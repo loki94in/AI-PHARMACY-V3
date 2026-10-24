@@ -601,15 +601,42 @@ export async function purgePendingCustomerReminders(
       ).catch(() => {});
     }
 
-    if (last10 && medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
-      await db.run(
-        `UPDATE automation_notifications 
-         SET status = 'cancelled', lifecycle_status = 'cancelled' 
-         WHERE recipient_phone LIKE ? 
-           AND status = 'staged' 
-           AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
-        [`%${last10}%`]
-      ).catch(() => {});
+    if (last10) {
+      if (medNames.length === 0 && refillIdStrs.length === 0 && orderIdStrs.length === 0) {
+        await db.run(
+          `UPDATE automation_notifications 
+           SET status = 'cancelled', lifecycle_status = 'cancelled' 
+           WHERE recipient_phone LIKE ? 
+             AND status = 'staged' 
+             AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
+          [`%${last10}%`]
+        ).catch(() => {});
+      } else if (medNames.length > 0) {
+        const stagedByPhone = await db.all(
+          `SELECT id, message FROM automation_notifications
+           WHERE recipient_phone LIKE ? 
+             AND status = 'staged' 
+             AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
+          [`%${last10}%`]
+        ).catch(() => []);
+
+        const stagedIdsToCancel: number[] = [];
+        for (const notif of stagedByPhone || []) {
+          const content = String(notif.message || '').toLowerCase();
+          if (medNames.some(m => content.includes(m))) {
+            stagedIdsToCancel.push(notif.id);
+          }
+        }
+        if (stagedIdsToCancel.length > 0) {
+          const ph = stagedIdsToCancel.map(() => '?').join(',');
+          await db.run(
+            `UPDATE automation_notifications 
+             SET status = 'cancelled', lifecycle_status = 'cancelled' 
+             WHERE id IN (${ph})`,
+            stagedIdsToCancel
+          ).catch(() => {});
+        }
+      }
     }
   } catch (err) {
     console.warn('[Refills] purgePendingCustomerReminders error:', err);
@@ -662,7 +689,7 @@ export async function buildDailyOperationalBriefing(
     statusLine = `🟡 Weekly Off (${todayDayName})`;
   }
 
-  // Refill summary (7 days)
+  // Refill summary (Today list — P2-111: pure today & overdue, completed patients disappear until real due date)
   const refillRows = await db.all(`
     SELECT pr.patient_name,
            MIN(DATE(pr.next_refill_date)) as earliest_due,
@@ -677,10 +704,9 @@ export async function buildDailyOperationalBriefing(
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
-      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
-      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
-      AND (pr.last_refill_date IS NULL OR DATE('now', 'localtime') >= DATE(pr.last_refill_date, '+' || MAX(7, COALESCE(pr.refill_interval_days, 30)) || ' days', '-7 days'))
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
+      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id
@@ -688,7 +714,7 @@ export async function buildDailyOperationalBriefing(
             DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
             OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
             OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
-            OR (DATE(rf.next_due_date) > DATE('now', 'localtime', '+7 days'))
+            OR (DATE(rf.next_due_date) > DATE('now', 'localtime'))
           )
       )
     GROUP BY pr.patient_name
@@ -710,10 +736,9 @@ export async function buildDailyOperationalBriefing(
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
-      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
-      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
-      AND (pr.last_refill_date IS NULL OR DATE('now', 'localtime') >= DATE(pr.last_refill_date, '+' || MAX(7, COALESCE(pr.refill_interval_days, 30)) || ' days', '-7 days'))
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
+      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id
@@ -721,7 +746,7 @@ export async function buildDailyOperationalBriefing(
             DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
             OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
             OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
-            OR (DATE(rf.next_due_date) > DATE('now', 'localtime', '+7 days'))
+            OR (DATE(rf.next_due_date) > DATE('now', 'localtime'))
           )
       )
     ORDER BY DATE(pr.next_refill_date) ASC, pr.patient_name ASC
@@ -798,14 +823,14 @@ export async function buildDailyOperationalBriefing(
      ORDER BY date ASC LIMIT 10`
   ).catch(() => []);
 
-  // Staged reminders breakdown
+  // Staged reminders breakdown — only active, non-completed refills
   const stagedRows = await db.all(`
     SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
     FROM automation_notifications an
     LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
     LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
     WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
-  `).catch(() => []);
+      AND (pr.id IS NULL OR (pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')))`).catch(() => []);
   const autoStagedCount = stagedRows.filter((r: any) => r.reminder_mode === 'auto').length;
   const manualStagedCount = stagedRows.filter((r: any) => r.reminder_mode !== 'auto').length;
 
@@ -960,7 +985,7 @@ export async function buildDailyOperationalBriefing(
       patientGroups.set(row.patient_name, list);
     }
 
-    let t4Details = '• No refills due in next 7 days';
+    let t4Details = '• No refills due today';
     if (patientGroups.size > 0) {
       let pIdx = 1;
       const pBlocks: string[] = [];
@@ -979,7 +1004,7 @@ export async function buildDailyOperationalBriefing(
 📅 *Date*: ${todayStr} (${todayDayName})
 🏪 *Store Status*: ${statusLine}
 
-📋 *REFILL PRESCRIPTIONS (Next 7 Days)*:
+📋 *REFILL PRESCRIPTIONS (Today & Overdue)*:
 ${t4Details}
 
 📦 *TODAY'S SPECIAL & ONLINE ORDERS*:
@@ -987,7 +1012,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
 
   } else if (templateKey === 'compact') {
     // TEMPLATE 1: Compact worklist (no medicine names)
-    let t1Refills = '• No refills due in next 7 days';
+    let t1Refills = '• No refills due today';
     if (refillRows.length > 0) {
       t1Refills = refillRows.map((r: any, i: number) => {
         const stockStatus = r.out_of_stock_count === 0 ? '✅ In Stock' : (r.in_stock_count === 0 ? '⏳ Hold for Stock' : '⚠️ Partial Stock');
@@ -1013,7 +1038,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
 📅 *Date*: ${todayStr} (${todayDayName})
 🏪 *Store Status*: ${statusLine}
 
-📋 *1. REFILLS WORKLIST (Next 7 Days)*:
+📋 *1. REFILLS WORKLIST (Today & Overdue)*:
 ${t1Refills}
 
 📦 *2. SPECIAL & ONLINE ORDERS*:
@@ -1078,7 +1103,7 @@ ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join('\n\n')}`;
 📅 *Date*: ${todayStr} (${todayDayName}) | ${statusLine}
 
 📊 *Morning KPI Dashboard*:
-• 📋 Refills Due (7d): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
+• 📋 Refills Due Today: *${totalRefillsDue} meds* (${refillRows.length} patient(s))
 • 📦 Active Orders: *${totalSpecialOrderItems} items* (${groupedCustomerOrders.length} customer(s))
 • ⏱️ 24h SLA Overdue: *${incomplete24hAudit.stats.totalOverdueCount}* (${incomplete24hAudit.stats.totalOverdueMedicines} meds)
 • ⏸️ Market-Paused Held: *${incomplete24hAudit.stats.totalPausedCount}*
@@ -1138,6 +1163,7 @@ export async function notifyAdminStagedReminders(db: Database): Promise<void> {
       LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
       LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
       WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
+        AND (pr.id IS NULL OR (pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')))
     `);
 
     if (stagedRows.length === 0) return;
@@ -1153,7 +1179,7 @@ export async function notifyAdminStagedReminders(db: Database): Promise<void> {
       `Review & dispatch in CRM → Refills or Quick Assist.`;
 
     const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
-    await whatsappQueueWorker.enqueue(adminWhatsapp, msg, 'admin_morning_briefing', 'Admin / Store Owner');
+    await whatsappQueueWorker.enqueue(adminWhatsapp, msg, 'admin_staged_reminders', 'Admin / Store Owner');
   } catch (err) {
     console.error('[RefillService] Failed to notify admin of staged reminders:', err);
   }

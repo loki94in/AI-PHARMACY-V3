@@ -593,17 +593,32 @@ router.post('/distributor-reminders/:id/send-now', async (req, res) => {
   const { id } = req.params;
   const { custom_message } = req.body || {};
   try {
-    const db = await dbManager.getConnection();
-    const enabledRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_dispatch_reminder_enabled'");
-    if (enabledRow?.value === 'false') {
-      return res.status(409).json({ error: 'Distributor dispatch reminder automation is disabled. Enable it in the Automation Hub to send reminders.' });
+    const result = await notificationService.sendDistributorDispatchReminder(Number(id), custom_message, undefined, { userClicked: true });
+    if (result.ok) {
+      const truthText = result.action === 'released'
+        ? 'WhatsApp reminder released & sending now'
+        : result.action === 'resent'
+          ? 'WhatsApp reminder resent successfully'
+          : 'WhatsApp reminder queued successfully';
+      return res.json({ success: true, action: result.action, queue_id: result.queueId, message: truthText });
     }
-    const ok = await notificationService.sendDistributorDispatchReminder(Number(id), custom_message);
-    if (ok) {
-      res.json({ success: true, message: 'WhatsApp reminder sent successfully' });
-    } else {
-      res.status(500).json({ error: 'Failed to send WhatsApp reminder. Check logs or distributor phone number.' });
+
+    if (result.reason === 'no_phone') {
+      const db = await dbManager.getConnection();
+      const rem = await db.get('SELECT distributor_name FROM distributor_dispatch_reminders WHERE id = ?', [id]);
+      const distName = rem?.distributor_name || 'distributor';
+      return res.status(400).json({ error: `No WhatsApp number saved for ${distName} — add it in Distributors.` });
     }
+
+    if (result.reason === 'not_found') {
+      return res.status(404).json({ error: 'Distributor reminder not found' });
+    }
+
+    if (result.reason === 'suppressed_no_order_no') {
+      return res.status(400).json({ error: 'Official PO number not confirmed yet — message not sent.' });
+    }
+
+    return res.status(500).json({ error: 'Failed to send WhatsApp reminder. Check logs or distributor phone number.' });
   } catch (error: any) {
     console.error('Send now distributor reminder error:', error);
     res.status(500).json({ error: error.message || 'Failed to send reminder' });
@@ -730,9 +745,9 @@ router.post('/distributor-reminders/:id/retry', async (req, res) => {
     // Reset status back to Pending for resend attempt
     await db.run("UPDATE distributor_dispatch_reminders SET status = 'Pending' WHERE id = ?", [id]);
 
-    const ok = await notificationService.sendDistributorDispatchReminder(Number(id), custom_message);
-    if (ok) {
-      res.json({ success: true, message: 'WhatsApp reminder resent successfully' });
+    const result = await notificationService.sendDistributorDispatchReminder(Number(id), custom_message, undefined, { userClicked: true });
+    if (result.ok) {
+      res.json({ success: true, action: result.action, queue_id: result.queueId, message: 'WhatsApp reminder resent successfully' });
     } else {
       res.status(500).json({ error: 'Failed to resend WhatsApp reminder. Check phone number or connection.' });
     }

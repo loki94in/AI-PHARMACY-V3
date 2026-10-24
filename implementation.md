@@ -1,86 +1,108 @@
-# Implementation Plan: Refill Auto Cart-Add + Website Payment & Credit Booking
+# Implementation Plan — Refill "Today List" Truth, Owner Message Combining & WhatsApp Queue Power-Cut Resilience
 
-> Based on `REFILL_AUTO_CART_AND_WEBSITE_BOOKING_IMPLEMENTATION_PLAN.md` (created 2026-10-24).
-> Status: COMPLETED.
-
----
-
-## 1. Goal & Context
-1. **Refill orders from online sources (website + WhatsApp)** to be added directly into the live Pharmarack cart automatically — no staff click. While the PC is OFF, orders queue in Vercel KV; when the PC comes on, the catch-up worker adds them without any click. Staff-created CRM refills remain manual staff-click.
-2. **Special orders** require **patient payment confirmation first**; after the pharmacist verifies in the app, the app adds the medicines to the cart automatically.
-3. The **website** becomes a direct booking surface for **refill + special + credit orders** (with patient UPI self-declaration and registered patient credit booking).
+> **Status:** COMPLETED — Verified with tests & performance guardrails
+> Bugs:
+> - **P2-111** — Fix A: Owner "today list" purity (no completed patients in morning briefing, cart runs, or staged counts)
+> - **P2-112** — Fix B: Combine the owner's own WhatsApp messages into ONE send (daily briefing stays separate)
+> - **P2-113** — Fix C: WhatsApp queue power-cut resilience + truthful retry/attempt report
 
 ---
 
-## 2. Architecture & Rules
-- Single writer per fact (`AGENT_DATA_FLOW_TREE.md`): `patient_refills` and `special_orders`.
-- `startupSyncCoordinator` is the one sanctioned auto cart-add worker (no parallel pass/table).
-- Strict legitimate data: no fake success, no invented QR, no estimated prices.
-- Manual-Only Patient Messaging (Owner Decision D4): notifications staged to `automation_notifications`, never auto-sent.
-- Events, not timers: refill catch-up triggered by `tokenRefreshScheduler.onFirstRefreshComplete()` and `pullCloudOrdersToLocal` import event.
-- Bounded batch per pass; serial and memory-friendly (P2-105).
+## 1. Problem Statements & Root Cause
+
+1. **Completed patients still appearing in owner lists (P2-111)**:
+   - Briefing re-admits completed patients: refill preview was a 7-day forward window (`next_refill_date <= now + 7 days`) AND had an early re-admit clause (`today >= last_refill_date + MAX(7, interval) - 7 days`) which re-added completed patients the moment their next cycle was within 7 days.
+   - Staged reminders query in briefing and alert didn't re-check linked `patient_refills` status (completed/canceled).
+   - `purgePendingCustomerReminders` didn't clean staged rows when callers passed names/meds without `refillIds`.
+   - `processRefillCartItem` and `sendRefillCartSummary` lacked checks for completed status.
+
+2. **Owner receives separate WhatsApp sends (P2-112)**:
+   - ~19 internal admin messages (cart summaries, alerts, reports) were each queued as separate messages.
+   - Requirement: Combine them into one formatted digest with divider sections under a character/section cap, while keeping the ☀️ Morning Briefing strictly separate/standalone.
+
+3. **PC power cut ruins queue / no retry report (P2-113)**:
+   - Boot recovery in `whatsappQueueWorker.ts` converted all pending/failed_offline messages to `review_required` except for distributor reminders and briefing.
+   - No timestamps or structured attempts log was kept on items.
+   - UI lacked truthful attempt count and last attempt timestamp reporting.
 
 ---
 
-## 3. Implementation Checklist & Tasks
+## 2. Architecture & Blueprint
 
-### Phase A: Honesty Fixes
-- [x] Task A.1: Update `src/routes/pharmarack.ts` no-token branch to return `{ success: false, offline: true, reason: 'NO_TOKEN' }` and typed `reason?: string`.
-- [x] Task A.2: Update `frontend/src/components/QuickOrderModal.tsx`, `SpecialOrdersSection.tsx`, and `LiveCartAddModal.tsx` to truthfully display failure/offline toast when cart add fails/is offline.
-- [x] Task A.3: Remove artificial injection of `auto_add_to_live_cart='true'` in `src/routes/settings.ts` so the real `storeSettingsService` value is served.
-- [x] Task A.4: In `src/routes/orders.ts` (`confirm-distributor`), gate cart re-add to payment-confirmed or advance-paid orders; otherwise mark `needs_live_cart_sync=1`.
-- [x] Task A.5: In `src/services/startupSyncCoordinator.ts`, stage `live_cart_sync_notification` into `automation_notifications` with `status='staged', needs_confirmation=1` instead of auto-sending via WhatsApp.
-- [x] Task A.6: Clean up dead `initiateRefill` in `website/public/catalog.html`.
-
-### Phase B: Refill Auto-Add (Online-Sourced Only)
-- [x] Task B.1: Add `refill_auto_cart_add` setting key (`auto | manual | off`, default `auto`) in `storeSettingsService.ts` and expose it in Settings UI (`IntegrationsCredentialsTab.tsx`).
-- [x] Task B.2: Extend `database.ts` (all 3 schema tiers) with `source TEXT DEFAULT 'counter'` and `cart_status TEXT DEFAULT 'pending'`. Extend `startupSyncCoordinator.ts` with serial, idempotent, bounded-batch refill catch-up pass (`runRefillAutoCartCatchUp`) using `processRefillCartItem` for online sources (`website`, `whatsapp`).
-- [x] Task B.3: Trigger refill catch-up pass after boot session refresh (`tokenRefreshScheduler.onFirstRefreshComplete()`) and after cloud order pull in `cloudCatalogSyncService.ts`. Also tag inbound WhatsApp confirms with `source='whatsapp'`.
-- [x] Task B.4: Wire refill query invalidation / SSE updates (`useGlobalSseInvalidation.ts`) so UI reflects cart status changes.
-- [x] Task B.5: Update docs (`src/AGENTS.md`, `AGENT_DATA_FLOW_TREE.md`) acknowledging this sanctioned worker path.
-
-### Phase C: Website Payment Self-Confirm (Vercel)
-- [x] Task C.1: Include live allocated UPI QR and payee details in order push payload to Vercel KV (`cloudCatalogSyncService.ts` / `orders.ts`).
-- [x] Task C.2: Implement `payment_declared` endpoint and UI button ("I Have Paid (Confirm Payment)") in `website/api/catalog.js` and `website/public/catalog.html`.
-- [x] Task C.3: Map payment-declared orders in desktop import (`cloudCatalogSyncService.ts`) to `payment_status='PENDING_VERIFICATION'`; pharmacist verification triggers live cart add.
-- [x] Task C.4: Push verified status back to Vercel KV via `update_order_status` so customer status tracks live cart addition (`In Live Cart`, `payment_status='CONFIRMED'`).
-
-### Phase D: Credit Booking (Vercel)
-- [x] Task D.1: Add "Pay Later (Credit)" option in website checkout drawer for OTP-verified registered patients.
-- [x] Task D.2: Map website credit orders to `payment_medium='CREDIT'`, `payment_status='UNPAID'` in `cloudCatalogSyncService.ts` and `website/api/catalog.js`.
-- [x] Task D.3: Finalizing credit order creates the legitimate invoice on CREDIT medium into CRM credit ledger without invented data.
-
-### Phase E: Verification, Tests, Guardrails & Bookkeeping
-- [x] Task E.1: Unit tests for refill auto cart catch-up, payment declaration, and offline cart-add truthfulness (`tests/refillAutoCartCatchUp.test.ts`).
-- [x] Task E.2: Run TypeScript check (`npx tsc --noEmit`), client build (`npm run build:client`), and guardrails (`npm run guardrails`).
-- [x] Task E.3: Update docs, `SMALL_BUG_FIX_PLAN.md` (P2-061 / settings truthfulness), root `AGENTS.md`, and run `node scripts/quick-update.mjs`.
+| Layer | File | Planned Changes |
+|---|---|---|
+| `layer:data` | `src/database.ts` | Add `last_attempt_at TEXT` and `attempts_log TEXT` to `whatsapp_send_queue` across all 3 schema tiers (CREATE, fast-boot, and alter-statements). |
+| `layer:service` | `src/services/whatsappQueueWorker.ts` | 1. Boot recovery rewrite: restore all same-day items to pending, cross-check with permanent Sent Register.<br>2. Auto-kick worker after recovery.<br>3. Attempt recording: update `last_attempt_at` (local time) and append to `attempts_log` (capped at 10).<br>4. Central owner message merge inside `enqueue()`. |
+| `layer:service` | `src/services/refillService.ts` | 1. Narrow morning briefing refills to `next_refill_date <= today` (today/overdue only).<br>2. Remove early re-admit clause.<br>3. Staged query check active non-completed refills.<br>4. Fix purge call sites and staged purge filter. |
+| `layer:service` | `src/services/refillCartService.ts` | 1. Cart item guard: reject `completed` refills.<br>2. Summary filter: drop `completed`/`canceled` refills from sent summary. |
+| `layer:api` | `src/routes/refills.ts` | Verify status before adding to cart in `/:id/add-to-cart` and `/confirm-patient`. |
+| `layer:api` | `src/routes/whatsappQueue.ts` | Expose `last_attempt_at`, `attempts_log`, and today's summary in `GET /status`. |
+| `layer:presentation` | `frontend/src/services/api.ts` & `frontend/src/components/WhatsAppQueuePopover.tsx` | Show per-item attempt counts ("Tried N× · last HH:MM · error") and summary status strip. |
+| `layer:testing` | `tests/refillTodayListTruth.test.ts` | Automated regression test for A6. |
 
 ---
 
-## 4. Execution Log
-- **2026-10-24 09:30**: Phase A Completed:
-  - `src/routes/pharmarack.ts`: Truthful `{ success: false, offline: true, reason: 'NO_TOKEN' }` when token is absent.
-  - `frontend/src/components/QuickOrderModal.tsx`, `SpecialOrdersSection.tsx`, `LiveCartAddModal.tsx`: Updated toast notifications to reflect offline token state truthfully.
-  - `src/routes/settings.ts`: Removed artificial override of `auto_add_to_live_cart='true'`.
-  - `src/routes/orders.ts`: Gated cart re-addition on `isPaymentConfirmed` in `confirm-distributor`.
-  - `src/services/startupSyncCoordinator.ts`: Staged offline sync alerts into `automation_notifications` (manual-only messaging contract D4).
-  - `website/public/catalog.html`: Removed dead `initiateRefill` function.
-- **2026-10-24 09:45**: Phase B Completed:
-  - `src/services/storeSettingsService.ts`: Added `RefillAutoCartAddMode` (`auto | manual | off`).
-  - `src/database.ts`: Added `source` and `cart_status` columns to `patient_refills` in all schema layers.
-  - `frontend/src/pages/Settings/IntegrationsCredentialsTab.tsx`: Added Online Refill Auto Cart-Add UI selector.
-  - `frontend/src/hooks/useGlobalSseInvalidation.ts`: Added `cart_updated` SSE event handling.
-  - `src/services/startupSyncCoordinator.ts`: Implemented `runRefillAutoCartCatchUp(triggerSource)` with single-flight mutex, batch limit 10, online sources only (`website`, `whatsapp`).
-  - `src/services/cloudCatalogSyncService.ts`: Wired `runRefillAutoCartCatchUp('cloud_pull')` after cloud orders import.
-  - `src/services/whatsappIntentService.ts`: Tagged confirmed refills with `source='whatsapp'`.
-  - `src/AGENTS.md` and `AGENT_DATA_FLOW_TREE.md`: Documented sanctioned worker policy for online refills.
-- **2026-10-24 09:55**: Phase C & D Completed:
-  - `website/api/catalog.js`: Added `action === 'payment_declared'` endpoint, attached `upi_uri` / `upi_id`, supported `paymentMethod` (`UPI`, `CREDIT`, `COUNTER_PICKUP`).
-  - `website/public/catalog.html`: Added Payment Method cards in cart drawer, rendered UPI self-confirmation button & badges (`Awaiting Verification`, `In Live Cart`, `Khata / Pay Later`).
-  - `src/routes/websiteOrders.ts`: Synchronized status updates back to Vercel KV (`status='In Live Cart', payment_status='CONFIRMED'`) upon pharmacist payment approval.
-- **2026-10-24 10:05**: Phase E Completed:
-  - Created unit test `tests/refillAutoCartCatchUp.test.ts` (all 5 tests passed).
-  - Executed `npx tsc --noEmit` (zero errors).
-  - Executed `npm run build:client` (built in 3m 5s, exit code 0).
-  - Executed `npm run guardrails` (PASS — no violations).
-  - Executed `node scripts/quick-update.mjs` (updated knowledge graph, exit code 0).
+## 3. Checklist & Execution Phases
+
+- [x] **Phase 1 — Schema Upgrades (Fix C1)**
+  - [x] Add `last_attempt_at` and `attempts_log` to full DDL block in `src/database.ts`
+  - [x] Add `last_attempt_at` and `attempts_log` to fast-boot DDL in `src/database.ts`
+  - [x] Add `last_attempt_at` and `attempts_log` to `ensureSchema` alter statements in `src/database.ts`
+  - [x] Verify `npx tsc --noEmit`
+
+- [x] **Phase 2 — Core WhatsApp Queue Engine (Fix C2, C3, C4, B1)**
+  - [x] Boot recovery rewrite in `whatsappQueueWorker.ts:cleanupOldSentItems`
+  - [x] Auto-trigger processing after any items recovered
+  - [x] Dispatch attempt tracking: update `last_attempt_at` & `attempts_log` on each attempt/failure
+  - [x] Implement central owner message combining in `whatsappQueueWorker.ts:enqueue`
+  - [x] Fix `notifyAdminStagedReminders` type from `'admin_morning_briefing'` to `'admin_staged_reminders'`
+
+- [x] **Phase 3 — Owner-Surface Purity (Fix A)**
+  - [x] Fix A1: Narrow briefing refill query to `next_refill_date <= today`, drop early re-admit clause in `src/services/refillService.ts`
+  - [x] Fix A2: Guard `/refills/:id/add-to-cart` and `processRefillCartItem` against `completed`/`canceled` refills
+  - [x] Fix A3: Filter completed/canceled items in `sendRefillCartSummary`
+  - [x] Fix A4: Exclude completed/canceled/inactive refills from staged counts and alerts
+  - [x] Fix A5: Audit and enhance purge call sites so staged notifications are cancelled reliably
+  - [x] Fix A6: Add regression test `tests/refillTodayListTruth.test.ts`
+
+- [x] **Phase 4 — Frontend Truth Report (Fix C5)**
+  - [x] Expose `last_attempt_at`, `attempts_log`, and `todaySummary` in `src/services/whatsappQueueWorker.ts:getWorkerState`
+  - [x] Update frontend types in `frontend/src/services/api.ts`
+  - [x] Update `frontend/src/components/WhatsAppQueuePopover.tsx` with attempt badges and today's summary strip
+
+- [x] **Phase 5 — Verification & Register**
+  - [x] Run regression tests (`PASS tests/refillTodayListTruth.test.ts` — 9/9 pass)
+  - [x] Run `npm run guardrails` (TypeScript compile + rule engine exit 0)
+  - [x] Run `node scripts/quick-update.mjs`
+  - [x] Register P2-111, P2-112, P2-113 in `SMALL_BUG_FIX_PLAN.md`
+
+---
+
+## 4. Execution Tasks & Completed Work Log
+
+1. **Schema Upgrades (`src/database.ts`, `src/services/whatsappQueueWorker.ts`)**:
+   - Added `last_attempt_at TEXT DEFAULT NULL` and `attempts_log TEXT DEFAULT NULL` across full DDL, fast-boot duplicate, alter checks, and worker ensureSchema.
+   - Extended TypeScript interfaces `QueueItem` and `QueueWorkerState`.
+
+2. **Core WhatsApp Queue Engine (`src/services/whatsappQueueWorker.ts`)**:
+   - Implemented `OWNER_DIGEST_TYPES` set and message combining logic in `enqueue()`: merges multiple owner messages into a single pending row separated by `\n\n──────────────\n` and `🔹 *Section N*` (cap: ≤ 8 sections, ≤ 5,000 characters).
+   - Strictly excluded `admin_morning_briefing` (☀️ Morning Briefing always sent standalone).
+   - Rewrote `cleanupOldSentItems()` for power-cut resilience: restores all unconfirmed same-day items to `pending`, cross-checks permanent Sent Register (`whatsappDeliveryRegister`) to prevent duplicate sends, and triggers processing immediately.
+   - Instrumented dispatch loop status updates to write `last_attempt_at` (local time) and `attempts_log` (JSON history) on all dispatch outcomes.
+   - Added `todaySummary` calculation (`sent`, `failed`, `pending`, `review_required`, `skipped`, `total`) to `getWorkerState()`.
+
+3. **Owner Surface Purity (`src/services/refillService.ts`, `src/services/refillCartService.ts`, `src/routes/refills.ts`)**:
+   - In `buildDailyOperationalBriefing`: Narrowed queries to `DATE(pr.next_refill_date) <= DATE('now', 'localtime')`, dropped early re-admit clause, updated headings to "Today & Overdue" (was "Next 7 Days"), and empty state to "No refills due today".
+   - In `refillCartService.ts`: Added guard in `processRefillCartItem` to reject completed/inactive refills, and filtered out completed refills in `sendRefillCartSummary`.
+   - In `refills.ts`: Added status check in `POST /confirm-patient` and `POST /send-staged-briefing` to filter out completed refills, and updated queue type to `admin_staged_reminders`.
+   - In `refillService.ts:purgePendingCustomerReminders`: Corrected query to check `message` in `automation_notifications` and cancel matching staged reminders.
+
+4. **Frontend Truth Reporting (`frontend/src/services/api.ts`, `frontend/src/components/WhatsAppQueuePopover.tsx`)**:
+   - Added `last_attempt_at`, `attempts_log` to `WhatsAppQueueItem` and `todaySummary` to `WhatsAppQueueStatus`.
+   - In `WhatsAppQueuePopover.tsx`: Added attempt badge ("Tried N× · last HH:MM"), attempt history log drawer in expanded view, and truthful today summary metric strip using semantic Tailwind tokens.
+
+5. **Testing & Performance Guardrails**:
+   - Created `tests/refillTodayListTruth.test.ts` covering P2-111, P2-112, and P2-113 (all 9 tests passing).
+   - Passed `npx tsc --noEmit` and `npx tsc -p frontend/tsconfig.app.json --noEmit` with 0 errors.
+   - Passed `npm run guardrails` with 0 violations (speed architecture intact).
+   - Registered P2-111, P2-112, P2-113 in `SMALL_BUG_FIX_PLAN.md`.

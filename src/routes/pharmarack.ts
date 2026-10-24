@@ -3044,6 +3044,24 @@ router.post('/cart/place-official-orders', async (req, res) => {
         if (hasAllStores || attempt === 2) break;
         await new Promise(r => setTimeout(r, 1500));
       }
+
+      // Bounded final sync attempt if any target store still has no confirmed order number
+      const stillMissing = storesNeedingOrderNo.some((sName: string) =>
+        !syncedToday.some((s: any) => {
+          const normS = (s.store_name || '').toLowerCase().trim();
+          return sName.includes(normS) || normS.includes(sName);
+        })
+      );
+      if (stillMissing) {
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          await syncPharmarackOrders(true);
+        } catch (_) {}
+        syncedToday = await db.all(
+          `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
+          [today]
+        ).catch(() => syncedToday);
+      }
     }
 
     // STEP 4: Automatically share confirmed official Order ID with saved distributor numbers with 5-minute grace period hold
@@ -3087,19 +3105,63 @@ router.post('/cart/place-official-orders', async (req, res) => {
 
         const cleanDistPhone = ord.phone.replace(/\D/g, '');
         if (cleanDistPhone && cleanDistPhone.length >= 10) {
-          const gracePeriodScheduledAt = Date.now() + 5 * 60 * 1000; // 5-minute grace period hold
+          const reminderScheduledAt = Date.now(); // Immediate dispatch per owner requirement (5-min grace hold removed 2026-10-24)
           try {
-            const queueId = await whatsappQueueWorker.enqueue(
-              cleanDistPhone,
-              distMsg.trim(),
-              'distributor_dispatch_reminder',
-              ord.storeName,
-              gracePeriodScheduledAt,
-              undefined,
-              undefined,
-              { skipDedupe: true }
+            // Atomic claim on pharmarack_synced_orders: exactly one writer may announce an OrderNo
+            const claim = await db.run(
+              `UPDATE pharmarack_synced_orders 
+               SET announced_at = CURRENT_TIMESTAMP, announce_result = 'announced_immediate' 
+               WHERE order_no = ? AND announced_at IS NULL`,
+              [resolvedOrderNo]
             );
-            console.log(`[PharmarackRoute] Step 4: Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) with 5-minute grace period hold (queue #${queueId})`);
+
+            if ((claim?.changes ?? 0) === 0) {
+              console.log(`[PharmarackRoute] Step 4: Order #${resolvedOrderNo} already claimed/announced; skipping duplicate enqueue.`);
+              continue;
+            }
+
+            // Pre-check if a waiting reminder already exists in the queue for this distributor today
+            const startOfDayMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
+            const waiting = await db.get(
+              `SELECT id, message FROM whatsapp_send_queue
+               WHERE type = 'distributor_dispatch_reminder' AND status IN ('pending', 'failed_offline')
+                 AND LOWER(TRIM(target_name)) = LOWER(TRIM(?)) AND created_at >= ?
+               ORDER BY id DESC LIMIT 1`,
+              [ord.storeName, startOfDayMs]
+            );
+
+            if (waiting) {
+              const missing = !String(waiting.message).includes(`#${resolvedOrderNo}`);
+              if (missing) {
+                const merged = `📦 Pharmarack order #${resolvedOrderNo}\n${waiting.message}`;
+                await db.run('UPDATE whatsapp_send_queue SET message = ? WHERE id = ?', [merged, waiting.id]);
+              }
+              await db.run(
+                `UPDATE pharmarack_synced_orders SET announce_result = 'merged_into_waiting_reminder' WHERE order_no = ?`,
+                [resolvedOrderNo]
+              );
+              console.log(`[PharmarackRoute] Step 4: Merged Order #${resolvedOrderNo} into waiting queue item #${waiting.id}`);
+            } else {
+              // Enqueue WITHOUT skipDedupe: restores queue's same-day number+text dedupe
+              try {
+                const queueId = await whatsappQueueWorker.enqueue(
+                  cleanDistPhone,
+                  distMsg.trim(),
+                  'distributor_dispatch_reminder',
+                  ord.storeName,
+                  reminderScheduledAt
+                );
+                await whatsappQueueWorker.forceNext();
+                console.log(`[PharmarackRoute] Step 4: Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) for immediate dispatch (queue #${queueId})`);
+              } catch (enqueueErr) {
+                // Un-claim so recovery / sync can retry truthfully
+                await db.run(
+                  `UPDATE pharmarack_synced_orders SET announced_at = NULL, announce_result = 'claim_failed' WHERE order_no = ?`,
+                  [resolvedOrderNo]
+                ).catch(() => {});
+                throw enqueueErr;
+              }
+            }
             
             // 1. Update pharmarack_placed_orders batch_sent status and attach confirmed order_no surgically by row ID
             const targetPlacedRow = await db.get(
@@ -3151,14 +3213,6 @@ router.post('/cart/place-official-orders', async (req, res) => {
               );
             }
 
-            // 3. Mark announced_at in pharmarack_synced_orders so order sync service does not send a duplicate
-            await db.run(
-              `UPDATE pharmarack_synced_orders 
-               SET announced_at = CURRENT_TIMESTAMP, announce_result = 'held_in_grace_period' 
-               WHERE order_no = ?`,
-              [resolvedOrderNo]
-            );
-
             // Paced 1.5s gap between enqueuing successive distributor reminders to prevent fast-flush bursts
             await new Promise(r => setTimeout(r, 1500));
           } catch (distMsgErr) {
@@ -3173,6 +3227,32 @@ router.post('/cart/place-official-orders', async (req, res) => {
       eventService.broadcast('whatsapp_queue_updated', {});
     } catch (_) {}
 
+    // Single fresh live cart read to evaluate remaining items for target stores
+    let liveCartRemaining: Array<{ storeId: number; storeName: string; remainingItemsCount: number; items: any[] }> = [];
+    let remainingCount = 0;
+    try {
+      const freshCart = await loadLiveCartCore();
+      const targetNames = (targetStoreNames || (orders || []).map((o: any) => o.storeName) || []).map((n: string) => String(n).toLowerCase().trim());
+      const targetIds = (targetStoreIds || (orders || []).map((o: any) => o.storeId) || []).map((id: any) => Number(id)).filter(Boolean);
+
+      for (const dist of (freshCart.distributors || [])) {
+        const dName = String(dist.storeName || '').toLowerCase().trim();
+        const dId = Number(dist.storeId);
+        const isTarget = targetIds.includes(dId) || targetNames.some((tn: string) => tn.length > 2 && (tn.includes(dName) || dName.includes(tn)));
+        if (isTarget && dist.items && dist.items.length > 0) {
+          liveCartRemaining.push({
+            storeId: dId,
+            storeName: dist.storeName,
+            remainingItemsCount: dist.items.length,
+            items: dist.items
+          });
+          remainingCount += dist.items.length;
+        }
+      }
+    } catch (cartReadErr: any) {
+      console.warn('[PharmarackRoute] Live cart post-checkout read notice:', cartReadErr?.message || cartReadErr);
+    }
+
     const isSuccess = checkoutResult.ok || (syncedToday && syncedToday.length > 0) || (checkoutResult.placedCount > 0);
     const placedTotal = checkoutResult.placedCount || (isSuccess ? (syncedToday?.length || 1) : 0);
 
@@ -3182,6 +3262,9 @@ router.post('/cart/place-official-orders', async (req, res) => {
       failedCount: checkoutResult.failedCount,
       orders: checkoutResult.orders,
       syncedOrders: syncedToday,
+      remaining: liveCartRemaining,
+      remainingCount,
+      cartEmptyForTargets: remainingCount === 0,
       error: isSuccess ? null : checkoutResult.error,
       message: isSuccess 
         ? `Successfully placed ${placedTotal} official order(s) on Pharmarack!`
@@ -3204,10 +3287,11 @@ router.post('/cart/open-official-window', async (_req, res) => {
 });
 
 // Post-checkout immediate sync endpoint: Reconciles cleared cart and captures new Order IDs
-router.post('/cart/sync-post-checkout', async (_req, res) => {
+router.post('/cart/sync-post-checkout', async (req, res) => {
   try {
     const today = toLocalSqlDateTime(new Date()).slice(0, 10);
-    await syncPharmarackOrders().catch(() => {});
+    const { targetStoreNames, targetStoreIds } = req.body || {};
+    await syncPharmarackOrders(true).catch(() => {});
     invalidatePharmarackCartCache();
     const db = await dbManager.getConnection();
     const syncedToday = await db.all(
@@ -3215,12 +3299,44 @@ router.post('/cart/sync-post-checkout', async (_req, res) => {
       [today]
     );
 
+    let remaining: Array<{ storeId: number; storeName: string; remainingItemsCount: number; items: any[] }> = [];
+    let remainingCount = 0;
+    try {
+      const freshCart = await loadLiveCartCore();
+      const targetNames = (targetStoreNames || []).map((n: string) => String(n).toLowerCase().trim());
+      const targetIds = (targetStoreIds || []).map((id: any) => Number(id)).filter(Boolean);
+
+      for (const dist of (freshCart.distributors || [])) {
+        const dName = String(dist.storeName || '').toLowerCase().trim();
+        const dId = Number(dist.storeId);
+        const isTarget = (targetIds.length > 0 || targetNames.length > 0)
+          ? (targetIds.includes(dId) || targetNames.some((tn: string) => tn.length > 2 && (tn.includes(dName) || dName.includes(tn))))
+          : true;
+        if (isTarget && dist.items && dist.items.length > 0) {
+          remaining.push({
+            storeId: dId,
+            storeName: dist.storeName,
+            remainingItemsCount: dist.items.length,
+            items: dist.items
+          });
+          remainingCount += dist.items.length;
+        }
+      }
+    } catch (_) {}
+
     try {
       eventService.broadcast('pharmarack_orders_changed', { today });
       eventService.broadcast('pharmarack_cart_changed', {});
     } catch (_) {}
 
-    res.json({ success: true, count: syncedToday.length, orders: syncedToday });
+    res.json({
+      success: true,
+      count: syncedToday.length,
+      orders: syncedToday,
+      remaining,
+      remainingCount,
+      cartEmptyForTargets: remainingCount === 0
+    });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message || 'Post-checkout sync failed' });
   }
@@ -3962,6 +4078,126 @@ router.get('/sent-orders', async (req, res) => {
   } catch (err: any) {
     console.error('Error fetching Pharmarack sent orders:', err);
     res.status(500).json({ error: 'Failed to fetch sent orders: ' + err.message });
+  }
+});
+
+/**
+ * POST /api/pharmarack/sent-orders/:id/send-dispatch
+ * Sends (or re-sends) an official dispatch reminder to the distributor for this placed order.
+ * Resolves the confirmed PO number from pharmarack_placed_orders or pharmarack_synced_orders.
+ */
+router.post('/sent-orders/:id/send-dispatch', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id || isNaN(id)) {
+    return res.status(400).json({ error: 'Valid sent order id is required' });
+  }
+
+  try {
+    const db = await dbManager.getConnection();
+    // 1. Look up order row in placed orders, or synced orders fallback
+    let placedOrder = await db.get('SELECT * FROM pharmarack_placed_orders WHERE id = ?', [id]);
+    let syncedOrder: any = null;
+    if (!placedOrder) {
+      syncedOrder = await db.get('SELECT * FROM pharmarack_synced_orders WHERE id = ? OR pharmarack_order_id = ?', [id, id]);
+    }
+
+    if (!placedOrder && !syncedOrder) {
+      return res.status(404).json({ error: 'Sent order record not found' });
+    }
+
+    const storeName = String(placedOrder?.store_name || syncedOrder?.store_name || '').trim();
+    if (!storeName) {
+      return res.status(400).json({ error: 'Store name is missing for this order record' });
+    }
+
+    const orderDate = placedOrder?.order_date || syncedOrder?.order_date || toLocalSqlDateTime(new Date()).slice(0, 10);
+    const rawOrderNo = placedOrder?.order_no || syncedOrder?.order_no || '';
+    const cleanOrderNo = String(rawOrderNo).trim().replace(/^#+/, '');
+
+    // 2. Resolve distributor phone
+    // Check reminder row first, then distributor mappings -> distributors table
+    let distPhone = '';
+    let reminder = await db.get(
+      `SELECT * FROM distributor_dispatch_reminders
+       WHERE date = ? AND LOWER(TRIM(distributor_name)) = LOWER(TRIM(?))
+       LIMIT 1`,
+      [orderDate, storeName]
+    );
+
+    if (reminder?.distributor_phone && String(reminder.distributor_phone).trim()) {
+      distPhone = String(reminder.distributor_phone).trim();
+    } else {
+      // Check mapped distributor
+      const mapping = await db.get(
+        `SELECT d.phone FROM pharmarack_distributor_mappings m
+         JOIN distributors d ON m.distributor_id = d.id
+         WHERE LOWER(TRIM(m.store_name)) = LOWER(TRIM(?))
+         LIMIT 1`,
+        [storeName]
+      );
+      if (mapping?.phone && String(mapping.phone).trim()) {
+        distPhone = String(mapping.phone).trim();
+      } else {
+        // Direct name lookup in distributors table
+        const directDist = await db.get(
+          `SELECT phone FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1`,
+          [storeName]
+        );
+        if (directDist?.phone && String(directDist.phone).trim()) {
+          distPhone = String(directDist.phone).trim();
+        }
+      }
+    }
+
+    const clean10Digits = distPhone.replace(/\D/g, '').slice(-10);
+    if (!clean10Digits || clean10Digits.length < 10) {
+      return res.status(400).json({ error: `No WhatsApp number saved for ${storeName} — add it in Distributors.` });
+    }
+
+    // 3. Ensure reminder row exists for this date + distributor
+    if (!reminder) {
+      const insResult = await db.run(
+        `INSERT INTO distributor_dispatch_reminders 
+         (distributor_name, distributor_phone, date, status, auto_remind, order_source)
+         VALUES (?, ?, ?, 'Pending', 1, 'pharmarack')`,
+        [storeName, clean10Digits, orderDate]
+      );
+      reminder = { id: insResult.lastID, distributor_name: storeName, distributor_phone: clean10Digits, date: orderDate, status: 'Pending' };
+    } else if (!reminder.distributor_phone) {
+      await db.run('UPDATE distributor_dispatch_reminders SET distributor_phone = ? WHERE id = ?', [clean10Digits, reminder.id]);
+      reminder.distributor_phone = clean10Digits;
+    }
+
+    // 4. Send reminder with real order number
+    const result = await notificationService.sendDistributorDispatchReminder(
+      reminder.id,
+      undefined,
+      undefined,
+      { userClicked: true, orderNos: cleanOrderNo ? [cleanOrderNo] : [] }
+    );
+
+    if (result.ok) {
+      const truthText = result.action === 'released'
+        ? `WhatsApp reminder for ${storeName} released & sending now`
+        : result.action === 'resent'
+          ? `Earlier reminder went out today — re-sent to ${storeName}`
+          : `Dispatch message for ${storeName} queued successfully`;
+      return res.json({
+        success: true,
+        action: result.action,
+        queue_id: result.queueId,
+        message: truthText
+      });
+    }
+
+    if (result.reason === 'no_phone') {
+      return res.status(400).json({ error: `No WhatsApp number saved for ${storeName} — add it in Distributors.` });
+    }
+
+    return res.status(500).json({ error: `Failed to dispatch reminder to ${storeName}. Check phone number or connection.` });
+  } catch (err: any) {
+    console.error('Error in send-dispatch from sent orders:', err);
+    res.status(500).json({ error: err.message || 'Failed to send dispatch message' });
   }
 });
 

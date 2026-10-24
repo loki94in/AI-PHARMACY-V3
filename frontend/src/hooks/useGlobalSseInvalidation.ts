@@ -133,6 +133,10 @@ export function useGlobalSseInvalidation(enabled: boolean = true) {
       const es = new EventSource('/api/notifications/stream');
       esRef.current = es;
 
+      es.onopen = () => {
+        window.dispatchEvent(new CustomEvent('sse-connected'));
+      };
+
       es.onmessage = (e: MessageEvent) => {
         let type: string;
         let parsed: SseFrame;

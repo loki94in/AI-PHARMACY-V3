@@ -483,7 +483,14 @@ const Dispatch = () => {
       messageSendEvent.triggerSendProgress(distName, `Sending WhatsApp reminder to ${distName}...`, 10);
       whatsappQueueEvent.triggerUpdated();
 
-      await api.sendDistributorReminderNow(targetId, msgToSend);
+      const res = await api.sendDistributorReminderNow(targetId, msgToSend);
+      if (res?.action === 'released') {
+        showNotif(`Released — sending to ${distName} now`);
+      } else if (res?.action === 'resent') {
+        showNotif(`Earlier reminder already went out today — re-sent to ${distName}`);
+      } else {
+        showNotif(res?.message || `Queued — sending to ${distName} in seconds`);
+      }
       await fetchDistributorReminders(true);
     } catch (err) {
       const e = err as LocalApiError;

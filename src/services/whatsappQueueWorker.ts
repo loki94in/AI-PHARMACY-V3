@@ -3,6 +3,42 @@ import { eventService } from './eventService.js';
 import { sendMessage, getWhatsAppStatus, shouldRouteToBusiness, hashMessageBody, normalizeWhatsAppPhone, isWhatsAppExplicitlyDisabled, ensureWhatsAppReady, isWhatsAppAutoConnectAllowed, checkPhoneWhatsAppRegistered, ensureSessionHealth } from '../whatsappClient.js';
 import { whatsappDeliveryRegister, CHATBOT_CONVERSATIONAL_TYPES } from './whatsappDeliveryRegister.js';
 import { nonWaFallbackService } from './nonWaFallbackService.js';
+import { toLocalSqlDateTime } from '../utils/localTime.js';
+
+export const OWNER_DIGEST_TYPES = new Set([
+  'admin_staged_reminders',
+  'refill_cart_summary',
+  'order_mail_check',
+  'invoice_arrival_alert',
+  'mail_arrival_alert',
+  'admin_missing_distributor_phones',
+  'bounce_alert',
+  'admin_escalation',
+  'monthly_report',
+  'ai_rx_briefing',
+  'queue_failure_admin_note',
+  'admin_shortage_reminder',
+  'admin_alert',
+  'owner_digest_combined'
+]);
+
+export function appendAttemptLog(
+  existingJson: string | null | undefined, 
+  entry: { ts: string; result: string; error?: string | null }
+): string {
+  try {
+    let arr: Array<{ ts: string; result: string; error?: string | null }> = [];
+    if (existingJson) {
+      const parsed = JSON.parse(existingJson);
+      if (Array.isArray(parsed)) arr = parsed;
+    }
+    arr.push(entry);
+    if (arr.length > 10) arr = arr.slice(-10);
+    return JSON.stringify(arr);
+  } catch {
+    return JSON.stringify([entry]);
+  }
+}
 
 const SERVER_BOOT_TIME = Date.now();
 
@@ -21,6 +57,8 @@ export interface QueueItem {
   media_url?: string | null;
   file_json?: string | null;
   skip_dedupe?: number;
+  last_attempt_at?: string | null;
+  attempts_log?: string | null;
 }
 
 export interface QueueWorkerState {
@@ -65,6 +103,13 @@ export interface QueueWorkerState {
   availabilityState?: 'READY' | 'WHATSAPP_SLEEPING' | 'WHATSAPP_DISCONNECTED' | 'APP_OUTAGE_RECOVERED';
   lastHeartbeatAt?: number | null;
   detectedOutage?: { start: number; end: number } | null;
+  todaySummary?: {
+    sent: number;
+    failed: number;
+    pending: number;
+    review_required: number;
+    skipped: number;
+  };
   recentItems: QueueItem[];
 }
 
@@ -328,6 +373,12 @@ class WhatsAppQueueWorker {
       if (!colNames.has('skip_dedupe')) {
         await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN skip_dedupe INTEGER DEFAULT 0");
       }
+      if (!colNames.has('last_attempt_at')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN last_attempt_at TEXT DEFAULT NULL");
+      }
+      if (!colNames.has('attempts_log')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN attempts_log TEXT DEFAULT NULL");
+      }
 
       const notifCols = await db.all("PRAGMA table_info(automation_notifications)");
       const notifColNames = new Set(notifCols.map((c: any) => c.name));
@@ -557,6 +608,75 @@ class WhatsAppQueueWorker {
 
     const fileJsonStr = file ? JSON.stringify(file) : null;
 
+    // SPEC FIX B (P2-112): Owner message combining into ONE send (☀️ daily briefing stays strictly separate)
+    if (!mediaUrl && !fileJsonStr && OWNER_DIGEST_TYPES.has(type) && type !== 'admin_morning_briefing') {
+      try {
+        const { waAdminEscalationService } = await import('./waAdminEscalationService.js');
+        const adminWhatsapp = await waAdminEscalationService.resolveAdminWhatsappNumber(db).catch(() => null);
+        const storePhoneRow = await db.get("SELECT value FROM app_settings WHERE key = 'store_phone'").catch(() => null);
+        const adminDigits = adminWhatsapp ? normalizeWhatsAppPhone(adminWhatsapp).replace(/\D/g, '').slice(-10) : '';
+        const storeDigits = storePhoneRow?.value ? normalizeWhatsAppPhone(storePhoneRow.value).replace(/\D/g, '').slice(-10) : '';
+        const recipientDigits = cleanPhone.replace(/\D/g, '').slice(-10);
+        const isOwnerRecipient = Boolean(recipientDigits && (recipientDigits === adminDigits || (storeDigits && recipientDigits === storeDigits)));
+
+        if (isOwnerRecipient) {
+          const ownerPlaceholders = Array.from(OWNER_DIGEST_TYPES).map(() => '?').join(',');
+          const existingPendingOwnerRow = await db.get(
+            `SELECT id, message, type, scheduled_at FROM whatsapp_send_queue
+             WHERE number = ? AND status = 'pending' 
+               AND type IN (${ownerPlaceholders})
+               AND type != 'admin_morning_briefing'
+               AND (media_url IS NULL OR media_url = '')
+               AND (file_json IS NULL OR file_json = '')
+               AND created_at >= ?
+               AND (scheduled_at IS NULL OR scheduled_at <= ?)
+             ORDER BY id DESC LIMIT 1`,
+            [cleanPhone, ...Array.from(OWNER_DIGEST_TYPES), startOfDayMs, now]
+          );
+
+          if (existingPendingOwnerRow) {
+            const SECTION_DIVIDER = '\n\n──────────────\n';
+            const existingMsg = String(existingPendingOwnerRow.message || '').trim();
+            const existingSections = existingMsg.split(SECTION_DIVIDER);
+            const currentSectionCount = existingSections.length;
+
+            // Cap check: <= 8 sections and <= 5000 chars total
+            if (currentSectionCount < 8 && (existingMsg.length + message.length + SECTION_DIVIDER.length + 50) <= 5000) {
+              const nextSectionNum = currentSectionCount + 1;
+              const formattedNext = `🔹 *Section ${nextSectionNum}*\n${message.trim()}`;
+              let mergedBody = '';
+              if (currentSectionCount === 1 && !existingMsg.startsWith('🔹 *Section 1*')) {
+                mergedBody = `🔹 *Section 1*\n${existingMsg}${SECTION_DIVIDER}${formattedNext}`;
+              } else {
+                mergedBody = `${existingMsg}${SECTION_DIVIDER}${formattedNext}`;
+              }
+
+              const mergeUpdate = await db.run(
+                `UPDATE whatsapp_send_queue 
+                 SET message = ?, type = 'owner_digest_combined', target_name = ?
+                 WHERE id = ? AND status = 'pending'`,
+                [mergedBody, 'Admin / Store Owner', existingPendingOwnerRow.id]
+              );
+
+              if ((mergeUpdate?.changes ?? 0) > 0) {
+                console.log(`[WhatsAppQueueWorker] Combined owner update into pending queue item #${existingPendingOwnerRow.id} (section ${nextSectionNum}/8).`);
+                this.broadcastQueueState(true);
+                try {
+                  eventService.broadcast('automation_hub_updated', { type: 'merged', id: existingPendingOwnerRow.id, targetName: 'Admin / Store Owner', automationType: 'owner_digest_combined' });
+                } catch (_) {}
+                if (scheduledAt <= now) {
+                  this.triggerProcessing();
+                }
+                return existingPendingOwnerRow.id;
+              }
+            }
+          }
+        }
+      } catch (mergeErr) {
+        console.warn('[WhatsAppQueueWorker] Owner message merge check failed, falling back to standalone enqueue:', mergeErr);
+      }
+    }
+
     // Defense-in-depth: Short-window deduplication guard for distributor orders and reminders.
     // If a distributor order was enqueued to this number in the last 15 minutes, suppress duplicate enqueue.
     const isDistributorOrder = type === 'pharmarack_distributor_order' || type === 'distributor_cart_order';
@@ -676,16 +796,16 @@ class WhatsAppQueueWorker {
       } catch (_) {}
 
       // PRE-RESTART & UPDATE RECOVERY (Permanent Register cross-reference):
-      // Verify any leftover pending / failed_offline items created before current server boot against the permanent Sent Register.
-      // 1. If already delivered on WhatsApp -> mark 'sent' with verified delivery timestamp.
-      // 2. If distributor_dispatch_reminder -> restore legitimate overdue reminders for today/outage to pending with descriptive reason.
-      // 3. If unconfirmed non-distributor message -> mark 'review_required' to prevent unintended dispatch.
+      // SPEC FIX C2 & C3 (P2-113): WhatsApp queue power-cut resilience.
+      // 1. If already delivered on WhatsApp per permanent register -> mark 'sent'.
+      // 2. All unconfirmed pending / failed_offline messages queued within last 24h are restored to 'pending',
+      //    preserving retry_count, and automatically trigger processing.
       try {
         const preBootPending = await db.all(
           "SELECT id, number, message, type, scheduled_at, created_at FROM whatsapp_send_queue WHERE status IN ('pending', 'failed_offline') AND created_at < ?",
           [SERVER_BOOT_TIME]
         );
-        let recoveredDistributorCount = 0;
+        let recoveredCount = 0;
         for (const item of preBootPending || []) {
           const isDistributorReminder = item.type === 'distributor_dispatch_reminder';
           const deliveryCheck = await whatsappDeliveryRegister.isAlreadyDelivered(
@@ -702,9 +822,8 @@ class WhatsAppQueueWorker {
               "UPDATE automation_notifications SET status = 'sent', error_message = NULL WHERE reference_id = ? OR reference_id = ?",
               [`queue_${item.id}`, String(item.id)]
             ).catch(() => {});
-          } else if (isDistributorReminder || item.type === 'admin_morning_briefing') {
-            // SPEC REQUIREMENT: Scheduled distributor Dispatch Reminders & Admin Morning Briefings MUST NEVER be silently converted to review_required or skipped_offline on startup!
-            // If legitimate and due/overdue for today, restore to pending/retryable so the worker dispatches it.
+          } else {
+            // Restore legitimate pending / offline items to 'pending' so worker dispatches them on startup
             const wasDueDuringOutage = item.scheduled_at && this.detectedOutageInterval && 
               item.scheduled_at >= (this.detectedOutageInterval.start - 60000) && 
               item.scheduled_at <= (this.detectedOutageInterval.end + 60000);
@@ -713,7 +832,7 @@ class WhatsAppQueueWorker {
               ? 'Morning briefing restored for immediate dispatch on startup'
               : (wasDueDuringOutage 
                 ? 'Recovered after PC/application outage during scheduled dispatch'
-                : (isOverdueToday ? 'Recovered overdue scheduled reminder after app restart' : 'Restored scheduled reminder'));
+                : (isOverdueToday ? 'Recovered overdue reminder after app restart' : 'Restored queue item after app restart / power cut'));
             
             console.log(`[WhatsAppQueueWorker] Startup recovery: #${item.id} (${item.type}) preserved and restored to pending. ${reason}`);
             await db.run(
@@ -724,16 +843,11 @@ class WhatsAppQueueWorker {
               "UPDATE automation_notifications SET status = 'pending', error_message = ? WHERE reference_id = ? OR reference_id = ?",
               [reason, `queue_${item.id}`, String(item.id)]
             ).catch(() => {});
-            recoveredDistributorCount++;
-          } else {
-            await db.run(
-              "UPDATE whatsapp_send_queue SET status = 'review_required', error_message = 'App restarted/updated — held for review to prevent unintended dispatch' WHERE id = ?",
-              [item.id]
-            );
+            recoveredCount++;
           }
         }
-        if (recoveredDistributorCount > 0) {
-          console.log(`[WhatsAppQueueWorker] Startup recovery: ${recoveredDistributorCount} scheduled distributor reminder(s) recovered, triggering queue worker processing...`);
+        if (recoveredCount > 0) {
+          console.log(`[WhatsAppQueueWorker] Startup recovery: ${recoveredCount} queue item(s) restored after restart, triggering queue worker processing...`);
           this.triggerProcessing();
         }
       } catch (_) {}
@@ -928,9 +1042,11 @@ class WhatsAppQueueWorker {
           if (deliveryCheck.delivered) {
             console.log(`[WhatsAppQueueWorker] Pre-send check: #${item.id} already delivered to ${item.number} (verified in Sent Register). Suppressing duplicate dispatch.`);
             const resolvedSentAt = deliveryCheck.sentAt || Date.now();
+            const attemptTs = toLocalSqlDateTime();
+            const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: 'sent' });
             await db.run(
-              "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
-              [resolvedSentAt, item.id]
+              "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, last_attempt_at = ?, attempts_log = ?, error_message = NULL WHERE id = ?",
+              [resolvedSentAt, attemptTs, newAttemptsLog, item.id]
             );
             await db.run(
               `UPDATE automation_notifications 
@@ -967,10 +1083,11 @@ class WhatsAppQueueWorker {
 
         // 1. Invalid phone length guard: exactly 10 digits required for mobile dispatch
         if (!isLidRecipient && (!target10Digits || target10Digits.length !== 10)) {
-          console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: invalid phone number "${item.number}" (requires 10 digits).`);
+          const attemptTs = toLocalSqlDateTime();
+          const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: 'skipped_invalid_phone', error: 'Invalid phone number (requires 10 digits)' });
           await db.run(
-            "UPDATE whatsapp_send_queue SET status = 'skipped_invalid_phone', error_message = 'Invalid phone number (requires 10 digits)' WHERE id = ?",
-            [item.id]
+            "UPDATE whatsapp_send_queue SET status = 'skipped_invalid_phone', last_attempt_at = ?, attempts_log = ?, error_message = 'Invalid phone number (requires 10 digits)' WHERE id = ?",
+            [attemptTs, newAttemptsLog, item.id]
           );
           await db.run(
             `UPDATE automation_notifications 
@@ -1024,9 +1141,11 @@ class WhatsAppQueueWorker {
 
             if (completedCallTask || !activeRefills || activeRefills.length === 0) {
               console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped — refill already fulfilled, call task completed, or reminder cancelled for ${target10Digits}.`);
+              const attemptTs = toLocalSqlDateTime();
+              const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: 'skipped_already_fulfilled', error: 'Refill already fulfilled, call task completed, or reminder cancelled' });
               await db.run(
-                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Refill already fulfilled, call task completed, or reminder cancelled' WHERE id = ?",
-                [item.id]
+                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', last_attempt_at = ?, attempts_log = ?, error_message = 'Refill already fulfilled, call task completed, or reminder cancelled' WHERE id = ?",
+                [attemptTs, newAttemptsLog, item.id]
               );
               await db.run(
                 `UPDATE automation_notifications 
@@ -1060,9 +1179,11 @@ class WhatsAppQueueWorker {
 
             if (completedOrderTask || !activeOrders || activeOrders.length === 0) {
               console.log(`[WhatsAppQueueWorker] Pre-send gate: #${item.id} skipped — special order already fulfilled, delivered, or call task completed for ${target10Digits}.`);
+              const attemptTs = toLocalSqlDateTime();
+              const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: 'skipped_already_fulfilled', error: 'Order already fulfilled, delivered, or call task completed' });
               await db.run(
-                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', error_message = 'Order already fulfilled, delivered, or call task completed' WHERE id = ?",
-                [item.id]
+                "UPDATE whatsapp_send_queue SET status = 'skipped_already_fulfilled', last_attempt_at = ?, attempts_log = ?, error_message = 'Order already fulfilled, delivered, or call task completed' WHERE id = ?",
+                [attemptTs, newAttemptsLog, item.id]
               );
               await db.run(
                 `UPDATE automation_notifications 
@@ -1081,9 +1202,11 @@ class WhatsAppQueueWorker {
           const regStatus = await checkPhoneWhatsAppRegistered(target10Digits);
           if (regStatus === 'NOT_AVAILABLE') {
             console.warn(`[WhatsAppQueueWorker] Skipping #${item.id}: recipient ${target10Digits} (${item.target_name || 'unknown'}) is NOT registered on WhatsApp.`);
+            const attemptTs = toLocalSqlDateTime();
+            const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: 'skipped_not_on_whatsapp', error: 'Number not registered on WhatsApp' });
             await db.run(
-              "UPDATE whatsapp_send_queue SET status = 'skipped_not_on_whatsapp', error_message = 'Number not registered on WhatsApp' WHERE id = ?",
-              [item.id]
+              "UPDATE whatsapp_send_queue SET status = 'skipped_not_on_whatsapp', last_attempt_at = ?, attempts_log = ?, error_message = 'Number not registered on WhatsApp' WHERE id = ?",
+              [attemptTs, newAttemptsLog, item.id]
             );
             await db.run(
               `UPDATE automation_notifications 
@@ -1180,9 +1303,11 @@ class WhatsAppQueueWorker {
 
           // Mark sent in queue and update linked notification records
           const sentAt = Date.now();
+          const attemptTs = toLocalSqlDateTime();
+          const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: 'sent' });
           await db.run(
-            "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
-            [sentAt, item.id]
+            "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, last_attempt_at = ?, attempts_log = ?, error_message = NULL WHERE id = ?",
+            [sentAt, attemptTs, newAttemptsLog, item.id]
           );
           await db.run(
             `UPDATE automation_notifications 
@@ -1243,9 +1368,11 @@ class WhatsAppQueueWorker {
             if (outboxMatch) {
               const fallbackLast10 = item.number.replace(/\D/g, '').slice(-10);
               const sentAt = Date.now();
+              const attemptTs = toLocalSqlDateTime();
+              const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: 'sent' });
               await db.run(
-                "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, error_message = NULL WHERE id = ?",
-                [sentAt, item.id]
+                "UPDATE whatsapp_send_queue SET status = 'sent', sent_at = ?, last_attempt_at = ?, attempts_log = ?, error_message = NULL WHERE id = ?",
+                [sentAt, attemptTs, newAttemptsLog, item.id]
               );
               await db.run(
                 `UPDATE automation_notifications 
@@ -1325,9 +1452,11 @@ class WhatsAppQueueWorker {
               console.warn(`[WhatsAppQueueWorker] Failed to send #${item.id} (attempt ${newRetryCount}${isDistributorReminder && isTemporaryError ? ' [retryable availability]' : '/3'}): ${errMsg}`);
               // Back off retries by 30 seconds so this item does not head-of-line block the rest of the queue
               const retryScheduledAt = (newStatus === 'failed_offline') ? (now + 30000) : item.scheduled_at;
+              const attemptTs = toLocalSqlDateTime();
+              const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: newStatus, error: errMsg });
               await db.run(
-                "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ?, scheduled_at = ? WHERE id = ?",
-                [newStatus, newRetryCount, errMsg, retryScheduledAt, item.id]
+                "UPDATE whatsapp_send_queue SET status = ?, retry_count = ?, error_message = ?, scheduled_at = ?, last_attempt_at = ?, attempts_log = ? WHERE id = ?",
+                [newStatus, newRetryCount, errMsg, retryScheduledAt, attemptTs, newAttemptsLog, item.id]
               );
               await db.run(
                 "UPDATE automation_notifications SET status = 'failed', error_message = ? WHERE reference_id = ? OR reference_id = ?",
@@ -1799,6 +1928,25 @@ class WhatsAppQueueWorker {
       WHERE type NOT IN (${nonTxPlaceholders})
     `, [startOfTodayMs, ...nonTxList]);
 
+    const todaySummaryRow = await db.get(`
+      SELECT 
+        SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
+        SUM(CASE WHEN status IN ('failed_offline', 'failed_perm') THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'review_required' THEN 1 ELSE 0 END) as review_required,
+        SUM(CASE WHEN status LIKE 'skipped%' THEN 1 ELSE 0 END) as skipped
+      FROM whatsapp_send_queue
+      WHERE created_at >= ? AND type NOT IN (${nonTxPlaceholders})
+    `, [startOfTodayMs, ...nonTxList]);
+
+    const todaySummary = {
+      sent: Number(todaySummaryRow?.sent || 0),
+      failed: Number(todaySummaryRow?.failed || 0),
+      pending: Number(todaySummaryRow?.pending || 0),
+      review_required: Number(todaySummaryRow?.review_required || 0),
+      skipped: Number(todaySummaryRow?.skipped || 0)
+    };
+
     // Fetch saved WhatsApp queue items (up to 300 recent items, excluding conversational chatbot dialogue)
     const queueItems: QueueItem[] = await db.all(
       `SELECT * FROM whatsapp_send_queue 
@@ -1941,6 +2089,7 @@ class WhatsAppQueueWorker {
       availabilityState: avail.state,
       lastHeartbeatAt: avail.lastHeartbeatAt,
       detectedOutage: avail.outageInterval,
+      todaySummary,
       recentItems
     };
   }

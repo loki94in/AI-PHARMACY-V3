@@ -182,9 +182,14 @@ function ensureInitialized(): void {
       publish(normalizeUpdateFrame(payload, store));
     };
 
+    const handleSseConnected = () => {
+      void fetchUpdateStatus();
+    };
+
     window.addEventListener('sse-update-available', handleUpdateAvailable);
     window.addEventListener('sse-update-progress', handleUpdateProgress);
     window.addEventListener('sse-update-check-complete', handleUpdateCheckComplete);
+    window.addEventListener('sse-connected', handleSseConnected);
   }
 
   void fetchUpdateStatus();

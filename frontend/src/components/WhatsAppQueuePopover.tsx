@@ -535,10 +535,11 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   const todaySpecialCount = todayRawItems.filter(i => isSpecialOrder(i.type)).length;
   const todayPendingCount = todayRawItems.filter(i => i.status === 'pending' || i.status === 'sending').length;
   const todaySendingCount = todayRawItems.filter(i => i.status === 'sending').length;
-  const todaySentCount = todayRawItems.filter(i => i.status === 'sent').length;
-  const todayFailedCount = todayRawItems.filter(i => isFailedStatus(i.status)).length;
-  const todayRemainingCount = todayPendingCount;
-  const todayProgressPercent = todayAllCount > 0 ? Math.min(100, Math.round((todaySentCount / todayAllCount) * 100)) : 100;
+  const todaySentCount = queueState?.todaySummary ? queueState.todaySummary.sent : todayRawItems.filter(i => i.status === 'sent').length;
+  const todayFailedCount = queueState?.todaySummary ? queueState.todaySummary.failed : todayRawItems.filter(i => isFailedStatus(i.status)).length;
+  const todayRemainingCount = queueState?.todaySummary ? queueState.todaySummary.pending : todayPendingCount;
+  const displayTotalCount = queueState?.todaySummary ? queueState.todaySummary.total : todayAllCount;
+  const todayProgressPercent = displayTotalCount > 0 ? Math.min(100, Math.round((todaySentCount / displayTotalCount) * 100)) : 100;
 
   const counts = queueState?.counts || { pending: 0, sending: 0, sent: 0, failed_offline: 0, failed_perm: 0 };
   const allPendingCount = items.filter(i => i.status === 'pending' || i.status === 'sending').length;
@@ -614,14 +615,17 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
               +{item.number}
             </span>
 
-            {item.retry_count > 0 && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono shrink-0">
-                Retry #{item.retry_count}
+            {((item.retry_count && item.retry_count > 0) || item.last_attempt_at) && (
+              <span 
+                className="text-[9px] px-1.5 py-0.5 rounded bg-bg3 border border-border text-amber-500 font-mono shrink-0"
+                title={item.last_attempt_at ? `Last attempt: ${new Date(item.last_attempt_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : undefined}
+              >
+                Tried {Math.max(1, item.retry_count || 1)}×{item.last_attempt_at ? ` · ${new Date(item.last_attempt_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
               </span>
             )}
 
             {(item.status.includes('failed') || item.error_message) && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 flex items-center gap-1 shrink-0 max-w-[200px] truncate" title={item.error_message || 'Delivery failed'}>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center gap-1 shrink-0 max-w-[200px] truncate" title={item.error_message || 'Delivery failed'}>
                 <ShieldAlert size={10} className="shrink-0 text-rose-400" />
                 <span className="truncate">Reason: {getFormattedFailureReason(item.error_message, item.status)}</span>
               </span>
@@ -723,6 +727,30 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
                     return 'Ensure WhatsApp is connected or click "Resend" to retry.';
                   })()}
                 </p>
+              </div>
+            )}
+
+            {item.attempts_log && (
+              <div className="p-2.5 rounded-xl bg-bg2 border border-border text-xs space-y-1.5 my-1">
+                <div className="flex items-center gap-1.5 font-bold text-muted text-[10px] uppercase">
+                  <Clock size={11} /> Attempt History
+                </div>
+                <div className="space-y-1 max-h-36 overflow-y-auto">
+                  {(() => {
+                    try {
+                      const logs = JSON.parse(item.attempts_log);
+                      if (Array.isArray(logs) && logs.length > 0) {
+                        return logs.map((log: any, idx: number) => (
+                          <div key={idx} className="text-[10px] text-muted font-mono flex items-center justify-between border-b border-border/40 pb-0.5 last:border-0">
+                            <span className="truncate pr-2">#{log.attempt || idx + 1}: {log.error || log.reason || log.status || 'Attempted'}</span>
+                            <span className="text-[9px] shrink-0">{log.at ? new Date(log.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                          </div>
+                        ));
+                      }
+                    } catch {}
+                    return <span className="text-[10px] text-muted font-mono">{item.attempts_log}</span>;
+                  })()}
+                </div>
               </div>
             )}
 
@@ -984,7 +1012,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
               <div className="flex items-center gap-2">
                 <span className="text-text">Queue Dispatch Progress:</span>
                 <span className="text-sky font-mono">
-                  {loading && !queueState ? '...' : `${todaySentCount} / ${todayAllCount}`}
+                  {loading && !queueState ? '...' : `${todaySentCount} / ${displayTotalCount}`}
                 </span>
               </div>
               <span className="text-sky font-mono font-extrabold text-sm">
@@ -1005,7 +1033,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
             {/* Status Metric Chips */}
             <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[11px]">
               <span className="px-2 py-0.5 rounded-lg bg-bg border border-glass-border font-bold text-text">
-                Total: {todayAllCount}
+                Total: {displayTotalCount}
               </span>
               <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-bold">
                 ✓ Sent: {todaySentCount}
@@ -1028,6 +1056,16 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
               {todayFailedCount > 0 && (
                 <span className="px-2 py-0.5 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 font-bold flex items-center gap-1">
                   <AlertTriangle size={11} /> Failed: {todayFailedCount}
+                </span>
+              )}
+              {(queueState?.todaySummary?.review_required || 0) > 0 && (
+                <span className="px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-400 font-bold flex items-center gap-1">
+                  <ShieldAlert size={11} /> Review: {queueState?.todaySummary?.review_required}
+                </span>
+              )}
+              {(queueState?.todaySummary?.skipped || 0) > 0 && (
+                <span className="px-2 py-0.5 rounded-lg bg-bg2 border border-border text-muted font-bold flex items-center gap-1">
+                  Skipped: {queueState?.todaySummary?.skipped}
                 </span>
               )}
               {(queueState?.stalePendingCount || 0) > 0 && (

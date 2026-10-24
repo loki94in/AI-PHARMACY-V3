@@ -80,10 +80,12 @@ router.post('/start-download', (_req, res) => {
   try {
     autoUpdateService.startBackgroundDownload(undefined, 'manual');
     const result = autoUpdateService.getStatus();
+    const isDownloading = !!(result?.downloading);
     res.json({
-      success: true,
-      downloading: true,
+      success: isDownloading,
+      downloading: isDownloading,
       latestVersion: result?.latestVersion,
+      message: isDownloading ? 'Download started' : 'No newer update to download',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

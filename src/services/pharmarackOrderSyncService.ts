@@ -427,19 +427,50 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
     // 5-Minute review grace period for human-in-the-loop review before automated release
     const gracePeriodMs = Date.now() + 5 * 60 * 1000;
 
+    // Single-writer claim: atomically claim announced_at before dispatching to eliminate race with Route STEP 4
+    const claimRes = await db.run(
+      `UPDATE pharmarack_synced_orders 
+       SET announced_at = CURRENT_TIMESTAMP, announce_result = 'claim_pending_send'
+       WHERE order_no IN (${freshOnlyOrderNos.map(() => '?').join(',')}) AND announced_at IS NULL`,
+      freshOnlyOrderNos
+    );
+
+    const changes = claimRes?.changes ?? 0;
+    if (changes === 0) {
+      await settle(db, freshOnlyOrderNos, 'already_announced_earlier', true, { storeName, appAlreadySent, reason: 'lost_atomic_claim' });
+      continue;
+    }
+
+    let claimedOrderNos = freshOnlyOrderNos;
+    if (changes < freshOnlyOrderNos.length) {
+      const claimedRows = await db.all(
+        `SELECT order_no FROM pharmarack_synced_orders 
+         WHERE order_no IN (${freshOnlyOrderNos.map(() => '?').join(',')}) AND announce_result = 'claim_pending_send'`,
+        freshOnlyOrderNos
+      );
+      claimedOrderNos = claimedRows.map((r: any) => String(r.order_no));
+      const unclaimed = freshOnlyOrderNos.filter(n => !claimedOrderNos.includes(n));
+      if (unclaimed.length > 0) {
+        await settle(db, unclaimed, 'already_announced_earlier', true, { storeName, appAlreadySent, reason: 'lost_atomic_claim' });
+      }
+      if (claimedOrderNos.length === 0) continue;
+    }
+
     if (!alreadyReminded) {
       // Direct order detected for today and reminder NOT yet sent today:
       // Auto-send the dispatch announcement to the distributor for today's orders
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { isOrderAnnouncement: true, orderNos: freshOnlyOrderNos });
-      await settle(db, freshOnlyOrderNos, sent ? 'dispatch_reminder_queued' : 'reminder_not_sent', sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
+      const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { isOrderAnnouncement: true, orderNos: claimedOrderNos });
+      const sent = sentRes.ok;
+      await settle(db, claimedOrderNos, sent ? 'dispatch_reminder_queued' : 'reminder_not_sent', sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
         directOrderRemindersToNotifyBoy.push(row);
       }
     } else {
       // Reminder already sent today: send single follow-up naming only the new order(s)
-      const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { followUp: true, orderNos: freshOnlyOrderNos });
-      await settle(db, freshOnlyOrderNos, sent ? 'follow_up_queued' : 'follow_up_not_sent', sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
+      const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { followUp: true, orderNos: claimedOrderNos });
+      const sent = sentRes.ok;
+      await settle(db, claimedOrderNos, sent ? 'follow_up_queued' : 'follow_up_not_sent', sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
       if (sent) {
         result.followUps++;
         lateReminders.push(row);
@@ -558,7 +589,8 @@ export async function recoverTodayUnnotifiedOrders(): Promise<{ unnotifiedOrders
           const reminders = await syncTodayActiveDistributors();
           const row = reminders.find((r: any) => String(r.distributor_name || '').toLowerCase().trim() === String(so.store_name).toLowerCase().trim());
           if (row && row.id && row.id < 800000) {
-            const sent = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { followUp: true, orderNos: [so.order_no] });
+            const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { followUp: true, orderNos: [so.order_no] });
+            const sent = sentRes.ok;
             if (sent) {
               await db.run('UPDATE pharmarack_synced_orders SET announced_at = ?, announce_result = ? WHERE order_no = ?', [Date.now(), 'recovered_on_boot', so.order_no]);
               result.notifiedDistributors++;

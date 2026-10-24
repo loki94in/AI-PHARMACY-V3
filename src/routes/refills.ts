@@ -1183,7 +1183,7 @@ router.post('/confirm-patient', async (req, res) => {
         pendingRefills = await db.all(
           `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') as medicine_name, pr.quantity_needed
            FROM patient_refills pr LEFT JOIN medicines m ON m.id = pr.medicine_id
-           WHERE pr.id IN (${placeholders}) AND pr.is_active = 1`,
+           WHERE pr.id IN (${placeholders}) AND pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')`,
           numIds
         );
       }
@@ -2985,6 +2985,7 @@ router.post('/send-staged-briefing', async (_req, res) => {
       LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
       WHERE an.type IN ('refill_collection', 'refill_reminder')
         AND an.status = 'staged'
+        AND (pr.id IS NULL OR (pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')))
     `);
 
     if (stagedRows.length === 0) {
@@ -3005,7 +3006,7 @@ router.post('/send-staged-briefing', async (_req, res) => {
       (stagedRows.length > 8 ? `_...and ${stagedRows.length - 8} more in app_\n\n` : '') +
       `👉 Review & approve staged messages in *CRM → Refills* or click *Send All Auto* in the app.`;
 
-    await whatsappQueueWorker.enqueue(adminWhatsapp, msg, 'admin_morning_briefing', 'Pharmacy Admin');
+    await whatsappQueueWorker.enqueue(adminWhatsapp, msg, 'admin_staged_reminders', 'Pharmacy Admin');
     res.json({ success: true, message: `Staged reminders briefing sent to store WhatsApp (${adminWhatsapp})` });
   } catch (err: any) {
     console.error('Failed to send staged briefing to admin:', err);

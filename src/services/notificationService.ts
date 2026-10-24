@@ -29,6 +29,13 @@ export interface CartOrderNotifyResult {
   suppressedCount: number;
 }
 
+export type SendReminderResult = {
+  ok: boolean;
+  action?: 'queued' | 'released' | 'resent';
+  reason?: 'no_phone' | 'not_found' | 'suppressed_no_order_no';
+  queueId?: number | null;
+};
+
 /* function isSendSuccess(result: SendMessageResult | boolean): boolean {
   return (result as any) === true || (!!result && typeof result === 'object' && result.sent === true);
 }
@@ -855,10 +862,11 @@ export class NotificationService {
     scheduledAt?: number,
     // followUp / isOrderAnnouncement: a Pharmarack order was newly noticed / placed.
     // Names the new order number(s) and instructs distributor to dispatch ASAP.
-    opts?: { followUp?: boolean; orderNos?: string[]; isOrderAnnouncement?: boolean }
-  ): Promise<boolean> {
+    opts?: { followUp?: boolean; orderNos?: string[]; isOrderAnnouncement?: boolean; userClicked?: boolean }
+  ): Promise<SendReminderResult> {
     const followUp = Boolean(opts?.followUp);
     const isOrderAnnouncement = Boolean(opts?.isOrderAnnouncement);
+    const userClicked = Boolean(opts?.userClicked);
     try {
       const db = await dbManager.getConnection();
       const reminder = await db.get(
@@ -871,19 +879,20 @@ export class NotificationService {
 
       if (!reminder) {
         console.warn(`[DistributorReminder] Reminder ID ${reminderId} not found.`);
-        return false;
+        return { ok: false, reason: 'not_found' };
       }
 
       // Safeguard: if distributor already dispatched, collected, or has no order, do not send reminder
-      if (reminder.status && reminder.status !== 'Pending' && !customMessage && !followUp && !isOrderAnnouncement) {
+      // Skipped when userClicked is true (user explicitly requested manual send / resend)
+      if (reminder.status && reminder.status !== 'Pending' && !customMessage && !followUp && !isOrderAnnouncement && !userClicked) {
         console.log(`[DistributorReminder] Skipping reminder ID ${reminderId}: distributor ${reminder.distributor_name} status is "${reminder.status}" (already dispatched or collected).`);
-        return false;
+        return { ok: false, reason: 'not_found' };
       }
 
       const recipientPhone = reminder.distributor_phone || reminder.dist_phone;
       if (!recipientPhone || !String(recipientPhone).trim()) {
         console.warn(`[DistributorReminder] Distributor ${reminder.distributor_name} has no phone number.`);
-        return false;
+        return { ok: false, reason: 'no_phone' };
       }
 
       // Deduplication guard: do not double-enqueue the same distributor reminder on the same date
@@ -898,12 +907,24 @@ export class NotificationService {
            AND (target_name = ? OR number LIKE ?)
            AND created_at >= ?
            AND status NOT IN ('cancelled', 'failed_perm', 'skipped_invalid_phone', 'skipped_not_on_whatsapp')
-         LIMIT 1`,
+         ORDER BY id DESC LIMIT 1`,
         [reminder.distributor_name, `%${clean10Digits}%`, startOfDayMs]
       );
-      if (existingQueueItem && !customMessage && !followUp && !isOrderAnnouncement) {
-        console.log(`[DistributorReminder] Reminder for ${reminder.distributor_name} is already queued today (#${existingQueueItem.id}, status: ${existingQueueItem.status}).`);
-        return true;
+
+      if (existingQueueItem) {
+        // If an item is already pending/sending/failed_offline in queue and user clicked Send Now:
+        // Release it immediately (set scheduled_at = now) and cancel pacing sleep via forceNext()
+        if (userClicked && (existingQueueItem.status === 'pending' || existingQueueItem.status === 'sending' || existingQueueItem.status === 'failed_offline')) {
+          await db.run("UPDATE whatsapp_send_queue SET scheduled_at = ? WHERE id = ?", [Date.now(), existingQueueItem.id]);
+          await whatsappQueueWorker.forceNext();
+          console.log(`[DistributorReminder] User-clicked send-now released existing queue item #${existingQueueItem.id} for ${reminder.distributor_name}`);
+          return { ok: true, action: 'released', queueId: existingQueueItem.id };
+        }
+
+        if (!customMessage && !followUp && !isOrderAnnouncement && !userClicked) {
+          console.log(`[DistributorReminder] Reminder for ${reminder.distributor_name} is already queued today (#${existingQueueItem.id}, status: ${existingQueueItem.status}).`);
+          return { ok: true, action: 'queued', queueId: existingQueueItem.id };
+        }
       }
 
       let message = '';
@@ -966,7 +987,7 @@ export class NotificationService {
 
         if ((isOrderAnnouncement || followUp) && !orderNoText) {
           console.warn(`[DistributorReminder] Suppressing order announcement for ${reminder.distributor_name}: official PO number not yet confirmed.`);
-          return false;
+          return { ok: false, reason: 'suppressed_no_order_no' };
         }
 
         if (rawTemplate && String(rawTemplate).trim()) {
@@ -999,6 +1020,10 @@ export class NotificationService {
         { skipDedupe: true }
       );
 
+      if (userClicked) {
+        await whatsappQueueWorker.forceNext();
+      }
+
       await db.run(
         `UPDATE distributor_dispatch_reminders SET last_reminded_at = CURRENT_TIMESTAMP WHERE id = ?`,
         [reminderId]
@@ -1012,10 +1037,14 @@ export class NotificationService {
         ['distributor_dispatch_reminder', reminder.distributor_name, recipientPhone, message, notifStatus, refId]
       );
 
-      return Boolean(queueId);
+      return {
+        ok: Boolean(queueId),
+        action: (userClicked && existingQueueItem) ? 'resent' : 'queued',
+        queueId
+      };
     } catch (err: any) {
       console.error(`[DistributorReminder] Error sending reminder for ID ${reminderId}:`, err.message);
-      return false;
+      return { ok: false };
     }
   }
 

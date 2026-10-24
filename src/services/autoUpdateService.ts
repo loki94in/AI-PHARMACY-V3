@@ -14,7 +14,7 @@ import http from 'http';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
 import { dbManager } from '../database/connection.js';
-import { checkForUpdate } from './licenseService.js';
+import { checkForUpdate, APP_VERSION } from './licenseService.js';
 import { eventService } from './eventService.js';
 import { activityTracker } from '../utils/activityTracker.js';
 
@@ -316,20 +316,26 @@ class AutoUpdateService {
 
       this.lastCheckedAt = new Date().toISOString();
 
+      // Client-side semver gate: verify latestVersion is strictly newer than running APP_VERSION
+      const isNewer = result.latestVersion ? compareVersions(result.latestVersion, APP_VERSION) > 0 : false;
+      const trulyHasUpdate = Boolean(result.hasUpdate && isNewer);
+
       const stagingDir   = getStagingDir();
       const zipFileName  = result.latestVersion ? `AI-Pharmacy-OS-Update-v${result.latestVersion}.zip` : null;
       const zipPath      = zipFileName ? path.join(stagingDir, zipFileName) : null;
-      const alreadyDownloaded = zipPath ? fs.existsSync(zipPath) : false;
+      const alreadyDownloaded = (zipPath && trulyHasUpdate) ? fs.existsSync(zipPath) : false;
 
       this.lastResult = {
         ...result,
+        hasUpdate: trulyHasUpdate,
+        currentVersion: APP_VERSION,
         downloading: this.isDownloading,
         downloadProgress: this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0),
         readyToInstall: alreadyDownloaded,
         lastError: undefined,
       };
 
-      if (result.hasUpdate) {
+      if (trulyHasUpdate) {
         console.log(`[AutoUpdate] New version available: ${result.latestVersion}`);
 
         if (alreadyDownloaded) {
@@ -344,17 +350,21 @@ class AutoUpdateService {
             reason,
           });
         } else if (result.updatePackageUrl && !this.isDownloading) {
-          this.startBackgroundDownload(result, reason);
+          this.startBackgroundDownload(this.lastResult, reason);
         }
       } else {
+        if (result.hasUpdate && !isNewer) {
+          console.log(`[AutoUpdate] Server reported update v${result.latestVersion}, but app is already running v${APP_VERSION}. Skipping download.`);
+        }
         if (reason === 'manual') {
           eventService.broadcast('update_check_complete', {
             hasUpdate:     false,
-            latestVersion: result.latestVersion,
+            latestVersion: result.latestVersion || APP_VERSION,
+            currentVersion: APP_VERSION,
             reason,
           });
         }
-        console.log(`[AutoUpdate] App is up to date (${result.latestVersion}).`);
+        console.log(`[AutoUpdate] App is up to date (v${APP_VERSION}).`);
       }
     } catch (err) {
       // PRODUCTION.md §13: never freeze on update check failure
@@ -371,6 +381,11 @@ class AutoUpdateService {
   startBackgroundDownload(info?: any, reason = 'auto'): void {
     const target = info || this.lastResult;
     if (!target || !target.hasUpdate || !target.latestVersion || !target.updatePackageUrl) {
+      return;
+    }
+    // Client-side semver gate: never download packages for versions older than or equal to running binary
+    if (compareVersions(target.latestVersion, APP_VERSION) <= 0) {
+      console.log(`[AutoUpdate] Skipping background download: target version v${target.latestVersion} is not newer than running v${APP_VERSION}.`);
       return;
     }
     if (this.isDownloading) return;

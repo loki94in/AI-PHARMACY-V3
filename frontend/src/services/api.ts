@@ -656,6 +656,8 @@ export interface WhatsAppQueueItem {
   scheduled_at?: number | null;
   media_url?: string | null;
   file_json?: string | null;
+  last_attempt_at?: string | null;
+  attempts_log?: string | null;
 }
 
 export interface WhatsAppQueueStatus {
@@ -676,6 +678,14 @@ export interface WhatsAppQueueStatus {
   currentSendingItemId: number | null;
   activeTargetName?: string | null;
   counts: { pending: number; sending: number; sent: number; failed_offline: number; failed_perm: number };
+  todaySummary?: {
+    sent: number;
+    failed: number;
+    pending: number;
+    review_required: number;
+    skipped: number;
+    total: number;
+  };
   delaySettings?: {
     whatsapp_delay_credit_bill: number;
     whatsapp_delay_distributor: number;
@@ -719,6 +729,14 @@ export interface ExpiryReviewAuditLog {
 }
 
 export type DistributorReminderStatus = 'Pending' | 'Dispatched' | 'Collected';
+
+export interface SendReminderResponse {
+  success: boolean;
+  action?: 'queued' | 'released' | 'resent';
+  queue_id?: number | null;
+  message?: string;
+  error?: string;
+}
 
 export interface DistributorDispatchReminder {
   id: number;
@@ -1550,14 +1568,20 @@ export const api = {
     failedCount: number;
     orders: Array<{ storeId?: number; storeName: string; orderNo?: string; status: string; error?: string }>;
     syncedOrders?: Array<{ order_no: string; store_name: string; order_amount: number }>;
+    remaining?: Array<{ storeId: number; storeName: string; remainingItemsCount: number; items: any[] }>;
+    remainingCount?: number;
+    cartEmptyForTargets?: boolean;
     message?: string;
     error?: string;
   }>('/pharmarack/cart/place-official-orders', data).then(res => res.data),
-  syncPharmarackPostCheckout: () => apiClient.post<{
+  syncPharmarackPostCheckout: (data?: { targetStoreNames?: string[]; targetStoreIds?: number[] }) => apiClient.post<{
     success: boolean;
     count: number;
     orders: Array<{ order_no: string; store_name: string; order_amount: number }>;
-  }>('/pharmarack/cart/sync-post-checkout').then(res => res.data),
+    remaining?: Array<{ storeId: number; storeName: string; remainingItemsCount: number; items: any[] }>;
+    remainingCount?: number;
+    cartEmptyForTargets?: boolean;
+  }>('/pharmarack/cart/sync-post-checkout', data).then(res => res.data),
   logoutPharmarack: () => apiClient.post('/pharmarack/logout').then(res => res.data),
   getAffectedClosurePatients: (params: { startDate?: string; endDate?: string; date?: string }) =>
     apiClient.get('/pharmarack/affected-closure-patients', { params }).then(res => res.data),
@@ -1798,7 +1822,7 @@ export const api = {
   getTodayDistributorReminders: (forceSync?: boolean) => apiClient.get<{ success: boolean; auto_dispatch_enabled?: boolean; window_start?: string; window_end?: string; afternoon_enabled?: boolean; afternoon_time?: string; is_recent_fallback?: boolean; recent_date?: string | null; reminders: DistributorDispatchReminder[] }>('/dispatch/distributor-reminders/today', { params: forceSync ? { forceSync: 'true' } : undefined }).then(res => res.data),
   toggleDistributorAutoRemind: (id: number, auto_remind: boolean) => apiClient.post('/dispatch/distributor-reminders/toggle-auto', { id, auto_remind }).then(res => res.data),
   updateDistributorReminderStatus: (id: number, data: { status?: string; delivery_boy_id?: number | null; distributor_name?: string; distributor_phone?: string }) => apiClient.put(`/dispatch/distributor-reminders/${id}/status`, data).then(res => res.data),
-  sendDistributorReminderNow: (id: number, custom_message?: string) => apiClient.post(`/dispatch/distributor-reminders/${id}/send-now`, { custom_message }).then(res => res.data),
+  sendDistributorReminderNow: (id: number, custom_message?: string) => apiClient.post<SendReminderResponse>(`/dispatch/distributor-reminders/${id}/send-now`, { custom_message }).then(res => res.data),
   sendAfternoonDeliveryBoyDispatch: () => apiClient.post<{ success: boolean; message: string }>('/dispatch/distributor-reminders/afternoon-delivery-boy-dispatch').then(res => res.data),
   getDistributorReminderTemplate: () => apiClient.get<{ success: boolean; template: string }>('/dispatch/distributor-reminders/template').then(res => res.data),
   saveDistributorReminderTemplate: (template: string) => apiClient.post<{ success: boolean; message: string; template: string }>('/dispatch/distributor-reminders/template', { template }).then(res => res.data),
@@ -1998,6 +2022,7 @@ export const api = {
   // Pharmarack Sent Orders History
   getPharmarackSentDates: () => apiClient.get<{ success: boolean; dates: string[] }>('/pharmarack/sent-orders/dates').then(res => res.data),
   getPharmarackSentOrders: (date?: string) => apiClient.get<{ success: boolean; date: string; orders: PharmarackSentOrder[] }>('/pharmarack/sent-orders', { params: { date } }).then(res => res.data),
+  sendSentOrderDispatch: (id: number) => apiClient.post<SendReminderResponse>(`/pharmarack/sent-orders/${id}/send-dispatch`).then(res => res.data),
   checkPharmarackOrder: (distributor: string, lines: Array<{ name: string; mrp?: number }>) => apiClient.post<PharmarackOrderCheck>('/pharmarack/order-check', { distributor, lines }).then(res => res.data),
   getPharmarackLatestSentMap: () => apiClient.get<{ success: boolean; sentMap: Record<string, PharmarackLatestSentMapEntry> }>('/pharmarack/sent-orders/latest-map').then(res => res.data),
   logPharmarackPlacedOrder: (data: { store_id?: number | null; store_name: string; items: readonly unknown[]; delivery_persons?: readonly unknown[]; order_no?: string | null; delivery_boy_id?: number | null; delivery_boy_notified?: number }) => apiClient.post('/pharmarack/log-placed-order', data).then(res => res.data),

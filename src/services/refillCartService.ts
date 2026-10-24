@@ -278,8 +278,8 @@ export async function processRefillCartItem(
   const fail = (message: string, extra: Partial<RefillCartResult> = {}): RefillCartResult =>
     ({ ...base, ...extra, status: 'failed', message });
 
-  if (refill.is_active === 0 || ['canceled', 'cancelled', 'paused'].includes(String(refill.status || '').toLowerCase())) {
-    return fail('This refill is paused or cancelled.');
+  if (refill.is_active === 0 || ['completed', 'canceled', 'cancelled', 'paused'].includes(String(refill.status || '').toLowerCase())) {
+    return fail('Refill is already completed or inactive.');
   }
 
   // 1. Save the pharmacist's ticked distributors as this medicine's links.
@@ -621,7 +621,7 @@ export async function sendRefillCartSummary(
   const saved = new Map<number, any>();
   if (ids.length > 0) {
     const dbRows: any[] = await db.all(
-      `SELECT id, cart_store_name, cart_qty, cart_product_code FROM patient_refills WHERE id IN (${ids.map(() => '?').join(',')})`,
+      `SELECT id, cart_store_name, cart_qty, cart_product_code, status, is_active FROM patient_refills WHERE id IN (${ids.map(() => '?').join(',')})`,
       ids
     );
     for (const r of dbRows) saved.set(Number(r.id), r);
@@ -633,8 +633,11 @@ export async function sendRefillCartSummary(
   const byStore = new Map<string, string[]>();
   const needs: string[] = [];
   for (const r of rows) {
-    const name = String(r.medicineName || 'Medicine');
     const db_ = saved.get(Number(r.refillId));
+    if (db_ && (db_.is_active === 0 || ['completed', 'canceled', 'cancelled'].includes(String(db_.status || '').toLowerCase()))) {
+      continue;
+    }
+    const name = String(r.medicineName || 'Medicine');
     const confirmed = r.status === 'added' && db_?.cart_product_code;
     if (confirmed || r.status === 'in_cart') {
       const store = String((confirmed ? (r.storeName || db_.cart_store_name) : r.storeName) || 'Distributor').trim();
@@ -644,6 +647,10 @@ export async function sendRefillCartSummary(
     } else {
       needs.push(`• ${name} — ${r.message || r.status}`);
     }
+  }
+
+  if (byStore.size === 0 && needs.length === 0) {
+    return { queued: false, reason: 'All items are completed or cancelled.' };
   }
 
   const parts = [`🛒 *Refill cart — ${patientName || 'Patient'}*`];

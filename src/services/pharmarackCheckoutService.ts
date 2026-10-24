@@ -74,6 +74,77 @@ export class PharmarackCheckoutService {
   }
 
   /**
+   * Verifies ambiguous checkout outcomes against fresh synced orders and placed orders for today.
+   * If Pharmarack processed the cart but returned an alternate response shape or timed out,
+   * this truthfully reclassifies orders that exist on Pharmarack's server.
+   */
+  private async verifyAmbiguousPlacement(
+    db: any,
+    todayIso: string,
+    storesToPlace: Array<{ storeId: number; storeName: string }>,
+    attemptStartMs: number,
+    existingResults: CheckoutResultItem[],
+    fallbackError?: string
+  ): Promise<CheckoutResultItem[]> {
+    try {
+      console.log(`[PharmarackCheckout] Running post-checkout order verification for ${storesToPlace.length} store(s)...`);
+      await syncPharmarackOrders(true);
+      const syncedOrders: Array<{ order_no: string; store_name: string; store_id: number | null; first_seen_at: number }> = await db.all(
+        `SELECT order_no, store_name, store_id, first_seen_at FROM pharmarack_synced_orders
+         WHERE order_date = ? AND first_seen_at >= ?`,
+        [todayIso, attemptStartMs]
+      );
+
+      const reclassified: CheckoutResultItem[] = [];
+      const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      for (const st of storesToPlace) {
+        const existing = existingResults.find(r => r.storeId === st.storeId || norm(r.storeName) === norm(st.storeName));
+        if (existing && existing.status === 'placed' && existing.orderNo) {
+          reclassified.push(existing);
+          continue;
+        }
+
+        const stNorm = norm(st.storeName);
+        const matchedSync = syncedOrders.find(so => {
+          if (st.storeId && so.store_id && Number(st.storeId) === Number(so.store_id)) return true;
+          const soNorm = norm(so.store_name);
+          return stNorm.length > 2 && soNorm.length > 2 && (stNorm.includes(soNorm) || soNorm.includes(stNorm));
+        });
+
+        if (matchedSync && matchedSync.order_no) {
+          const placedCheck = await db.get(
+            `SELECT id FROM pharmarack_placed_orders WHERE order_date = ? AND order_no = ? LIMIT 1`,
+            [todayIso, matchedSync.order_no]
+          );
+          if (placedCheck) {
+            console.log(`[PharmarackCheckout] Ambiguous placement verified: ${st.storeName} -> Order #${matchedSync.order_no}`);
+            reclassified.push({
+              storeId: st.storeId,
+              storeName: st.storeName,
+              status: 'placed',
+              orderNo: String(matchedSync.order_no)
+            });
+            continue;
+          }
+        }
+
+        reclassified.push(existing || {
+          storeId: st.storeId,
+          storeName: st.storeName,
+          status: 'failed',
+          error: fallbackError || 'Order placement unconfirmed'
+        });
+      }
+
+      return reclassified;
+    } catch (verifyErr: any) {
+      console.warn('[PharmarackCheckout] Ambiguous placement verification warning:', verifyErr?.message || verifyErr);
+      return existingResults;
+    }
+  }
+
+  /**
    * Places official orders on https://pharmretail-api.pharmarack.com/cart/api/v1/SaveOrderCartForRetailerManager
    * using direct REST API authentication.
    * Eliminates headless browser, DOM button hunting, profile lock conflicts, and UI timeouts.
@@ -83,6 +154,8 @@ export class PharmarackCheckoutService {
       return { ok: false, placedCount: 0, failedCount: 0, orders: [], error: 'Application shutdown in progress' };
     }
 
+    let attemptStartMs = 0;
+    let storesToPlace: Array<{ storeId: number; storeName: string; retailerId?: number; items: any[] }> = [];
     const results: CheckoutResultItem[] = [];
     try {
       const db = await dbManager.getConnection();
@@ -193,7 +266,7 @@ export class PharmarackCheckoutService {
       }
 
       // Filter by targetStoreIds or targetStoreNames if provided
-      let storesToPlace = Array.from(storeMap.values());
+      storesToPlace = Array.from(storeMap.values());
       if (targetStoreIds && targetStoreIds.length > 0) {
         const idSet = new Set(targetStoreIds.map(Number));
         storesToPlace = storesToPlace.filter(st => idSet.has(st.storeId));
@@ -272,6 +345,8 @@ export class PharmarackCheckoutService {
         };
       }
 
+      attemptStartMs = Date.now();
+      const todayIso = toLocalSqlDateTime(new Date()).slice(0, 10);
       console.log(`[PharmarackCheckout] Sending SaveOrderCartForRetailerManager request to Pharmarack API for ${orderPayload.length} store(s)...`);
       const saveOrderUrl = 'https://pharmretail-api.pharmarack.com/cart/api/v1/SaveOrderCartForRetailerManager';
       const orderRes = await fetch(saveOrderUrl, {
@@ -337,6 +412,12 @@ export class PharmarackCheckoutService {
         }
       }
 
+      // Truthful verification: If response parsed to 0 results but HTTP request succeeded,
+      // verify if orders were actually placed on Pharmarack before returning failure
+      if (results.length === 0) {
+        results.push(...await this.verifyAmbiguousPlacement(db, todayIso, storesToPlace, attemptStartMs, results));
+      }
+
       const placedCount = results.filter(r => r.status === 'placed').length;
       const failedCount = results.filter(r => r.status === 'failed').length;
       const isOk = placedCount > 0;
@@ -353,11 +434,40 @@ export class PharmarackCheckoutService {
       };
     } catch (apiErr: any) {
       console.warn('[PharmarackCheckout] Direct REST API checkout error:', apiErr.message);
+
+      // If attempt was dispatched, run verification before declaring failure
+      if (storesToPlace.length > 0 && attemptStartMs > 0) {
+        try {
+          const todayIso = toLocalSqlDateTime(new Date()).slice(0, 10);
+          const db = await dbManager.getConnection();
+          const recovered = await this.verifyAmbiguousPlacement(db, todayIso, storesToPlace, attemptStartMs, [], apiErr.message);
+          const placedCount = recovered.filter(r => r.status === 'placed').length;
+          const failedCount = recovered.filter(r => r.status === 'failed').length;
+          if (placedCount > 0) {
+            console.log(`[PharmarackCheckout] Rescued ambiguous checkout error: verified ${placedCount} order(s) placed.`);
+            return {
+              ok: true,
+              placedCount,
+              failedCount,
+              orders: recovered,
+              error: failedCount > 0 ? 'Some orders placed, some failed' : undefined
+            };
+          }
+        } catch (rescueErr: any) {
+          console.warn('[PharmarackCheckout] Rescue verification error:', rescueErr?.message || rescueErr);
+        }
+      }
+
       return {
         ok: false,
         placedCount: 0,
-        failedCount: 1,
-        orders: [],
+        failedCount: storesToPlace.length || 1,
+        orders: (storesToPlace.length > 0 ? storesToPlace : [{ storeId: 0, storeName: 'Unknown' }]).map(st => ({
+          storeId: st.storeId,
+          storeName: st.storeName,
+          status: 'failed',
+          error: apiErr.message || 'Direct REST order placement error'
+        })),
         error: apiErr.message || 'Direct REST order placement error'
       };
     }

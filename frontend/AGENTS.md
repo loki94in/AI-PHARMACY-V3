@@ -55,6 +55,7 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
 - **Header Ticker**: `Topbar` (`components/Layout.tsx`) derives the `'app-update'` item (priority 0.07) purely from the store. It shows live download progress with real MB/percent, verified ready status, or truthful failure reasons, and sleeps silently when no status is known. Clicking navigates to `/settings?tab=license`.
 - **Ready-Only Banner**: `UpdateBanner.tsx` displays only when `state === 'ready'` and is not dismissed via `update_later_<v>`. Progress display is owned entirely by the Topbar ticker to prevent duplicate banner spam.
 - **Settings Update Center**: `LicenseAndUpdatesTab.tsx`'s `SoftwareUpdateCard` provides the full Update Center: live downloading progress in MB/%, ready-to-install strip, manual "Check Now" triggering, and collapsible release history fetched lazily on first expand from `GET /license/update-history` with a 10-minute module TTL cache.
+- **Reconnect Reconciliation (added 2026-10-24, bug P2-108)**: `useGlobalSseInvalidation.ts` dispatches `sse-connected` on `es.onopen`. `updateStatusStore.ts` listens for `sse-connected` and performs ONE idempotent `fetchUpdateStatus()` to reconcile download progress from the backend (`autoUpdateService.getStatus()`). This heals missed SSE frames across WiFi drops, window reloads, or idle-wake reconnects without any polling timer.
 
 ## System Health & Memory Protection UI (added 2026-10-23, bug P2-105)
 
@@ -251,4 +252,10 @@ Fast, mouse-free keyboard billing and purchase entry is a core pharmacy speed re
    - **Arrow & Shift Navigation**:
      - Operators can press `ArrowLeft` or `Shift+Tab` from Loose Tablets to edit Strip Qty if selling full strips.
    - Every input auto-selects its text upon receiving focus (`el.select()`) so operators can immediately type new values without pressing backspace.
+
+## Sent PO History Dispatch Actions (added 2026-10-24, bug P2-111)
+
+- **Ownership**: Dispatch reminder status and delivery boy assignment remain owned by the Dispatch page (`/dispatch`).
+- **Sent Orders Extension**: Each card in the Sent PO History tab (`PharmarackCart/index.tsx`) provides an instant user-clicked action button (`📤 Send Dispatch Msg`) that calls `api.sendSentOrderDispatch(order.id)`. This guarantees pharmacy staff can dispatch (or re-send) an official reminder to any distributor carrying the confirmed PO number without creating duplicate order cards or parallel tracking tables.
+
 

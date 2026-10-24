@@ -309,8 +309,8 @@ export async function checkForUpdate(): Promise<{
 } | null> {
   try {
     const db = await dbManager.getConnection();
-    const row = await db.get<any>('SELECT current_version FROM update_checks WHERE id = 1');
-    const currentVersion = row?.current_version || APP_VERSION;
+    // Always use the running binary version as the ground truth version sent to the update server
+    const currentVersion = APP_VERSION;
 
     const licRow = await db.get<any>('SELECT license_id FROM app_license WHERE id = 1');
     const machineId = getMachineId();
@@ -327,8 +327,8 @@ export async function checkForUpdate(): Promise<{
     const latestVersion = resp.data.latestVersion || currentVersion;
     const now = new Date().toISOString();
     await db.run(
-      'UPDATE update_checks SET last_checked_at = ?, last_known_version = ? WHERE id = 1',
-      [now, latestVersion]
+      'UPDATE update_checks SET last_checked_at = ?, last_known_version = ?, current_version = ? WHERE id = 1',
+      [now, latestVersion, currentVersion]
     );
 
     return {

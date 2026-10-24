@@ -2462,7 +2462,9 @@ export async function ensureSchema(dbPath: string) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       sent_at INTEGER DEFAULT NULL,
       acknowledged INTEGER DEFAULT 0,
-      resolved_at INTEGER DEFAULT NULL
+      resolved_at INTEGER DEFAULT NULL,
+      last_attempt_at TEXT DEFAULT NULL,
+      attempts_log TEXT DEFAULT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_wa_send_queue_status ON whatsapp_send_queue (status);
 
@@ -4202,7 +4204,13 @@ export async function ensureSchema(dbPath: string) {
       created_at INTEGER NOT NULL,
       sent_at INTEGER,
       error_message TEXT,
-      target_name TEXT
+      target_name TEXT,
+      scheduled_at INTEGER,
+      media_url TEXT,
+      file_json TEXT,
+      skip_dedupe INTEGER DEFAULT 0,
+      last_attempt_at TEXT,
+      attempts_log TEXT
     )
   `);
 
@@ -4236,6 +4244,12 @@ export async function ensureSchema(dbPath: string) {
       }
       if (!colNames.includes('skip_dedupe')) {
         await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN skip_dedupe INTEGER DEFAULT 0");
+      }
+      if (!colNames.includes('last_attempt_at')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN last_attempt_at TEXT DEFAULT NULL");
+      }
+      if (!colNames.includes('attempts_log')) {
+        await db.run("ALTER TABLE whatsapp_send_queue ADD COLUMN attempts_log TEXT DEFAULT NULL");
       }
     } catch (colErr) {
       console.warn('[Database Schema] Column check warning for whatsapp_send_queue:', colErr);

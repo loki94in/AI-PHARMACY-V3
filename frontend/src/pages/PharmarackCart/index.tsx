@@ -1107,6 +1107,7 @@ export default function PharmarackCart() {
   });
   const [sentOrdersLoading, setSentOrdersLoading] = useState<boolean>(false);
   const [readdingSentItems, setReaddingSentItems] = useState<boolean>(false);
+  const [sendingDispatchOrderId, setSendingDispatchOrderId] = useState<number | null>(null);
   // Sent History: tick medicines (any orders), press the ONE Re-order button, finalize in a small popup (qty + distributor change).
   const [sentPopup, setSentPopup] = useState<{ rows: Array<{ key: string; item: LocalSentOrderItem; name: string; qty: number; storeId: number; storeName: string }> } | null>(null);
   const [sentSelection, setSentSelection] = useState<Record<string, boolean>>({});
@@ -3382,6 +3383,71 @@ export default function PharmarackCart() {
     } catch (err: unknown) {
       const apiErr = err as LocalApiError;
       console.warn('Batch WhatsApp send error:', err);
+
+      // Truthful verify-before-fallback check: check if orders were actually placed on Pharmarack
+      try {
+        const verifyRes = await api.syncPharmarackPostCheckout({
+          targetStoreNames: mapped.map(m => m.storeName),
+          targetStoreIds: mapped.map(m => m.storeId)
+        });
+
+        const targetNames = mapped.map(m => m.storeName.toLowerCase().trim());
+        const reallySynced = (verifyRes?.orders || []).filter(o => {
+          const sName = (o.store_name || '').toLowerCase().trim();
+          return targetNames.some(tn => tn.includes(sName) || sName.includes(tn));
+        });
+
+        const isCartEmptyForTargets = verifyRes?.cartEmptyForTargets ?? (
+          !verifyRes?.remaining || verifyRes.remaining.length === 0
+        );
+
+        if (isCartEmptyForTargets && reallySynced.length > 0) {
+          // Success! Orders were placed on Pharmarack and cart was cleared.
+          const orderNumbersStr = reallySynced.map(o => `#${o.order_no}`).join(', ');
+          toastEvent.trigger(
+            `✅ Official order(s) placed on Pharmarack (${orderNumbersStr})! Cart is clear. Delivery staff notified & confirmed Order IDs shared.`,
+            'info'
+          );
+
+          const batchTimeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          setLastBatchSentTime(batchTimeStr);
+          try { localStorage.setItem('pharmarack_last_batch_sent_time', batchTimeStr); } catch (_) { }
+
+          const statusUpdates: Record<number, 'queued'> = {};
+          mapped.forEach(d => { statusUpdates[d.storeId] = 'queued'; });
+          setSentWaStatusMap(prev => ({ ...prev, ...statusUpdates }));
+
+          setHasUnreadSentHistory(true);
+          specialOrdersEvent.triggerUpdated();
+          whatsappQueueEvent.triggerUpdated();
+          window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+          window.dispatchEvent(new CustomEvent('sse-dispatch-updated'));
+
+          fetchCart(false);
+          Promise.allSettled([
+            fetchPendingOrders(),
+            fetchLatestSentMap(),
+            loadSentDates()
+          ]).catch(() => { });
+
+          return; // DO NOT OPEN FALLBACK WINDOW!
+        }
+
+        if (verifyRes?.remaining && verifyRes.remaining.length > 0) {
+          // Leftovers remain in the cart for target stores.
+          fetchCart(false);
+          toastEvent.trigger(
+            `⚠️ Some items remained unplaced in live cart (${verifyRes.remainingCount || verifyRes.remaining.length} items). Opening live cart window for remaining items...`,
+            'error'
+          );
+          api.openOfficialPharmarackCartWindow().catch(() => {});
+          waitingForManualOrderSyncRef.current = true;
+          return;
+        }
+      } catch (verifyErr) {
+        console.warn('[PharmarackCart] Verify-before-fallback failed, proceeding to standard fallback:', verifyErr);
+      }
+
       toastEvent.trigger(apiErr?.message || 'Automated placement encountered an issue. Opening live cart window...', 'error');
 
       // Fallback: If automated order placement encounters an issue, provide direct access to authenticated cart window
@@ -4452,6 +4518,26 @@ export default function PharmarackCart() {
     }
   };
 
+  const handleSendSentOrderDispatch = async (order: LocalSentOrder) => {
+    if (!order.id) return;
+    setSendingDispatchOrderId(order.id);
+    try {
+      const res = await api.sendSentOrderDispatch(order.id);
+      if (res?.action === 'released') {
+        toastEvent.trigger(`Released — sending dispatch message to ${order.store_name} now`, 'success');
+      } else if (res?.action === 'resent') {
+        toastEvent.trigger(`Earlier reminder went out today — re-sent to ${order.store_name}`, 'success');
+      } else {
+        toastEvent.trigger(res?.message || `Queued dispatch message for ${order.store_name} in seconds`, 'success');
+      }
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.error || err?.message || 'Failed to send dispatch message';
+      toastEvent.trigger(errMsg, 'error');
+    } finally {
+      setSendingDispatchOrderId(null);
+    }
+  };
+
   const handleOpenSwitchModal = async (item: CartLineItem, dist: Distributor) => {
     setSwitchModalTarget({ item, dist });
     setSwitchSearchQuery(item.productName);
@@ -5061,6 +5147,20 @@ export default function PharmarackCart() {
                             <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${order.batch_sent ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
                               {order.batch_sent ? '● Sent' : '○ Pending'}
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => handleSendSentOrderDispatch(order)}
+                              disabled={sendingDispatchOrderId === order.id}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary hover:bg-primary-hover text-white text-[11px] font-bold shadow-xs transition-all active:scale-[.98] disabled:opacity-50 cursor-pointer"
+                              title="Send or re-send WhatsApp dispatch status reminder with confirmed PO number"
+                            >
+                              {sendingDispatchOrderId === order.id ? (
+                                <Loader2 size={11} className="animate-spin" />
+                              ) : (
+                                <Send size={11} />
+                              )}
+                              <span>{sendingDispatchOrderId === order.id ? 'Sending…' : 'Send Dispatch Msg'}</span>
+                            </button>
                           </div>
                         </div>
 

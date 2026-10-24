@@ -1,14 +1,15 @@
 import { kv, isKvConfigured } from './_db.js';
 
-const DEFAULT_LATEST_VERSION = '0.1.144';
-const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.144/AI-Pharmacy-OS-Portable-Setup-v0.1.144.exe';
-const DEFAULT_UPDATE_PACKAGE_URL = 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.144/AI-Pharmacy-OS-Update-v0.1.144.zip';
-const DEFAULT_SHA256 = '56cc6909ed21a35703f19624a48a568499a45032303abb9c25ce4cbf64ffbdaa';
+const DEFAULT_LATEST_VERSION = '0.1.151';
+const DEFAULT_DOWNLOAD_URL = process.env.DOWNLOAD_URL || 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.151/AI-Pharmacy-OS-Portable-Setup-v0.1.151.exe';
+const DEFAULT_UPDATE_PACKAGE_URL = 'https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v0.1.151/AI-Pharmacy-OS-Update-v0.1.151.zip';
+const DEFAULT_SHA256 = '83fb1c2df1f577c58155756d27bcb8d7ad25120c9ad4f9a4786a12f26666e197';
 const DEFAULT_CHANGELOG = `
-v0.1.144 — Production Release
+v0.1.151 — Production Release
 • Production-stable installer & portable package
 • Auto background update delivery with zero-downtime staging
-• Multi-language catalog & refill portal with CRM synchronization
+• Refill Auto Cart-Add and Website Payment Verification
+• System health and memory protection
 `.trim();
 
 let memoryRelease = null;
@@ -28,18 +29,29 @@ async function fetchLatestGitHubRelease() {
       },
       signal: AbortSignal.timeout(3500),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return githubCache || null;
     const data = await res.json();
     const tag = (data.tag_name || '').replace(/^v/, '');
-    if (!tag) return null;
+    if (!tag) return githubCache || null;
 
     const installerAsset = data.assets?.find(a => a.name.endsWith('.exe'));
     const updateZipAsset = data.assets?.find(a => a.name.startsWith('AI-Pharmacy-OS-Update-') && a.name.endsWith('.zip'));
+
+    let assetSha = null;
+    if (updateZipAsset && updateZipAsset.digest) {
+      assetSha = updateZipAsset.digest.replace(/^sha256:/i, '').trim();
+    }
+    if (!assetSha && data.body) {
+      const match = data.body.match(/sha256[:\s]+([a-f0-9]{64})/i) ||
+                    data.body.match(/([a-f0-9]{64})\s+\*?AI-Pharmacy-OS-Update/i);
+      if (match) assetSha = match[1].toLowerCase();
+    }
 
     githubCache = {
       latestVersion: tag,
       downloadUrl: installerAsset?.browser_download_url || `https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v${tag}/AI-Pharmacy-OS-Portable-Setup-v${tag}.exe`,
       updatePackageUrl: updateZipAsset?.browser_download_url || `https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v${tag}/AI-Pharmacy-OS-Update-v${tag}.zip`,
+      sha256: assetSha,
       changelog: data.body || `AI Pharmacy OS v${tag} Release`,
       rolloutMode: 'ALL',
       publishedAt: data.published_at,
@@ -47,7 +59,7 @@ async function fetchLatestGitHubRelease() {
     lastGithubFetch = now;
     return githubCache;
   } catch (_) {
-    return null;
+    return githubCache || null;
   }
 }
 
@@ -86,7 +98,7 @@ export default async function handler(req, res) {
       release = {
         ...(release || {}),
         ...ghRelease,
-        sha256: release?.sha256 || DEFAULT_SHA256,
+        sha256: ghRelease.sha256 || release?.sha256 || DEFAULT_SHA256,
       };
     }
 
@@ -163,8 +175,22 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'latestVersion is required' });
     }
 
+    const trimmedVersion = latestVersion.trim();
+    let currentLatest = memoryRelease?.latestVersion || DEFAULT_LATEST_VERSION;
+    if (isKvConfigured) {
+      try {
+        const stored = await kv.get('update_release');
+        if (stored?.latestVersion) currentLatest = stored.latestVersion;
+      } catch (_) {}
+    }
+    if (compareVersions(trimmedVersion, currentLatest) < 0) {
+      return res.status(400).json({
+        error: `Cannot publish v${trimmedVersion} because it is older than current known latest v${currentLatest}`,
+      });
+    }
+
     const release = {
-      latestVersion: latestVersion.trim(),
+      latestVersion: trimmedVersion,
       downloadUrl: (downloadUrl || '').trim(),
       updatePackageUrl: (updatePackageUrl || '').trim(),
       sha256: (sha256 || '').trim(),
@@ -205,7 +231,7 @@ export default async function handler(req, res) {
       release = {
         ...(release || {}),
         ...ghRelease,
-        sha256: release?.sha256 || DEFAULT_SHA256,
+        sha256: ghRelease.sha256 || release?.sha256 || DEFAULT_SHA256,
       };
     }
 

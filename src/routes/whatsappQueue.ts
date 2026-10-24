@@ -588,9 +588,9 @@ router.post(['/item/:id/send-now', '/items/:id/send-now'], async (req, res) => {
       return res.status(404).json({ error: 'Queue item not found' });
     }
     await db.run("UPDATE whatsapp_send_queue SET scheduled_at = ? WHERE id = ?", [Date.now(), id]);
-    whatsappQueueWorker.triggerProcessing();
+    await whatsappQueueWorker.forceNext();
     eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'send_now', id });
-    res.json({ success: true, message: `Dispatched queue item #${id} immediately` });
+    res.json({ success: true, released: true, message: `Dispatched queue item #${id} immediately` });
   } catch (err: any) {
     console.error('Failed to release scheduled queue item:', err);
     res.status(500).json({ error: err?.message || 'Failed to release queue item' });
