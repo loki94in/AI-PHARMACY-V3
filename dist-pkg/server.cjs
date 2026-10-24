@@ -62965,7 +62965,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.155";
+    APP_VERSION = "0.1.156";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -93039,7 +93039,7 @@ function computeSha256(filePath) {
     stream.on("error", reject);
   });
 }
-var import_fs57, import_path52, import_os5, import_https, import_http2, import_crypto10, import_child_process8, BOOT_DELAY_MS, POLL_INTERVAL_MS, AutoUpdateService, autoUpdateService;
+var import_fs57, import_path52, import_os5, import_https, import_http2, import_crypto10, import_child_process8, AutoUpdateService, autoUpdateService;
 var init_autoUpdateService = __esm({
   "src/services/autoUpdateService.ts"() {
     "use strict";
@@ -93053,9 +93053,6 @@ var init_autoUpdateService = __esm({
     init_connection();
     init_licenseService();
     init_eventService();
-    init_activityTracker();
-    BOOT_DELAY_MS = 6e4;
-    POLL_INTERVAL_MS = 2 * 60 * 60 * 1e3;
     AutoUpdateService = class _AutoUpdateService {
       static instance;
       intervalHandle = null;
@@ -93141,11 +93138,6 @@ var init_autoUpdateService = __esm({
           } catch (_) {
           }
         })();
-        setTimeout(() => this.runCheck("boot"), BOOT_DELAY_MS);
-        this.intervalHandle = setInterval(async () => {
-          if (!activityTracker.isIdle(30 * 60 * 1e3)) return;
-          await this.runCheck("interval");
-        }, POLL_INTERVAL_MS);
       }
       stop() {
         if (this.intervalHandle) {
