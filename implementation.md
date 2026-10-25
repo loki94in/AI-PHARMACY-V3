@@ -146,3 +146,20 @@ sequenceDiagram
       - 1-click UPI payment action links (`upi://pay?...`) and instant "Confirm Advance Deposit Paid" declaration button.
     - **Multi-lingual Support**: All new labels localized into Marathi (`mr`), Hindi (`hi`), and English (`en`).
     - **Verification**: `npm run guardrails` passed (TypeScript compilation clean, zero violations), `node scripts/quick-update.mjs` executed cleanly.
+
+- [x] Task 7: Production Release v0.1.159 Deployment
+  - **Completed**:
+    - Ran pre-flight guardrails scanner (`npm run guardrails`): clean compilation, 0 violations.
+    - Pushed commit `f266b73a` to GitHub remote `origin/main`.
+    - Executed `npm run release` (`node scripts/release.mjs`):
+      - Built portable standalone executable & installer: `dist/installer/AI-Pharmacy-OS-Portable-Setup-v0.1.159.exe`.
+      - Built delta update archive: `AI-Pharmacy-OS-Update-v0.1.159.zip` (SHA-256: `993d4957cd46c67ccee38cfdada2abcf2f69a6d365ea1dd19feee67b5a5c5f35`).
+      - Created GitHub Release `v0.1.159` and uploaded setup executable, update package, and companion mobile APK.
+      - Published and verified release metadata to update server `https://website-woad-seven-26.vercel.app` (`latestVersion="0.1.159"`, `Rollout="ALL"`).
+
+- [x] Task 8: Vercel Build Command Bypass Fix
+  - **Completed**:
+    - Identified root cause of Vercel build crash: `npm --prefix website install` only installed website packages, leaving root `tsc` uninstalled while Vercel ran default `"npm run build"` (`tsc -p tsconfig.json`).
+    - Configured `"buildCommand": "echo 'No build required for static website'"` in root [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json).
+    - Updated CORS headers (`x-owner-token`, `Authorization`) and mapped `/owner` to `/owner.html` in root [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json).
+    - Verified guardrails (`npm run guardrails`) clean, updated knowledge graph (`node scripts/quick-update.mjs`), and committed to GitHub.
