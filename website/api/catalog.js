@@ -375,72 +375,6 @@ export default async function handler(req, res) {
       }
     }
 
-    // If no refills yet, provide verified sample chronic refill setup for demo patient
-    if (refills.length === 0) {
-      refills = [
-        {
-          id: 'RFL-101',
-          medicineName: 'Telma 40 Tablet',
-          pack: 'Strip of 30 Tablets',
-          dosage: '1 Tablet Daily (Morning)',
-          daysInterval: 30,
-          remainingDays: 5,
-          nextDueDate: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0],
-          price: 255.0,
-          status: 'Refill Due Soon',
-        },
-        {
-          id: 'RFL-102',
-          medicineName: 'Glycomet-GP 1 Tablet PR',
-          pack: 'Strip of 15 Tablets',
-          dosage: '1 Tablet After Dinner',
-          daysInterval: 30,
-          remainingDays: 7,
-          nextDueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
-          price: 125.0,
-          status: 'Active Chronic Care',
-        },
-        {
-          id: 'RFL-103',
-          medicineName: 'Thyronorm 50mcg Tablet',
-          pack: 'Bottle of 120 Tablets',
-          dosage: '1 Tablet Empty Stomach (Morning)',
-          daysInterval: 90,
-          remainingDays: 24,
-          nextDueDate: new Date(Date.now() + 24 * 86400000).toISOString().split('T')[0],
-          price: 185.0,
-          status: 'Active',
-        }
-      ];
-    }
-
-    // If no past bills yet, provide verified sample invoices
-    if (bills.length === 0) {
-      bills = [
-        {
-          invoiceNo: 'INV-2026-904',
-          date: new Date(Date.now() - 25 * 86400000).toISOString().split('T')[0],
-          storeName: 'Pune City Pharmacy',
-          totalAmount: 565.0,
-          items: [
-            { name: 'Telma 40 Tablet', qty: 1, price: 255.0 },
-            { name: 'Glycomet-GP 1 Tablet PR', qty: 2, price: 125.0 },
-            { name: 'Dolo 650 Tablet', qty: 1, price: 30.0 },
-          ]
-        },
-        {
-          invoiceNo: 'INV-2026-812',
-          date: new Date(Date.now() - 55 * 86400000).toISOString().split('T')[0],
-          storeName: 'Pune City Pharmacy',
-          totalAmount: 440.0,
-          items: [
-            { name: 'Foracort 200 Inhaler', qty: 1, price: 395.0 },
-            { name: 'Pan 40 Tablet', qty: 1, price: 150.0 },
-          ]
-        }
-      ];
-    }
-
     return res.status(200).json({
       success: true,
       customer,
@@ -522,7 +456,9 @@ export default async function handler(req, res) {
         refillOrder.upi_id = targetStore?.upi_id || 'pharmacy@upi';
         refillOrder.upi_uri = `upi://pay?pa=${refillOrder.upi_id}&pn=${encodeURIComponent(storeName)}&am=${subtotal}&cu=INR&tn=${encodeURIComponent('Refill ' + orderId)}`;
 
+        refillOrder.storeId = storeId || 'PHARM-DEFAULT';
         await kv.set(`order:${orderId}`, refillOrder);
+        await kv.lpush(`orders:pending:${refillOrder.storeId}`, orderId);
         await kv.lpush('orders:pending', orderId);
         await kv.lpush(`customer:${cleanPhone}:orders`, orderId);
       } catch (err) {
@@ -599,7 +535,9 @@ export default async function handler(req, res) {
 
     if (isKvConfigured) {
       try {
+        specialOrder.storeId = storeId || 'PHARM-DEFAULT';
         await kv.set(`order:${orderId}`, specialOrder);
+        await kv.lpush(`orders:pending:${specialOrder.storeId}`, orderId);
         await kv.lpush('orders:pending', orderId);
         await kv.lpush(`customer:${cleanPhone}:orders`, orderId);
       } catch (err) {
@@ -642,7 +580,13 @@ export default async function handler(req, res) {
 
       await kv.set(`order:${orderId}`, order);
 
-      // Ensure it is in orders:pending queue for local POS to pull
+      // Ensure it is in store-scoped and global orders:pending queue for local POS to pull
+      const targetStoreId = order.storeId || 'PHARM-DEFAULT';
+      const storePendingKey = `orders:pending:${targetStoreId}`;
+      const storePendingIds = await kv.lrange(storePendingKey, 0, 150) || [];
+      if (!storePendingIds.includes(orderId)) {
+        await kv.lpush(storePendingKey, orderId);
+      }
       const pendingIds = await kv.lrange('orders:pending', 0, 150) || [];
       if (!pendingIds.includes(orderId)) {
         await kv.lpush('orders:pending', orderId);
@@ -749,7 +693,9 @@ export default async function handler(req, res) {
         order.upi_id = storeInfo?.upi_id || 'pharmacy@upi';
         order.upi_uri = `upi://pay?pa=${order.upi_id}&pn=${encodeURIComponent(storeName)}&am=${order.totalAmount}&cu=INR&tn=${encodeURIComponent('Order ' + orderId)}`;
 
+        order.storeId = storeId || 'PHARM-DEFAULT';
         await kv.set(`order:${orderId}`, order);
+        await kv.lpush(`orders:pending:${order.storeId}`, orderId);
         await kv.lpush('orders:pending', orderId);
         await kv.lpush(`customer:${cleanPhone}:orders`, orderId);
       } catch (err) {
@@ -887,9 +833,30 @@ export default async function handler(req, res) {
       return res.status(503).json({ error: 'Database not configured.' });
     }
 
+    const requestedStoreId = req.query.storeId || req.query.store;
+
     if (req.method === 'GET') {
       try {
-        const pendingIds = await kv.lrange('orders:pending', 0, 100);
+        let pendingIds = [];
+        if (requestedStoreId && requestedStoreId !== 'all') {
+          // Store-isolated queue first
+          const storeSpecificIds = await kv.lrange(`orders:pending:${requestedStoreId}`, 0, 100);
+          if (Array.isArray(storeSpecificIds) && storeSpecificIds.length > 0) {
+            pendingIds = storeSpecificIds;
+          } else {
+            // Check global queue for orders tagged with this store or untagged legacy
+            const globalIds = await kv.lrange('orders:pending', 0, 100) || [];
+            for (const gid of globalIds) {
+              const ord = await kv.get(`order:${gid}`);
+              if (ord && (ord.storeId === requestedStoreId || !ord.storeId)) {
+                pendingIds.push(gid);
+              }
+            }
+          }
+        } else {
+          pendingIds = await kv.lrange('orders:pending', 0, 100) || [];
+        }
+
         if (!Array.isArray(pendingIds) || pendingIds.length === 0) {
           return res.status(200).json({ success: true, count: 0, orders: [] });
         }
@@ -911,8 +878,9 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const { orderIds } = req.body || {};
+      const { orderIds, storeId } = req.body || {};
       const idsToAcknowledge = Array.isArray(orderIds) ? orderIds : (req.body?.orderId ? [req.body.orderId] : []);
+      const targetStore = storeId || requestedStoreId;
 
       if (idsToAcknowledge.length === 0) {
         return res.status(400).json({ error: 'No orderIds provided to acknowledge.' });
@@ -921,8 +889,14 @@ export default async function handler(req, res) {
       try {
         for (const id of idsToAcknowledge) {
           await kv.lrem('orders:pending', 0, id);
+          if (targetStore) {
+            await kv.lrem(`orders:pending:${targetStore}`, 0, id);
+          }
           const existing = await kv.get(`order:${id}`);
           if (existing) {
+            if (existing.storeId && existing.storeId !== targetStore) {
+              await kv.lrem(`orders:pending:${existing.storeId}`, 0, id);
+            }
             existing.status = 'Imported to Store Counter';
             existing.syncedToLocalAt = new Date().toISOString();
             await kv.set(`order:${id}`, existing);

@@ -1112,19 +1112,26 @@ router.post('/live-cart/orders/:orderId/finalize', async (req, res) => {
 
     await db.run('BEGIN TRANSACTION');
     try {
-      // Deduct inventory for confirmed items (spec §19)
+      // Ensure inventory reservations remain ACTIVE with exact confirmed quantity
+      // until POS bill save executes the single authoritative inventory deduction (spec §19, AGENT_DATA_FLOW_TREE.md)
       for (const item of confirmedItems) {
         if (item.actual_batch_id) {
-          await db.run(
-            'UPDATE inventory_master SET quantity = quantity - ? WHERE id = ? AND quantity >= ?',
-            [item.confirmed_qty, item.actual_batch_id, item.confirmed_qty]
-          );
-          // Mark reservation as SOLD
-          await db.run(
-            `UPDATE inventory_reservations SET status = 'SOLD', released_at = CURRENT_TIMESTAMP
-             WHERE order_item_id = ? AND status = 'ACTIVE'`,
+          const resRow = await db.get(
+            `SELECT id FROM inventory_reservations WHERE order_item_id = ? AND status = 'ACTIVE'`,
             [item.id]
           );
+          if (resRow) {
+            await db.run(
+              `UPDATE inventory_reservations SET reserved_qty = ?, inventory_id = ? WHERE id = ?`,
+              [item.confirmed_qty, item.actual_batch_id, resRow.id]
+            );
+          } else {
+            await db.run(
+              `INSERT INTO inventory_reservations (inventory_id, order_id, order_item_id, reserved_qty, status)
+               VALUES (?, ?, ?, ?, 'ACTIVE')`,
+              [item.actual_batch_id, orderId, item.id, item.confirmed_qty]
+            );
+          }
         }
       }
 

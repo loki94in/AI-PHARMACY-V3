@@ -1801,6 +1801,29 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
       });
     }
 
+    // 2-Way Sync: If this order originated from the 24/7 web portal, push status update to cloud in background
+    if (existing.sync_id) {
+      setImmediate(async () => {
+        try {
+          const { getAdminSecret } = await import('../services/cloudCatalogSyncService.js');
+          const secret = await getAdminSecret();
+          const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+          const cloudStatus = status === 'Fulfilled'
+            ? 'Completed'
+            : (status === 'Ready' ? 'Ready for Pickup' : (status === 'Cancelled' ? 'Cancelled' : status));
+          await fetch(`${CLOUD_SERVER_URL}/api/catalog?action=update_order_status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+            body: JSON.stringify({
+              orderId: existing.sync_id,
+              newStatus: cloudStatus,
+              notes: `Status updated to ${status} by pharmacy staff.`
+            })
+          }).catch(err => console.warn('[Orders] Cloud order sync update failed:', err?.message || err));
+        } catch (_) {}
+      });
+    }
+
     broadcastOrdersChanged({ action: 'update_status', orderId: Number(id), patch: { status, auto_remind: newAutoRemind } });
     res.json({ success: true, message: `Order status updated to ${status}`, whatsapp_queued: whatsappQueued, notification_count: newCount, auto_remind: newAutoRemind });
   } catch (err: any) {
@@ -1940,6 +1963,32 @@ const handleBatchStatusUpdate = async (req: express.Request, res: express.Respon
         } catch (bgErr) {
           console.warn('[Orders] Background batch live cart adjustment note:', bgErr);
         }
+      });
+    }
+
+    // 2-Way Sync: If any batch orders originated from 24/7 web portal, push status updates to cloud
+    const syncedOrders = orders.filter((o: any) => Boolean(o.sync_id));
+    if (syncedOrders.length > 0) {
+      setImmediate(async () => {
+        try {
+          const { getAdminSecret } = await import('../services/cloudCatalogSyncService.js');
+          const secret = await getAdminSecret();
+          const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+          const cloudStatus = status === 'Fulfilled'
+            ? 'Completed'
+            : (status === 'Ready' ? 'Ready for Pickup' : (status === 'Cancelled' ? 'Cancelled' : status));
+          for (const sOrd of syncedOrders) {
+            await fetch(`${CLOUD_SERVER_URL}/api/catalog?action=update_order_status`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+              body: JSON.stringify({
+                orderId: sOrd.sync_id,
+                newStatus: cloudStatus,
+                notes: `Batch status updated to ${status} by pharmacy.`
+              })
+            }).catch(err => console.warn('[Orders] Batch cloud order sync update failed:', err?.message || err));
+          }
+        } catch (_) {}
       });
     }
 

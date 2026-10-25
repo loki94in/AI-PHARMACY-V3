@@ -590,6 +590,27 @@ router.post('/', async (req, res) => {
            VALUES (?, 'pos_sale_completed', ?, 'POS', CURRENT_TIMESTAMP)`,
           [resolvedOnlineOrderId, `Fulfilled via POS sale invoice #${invoice_no} (15-day return window active until ${returnWindowUntil})`]
         );
+
+        // 2-Way Sync: If this online order originated from 24/7 web portal, push status update to cloud
+        const soRow = await db.get('SELECT sync_id FROM special_orders WHERE id = ?', [resolvedOnlineOrderId]).catch(() => null);
+        if (soRow?.sync_id) {
+          setImmediate(async () => {
+            try {
+              const { getAdminSecret } = await import('../services/cloudCatalogSyncService.js');
+              const secret = await getAdminSecret();
+              const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+              await fetch(`${CLOUD_SERVER_URL}/api/catalog?action=update_order_status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
+                body: JSON.stringify({
+                  orderId: soRow.sync_id,
+                  newStatus: 'Completed & Dispensed',
+                  notes: `Fulfilled and billed at POS counter (Invoice #${invoice_no}).`
+                })
+              }).catch(err => console.warn('[Sales] Cloud order sync update failed:', err?.message || err));
+            } catch (_) {}
+          });
+        }
       } catch (ordErr) {
         console.warn('[Sales] Failed to link online order:', resolvedOnlineOrderId, ordErr);
       }
@@ -624,18 +645,30 @@ router.post('/', async (req, res) => {
     if (knownInventoryIds.length > 0) {
       const placeholders = knownInventoryIds.map(() => '?').join(',');
       const rows = await db.all(
-        `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, im.expiry_date, COALESCE(im.mrp, m.mrp) as mrp, m.pack_size as raw_pack_size, COALESCE(m.pack_size, 1) as pack_size, m.name as db_medicine_name
+        `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, im.expiry_date,
+                COALESCE(im.mrp, m.mrp) as mrp, m.pack_size as raw_pack_size, COALESCE(m.pack_size, 1) as pack_size, m.name as db_medicine_name,
+                COALESCE((
+                  SELECT SUM(ir.reserved_qty) FROM inventory_reservations ir
+                  WHERE ir.inventory_id = im.id AND ir.status = 'ACTIVE'
+                    AND (ir.order_id != ? OR ? IS NULL)
+                ), 0) as reserved_strips
          FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id IN (${placeholders})`,
-        knownInventoryIds
+        [resolvedOnlineOrderId || -1, resolvedOnlineOrderId || null, ...knownInventoryIds]
       );
       for (const r of rows) stockMap.set(r.inventory_id, r);
     }
     const getStock = async (id: number) => {
       if (stockMap.has(id)) return stockMap.get(id);
       const row = await conn.get(
-        `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, im.expiry_date, COALESCE(im.mrp, m.mrp) as mrp, m.pack_size as raw_pack_size, COALESCE(m.pack_size, 1) as pack_size, m.name as db_medicine_name
+        `SELECT im.id as inventory_id, im.medicine_id, im.batch_no, im.quantity, im.loose_quantity, im.expiry_date,
+                COALESCE(im.mrp, m.mrp) as mrp, m.pack_size as raw_pack_size, COALESCE(m.pack_size, 1) as pack_size, m.name as db_medicine_name,
+                COALESCE((
+                  SELECT SUM(ir.reserved_qty) FROM inventory_reservations ir
+                  WHERE ir.inventory_id = im.id AND ir.status = 'ACTIVE'
+                    AND (ir.order_id != ? OR ? IS NULL)
+                ), 0) as reserved_strips
          FROM inventory_master im JOIN medicines m ON im.medicine_id = m.id WHERE im.id = ?`,
-        [id]
+        [resolvedOnlineOrderId || -1, resolvedOnlineOrderId || null, id]
       );
       if (row) stockMap.set(id, row);
       return row;
@@ -709,9 +742,15 @@ router.post('/', async (req, res) => {
         if (soldLoose > 0 && !(Number(currentStock.raw_pack_size) > 0)) {
           throw new Error(`Cannot sell loose units of "${batchLabel}": its pack size is not saved. Set the pack size in Inventory first.`);
         }
+        const reservedStrips = Number(currentStock.reserved_strips || 0);
+        const reservedUnits = reservedStrips * packSize;
         const currentTotalUnits = currentStock.quantity * packSize + currentStock.loose_quantity;
+        const availableUnits = Math.max(0, currentTotalUnits - reservedUnits);
         const soldTotalUnits = soldQty * packSize + soldLoose;
-        if (currentTotalUnits < soldTotalUnits) {
+        if (availableUnits < soldTotalUnits) {
+          if (reservedStrips > 0 && currentTotalUnits >= soldTotalUnits) {
+            throw new Error(`Cannot sell "${currentStock.db_medicine_name || medicine_name || 'Medicine'}": ${reservedStrips} strip(s) are reserved for pending online orders. Available unreserved: ${Math.floor(availableUnits / packSize)} strips & ${availableUnits % packSize} loose.`);
+          }
           throw new Error(`Insufficient stock for "${currentStock.db_medicine_name || medicine_name || 'Medicine'}". Available: ${currentStock.quantity} strips & ${currentStock.loose_quantity} loose. Requested: ${soldQty} strips & ${soldLoose} loose.`);
         }
 

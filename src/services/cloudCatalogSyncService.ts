@@ -232,7 +232,12 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
   const db = await dbManager.getConnection();
 
   try {
-    const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/orders`, {
+    const storeSettingRow = await db.get(
+      "SELECT value FROM app_settings WHERE key = 'pharmacy_store_id' OR key = 'cloud_store_id'"
+    ).catch(() => null);
+    const storeId = storeSettingRow?.value?.trim() || 'PHARM-DEFAULT';
+
+    const res = await fetch(`${CLOUD_SERVER_URL}/api/catalog/orders?storeId=${encodeURIComponent(storeId)}`, {
       headers: { 'x-admin-secret': secret },
     });
 
@@ -303,15 +308,17 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
 
         if (isRefill) {
           // Check if patient has an active refill for any of these items
+          let hasUnregisteredItems = false;
           if (matchedCustomerId) {
             for (const it of (o.items || [])) {
               const refill = await db.get(
-                `SELECT pr.id FROM patient_refills pr 
+                `SELECT pr.id, pr.is_active, pr.quantity_needed FROM patient_refills pr 
                  JOIN medicines m ON m.id = pr.medicine_id
                  WHERE pr.customer_id = ? AND (LOWER(m.name) = LOWER(?) OR LOWER(m.name) LIKE LOWER(?)) LIMIT 1`,
                 [matchedCustomerId, it.name, `%${it.name}%`]
               );
-              if (refill) {
+              if (refill && refill.is_active === 1) {
+                // Legitimate verified prescription refill
                 await db.run(
                   `UPDATE patient_refills 
                    SET next_refill_date = date('now'), source = 'website', cart_status = 'pending', updated_at = CURRENT_TIMESTAMP
@@ -319,33 +326,29 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
                   [refill.id]
                 ).catch(() => {});
               } else {
-                const med = await db.get(
-                  `SELECT id FROM medicines WHERE LOWER(name) = LOWER(?) OR LOWER(name) LIKE LOWER(?) LIMIT 1`,
-                  [it.name, `%${it.name}%`]
-                );
-                if (med) {
-                  await db.run(
-                    `INSERT INTO patient_refills (
-                      customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, quantity_needed, next_refill_date, is_active, source, cart_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, date('now'), 1, 'website', 'pending')`,
-                    [matchedCustomerId, customerName, cleanPhone, med.id, 30, it.qty || 1]
-                  ).catch(() => {});
-                }
+                // Item is not an active prescription refill for this patient — require pharmacist review
+                hasUnregisteredItems = true;
               }
             }
+          } else {
+            hasUnregisteredItems = true;
           }
+
+          const reviewNote = hasUnregisteredItems ? ' [⚠️ Requires Prescription Verification by Pharmacist]' : '';
+          const finalRefillNotes = `[Website Refill Request #${o.orderId}] ${orderNotesWithPayment}${reviewNote}`;
+          const verificationStatus = hasUnregisteredItems ? 'REQUIRES_REVIEW' : 'PENDING';
 
           await db.run(
             `INSERT INTO special_orders (
               store_id, requester, phone, notes, product, medicine_name, qty,
               status, priority, customer_order_source, order_type, total_amount, sync_id,
-              payment_method, payment_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              payment_method, payment_status, pharmacy_verification_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               1,
               customerName,
               o.phone || '',
-              `[Website Refill Request #${o.orderId}] ${orderNotesWithPayment}`,
+              finalRefillNotes,
               itemsSummary,
               itemsSummary,
               o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
@@ -356,7 +359,8 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
               o.totalAmount || 0,
               o.orderId,
               paymentMethod,
-              paymentStatus
+              paymentStatus,
+              verificationStatus
             ]
           );
         } else if (isSpecialOrder) {
@@ -422,7 +426,7 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
           'Content-Type': 'application/json',
           'x-admin-secret': secret,
         },
-        body: JSON.stringify({ orderIds: importedIds }),
+        body: JSON.stringify({ orderIds: importedIds, storeId }),
       }).catch(err => console.warn('[CloudCatalogSync] order ack failed:', err?.message || err));
     }
 
