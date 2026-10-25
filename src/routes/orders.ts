@@ -1807,7 +1807,7 @@ const handleStatusUpdate = async (req: express.Request, res: express.Response) =
         try {
           const { getAdminSecret } = await import('../services/cloudCatalogSyncService.js');
           const secret = await getAdminSecret();
-          const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+          const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
           const cloudStatus = status === 'Fulfilled'
             ? 'Completed'
             : (status === 'Ready' ? 'Ready for Pickup' : (status === 'Cancelled' ? 'Cancelled' : status));
@@ -1973,7 +1973,7 @@ const handleBatchStatusUpdate = async (req: express.Request, res: express.Respon
         try {
           const { getAdminSecret } = await import('../services/cloudCatalogSyncService.js');
           const secret = await getAdminSecret();
-          const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+          const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
           const cloudStatus = status === 'Fulfilled'
             ? 'Completed'
             : (status === 'Ready' ? 'Ready for Pickup' : (status === 'Cancelled' ? 'Cancelled' : status));

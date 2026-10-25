@@ -3,7 +3,7 @@ import { addItemsToPharmarackCart } from '../routes/pharmarack.js';
 import { eventService } from './eventService.js';
 import { activityTracker } from '../utils/activityTracker.js';
 
-const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
 
 export interface QueuedCartItem {
   req_id: string;

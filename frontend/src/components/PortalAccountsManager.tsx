@@ -536,7 +536,7 @@ export function PortalAccountsManager() {
 
           <button
             onClick={() => {
-              const ownerTarget = cloudUrl ? `${cloudUrl.replace(/\/shop.*$/, '')}/owner` : 'https://ai-pharmacy-os.vercel.app/owner';
+              const ownerTarget = cloudUrl ? `${cloudUrl.replace(/\/shop.*$/, '')}/owner` : 'https://website-woad-seven-26.vercel.app/owner';
               window.open(ownerTarget, '_blank');
             }}
             className="px-3.5 py-2.5 bg-purple-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 rounded-xl hover:bg-purple-500/20 transition-colors text-xs font-semibold flex items-center gap-1.5"

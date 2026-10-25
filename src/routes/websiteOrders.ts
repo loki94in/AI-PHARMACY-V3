@@ -772,7 +772,7 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
     // If order was received from 24/7 web portal, push status update to cloud
     if (order.sync_id) {
       try {
-        const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+        const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
         const ADMIN_SECRET = process.env.ADMIN_SECRET || 'admin@pharmacy2026';
         fetch(`${CLOUD_SERVER_URL}/api/catalog?action=update_order_status`, {
           method: 'POST',

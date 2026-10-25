@@ -41,7 +41,7 @@ export async function getLivePortalUrl(db: any, phone?: string): Promise<string>
 
   // Universal 24/7 cloud fallback
   if (!base) {
-    base = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+    base = process.env.CLOUD_CATALOG_URL || process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
   }
 
   const cleanBase = (base || '').replace(/\/+$/, '');
@@ -60,7 +60,7 @@ export async function get247CloudPortalUrl(db: any, phone?: string): Promise<str
     }
   } catch (_) {}
   if (!base) {
-    base = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+    base = process.env.CLOUD_CATALOG_URL || process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
   }
   const cleanBase = base.replace(/\/+$/, '');
   const query = phone ? `?phone=${phone}` : '';

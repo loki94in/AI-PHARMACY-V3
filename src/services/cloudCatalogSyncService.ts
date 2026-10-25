@@ -1,7 +1,7 @@
 import { dbManager } from '../database/connection.js';
 import { getStoreMedicalName, getStorePhone, getStoreAddress, getStoreGoogleMapsUrl } from './storeSettingsService.js';
 
-const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
 
 export async function getAdminSecret(): Promise<string> {
   if (process.env.ADMIN_SECRET && process.env.ADMIN_SECRET.trim() !== '') {

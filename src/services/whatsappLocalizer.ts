@@ -119,7 +119,7 @@ export function formatPortalPinMessage(params: PortalPinParams): string {
   const lang = normalizeLanguage(params.lang);
   const name = params.patientName ? ` *${params.patientName}*` : '';
   const store = params.storeName || 'AI Pharmacy';
-  const portalUrl = params.portalUrl || 'https://ai-pharmacy-os.vercel.app/shop';
+  const portalUrl = params.portalUrl || `${process.env.CLOUD_CATALOG_URL || process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app'}/shop`;
 
   if (lang === 'hi') {
     return `🔐 *${store} पेशेंट पोर्टल लॉगिन*\n\n` +

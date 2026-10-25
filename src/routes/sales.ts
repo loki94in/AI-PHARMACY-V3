@@ -598,7 +598,7 @@ router.post('/', async (req, res) => {
             try {
               const { getAdminSecret } = await import('../services/cloudCatalogSyncService.js');
               const secret = await getAdminSecret();
-              const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || 'https://ai-pharmacy-os.vercel.app';
+              const CLOUD_SERVER_URL = process.env.CLOUD_CATALOG_URL || process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
               await fetch(`${CLOUD_SERVER_URL}/api/catalog?action=update_order_status`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-admin-secret': secret },
