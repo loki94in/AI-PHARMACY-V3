@@ -5445,7 +5445,7 @@ export default function PharmarackCart() {
 
             <button
               type="button"
-              onClick={() => navigate(`/pos?search=${encodeURIComponent(refill.medicine_name)}`)}
+              onClick={() => navigate(`/pos?search=${encodeURIComponent(refill.medicine_name || '')}`)}
               className="py-1.5 px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 bg-bg3 hover:bg-glass-bg border border-glass-border text-text transition-all active:scale-95 cursor-pointer"
               title="Search and bill in POS"
             >
