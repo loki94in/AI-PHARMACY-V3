@@ -1266,7 +1266,6 @@ export default function PharmarackCart() {
   // Reorder Same Medicine Confirmation Modal State
   const [reorderSameModalTarget, setReorderSameModalTarget] = useState<LocalReorderSameCard | null>(null);
   const [reorderModalQty, setReorderModalQty] = useState<number>(1);
-  const [reorderModalSupplierId, setReorderModalSupplierId] = useState<number | null>(null);
   const reorderQtyInputRef = useRef<HTMLInputElement>(null);
   const [addingItemKeys, setAddingItemKeys] = useState<Set<string>>(new Set());
 
@@ -4827,13 +4826,6 @@ export default function PharmarackCart() {
   }) => {
     const defaultQty = Math.max(1, item.suggestedQty || 1);
     setReorderModalQty(defaultQty);
-    if (item.storeId) {
-      setReorderModalSupplierId(Number(item.storeId));
-    } else if (distributors.length > 0) {
-      setReorderModalSupplierId(distributors[0].storeId);
-    } else {
-      setReorderModalSupplierId(null);
-    }
     setReorderSameModalTarget({
       medicineName: item.medicineName,
       medicineId: item.medicineId,
@@ -4859,27 +4851,30 @@ export default function PharmarackCart() {
   const handleConfirmReorderSame = async () => {
     if (!reorderSameModalTarget) return;
     const card = reorderSameModalTarget;
-    const targetStoreId = reorderModalSupplierId || card.storeId || distributors[0]?.storeId || 0;
-    const targetDist = distributors.find(d => d.storeId === targetStoreId) || distributors[0];
     const qtyToAdd = Math.max(1, reorderModalQty || 1);
     const medName = card.medicineName;
-    const itemKey = `${medName}:::${targetStoreId}`;
 
     // 1. Immediately close modal so user can proceed without waiting (<10ms)
     setReorderSameModalTarget(null);
 
+    // Directly use the card's native distributor
+    const targetStoreId = card.storeId ? Number(card.storeId) : 0;
+    const targetDist = targetStoreId ? distributors.find(d => d.storeId === targetStoreId) : undefined;
+    const itemKey = `${medName}:::${targetStoreId}`;
+
     // 2. Track addition state per item key (keeps all other cards active!)
     setAddingItemKeys(prev => new Set(prev).add(itemKey));
 
-    // 3. Resolve IDs
+    // 3. Resolve IDs — STRICT ONLY.
     let productCode = card.productCode || '';
-    let productId = Number(card.productId) || Number(card.medicineId) || 0;
+    let productId = Number(card.productId) || 0;
     let packaging = card.packaging || '';
     let company = card.company || '';
     let rate = card.ptr || card.previousPurchase?.price || undefined;
     let mrp = card.mrp || card.previousPurchase?.mrp || undefined;
-    const storeName = targetDist?.storeName || card.storeName || 'Distributor';
+    const storeName = targetDist?.storeName || card.storeName || (targetStoreId ? `Distributor #${targetStoreId}` : 'Distributor');
 
+    // If not yet resolved, check distributorProductsMap ONLY for strict same product on targetStoreId
     if ((!productCode || !productId) && targetStoreId) {
       const storeProducts = distributorProductsMap[targetStoreId] || [];
       const match = storeProducts.find(p => isStrictSameProduct(p.medicineName, medName));
@@ -4893,10 +4888,23 @@ export default function PharmarackCart() {
       }
     }
 
-    // 4. Optimistically update local cart so the card immediately shows in cart
+    // Fallback: If missing verified Pharmarack IDs or missing target store, DO NOT guess and DO NOT add optimistic dummy!
+    // Seamlessly open Live Cart Search with prefilled query
+    if (!productCode || !productId || !targetStoreId) {
+      toastEvent.trigger(`Opening Live Search for "${medName}" (${storeName})...`, 'info');
+      liveCartAddEvent.triggerOpen(medName, qtyToAdd, card.sourceOrderId, card.sourceRefillId, targetStoreId ? Number(targetStoreId) : undefined);
+      setAddingItemKeys(prev => {
+        const next = new Set(prev);
+        next.delete(itemKey);
+        return next;
+      });
+      return;
+    }
+
+    // 4. We have verified IDs! Optimistically update local cart so the card immediately shows in cart
     setDistributors(prev => {
       const updated = mergeItemIntoDistributors(prev, {
-        productId: productId || 0,
+        productId: productId,
         storeId: targetStoreId,
         qty: qtyToAdd,
         ptr: rate,
@@ -4920,36 +4928,14 @@ export default function PharmarackCart() {
       });
     }
 
-    // 5. Non-blocking detached upstream sync
+    // 5. Non-blocking detached upstream sync with automated rollback & Live Search fallback
     (async () => {
       try {
-        if ((!productCode || !productId) && targetStoreId) {
-          const live = await api.searchPharmarack(medName, targetStoreId).catch(() => null);
-          const hits = (Array.isArray(live) ? live : []).filter((r: LocalLiveSearchRow) =>
-            !r.isOffline && !r.isLocalPharmacy && r.productCode && r.productId &&
-            Number(r.storeId) === Number(targetStoreId) && isStrictSameProduct(r.fullName || r.shortName || r.name, medName));
-          if (hits.length === 1) {
-            const h = hits[0];
-            productCode = String(h.productCode);
-            productId = Number(h.productId) || 0;
-            packaging = packaging || h.packaging || '';
-            company = company || h.company || '';
-            rate = h.rate ?? rate;
-            mrp = h.mrp ?? mrp;
-          }
-        }
-
-        if (!productCode || !productId) {
-          toastEvent.trigger(`Opening Live Search to verify product for "${medName}"...`, 'info');
-          liveCartAddEvent.triggerOpen(medName, qtyToAdd, card.sourceOrderId, card.sourceRefillId, targetStoreId ? Number(targetStoreId) : undefined);
-          return;
-        }
-
         const payload = [{
-          productId: productId || 0,
-          storeId: Number(targetStoreId) || 0,
+          productId: productId,
+          storeId: Number(targetStoreId),
           qty: qtyToAdd,
-          productCode: productCode || '',
+          productCode: productCode,
           productName: medName,
           company: company || '',
           packaging: packaging || '',
@@ -4969,12 +4955,48 @@ export default function PharmarackCart() {
             api.updateOrder(card.sourceOrderId, { status: 'Ordered' }).catch(() => {});
           }
         } else {
-          toastEvent.trigger(addRes?.details || addRes?.error || `Failed to add ${medName} to live cart`, 'error');
+          // Upstream add failed! ROLLBACK / REMOVE the optimistic item from local cart!
+          setDistributors(prev => {
+            const rolledBack = prev.map(d => {
+              if (d.storeId === targetStoreId) {
+                return {
+                  ...d,
+                  items: (d.items || []).filter(i => !isStrictSameProduct(i.productName, medName) && i.productCode !== productCode)
+                };
+              }
+              return d;
+            }).filter(d => (d.items || []).length > 0);
+            cachedDistributors = rolledBack;
+            persistCartCache(rolledBack, cachedPriceHistory);
+            return rolledBack;
+          });
+
+          const errDetail = addRes?.details || addRes?.error || `Could not add "${medName}" directly`;
+          toastEvent.trigger(`${errDetail} — opening Live Search...`, 'info');
+          // Automated fallback: open Live Cart Search with prefilled query so user can select the right distributor/product
+          liveCartAddEvent.triggerOpen(medName, qtyToAdd, card.sourceOrderId, card.sourceRefillId, targetStoreId ? Number(targetStoreId) : undefined);
         }
       } catch (err: unknown) {
+        // ROLLBACK on network or unexpected exception as well
+        setDistributors(prev => {
+          const rolledBack = prev.map(d => {
+            if (d.storeId === targetStoreId) {
+              return {
+                ...d,
+                items: (d.items || []).filter(i => !isStrictSameProduct(i.productName, medName) && i.productCode !== productCode)
+              };
+            }
+            return d;
+          }).filter(d => (d.items || []).length > 0);
+          cachedDistributors = rolledBack;
+          persistCartCache(rolledBack, cachedPriceHistory);
+          return rolledBack;
+        });
+
         console.error('Failed to add reorder item:', err);
         const apiErr = err as LocalApiError;
-        toastEvent.trigger('Failed to reorder: ' + (apiErr?.message || 'Network error'), 'error');
+        toastEvent.trigger(`Add failed (${apiErr?.message || 'Network error'}) — opening Live Search...`, 'info');
+        liveCartAddEvent.triggerOpen(medName, qtyToAdd, card.sourceOrderId, card.sourceRefillId, targetStoreId ? Number(targetStoreId) : undefined);
       } finally {
         setAddingItemKeys(prev => {
           const next = new Set(prev);
@@ -6396,10 +6418,10 @@ export default function PharmarackCart() {
                                     packaging: item.packaging,
                                     ptr: item.ptr,
                                     storeId: item.storeId ? Number(item.storeId) : undefined,
-                                    storeName: item.storeName || item.lastDistributorName,
+                                    storeName: item.lastDistributorName || item.storeName,
                                     suggestedQty: itemQty,
                                     previousPurchase: {
-                                      supplierName: item.storeName || item.lastDistributorName,
+                                      supplierName: item.lastDistributorName || item.storeName,
                                       quantity: item.lastQty,
                                       price: item.ptr,
                                       mrp: item.mrp,
@@ -8379,59 +8401,50 @@ export default function PharmarackCart() {
                 </div>
               </div>
 
-              {/* Target Supplier & Quantity Adjuster */}
+              {/* Quantity Adjuster */}
               <div className="p-4 rounded-xl bg-bg3/30 border border-glass-border space-y-3">
-                <div>
-                  <label className="block text-[11px] font-bold text-muted mb-1">Target Supplier / Distributor</label>
-                  <select
-                    value={reorderModalSupplierId || ''}
-                    onChange={(e) => setReorderModalSupplierId(Number(e.target.value))}
-                    className="w-full bg-bg border border-glass-border rounded-xl px-3 py-2 text-xs text-text focus:outline-none focus:border-amber-500 font-bold"
-                  >
-                    {distributors.map(d => (
-                      <option key={d.storeId} value={d.storeId}>
-                        {d.storeName}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-text">Quantity to Reorder (Strips / Units)</label>
+                  {(reorderSameModalTarget.storeName || reorderSameModalTarget.previousPurchase?.supplierName) && (
+                    <span className="text-[11px] font-medium text-muted bg-bg px-2.5 py-1 rounded-lg border border-glass-border/60">
+                      Distributor: <strong className="text-text font-semibold">{reorderSameModalTarget.storeName || reorderSameModalTarget.previousPurchase?.supplierName}</strong>
+                    </span>
+                  )}
                 </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-muted mb-1">Quantity to Reorder (Strips / Units)</label>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setReorderModalQty(q => Math.max(1, q - 1))}
-                      className="w-8 h-8 rounded-xl bg-bg border border-glass-border hover:bg-bg2 text-sm font-bold flex items-center justify-center cursor-pointer"
-                    >
-                      -
-                    </button>
-                    <input
-                      ref={reorderQtyInputRef}
-                      autoFocus
-                      type="number"
-                      min={1}
-                      value={reorderModalQty}
-                      onChange={(e) => setReorderModalQty(Math.max(1, parseInt(e.target.value) || 1))}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleConfirmReorderSame();
-                        }
-                      }}
-                      className="w-24 text-center bg-bg border border-glass-border rounded-xl py-1.5 text-xs text-text font-mono font-black focus:outline-none focus:border-amber-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setReorderModalQty(q => q + 1)}
-                      className="w-8 h-8 rounded-xl bg-bg border border-glass-border hover:bg-bg2 text-sm font-bold flex items-center justify-center cursor-pointer"
-                    >
-                      +
-                    </button>
-                    <span className="text-xs text-muted ml-2">
-                      Estimated Total: <strong className="font-mono text-emerald-400 font-bold">₹{(reorderModalQty * (reorderSameModalTarget.ptr || reorderSameModalTarget.previousPurchase?.price || 0)).toFixed(2)}</strong>
-                    </span>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setReorderModalQty(q => Math.max(1, q - 1))}
+                    className="w-9 h-9 rounded-xl bg-bg border border-glass-border hover:bg-bg2 text-base font-bold flex items-center justify-center cursor-pointer transition-colors"
+                  >
+                    -
+                  </button>
+                  <input
+                    ref={reorderQtyInputRef}
+                    autoFocus
+                    type="number"
+                    min={1}
+                    value={reorderModalQty}
+                    onChange={(e) => setReorderModalQty(Math.max(1, parseInt(e.target.value) || 1))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleConfirmReorderSame();
+                      }
+                    }}
+                    className="w-24 text-center bg-bg border border-glass-border rounded-xl py-1.5 text-sm text-text font-mono font-black focus:outline-none focus:border-amber-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setReorderModalQty(q => q + 1)}
+                    className="w-9 h-9 rounded-xl bg-bg border border-glass-border hover:bg-bg2 text-base font-bold flex items-center justify-center cursor-pointer transition-colors"
+                  >
+                    +
+                  </button>
+                  <span className="text-xs text-muted ml-3">
+                    Estimated Total: <strong className="font-mono text-emerald-400 font-bold">₹{(reorderModalQty * (reorderSameModalTarget.ptr || reorderSameModalTarget.previousPurchase?.price || 0)).toFixed(2)}</strong>
+                  </span>
                 </div>
               </div>
 
