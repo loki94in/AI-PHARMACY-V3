@@ -196,3 +196,10 @@ sequenceDiagram
     - Removed suppression flags from `installCommand` in [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json), keeping it standard (`npm --prefix website install`).
     - Verified natural install runs with 0 warnings and 0 vulnerabilities.
     - Verified guardrails (`npm run guardrails`) exit 0, updated knowledge graph, and committed to GitHub.
+
+- [x] Task 13: Native npm Security Governance (`allowScripts`) & Vercel Host Cache-Dir Environment Clean
+  - **Completed**:
+    - Configured native `allowScripts` in root [`package.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/package.json) for the 8 desktop native packages (`better-sqlite3`, `canvas`, `electron-winstaller`, `esbuild`, `onnxruntime-node`, `puppeteer`, `sqlite3`, `tesseract.js`), permanently eliminating `npm warn install-scripts` without using error suppression.
+    - Verified `npm install-scripts ls` confirms 0 unreviewed install scripts remaining.
+    - Updated `installCommand` in [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json) to unset legacy `npm_config_cache_dir` environment variable via `env -u npm_config_cache_dir -u NPM_CONFIG_CACHE_DIR`, preventing npm 10+ unknown config warnings.
+    - Verified guardrails (`npm run guardrails`) clean with exit 0 and updated knowledge graph.
