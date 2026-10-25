@@ -1,7 +1,7 @@
 {
   "version": 2,
   "outputDirectory": "website/public",
-  "installCommand": "npm --prefix website install",
+  "installCommand": "npm --prefix website install --no-audit --no-fund --loglevel=error",
   "buildCommand": "echo 'No build required for static website'",
   "functions": {
     "api/*.js": {

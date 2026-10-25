@@ -181,3 +181,10 @@ sequenceDiagram
       - Created GitHub Release `v0.1.160` and uploaded installer, update ZIP, and companion mobile APK (`AI-Pharmacy-Mobile-v0.1.160.apk`).
       - Verified update server reports `latestVersion="0.1.160"` with `Rollout="ALL"`.
       - Committed version bump to `origin/main` ([`631b0e7e`](https://github.com/loki94in/AI-PHARMACY-V3/commit/631b0e7e)).
+
+- [x] Task 11: Deprecation Warning & Install Noise Elimination
+  - **Completed**:
+    - Removed unused and deprecated `"@vercel/kv"` from [`website/package.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/website/package.json) since [`website/api/_db.js`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/website/api/_db.js) uses pure `@upstash/redis`.
+    - Regenerated [`website/package-lock.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/website/package-lock.json) cleanly without deprecated package warnings.
+    - Updated `installCommand` in [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json) to `npm --prefix website install --no-audit --no-fund --loglevel=error` to permanently silence harmless npm notices in cloud deployment logs.
+    - Verified guardrails (`npm run guardrails`) exit 0, updated knowledge graph, and pushed to GitHub.
