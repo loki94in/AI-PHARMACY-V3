@@ -40681,29 +40681,15 @@ ${waiting.message}`;
         }
         let cartQty = 0;
         try {
-          const settings = await getPharmarackSettings();
-          const token = settings["pharmarack_session_token"] || "";
-          if (token) {
-            const cartRes = await fetchPharmarack("https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails", {
-              method: "GET",
-              signal: AbortSignal.timeout(5e3)
-            });
-            if (cartRes.ok) {
-              const cartData = await cartRes.json();
-              const rawList = Array.isArray(cartData?.IList) ? cartData.IList : Array.isArray(cartData?.data) ? cartData.data : Array.isArray(cartData?.Data) ? cartData.Data : cartData?.data?.Stores || cartData?.Data?.Stores || [];
-              const targetNames = matchingMeds.map((m) => m.name.toLowerCase().replace(/[^a-z0-9]/g, ""));
-              targetNames.push(productName.toLowerCase().replace(/[^a-z0-9]/g, ""));
-              targetNames.push(brandTokens.replace(/[^a-z0-9]/g, ""));
-              for (const store of rawList) {
-                const items = store.lineItems || store.items || store.Products || store.line_items || [];
-                for (const item of items) {
-                  const itemTitle = (item.productName || item.ProductName || item.ProductFullName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-                  const matchesAny = targetNames.some((tn) => tn.length >= 3 && (itemTitle.includes(tn) || tn.includes(itemTitle)));
-                  if (matchesAny) {
-                    cartQty += Number(item.qty || item.Quantity || item.quantity || 0);
-                  }
-                }
-              }
+          const cachedLines = getCachedCartLines();
+          const targetNames = matchingMeds.map((m) => m.name.toLowerCase().replace(/[^a-z0-9]/g, ""));
+          targetNames.push(productName.toLowerCase().replace(/[^a-z0-9]/g, ""));
+          targetNames.push(brandTokens.replace(/[^a-z0-9]/g, ""));
+          for (const it of cachedLines) {
+            const itemTitle = it.productName.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const matchesAny = targetNames.some((tn) => tn.length >= 3 && (itemTitle.includes(tn) || tn.includes(itemTitle)));
+            if (matchesAny) {
+              cartQty += Number(it.qty || 0);
             }
           }
         } catch (_) {
@@ -67663,7 +67649,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.161";
+    APP_VERSION = "0.1.162";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -93191,7 +93177,9 @@ function downloadFile(url, dest, onProgress) {
         },
         (res) => {
           if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            return makeRequest(res.headers.location, redirectCount + 1);
+            res.resume();
+            const redirectUrl = new URL(res.headers.location, currentUrl).toString();
+            return makeRequest(redirectUrl, redirectCount + 1);
           }
           if (res.statusCode !== 200) {
             return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
@@ -93328,6 +93316,8 @@ var init_autoUpdateService = __esm({
                     setTimeout(() => {
                       eventService.broadcast("update_available", {
                         latestVersion: stagedVersion,
+                        currentVersion: APP_VERSION2,
+                        hasUpdate: true,
                         readyToInstall: true,
                         downloading: false,
                         reason: "boot_staged"
@@ -93352,6 +93342,9 @@ var init_autoUpdateService = __esm({
           } catch (_) {
           }
         })();
+        setTimeout(() => {
+          void this.runCheck("boot");
+        }, 1e4);
       }
       stop() {
         if (this.intervalHandle) {
@@ -93430,6 +93423,8 @@ var init_autoUpdateService = __esm({
             if (alreadyDownloaded) {
               eventService.broadcast("update_available", {
                 latestVersion: result.latestVersion,
+                currentVersion: APP_VERSION,
+                hasUpdate: true,
                 downloadUrl: result.downloadUrl,
                 updatePackageUrl: result.updatePackageUrl,
                 changelog: result.changelog,
@@ -93523,6 +93518,8 @@ var init_autoUpdateService = __esm({
         };
         eventService.broadcast("update_available", {
           latestVersion: target.latestVersion,
+          currentVersion: APP_VERSION,
+          hasUpdate: true,
           downloadUrl: target.downloadUrl,
           updatePackageUrl: target.updatePackageUrl,
           changelog: target.changelog,
@@ -93555,6 +93552,8 @@ var init_autoUpdateService = __esm({
             }
             eventService.broadcast("update_progress", {
               latestVersion: version,
+              currentVersion: APP_VERSION,
+              hasUpdate: true,
               downloading: true,
               downloadProgress: percent,
               downloadedBytes: downloaded,
@@ -93579,6 +93578,8 @@ var init_autoUpdateService = __esm({
               }
               eventService.broadcast("update_available", {
                 latestVersion: version,
+                currentVersion: APP_VERSION,
+                hasUpdate: true,
                 changelog: changelog || "",
                 readyToInstall: false,
                 downloading: false,
@@ -93615,6 +93616,8 @@ var init_autoUpdateService = __esm({
           console.log(`[AutoUpdate] Download complete. Update v${version} is ready to install.`);
           eventService.broadcast("update_available", {
             latestVersion: version,
+            currentVersion: APP_VERSION,
+            hasUpdate: true,
             changelog: changelog || "",
             readyToInstall: true,
             downloading: false,
@@ -93639,6 +93642,8 @@ var init_autoUpdateService = __esm({
           console.warn("[AutoUpdate] DOWNLOAD_FAILED:", err.message);
           eventService.broadcast("update_available", {
             latestVersion: version,
+            currentVersion: APP_VERSION,
+            hasUpdate: true,
             changelog: changelog || "",
             readyToInstall: false,
             downloading: false,
