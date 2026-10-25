@@ -203,3 +203,8 @@ sequenceDiagram
     - Verified `npm install-scripts ls` confirms 0 unreviewed install scripts remaining.
     - Updated `installCommand` in [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json) to unset legacy `npm_config_cache_dir` environment variable via `env -u npm_config_cache_dir -u NPM_CONFIG_CACHE_DIR`, preventing npm 10+ unknown config warnings.
     - Verified guardrails (`npm run guardrails`) clean with exit 0 and updated knowledge graph.
+
+- [x] Task 14: Neutralize Legacy Vercel Cache-Dir Injected Environment Variable
+  - **Completed**:
+    - Updated `installCommand` in [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json) to explicitly pass empty string overrides (`npm_config_cache_dir="" NPM_CONFIG_CACHE_DIR=""`) to prevent npm from detecting non-empty legacy cache-dir variables during build.
+    - Verified guardrails (`npm run guardrails`) exit 0, updated knowledge graph, and pushed commit to GitHub remote `origin/main`.
