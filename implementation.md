@@ -188,3 +188,11 @@ sequenceDiagram
     - Regenerated [`website/package-lock.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/website/package-lock.json) cleanly without deprecated package warnings.
     - Updated `installCommand` in [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json) to `npm --prefix website install --no-audit --no-fund --loglevel=error` to permanently silence harmless npm notices in cloud deployment logs.
     - Verified guardrails (`npm run guardrails`) exit 0, updated knowledge graph, and pushed to GitHub.
+
+- [x] Task 12: Permanent Package Elimination of Deprecated Dependencies
+  - **Completed**:
+    - Uninstalled legacy and deprecated `aws-sdk@2.1693.0` from root [`package.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/package.json), eliminating `request`, `querystring`, `har-validator`, and AWS maintenance warnings from the dependency tree permanently.
+    - Updated [`src/routes/utilities.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/utilities.ts) to safely return 501 without attempting to import `aws-sdk`.
+    - Removed suppression flags from `installCommand` in [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json), keeping it standard (`npm --prefix website install`).
+    - Verified natural install runs with 0 warnings and 0 vulnerabilities.
+    - Verified guardrails (`npm run guardrails`) exit 0, updated knowledge graph, and committed to GitHub.

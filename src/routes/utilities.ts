@@ -216,28 +216,11 @@ router.get('/barcode/:code', async (req, res) => {
 // Cloud storage with AWS S3
 router.post('/cloud/push', async (_req, res) => {
   try {
-    const { default: AWS } = await import('aws-sdk');
-    const s3 = new AWS.S3();
-
-    // Upload database file to S3
-    const bucketName = process.env.S3_BUCKET_NAME || 'ai-pharmacy-backups';
-    const key = `backups/app_${new Date().toISOString().replace(/[:.]/g, '-')}.db`;
-
-    const fileStream = fs.createReadStream(getDbPath());
-
-    const uploadParams = {
-      Bucket: bucketName,
-      Key: key,
-      Body: fileStream
-    };
-
-    const data = await s3.upload(uploadParams).promise();
-
-    // Log the action
-    const db = await dbManager.getConnection();
-    await db.run('INSERT INTO action_logs (action_type, description) VALUES (?, ?)', ['CLOUD_PUSH', `Uploaded to S3: ${data.Key}`]);
-    
-    res.json({ success: true, message: 'Data pushed to AWS S3', s3Url: data.Location });
+    const bucketName = process.env.S3_BUCKET_NAME;
+    if (!bucketName) {
+      return res.status(501).json({ error: 'AWS S3 cloud backup is not configured.' });
+    }
+    res.json({ success: false, message: 'Cloud S3 push is disabled. Use local automated encrypted backups.' });
   } catch (e: any) {
     console.error('Cloud push error:', e);
     res.status(500).json({ error: 'Failed to push to cloud' });

@@ -58,7 +58,6 @@
     "@types/compression": "^1.8.1",
     "@types/jsbarcode": "^3.11.4",
     "adm-zip": "^0.5.17",
-    "aws-sdk": "^2.1693.0",
     "axios": "^1.16.1",
     "better-sqlite3": "^12.11.1",
     "canvas": "^3.2.3",
