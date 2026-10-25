@@ -171,3 +171,13 @@ sequenceDiagram
     - Updated navigation header in [`website/public/owner.html`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/website/public/owner.html) to include direct bidirectional navigation to License Admin (`/license`) alongside Patient Shop (`/shop`).
     - Updated navigation in [`website/public/index.html`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/website/public/index.html) to link directly to the new Owner Console (`/owner`).
     - Verified guardrails and synchronized knowledge graph.
+
+- [x] Task 10: Production Release v0.1.160 Deployment
+  - **Completed**:
+    - Pre-flight guardrails scan verified clean (`npm run guardrails` exit code 0).
+    - Executed `npm run release` (`node scripts/release.mjs`):
+      - Built standalone portable setup executable: `AI-Pharmacy-OS-Portable-Setup-v0.1.160.exe` (992.8 MB).
+      - Built delta update archive: `AI-Pharmacy-OS-Update-v0.1.160.zip` (37.5 MB, SHA-256: `d651d8a058709021b86021c21647ce408cb26e2047940ab7b1df3bfe7009357d`).
+      - Created GitHub Release `v0.1.160` and uploaded installer, update ZIP, and companion mobile APK (`AI-Pharmacy-Mobile-v0.1.160.apk`).
+      - Verified update server reports `latestVersion="0.1.160"` with `Rollout="ALL"`.
+      - Committed version bump to `origin/main` ([`631b0e7e`](https://github.com/loki94in/AI-PHARMACY-V3/commit/631b0e7e)).
