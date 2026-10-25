@@ -558,10 +558,15 @@ interface LocalSwitchCatalogItem {
 interface LocalReorderSameCard {
   medicineName: string;
   medicineId?: number;
+  productCode?: string;
+  productId?: number | string;
   company?: string;
   mrp?: number;
   packaging?: string;
   ptr?: number;
+  storeId?: number;
+  storeName?: string;
+  scheme?: string;
   currentStock: number;
   minStock: number;
   suggestedQty: number;
@@ -573,6 +578,8 @@ interface LocalReorderSameCard {
     mrp?: number;
     purchaseDate?: string;
   };
+  sourceOrderId?: number;
+  sourceRefillId?: number;
 }
 
 interface LocalRefillPanelPatient {
@@ -1260,6 +1267,17 @@ export default function PharmarackCart() {
   const [reorderSameModalTarget, setReorderSameModalTarget] = useState<LocalReorderSameCard | null>(null);
   const [reorderModalQty, setReorderModalQty] = useState<number>(1);
   const [reorderModalSupplierId, setReorderModalSupplierId] = useState<number | null>(null);
+  const reorderQtyInputRef = useRef<HTMLInputElement>(null);
+  const [addingItemKeys, setAddingItemKeys] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (reorderSameModalTarget) {
+      setTimeout(() => {
+        reorderQtyInputRef.current?.focus();
+        reorderQtyInputRef.current?.select();
+      }, 50);
+    }
+  }, [reorderSameModalTarget]);
 
   // Purchase History Modal State
   const [purchaseHistoryModalTarget, setPurchaseHistoryModalTarget] = useState<{ medicineName: string; loading: boolean; history: LocalPriceHistoryRow[] } | null>(null);
@@ -4378,7 +4396,8 @@ export default function PharmarackCart() {
       }
     }
 
-    setReaddingSentItems(true);
+    const directItemKey = `${medName}:::${storeId}`;
+    setAddingItemKeys(prev => new Set(prev).add(directItemKey));
     beginHighPriorityAction();
     try {
       // Still no ids: ONE live search scoped to THIS distributor; auto-add only when exactly one of
@@ -4453,7 +4472,11 @@ export default function PharmarackCart() {
       console.error('Failed to direct reorder:', err);
       toastEvent.trigger('Failed to reorder: ' + (apiErr?.message || 'Error'), 'error');
     } finally {
-      setReaddingSentItems(false);
+      setAddingItemKeys(prev => {
+        const next = new Set(prev);
+        next.delete(directItemKey);
+        return next;
+      });
       endHighPriorityAction();
     }
   };
@@ -4776,67 +4799,190 @@ export default function PharmarackCart() {
 
   // 1. Unified Reorder Cards Memo
 
+  const openReorderModalForItem = (item: {
+    medicineName: string;
+    medicineId?: number;
+    productCode?: string;
+    productId?: number | string;
+    company?: string;
+    mrp?: number;
+    packaging?: string;
+    ptr?: number;
+    currentStock?: number;
+    minStock?: number;
+    suggestedQty?: number;
+    storeId?: number;
+    storeName?: string;
+    scheme?: string;
+    previousPurchase?: {
+      supplierName?: string;
+      quantity?: number;
+      price?: number;
+      mrp?: number;
+      purchaseDate?: string;
+    };
+    hasPreviousPurchase?: boolean;
+    sourceOrderId?: number;
+    sourceRefillId?: number;
+  }) => {
+    const defaultQty = Math.max(1, item.suggestedQty || 1);
+    setReorderModalQty(defaultQty);
+    if (item.storeId) {
+      setReorderModalSupplierId(Number(item.storeId));
+    } else if (distributors.length > 0) {
+      setReorderModalSupplierId(distributors[0].storeId);
+    } else {
+      setReorderModalSupplierId(null);
+    }
+    setReorderSameModalTarget({
+      medicineName: item.medicineName,
+      medicineId: item.medicineId,
+      productCode: item.productCode,
+      productId: item.productId,
+      company: item.company || '',
+      mrp: item.mrp,
+      packaging: item.packaging,
+      ptr: item.ptr,
+      currentStock: item.currentStock ?? 0,
+      minStock: item.minStock ?? 5,
+      suggestedQty: defaultQty,
+      storeId: item.storeId,
+      storeName: item.storeName,
+      scheme: item.scheme,
+      hasPreviousPurchase: Boolean(item.hasPreviousPurchase || item.previousPurchase),
+      previousPurchase: item.previousPurchase,
+      sourceOrderId: item.sourceOrderId,
+      sourceRefillId: item.sourceRefillId
+    });
+  };
+
   const handleConfirmReorderSame = async () => {
     if (!reorderSameModalTarget) return;
     const card = reorderSameModalTarget;
-    const targetStoreId = reorderModalSupplierId || distributors[0]?.storeId || 0;
+    const targetStoreId = reorderModalSupplierId || card.storeId || distributors[0]?.storeId || 0;
     const targetDist = distributors.find(d => d.storeId === targetStoreId) || distributors[0];
+    const qtyToAdd = Math.max(1, reorderModalQty || 1);
+    const medName = card.medicineName;
+    const itemKey = `${medName}:::${targetStoreId}`;
 
-    beginHighPriorityAction();
-    try {
-      const rate = card.previousPurchase?.price || card.ptr || undefined;
-      const addRes = await api.addPharmarackCart([{
-        productId: card.medicineId || 0,
-        storeId: targetStoreId,
-        qty: reorderModalQty,
-        rate: rate,
-        mrp: card.mrp || card.previousPurchase?.mrp || undefined,
-        company: card.company || '',
-        productName: card.medicineName,
-        storeName: targetDist?.storeName || 'Distributor',
-        packaging: card.packaging || '',
-        mapped: true
-      }]);
+    // 1. Immediately close modal so user can proceed without waiting (<10ms)
+    setReorderSameModalTarget(null);
 
-      if (addRes && addRes.success) {
-        toastEvent.trigger(`Added "${card.medicineName}" (x${reorderModalQty}) to ${targetDist?.storeName || 'Cart'}!`, 'success');
-        if (targetStoreId) {
-          setSentWaStatusMap(prev => {
-            const next = { ...prev };
-            delete next[targetStoreId];
-            return next;
-          });
-        }
-        setDistributors(prev => {
-          const updated = mergeItemIntoDistributors(prev, {
-            productId: card.medicineId || 0,
-            storeId: targetStoreId,
-            qty: reorderModalQty,
-            ptr: rate,
-            mrp: card.mrp || card.previousPurchase?.mrp || undefined,
-            company: card.company || '',
-            productName: card.medicineName,
-            storeName: targetDist?.storeName || 'Distributor',
-            packaging: card.packaging || '',
-            isChecked: true
-          });
-          cachedDistributors = updated;
-          persistCartCache(updated, cachedPriceHistory);
-          return updated;
-        });
-        setReorderSameModalTarget(null);
-        scheduleCartSync(1500);
-      } else {
-        toastEvent.trigger(addRes?.error || 'Opening Live Search to verify product...', 'info');
-        liveCartAddEvent.triggerOpen(card.medicineName, reorderModalQty);
-        setReorderSameModalTarget(null);
+    // 2. Track addition state per item key (keeps all other cards active!)
+    setAddingItemKeys(prev => new Set(prev).add(itemKey));
+
+    // 3. Resolve IDs
+    let productCode = card.productCode || '';
+    let productId = Number(card.productId) || Number(card.medicineId) || 0;
+    let packaging = card.packaging || '';
+    let company = card.company || '';
+    let rate = card.ptr || card.previousPurchase?.price || undefined;
+    let mrp = card.mrp || card.previousPurchase?.mrp || undefined;
+    const storeName = targetDist?.storeName || card.storeName || 'Distributor';
+
+    if ((!productCode || !productId) && targetStoreId) {
+      const storeProducts = distributorProductsMap[targetStoreId] || [];
+      const match = storeProducts.find(p => isStrictSameProduct(p.medicineName, medName));
+      if (match) {
+        productCode = match.productCode || productCode;
+        productId = Number(match.productId) || productId;
+        packaging = packaging || match.packaging || '';
+        company = company || match.manufacturer || '';
+        rate = rate || match.ptr || undefined;
+        mrp = mrp || match.mrp || undefined;
       }
-    } catch (err: unknown) {
-      const apiErr = err as LocalApiError;
-      toastEvent.trigger(apiErr?.message || 'Failed to add reorder item', 'error');
-    } finally {
-      endHighPriorityAction();
     }
+
+    // 4. Optimistically update local cart so the card immediately shows in cart
+    setDistributors(prev => {
+      const updated = mergeItemIntoDistributors(prev, {
+        productId: productId || 0,
+        storeId: targetStoreId,
+        qty: qtyToAdd,
+        ptr: rate,
+        mrp: mrp,
+        company: company,
+        productName: medName,
+        storeName: storeName,
+        packaging: packaging,
+        isChecked: true
+      });
+      cachedDistributors = updated;
+      persistCartCache(updated, cachedPriceHistory);
+      return updated;
+    });
+
+    if (targetStoreId) {
+      setSentWaStatusMap(prev => {
+        const next = { ...prev };
+        delete next[targetStoreId];
+        return next;
+      });
+    }
+
+    // 5. Non-blocking detached upstream sync
+    (async () => {
+      try {
+        if ((!productCode || !productId) && targetStoreId) {
+          const live = await api.searchPharmarack(medName, targetStoreId).catch(() => null);
+          const hits = (Array.isArray(live) ? live : []).filter((r: LocalLiveSearchRow) =>
+            !r.isOffline && !r.isLocalPharmacy && r.productCode && r.productId &&
+            Number(r.storeId) === Number(targetStoreId) && isStrictSameProduct(r.fullName || r.shortName || r.name, medName));
+          if (hits.length === 1) {
+            const h = hits[0];
+            productCode = String(h.productCode);
+            productId = Number(h.productId) || 0;
+            packaging = packaging || h.packaging || '';
+            company = company || h.company || '';
+            rate = h.rate ?? rate;
+            mrp = h.mrp ?? mrp;
+          }
+        }
+
+        if (!productCode || !productId) {
+          toastEvent.trigger(`Opening Live Search to verify product for "${medName}"...`, 'info');
+          liveCartAddEvent.triggerOpen(medName, qtyToAdd, card.sourceOrderId, card.sourceRefillId, targetStoreId ? Number(targetStoreId) : undefined);
+          return;
+        }
+
+        const payload = [{
+          productId: productId || 0,
+          storeId: Number(targetStoreId) || 0,
+          qty: qtyToAdd,
+          productCode: productCode || '',
+          productName: medName,
+          company: company || '',
+          packaging: packaging || '',
+          rate: rate || undefined,
+          mrp: mrp || undefined,
+          storeName: storeName,
+          mapped: true,
+          medicineId: card.medicineId || undefined
+        }];
+
+        const addRes = await api.addPharmarackCart(payload);
+        if (addRes && addRes.success) {
+          toastEvent.trigger(`Added "${medName}" (x${qtyToAdd}) to ${storeName} live cart!`, 'success');
+          window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+
+          if (card.sourceOrderId) {
+            api.updateOrder(card.sourceOrderId, { status: 'Ordered' }).catch(() => {});
+          }
+        } else {
+          toastEvent.trigger(addRes?.details || addRes?.error || `Failed to add ${medName} to live cart`, 'error');
+        }
+      } catch (err: unknown) {
+        console.error('Failed to add reorder item:', err);
+        const apiErr = err as LocalApiError;
+        toastEvent.trigger('Failed to reorder: ' + (apiErr?.message || 'Network error'), 'error');
+      } finally {
+        setAddingItemKeys(prev => {
+          const next = new Set(prev);
+          next.delete(itemKey);
+          return next;
+        });
+      }
+    })();
   };
 
   // Re-fetch pending special orders whenever any page creates/updates an order.
@@ -5423,7 +5569,12 @@ export default function PharmarackCart() {
                               <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => !inCart && liveCartAddEvent.triggerOpen(order.product, order.qty, order.id)}
+                                  onClick={() => !inCart && openReorderModalForItem({
+                                    medicineName: order.product,
+                                    suggestedQty: order.qty || 1,
+                                    sourceOrderId: order.id,
+                                    storeName: order.pharmarack_distributor
+                                  })}
                                   disabled={inCart}
                                   className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
                                 >
@@ -5467,7 +5618,13 @@ export default function PharmarackCart() {
                               <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => !inCart && liveCartAddEvent.triggerOpen(refill.medicine_name, refill.quantity_needed || 1)}
+                                  onClick={() => !inCart && openReorderModalForItem({
+                                    medicineName: refill.medicine_name || '',
+                                    medicineId: refill.medicine_id,
+                                    suggestedQty: Number(refill.quantity_needed) || 1,
+                                    currentStock: Number(refill.in_stock_qty) || 0,
+                                    sourceRefillId: refill.id
+                                  })}
                                   disabled={inCart}
                                   className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
                                 >
@@ -5522,7 +5679,14 @@ export default function PharmarackCart() {
                                 return (
                                   <button
                                     type="button"
-                                    onClick={() => !inCart && liveCartAddEvent.triggerOpen(sug.medicineName, sug.suggestedQty)}
+                                    onClick={() => !inCart && openReorderModalForItem({
+                                      medicineName: sug.medicineName,
+                                      medicineId: sug.medicineId,
+                                      packaging: sug.packaging,
+                                      currentStock: sug.currentStock,
+                                      minStock: 5,
+                                      suggestedQty: sug.suggestedQty
+                                    })}
                                     disabled={inCart}
                                     className={`py-1 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all whitespace-nowrap ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-emerald-500 hover:bg-emerald-600 text-white active:scale-95 cursor-pointer shadow-xs'}`}
                                   >
@@ -5552,6 +5716,8 @@ export default function PharmarackCart() {
                           const itemKey = `all-recent-${item.medicineName}:::${item.storeId || item.storeName || idx}`;
                           const rawKey = `${item.medicineName}:::${item.storeId || item.storeName || idx}`;
                           const itemQty = getReorderItemQty(rawKey, 1);
+                          const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
+                          const inCart = isMedicineInAnyCart(item.medicineName);
                           return (
                             <div key={itemKey} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                               <div className="space-y-2.5">
@@ -5594,12 +5760,25 @@ export default function PharmarackCart() {
                                 <span className="text-xs text-muted font-bold">Qty: {itemQty}</span>
                                 <button
                                   type="button"
-                                  onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
-                                  disabled={readdingSentItems}
+                                  onClick={() => openReorderModalForItem({
+                                    medicineName: item.medicineName,
+                                    medicineId: item.medicineId,
+                                    productCode: item.productCode,
+                                    productId: item.productId,
+                                    company: item.manufacturer || '',
+                                    mrp: item.mrp,
+                                    packaging: item.packaging,
+                                    ptr: item.ptr || item.lastRate,
+                                    storeId: item.storeId ? Number(item.storeId) : undefined,
+                                    storeName: item.storeName || item.lastDistributorName,
+                                    scheme: item.scheme,
+                                    suggestedQty: itemQty
+                                  })}
+                                  disabled={inCart || isAdding}
                                   className="py-1.5 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
                                 >
-                                  <ShoppingCart size={12} />
-                                  <span>Reorder</span>
+                                  {isAdding ? <Loader2 size={12} className="animate-spin" /> : inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
+                                  <span>{isAdding ? 'Adding…' : inCart ? '✓ In Cart' : 'Reorder'}</span>
                                 </button>
                               </div>
                             </div>
@@ -5623,6 +5802,8 @@ export default function PharmarackCart() {
                           const itemKey = `all-purchase:::${item.medicineId || item.medicineName}:::${item.storeId || item.storeName || idx}`;
                           const rawKey = `purchase:::${item.medicineId || item.medicineName}:::${item.storeId || item.storeName || idx}`;
                           const itemQty = getReorderItemQty(rawKey, 1);
+                          const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
+                          const inCart = isMedicineInAnyCart(item.medicineName);
                           return (
                             <div key={itemKey} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                               <div className="space-y-2.5">
@@ -5652,12 +5833,32 @@ export default function PharmarackCart() {
                                 <span className="text-xs text-muted font-bold">Qty: {itemQty}</span>
                                 <button
                                   type="button"
-                                  onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
-                                  disabled={readdingSentItems}
+                                  onClick={() => openReorderModalForItem({
+                                    medicineName: item.medicineName,
+                                    medicineId: item.medicineId,
+                                    productCode: item.productCode,
+                                    productId: item.productId,
+                                    company: item.manufacturer || '',
+                                    mrp: item.mrp,
+                                    packaging: item.packaging,
+                                    ptr: item.ptr,
+                                    storeId: item.storeId ? Number(item.storeId) : undefined,
+                                    storeName: item.storeName || item.lastDistributorName,
+                                    suggestedQty: itemQty,
+                                    previousPurchase: {
+                                      supplierName: item.storeName || item.lastDistributorName,
+                                      quantity: item.lastQty,
+                                      price: item.ptr,
+                                      mrp: item.mrp,
+                                      purchaseDate: item.lastOrderedDate
+                                    },
+                                    hasPreviousPurchase: true
+                                  })}
+                                  disabled={inCart || isAdding}
                                   className="py-1.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
                                 >
-                                  <ShoppingCart size={12} />
-                                  <span>Add to Cart</span>
+                                  {isAdding ? <Loader2 size={12} className="animate-spin" /> : inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
+                                  <span>{isAdding ? 'Adding…' : inCart ? '✓ In Cart' : 'Add to Cart'}</span>
                                 </button>
                               </div>
                             </div>
@@ -5717,7 +5918,12 @@ export default function PharmarackCart() {
                           <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
                             <button
                               type="button"
-                              onClick={() => !inCart && liveCartAddEvent.triggerOpen(order.product, order.qty, order.id)}
+                              onClick={() => !inCart && openReorderModalForItem({
+                                medicineName: order.product,
+                                suggestedQty: order.qty || 1,
+                                sourceOrderId: order.id,
+                                storeName: order.pharmarack_distributor
+                              })}
                               disabled={inCart}
                               className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
                             >
@@ -5762,7 +5968,13 @@ export default function PharmarackCart() {
                         <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
                           <button
                             type="button"
-                            onClick={() => !inCart && liveCartAddEvent.triggerOpen(refill.medicine_name, refill.quantity_needed || 1)}
+                            onClick={() => !inCart && openReorderModalForItem({
+                              medicineName: refill.medicine_name || '',
+                              medicineId: refill.medicine_id,
+                              suggestedQty: Number(refill.quantity_needed) || 1,
+                              currentStock: Number(refill.in_stock_qty) || 0,
+                              sourceRefillId: refill.id
+                            })}
                             disabled={inCart}
                             className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
                           >
@@ -5839,7 +6051,14 @@ export default function PharmarackCart() {
                             return (
                               <button
                                 type="button"
-                                onClick={() => !inCart && liveCartAddEvent.triggerOpen(sug.medicineName, sug.suggestedQty)}
+                                onClick={() => !inCart && openReorderModalForItem({
+                                  medicineName: sug.medicineName,
+                                  medicineId: sug.medicineId,
+                                  packaging: sug.packaging,
+                                  currentStock: sug.currentStock,
+                                  minStock: 5,
+                                  suggestedQty: sug.suggestedQty
+                                })}
                                 disabled={inCart}
                                 className={`py-1 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all whitespace-nowrap ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-emerald-500 hover:bg-emerald-600 text-white active:scale-95 cursor-pointer shadow-xs'}`}
                               >
@@ -6006,32 +6225,62 @@ export default function PharmarackCart() {
                           <div className="flex items-center gap-1.5">
                             {(() => {
                               const inCart = isMedicineInAnyCart(item.medicineName);
+                              const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
                               return (
                                 <button
                                   type="button"
-                                  onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
-                                  disabled={readdingSentItems || inCart}
+                                  onClick={() => openReorderModalForItem({
+                                    medicineName: item.medicineName,
+                                    medicineId: item.medicineId,
+                                    productCode: item.productCode,
+                                    productId: item.productId,
+                                    company: item.manufacturer || '',
+                                    mrp: item.mrp,
+                                    packaging: item.packaging,
+                                    ptr: item.ptr || item.lastRate,
+                                    storeId: item.storeId ? Number(item.storeId) : undefined,
+                                    storeName: item.storeName || item.lastDistributorName,
+                                    scheme: item.scheme,
+                                    suggestedQty: itemQty
+                                  })}
+                                  disabled={inCart || isAdding}
                                   className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-purple-600 hover:bg-purple-700 text-white active:scale-95 cursor-pointer disabled:opacity-50'}`}
                                   title={inCart ? `${item.medicineName} is already in the live cart` : `Reorder from ${item.storeName || item.lastDistributorName}`}
                                 >
-                                  {inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
-                                  <span className="truncate">{inCart ? '✓ In Live Cart' : `Reorder (x{itemQty})`}</span>
+                                  {isAdding ? <Loader2 size={12} className="animate-spin" /> : inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
+                                  <span className="truncate">{isAdding ? 'Adding…' : inCart ? '✓ In Live Cart' : `Reorder (x${itemQty})`}</span>
                                 </button>
                               );
                             })()}
 
-                            {isDiffDistributor && highestStock && (
-                              <button
-                                type="button"
-                                onClick={() => handleReorderDirect(item, itemQty, highestStock.storeId, highestStock.storeName)}
-                                disabled={readdingSentItems}
-                                className="py-1.5 px-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-[11px] font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs whitespace-nowrap"
-                                title={`Switch and reorder from ${highestStock.storeName} (${highestStock.availability} in stock)`}
-                              >
-                                <Zap size={11} />
-                                <span>Highest Stock</span>
-                              </button>
-                            )}
+                            {isDiffDistributor && highestStock && (() => {
+                              const isAddingHs = addingItemKeys.has(`${item.medicineName}:::${highestStock.storeId || 0}`);
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => openReorderModalForItem({
+                                    medicineName: item.medicineName,
+                                    medicineId: item.medicineId,
+                                    productCode: item.productCode,
+                                    productId: item.productId,
+                                    company: item.manufacturer || '',
+                                    mrp: item.mrp,
+                                    packaging: item.packaging,
+                                    ptr: highestStock.ptr || item.ptr,
+                                    storeId: highestStock.storeId ? Number(highestStock.storeId) : undefined,
+                                    storeName: highestStock.storeName,
+                                    scheme: item.scheme,
+                                    suggestedQty: itemQty
+                                  })}
+                                  disabled={isAddingHs}
+                                  className="py-1.5 px-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-[11px] font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs whitespace-nowrap disabled:opacity-50"
+                                  title={`Switch and reorder from ${highestStock.storeName} (${highestStock.availability} in stock)`}
+                                >
+                                  {isAddingHs ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+                                  <span>{isAddingHs ? 'Adding…' : 'Highest Stock'}</span>
+                                </button>
+                              );
+                            })()}
 
                             <button
                               type="button"
@@ -6133,16 +6382,37 @@ export default function PharmarackCart() {
                           <div className="flex items-center gap-1.5">
                             {(() => {
                               const inCart = isMedicineInAnyCart(item.medicineName);
+                              const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
                               return (
                                 <button
                                   type="button"
-                                  onClick={() => handleReorderDirect(item, itemQty, item.storeId ?? undefined, item.storeName || item.lastDistributorName)}
-                                  disabled={readdingSentItems || inCart}
+                                  onClick={() => openReorderModalForItem({
+                                    medicineName: item.medicineName,
+                                    medicineId: item.medicineId,
+                                    productCode: item.productCode,
+                                    productId: item.productId,
+                                    company: item.manufacturer || '',
+                                    mrp: item.mrp,
+                                    packaging: item.packaging,
+                                    ptr: item.ptr,
+                                    storeId: item.storeId ? Number(item.storeId) : undefined,
+                                    storeName: item.storeName || item.lastDistributorName,
+                                    suggestedQty: itemQty,
+                                    previousPurchase: {
+                                      supplierName: item.storeName || item.lastDistributorName,
+                                      quantity: item.lastQty,
+                                      price: item.ptr,
+                                      mrp: item.mrp,
+                                      purchaseDate: item.lastOrderedDate
+                                    },
+                                    hasPreviousPurchase: true
+                                  })}
+                                  disabled={inCart || isAdding}
                                   className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-sky-600 hover:bg-sky-500 text-white active:scale-95 cursor-pointer disabled:opacity-50'}`}
                                   title={inCart ? `${item.medicineName} is already in the live cart` : `Add to live cart of ${item.storeName || item.lastDistributorName}`}
                                 >
-                                  {inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
-                                  <span className="truncate">{inCart ? '✓ In Live Cart' : `Add to Cart (x${itemQty})`}</span>
+                                  {isAdding ? <Loader2 size={12} className="animate-spin" /> : inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
+                                  <span className="truncate">{isAdding ? 'Adding…' : inCart ? '✓ In Live Cart' : `Add to Cart (x${itemQty})`}</span>
                                 </button>
                               );
                             })()}
@@ -7246,12 +7516,12 @@ export default function PharmarackCart() {
                                             <div className="flex items-center gap-1 shrink-0">
                                               <button
                                                 type="button"
-                                                disabled={readdingSentItems}
+                                                disabled={addingItemKeys.has(`${item.medicineName}:::${dist.storeId || 0}`)}
                                                 onClick={() => handleReorderDirect(item, qty, dist.storeId, dist.storeName)}
                                                 className="px-2.5 py-1 rounded-md bg-primary hover:bg-primary/90 text-white text-[10px] font-bold disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-xs"
                                                 title={`Add ${item.medicineName} (x${qty}) directly to cart`}
                                               >
-                                                + Add (x{qty})
+                                                {addingItemKeys.has(`${item.medicineName}:::${dist.storeId || 0}`) ? 'Adding…' : `+ Add (x${qty})`}
                                               </button>
                                               <button
                                                 type="button"
@@ -8137,10 +8407,18 @@ export default function PharmarackCart() {
                       -
                     </button>
                     <input
+                      ref={reorderQtyInputRef}
+                      autoFocus
                       type="number"
                       min={1}
                       value={reorderModalQty}
                       onChange={(e) => setReorderModalQty(Math.max(1, parseInt(e.target.value) || 1))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleConfirmReorderSame();
+                        }
+                      }}
                       className="w-24 text-center bg-bg border border-glass-border rounded-xl py-1.5 text-xs text-text font-mono font-black focus:outline-none focus:border-amber-500"
                     />
                     <button
@@ -8183,7 +8461,7 @@ export default function PharmarackCart() {
                 className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs flex items-center gap-1.5 transition-all active:scale-95 shadow-md cursor-pointer"
               >
                 <Check size={14} />
-                <span>Confirm & Add to Reorder Cart</span>
+                <span>Confirm & Add to Reorder Cart ↵</span>
               </button>
             </div>
           </div>

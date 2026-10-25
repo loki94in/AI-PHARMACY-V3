@@ -5242,40 +5242,19 @@ router.post('/check-overstock', async (req, res) => {
       }
     } catch (_) {}
 
-    // 5. Calculate existing cart quantity across distributors
+    // 5. Calculate existing cart quantity across distributors (fast in-memory cache)
     let cartQty = 0;
     try {
-      const settings = await getPharmarackSettings();
-      const token = settings['pharmarack_session_token'] || '';
-      if (token) {
-        const cartRes = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/GetUserCartDetails', {
-          method: 'GET',
-          signal: AbortSignal.timeout(5000)
-        });
-        if (cartRes.ok) {
-          const cartData: any = await cartRes.json();
-          const rawList = Array.isArray(cartData?.IList) 
-            ? cartData.IList 
-            : Array.isArray(cartData?.data) 
-            ? cartData.data 
-            : Array.isArray(cartData?.Data)
-            ? cartData.Data
-            : (cartData?.data?.Stores) || (cartData?.Data?.Stores) || [];
+      const cachedLines = getCachedCartLines();
+      const targetNames = matchingMeds.map(m => m.name.toLowerCase().replace(/[^a-z0-9]/g, ''));
+      targetNames.push(productName.toLowerCase().replace(/[^a-z0-9]/g, ''));
+      targetNames.push(brandTokens.replace(/[^a-z0-9]/g, ''));
 
-          const targetNames = matchingMeds.map(m => m.name.toLowerCase().replace(/[^a-z0-9]/g, ''));
-          targetNames.push(productName.toLowerCase().replace(/[^a-z0-9]/g, ''));
-          targetNames.push(brandTokens.replace(/[^a-z0-9]/g, ''));
-
-          for (const store of rawList) {
-            const items = store.lineItems || store.items || store.Products || store.line_items || [];
-            for (const item of items) {
-              const itemTitle = (item.productName || item.ProductName || item.ProductFullName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-              const matchesAny = targetNames.some(tn => tn.length >= 3 && (itemTitle.includes(tn) || tn.includes(itemTitle)));
-              if (matchesAny) {
-                cartQty += Number(item.qty || item.Quantity || item.quantity || 0);
-              }
-            }
-          }
+      for (const it of cachedLines) {
+        const itemTitle = it.productName.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const matchesAny = targetNames.some(tn => tn.length >= 3 && (itemTitle.includes(tn) || tn.includes(itemTitle)));
+        if (matchesAny) {
+          cartQty += Number(it.qty || 0);
         }
       }
     } catch (_) {}

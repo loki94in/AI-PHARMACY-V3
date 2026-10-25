@@ -89,7 +89,9 @@ function downloadFile(url: string, dest: string, onProgress?: (downloaded: numbe
         },
         (res) => {
           if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            return makeRequest(res.headers.location, redirectCount + 1);
+            res.resume(); // Free previous response socket back to agent pool
+            const redirectUrl = new URL(res.headers.location, currentUrl).toString();
+            return makeRequest(redirectUrl, redirectCount + 1);
           }
           if (res.statusCode !== 200) {
             return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
@@ -232,6 +234,8 @@ class AutoUpdateService {
                 setTimeout(() => {
                   eventService.broadcast('update_available', {
                     latestVersion:  stagedVersion,
+                    currentVersion: APP_VERSION,
+                    hasUpdate:      true,
                     readyToInstall: true,
                     downloading:    false,
                     reason:         'boot_staged',
@@ -257,8 +261,10 @@ class AutoUpdateService {
       } catch (_) {}
     })();
 
-    // Manual-only update mode: automatic boot check and periodic polling are disabled.
-    // Update checks run exclusively when triggered manually by the user via Settings > License & Updates.
+    // Automatically check for new releases in the background on every boot (T+10s after app services settle)
+    setTimeout(() => {
+      void this.runCheck('boot');
+    }, 10_000);
   }
 
   stop(): void {
@@ -352,6 +358,8 @@ class AutoUpdateService {
         if (alreadyDownloaded) {
           eventService.broadcast('update_available', {
             latestVersion:    result.latestVersion,
+            currentVersion:   APP_VERSION,
+            hasUpdate:        true,
             downloadUrl:      result.downloadUrl,
             updatePackageUrl: result.updatePackageUrl,
             changelog:        result.changelog,
@@ -456,6 +464,8 @@ class AutoUpdateService {
 
     eventService.broadcast('update_available', {
       latestVersion: target.latestVersion,
+      currentVersion: APP_VERSION,
+      hasUpdate: true,
       downloadUrl: target.downloadUrl,
       updatePackageUrl: target.updatePackageUrl,
       changelog: target.changelog,
@@ -499,6 +509,8 @@ class AutoUpdateService {
         }
         eventService.broadcast('update_progress', {
           latestVersion: version,
+          currentVersion: APP_VERSION,
+          hasUpdate: true,
           downloading: true,
           downloadProgress: percent,
           downloadedBytes: downloaded,
@@ -525,6 +537,8 @@ class AutoUpdateService {
           }
           eventService.broadcast('update_available', {
             latestVersion: version,
+            currentVersion: APP_VERSION,
+            hasUpdate: true,
             changelog: changelog || '',
             readyToInstall: false,
             downloading: false,
@@ -564,6 +578,8 @@ class AutoUpdateService {
       console.log(`[AutoUpdate] Download complete. Update v${version} is ready to install.`);
       eventService.broadcast('update_available', {
         latestVersion:  version,
+        currentVersion: APP_VERSION,
+        hasUpdate:      true,
         changelog:      changelog || '',
         readyToInstall: true,
         downloading:    false,
@@ -585,6 +601,8 @@ class AutoUpdateService {
       console.warn('[AutoUpdate] DOWNLOAD_FAILED:', err.message);
       eventService.broadcast('update_available', {
         latestVersion: version,
+        currentVersion: APP_VERSION,
+        hasUpdate: true,
         changelog: changelog || '',
         readyToInstall: false,
         downloading: false,

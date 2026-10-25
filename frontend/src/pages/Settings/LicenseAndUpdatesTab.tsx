@@ -318,8 +318,14 @@ function SoftwareUpdateCard() {
     setDownloadStarting(true);
     setError(null);
     try {
-      await apiClient.post('/license/start-download');
-      setUpdateStatus({ downloading: true, readyToInstall: false });
+      const res = await apiClient.post<{ downloading?: boolean; latestVersion?: string }>('/license/start-download');
+      setUpdateStatus({
+        latestVersion: res.data?.latestVersion || updateStatus.version,
+        currentVersion: updateStatus.currentVersion,
+        hasUpdate: true,
+        downloading: true,
+        readyToInstall: false,
+      });
       toastEvent.trigger('Background update download started...', 'info');
     } catch (err: unknown) {
       const e = err as { response?: { data?: { error?: string } }; message?: string };
@@ -431,7 +437,7 @@ function SoftwareUpdateCard() {
               Downloading update v{updateStatus.version || ''} in background...
             </span>
             <span className="font-mono text-text">
-              {updateStatus.downloadedMB} MB / {updateStatus.totalMB > 0 ? updateStatus.totalMB : 105} MB ({updateStatus.percent}%)
+              {updateStatus.downloadedMB} MB / {updateStatus.totalMB > 0 ? updateStatus.totalMB : 39.4} MB ({updateStatus.percent}%)
             </span>
           </div>
           <div className="w-full bg-border rounded-full h-2 overflow-hidden">
@@ -499,7 +505,7 @@ function SoftwareUpdateCard() {
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-60"
               >
                 <ArrowDownToLine size={13} className={downloadStarting ? 'animate-bounce' : ''} />
-                {downloadStarting ? 'Starting...' : 'Download Update (105 MB)'}
+                {downloadStarting ? 'Starting...' : `Download Update (${updateStatus.totalMB > 0 ? `${updateStatus.totalMB} MB` : 'Fast Path'})`}
               </button>
             )}
           </div>
@@ -526,7 +532,7 @@ function SoftwareUpdateCard() {
                   className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer shadow-sm shadow-primary/20 disabled:opacity-60"
                 >
                   <ArrowDownToLine size={13} className={downloadStarting ? 'animate-bounce' : ''} />
-                  {downloadStarting ? 'Starting...' : 'Download Update (105 MB)'}
+                  {downloadStarting ? 'Starting...' : `Download Update (${updateStatus.totalMB > 0 ? `${updateStatus.totalMB} MB` : 'Fast Path'})`}
                 </button>
               </div>
               {updateStatus.changelog && (

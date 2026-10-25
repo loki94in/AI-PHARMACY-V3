@@ -2031,7 +2031,36 @@ const Topbar = memo(({
       icon: React.ReactNode;
     }> = [];
 
-    // 0. Active Refill Cart Order Progress (Highest Priority)
+    // 0. Software Update Progress / Status (Top Priority when downloading or ready)
+    if (updateStatus.state === 'downloading') {
+      const totalMB = updateStatus.totalMB > 0 ? updateStatus.totalMB : 39.4;
+      items.push({
+        id: 'app-update',
+        type: 'notification',
+        title: `⏬ Update v${updateStatus.version || ''} — ${updateStatus.percent}%`,
+        subtitle: `${updateStatus.downloadedMB} of ${totalMB} MB downloading in background`,
+        progress: updateStatus.percent,
+        badge: `${updateStatus.percent}%`,
+        color: 'sky',
+        action: () => navigate('/settings?tab=license'),
+        actionLabel: 'Updates',
+        icon: <ArrowDownToLine size={12} className="text-sky-400 animate-bounce shrink-0" />
+      });
+    } else if (updateStatus.state === 'ready') {
+      items.push({
+        id: 'app-update',
+        type: 'notification',
+        title: `✅ Update v${updateStatus.version || ''} ready`,
+        subtitle: 'Downloaded & verified — install anytime',
+        badge: 'Install',
+        color: 'emerald',
+        action: () => navigate('/settings?tab=license'),
+        actionLabel: 'Updates',
+        icon: <Check size={12} className="text-emerald-400 shrink-0" />
+      });
+    }
+
+    // 0.05. Active Refill Cart Order Progress
     if (activeCartJob) {
       const total = activeCartJob.rows.length;
       const done = activeCartJob.rows.filter(r => r.state !== 'queued' && r.state !== 'working').length;
@@ -2077,34 +2106,6 @@ const Topbar = memo(({
         icon: isFlash
           ? <Check size={12} className="text-emerald-400 shrink-0" />
           : <RefreshCw size={12} className={`${startupAttention ? 'text-amber-400' : 'text-sky-400'} animate-spin shrink-0`} />
-      });
-    }
-
-    // 0.07. Software Update Progress / Status (only displayed when actively downloading or ready to install)
-    if (updateStatus.state === 'downloading') {
-      items.push({
-        id: 'app-update',
-        type: 'notification',
-        title: `⏬ Update v${updateStatus.version || ''} — ${updateStatus.percent}%`,
-        subtitle: `${updateStatus.downloadedMB} of ${updateStatus.totalMB > 0 ? updateStatus.totalMB : 105} MB downloading in background`,
-        progress: updateStatus.percent,
-        badge: 'Downloading',
-        color: 'sky',
-        action: () => navigate('/settings?tab=license'),
-        actionLabel: 'Updates',
-        icon: <ArrowDownToLine size={12} className="text-sky-400 animate-bounce shrink-0" />
-      });
-    } else if (updateStatus.state === 'ready') {
-      items.push({
-        id: 'app-update',
-        type: 'notification',
-        title: `✅ Update v${updateStatus.version || ''} ready`,
-        subtitle: 'Downloaded & verified — install anytime',
-        badge: 'Install',
-        color: 'emerald',
-        action: () => navigate('/settings?tab=license'),
-        actionLabel: 'Updates',
-        icon: <Check size={12} className="text-emerald-400 shrink-0" />
       });
     }
 
@@ -2562,6 +2563,84 @@ const Topbar = memo(({
             }
 
             // 2. CONTEXTUAL AUTO-FOCUS MODES (When NOT Hovered)
+
+            // (Update-0) Software Update Downloading in Background (Live Progress Bar)
+            if (updateStatus.state === 'downloading') {
+              const totalMB = updateStatus.totalMB > 0 ? updateStatus.totalMB : 39.4;
+              return (
+                <div
+                  onClick={() => navigate('/settings?tab=license')}
+                  className="w-full flex flex-col justify-center gap-1 h-full relative cursor-pointer group/progress animate-hub-enter"
+                  title="Click to view update details in Settings"
+                >
+                  <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                      <ArrowDownToLine size={12} className="text-sky-400 animate-bounce shrink-0" />
+                      <span className="truncate text-text font-bold text-xs tracking-tight">
+                        Downloading Update v{updateStatus.version || ''} ({updateStatus.percent}%)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-bold">
+                      <span className="font-mono text-sky-400">
+                        {updateStatus.downloadedMB} / {totalMB} MB
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate('/settings?tab=license');
+                        }}
+                        className="text-[9px] font-black text-sky-400 hover:text-sky-300 hover:underline uppercase tracking-wider pl-1"
+                      >
+                        Details
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* High Visibility Progress Bar */}
+                  <div className="w-full h-1.5 bg-bg border border-sky-500/30 rounded-full overflow-hidden flex relative shadow-inner">
+                    <div
+                      className="h-full bg-gradient-to-r from-sky-500 via-blue-500 to-emerald-400 transition-[width] duration-300 ease-out"
+                      style={{ width: `${Math.min(100, Math.max(2, updateStatus.percent))}%` }}
+                      title={`Downloaded ${updateStatus.downloadedMB} of ${totalMB} MB (${updateStatus.percent}%)`}
+                    />
+                  </div>
+                </div>
+              );
+            }
+
+            // (Update-Ready) Software Update Downloaded & Ready to Install
+            if (updateStatus.state === 'ready') {
+              return (
+                <div
+                  onClick={() => navigate('/settings?tab=license')}
+                  className="w-full flex flex-col justify-center gap-1 h-full relative cursor-pointer group/progress animate-hub-enter"
+                  title="Click to install update and restart"
+                >
+                  <div className="flex items-center justify-between gap-2 text-xs font-semibold">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                      <Check size={12} className="text-emerald-400 shrink-0 font-bold" />
+                      <span className="truncate text-emerald-400 font-bold text-xs tracking-tight">
+                        Update v{updateStatus.version || ''} Ready to Install
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate('/settings?tab=license');
+                      }}
+                      className="text-[10px] font-black px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 uppercase tracking-wider shrink-0"
+                    >
+                      Install Now
+                    </button>
+                  </div>
+                  <div className="w-full h-1.5 bg-bg border border-emerald-500/30 rounded-full overflow-hidden relative shadow-inner">
+                    <div className="h-full bg-emerald-400 w-full" />
+                  </div>
+                </div>
+              );
+            }
 
             // (0) Active Live Refill Cart Order in Progress
             if (activeCartJob) {

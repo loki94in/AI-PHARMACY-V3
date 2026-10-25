@@ -38,7 +38,7 @@ export interface RawUpdateFrame {
 
 const INITIAL_STATUS: UpdateStatus = {
   version: null,
-  currentVersion: '1.0.0',
+  currentVersion: '0.0.0',
   state: 'idle',
   percent: 0,
   downloadedMB: 0,
@@ -81,13 +81,22 @@ export function compareVersions(a: string, b: string): number {
  */
 export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatus): UpdateStatus {
   const rawVersion = frame.latestVersion !== undefined ? frame.latestVersion : current.version;
-  const currentVersion = frame.currentVersion || current.currentVersion;
+  const currentVersion = (frame.currentVersion && frame.currentVersion !== '0.0.0')
+    ? frame.currentVersion
+    : (current.currentVersion !== '0.0.0' ? current.currentVersion : (frame.currentVersion || '0.0.0'));
 
   // Semver verification: is rawVersion strictly newer than current running binary?
-  const isTargetNewer = Boolean(rawVersion && currentVersion && compareVersions(rawVersion, currentVersion) > 0);
+  // If currentVersion is not known yet ('0.0.0'), accept frame.hasUpdate or active download state
+  const isTargetNewer = Boolean(
+    rawVersion && (
+      currentVersion === '0.0.0'
+        ? (frame.hasUpdate !== false)
+        : compareVersions(rawVersion, currentVersion) > 0
+    )
+  );
 
-  // Never report a target version older than or equal to current running binary
-  const version = (rawVersion && !isTargetNewer) ? currentVersion : rawVersion;
+  // Never report a target version older than or equal to current running binary unless currentVersion is unknown
+  const version = (rawVersion && !isTargetNewer && currentVersion !== '0.0.0') ? currentVersion : rawVersion;
   const changelog = frame.changelog !== undefined ? (frame.changelog || '') : current.changelog;
   const downloadUrl = frame.downloadUrl !== undefined ? frame.downloadUrl : current.downloadUrl;
   const updatePackageUrl = frame.updatePackageUrl !== undefined ? frame.updatePackageUrl : current.updatePackageUrl;
@@ -126,9 +135,9 @@ export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatu
   } else if (frame.readyToInstall && isTargetNewer) {
     state = 'ready';
     percent = 100;
-  } else if (frame.downloading && hasUpdate) {
+  } else if (frame.downloading && (hasUpdate || isTargetNewer)) {
     state = 'downloading';
-  } else if (hasUpdate && typeof frame.downloadProgress === 'number' && (current.state === 'downloading' || frame.downloadProgress > 0)) {
+  } else if ((hasUpdate || isTargetNewer) && typeof frame.downloadProgress === 'number' && (current.state === 'downloading' || frame.downloadProgress > 0)) {
     state = 'downloading';
   } else if (!hasUpdate || frame.downloading === false || frame.readyToInstall === false) {
     if (current.state !== 'ready' || !isTargetNewer) {
