@@ -131,13 +131,22 @@ export async function ensureCustomerPortalAccount(
     );
 
     if (existingAccount) {
+      let pin = existingAccount.pin_display;
+      if (!pin || String(pin).trim() === '') {
+        pin = generateRandomPin();
+        const pinHashed = hashPin(pin);
+        await db.run(
+          'UPDATE customer_portal_accounts SET pin_display = ?, pin_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+          [pin, pinHashed, existingAccount.id]
+        );
+      }
       if (targetCustomerId) {
         await db.run(
           'UPDATE customer_portal_accounts SET customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
           [targetCustomerId, existingAccount.id]
         );
       }
-      return { accountId: existingAccount.id, pin: existingAccount.pin_display || '1234', isNew: false };
+      return { accountId: existingAccount.id, pin, isNew: false };
     }
 
     const pin = generateRandomPin();
@@ -286,6 +295,22 @@ router.get('/accounts/:id/sessions', async (req, res) => {
  * Each customer receives a unique random 4-digit PIN, stored in pin_display and hashed in pin_hash.
  */
 export async function syncAllCustomersToPortal(db: any): Promise<{ syncedCount: number; totalAccounts: number }> {
+  // 1. Repair any existing accounts with missing or blank pin_display
+  try {
+    const blankPinAccounts = await db.all(
+      `SELECT id FROM customer_portal_accounts WHERE pin_display IS NULL OR TRIM(pin_display) = ''`
+    );
+    for (const acc of blankPinAccounts) {
+      const pin = generateRandomPin();
+      const pHash = hashPin(pin);
+      await db.run(
+        `UPDATE customer_portal_accounts SET pin_display = ?, pin_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [pin, pHash, acc.id]
+      );
+    }
+  } catch (_) {}
+
+  // 2. Sync all saved customers with phone numbers
   const customers = await db.all(
     `SELECT id, name, phone FROM customers WHERE phone IS NOT NULL AND TRIM(phone) != ''`
   );

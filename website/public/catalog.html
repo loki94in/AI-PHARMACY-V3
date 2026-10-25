@@ -331,7 +331,23 @@
     <!-- Refill Cards Container -->
     <div id="refillsListContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <div class="col-span-full py-12 text-center text-slate-400 text-xs">
-        Please log in with your phone number to view your chronic prescriptions and refill schedules.
+        Please log in with your phone number and 4-digit PIN to view your chronic prescriptions and refill schedules.
+      </div>
+    </div>
+
+    <!-- Refill Fulfillment & Past Sold Booking History -->
+    <div class="mt-8 pt-6 border-t border-slate-200/90 space-y-4">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-base font-extrabold text-slate-900 flex items-center gap-2">
+            <i data-lucide="history" class="w-4 h-4 text-emerald-600"></i>
+            <span id="i18n-refillHistoryTitle">Refill Fulfillment & Past Sold Booking History</span>
+          </h3>
+          <p class="text-xs text-slate-500">History of your past dispensed chronic medicines, fulfillment dates, and counter bookings.</p>
+        </div>
+      </div>
+      <div id="refillsHistoryContainer" class="space-y-3.5">
+        <div class="py-6 text-center text-slate-400 text-xs">No past refill history found.</div>
       </div>
     </div>
   </section>
@@ -351,17 +367,34 @@
     </div>
   </section>
 
-  <!-- ================= TAB 4: TRACK ACTIVE ORDERS ================= -->
-  <section id="portalView-orders" class="hidden max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 space-y-5">
+  <!-- ================= TAB 4: TRACK ACTIVE ORDERS & SPECIAL SHORTAGES ================= -->
+  <section id="portalView-orders" class="hidden max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1 space-y-6">
     <div>
-      <h2 class="text-lg sm:text-xl font-extrabold text-slate-900">Track Orders & Delivery Status</h2>
-      <p class="text-xs text-slate-500">Live fulfillment status of your website orders and prescription refills.</p>
+      <h2 class="text-lg sm:text-xl font-extrabold text-slate-900">Track Orders & Special Shortage Requests</h2>
+      <p class="text-xs text-slate-500">Live fulfillment status of your special shortage orders, advance payment tracking, and website refills.</p>
     </div>
 
-    <!-- Orders List Container -->
-    <div id="ordersListContainer" class="space-y-3.5">
-      <div class="py-12 text-center text-slate-400 text-xs">
-        No active orders found. Place an order from the catalog to track it here.
+    <!-- Special Shortages Section -->
+    <div class="space-y-3.5">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-extrabold text-amber-900 flex items-center gap-2">
+          <i data-lucide="sparkles" class="w-4 h-4 text-amber-600"></i>
+          <span id="i18n-specialHistoryTitle">Special / Shortage Medicine Requests & Advance Status</span>
+        </h3>
+      </div>
+      <div id="specialOrdersContainer" class="space-y-3.5">
+        <div class="py-6 text-center text-slate-400 text-xs">No special shortage requests registered.</div>
+      </div>
+    </div>
+
+    <!-- General Orders Container -->
+    <div class="pt-4 border-t border-slate-200/90 space-y-3.5">
+      <h3 class="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+        <i data-lucide="package" class="w-4 h-4 text-brand-600"></i>
+        <span>General Store & Delivery Orders</span>
+      </h3>
+      <div id="ordersListContainer" class="space-y-3.5">
+        <div class="py-8 text-center text-slate-400 text-xs">No active orders found.</div>
       </div>
     </div>
   </section>
@@ -380,63 +413,168 @@
     </button>
   </div>
 
-  <!-- ================= PATIENT LOGIN MODAL ================= -->
-  <div id="loginModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
-    <div class="bg-white p-6 sm:p-8 rounded-3xl max-w-md w-full shadow-2xl border border-slate-100 space-y-4 max-h-[92vh] overflow-y-auto custom-scroll">
+  <!-- ================= AUTHENTICATION MODAL (PATIENT / OWNER GATE) ================= -->
+  <div id="loginModal" class="fixed inset-0 z-50 hidden flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+    <div class="bg-white p-6 sm:p-8 rounded-3xl max-w-md w-full shadow-2xl border border-slate-100 space-y-4 max-h-[92vh] overflow-y-auto custom-scroll relative">
+      
+      <!-- Top Header & Optional Close Button -->
       <div class="flex items-center justify-between border-b border-slate-100 pb-3">
         <div class="flex items-center gap-2.5">
           <div class="w-10 h-10 rounded-xl bg-brand-50 text-brand-600 flex items-center justify-center font-bold">
-            <i data-lucide="user-check" class="w-5 h-5"></i>
+            <i data-lucide="shield-check" class="w-5 h-5"></i>
           </div>
           <div>
-            <h3 class="text-base font-extrabold text-slate-900">Patient Health Portal</h3>
-            <p class="text-[11px] text-slate-500">Access your bills, refills & discounts</p>
+            <h3 class="text-base font-extrabold text-slate-900" id="loginModalHeaderTitle">AI Pharmacy OS</h3>
+            <p class="text-[11px] text-slate-500" id="loginModalHeaderSub">Patient Refills & Store Portal</p>
           </div>
         </div>
-        <button onclick="closeLoginModal()" class="p-1 text-slate-400 hover:text-slate-700 rounded-lg">
+        <button id="closeLoginModalBtn" onclick="closeLoginModal()" class="p-1 text-slate-400 hover:text-slate-700 rounded-lg">
           <i data-lucide="x" class="w-5 h-5"></i>
         </button>
       </div>
 
-      <form id="patientLoginForm" onsubmit="handlePatientLogin(event)" class="space-y-3.5">
-        <input type="text" id="login_url_check" name="website_url_check" class="hidden" style="display:none !important;" tabindex="-1" autocomplete="off">
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1">Mobile Phone Number *</label>
-          <div class="relative">
-            <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">+91</span>
-            <input type="tel" id="loginPhoneInput" required placeholder="98765 43210" maxlength="10"
-              class="w-full pl-12 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-brand-500">
+      <!-- Segmented Toggle: Patient vs Pharmacy Owner -->
+      <div class="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl gap-1 text-xs font-bold">
+        <button type="button" id="authTabBtn-patient" onclick="switchAuthTab('patient')"
+          class="py-2.5 px-3 rounded-xl bg-white text-brand-700 shadow-xs flex items-center justify-center gap-1.5 transition-all">
+          <i data-lucide="user" class="w-4 h-4"></i>
+          <span id="i18n-tabPatientLogin">Patient Login</span>
+        </button>
+        <button type="button" id="authTabBtn-owner" onclick="switchAuthTab('owner')"
+          class="py-2.5 px-3 rounded-xl text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5 transition-all">
+          <i data-lucide="store" class="w-4 h-4"></i>
+          <span id="i18n-tabOwnerLogin">Pharmacy Owner</span>
+        </button>
+      </div>
+
+      <!-- Error / Notice Banner -->
+      <div id="loginErrorMsg" class="hidden p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start gap-2">
+        <i data-lucide="alert-circle" class="w-4 h-4 text-rose-500 shrink-0 mt-0.5"></i>
+        <span id="loginErrorText"></span>
+      </div>
+
+      <!-- ================= PATIENT LOGIN VIEW ================= -->
+      <div id="authView-patient" class="space-y-4">
+        <form id="patientLoginForm" onsubmit="handlePatientLogin(event)" class="space-y-3.5">
+          <input type="text" id="login_url_check" name="website_url_check" class="hidden" style="display:none !important;" tabindex="-1" autocomplete="off">
+          
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-loginPhoneLabel">Mobile Phone Number *</label>
+            <div class="relative">
+              <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">+91</span>
+              <input type="tel" id="loginPhoneInput" required placeholder="98765 43210" maxlength="10" inputmode="numeric"
+                class="w-full pl-12 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-brand-500">
+            </div>
           </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-xs font-semibold text-slate-700" id="i18n-loginPinLabel">4-Digit Portal PIN *</label>
+              <button type="button" onclick="toggleForgotPinView()" class="text-[11px] text-brand-600 font-bold hover:underline" id="i18n-forgotPinLink">
+                Forgot / Reset PIN?
+              </button>
+            </div>
+            <div class="relative">
+              <input type="password" id="loginPinInput" required placeholder="••••" maxlength="4" inputmode="numeric"
+                class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono tracking-widest text-slate-900 focus:outline-none focus:border-brand-500">
+              <button type="button" onclick="togglePinVisibility('loginPinInput')" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                <i data-lucide="eye" class="w-4 h-4"></i>
+              </button>
+            </div>
+            <p class="text-[10px] text-slate-400 mt-1" id="i18n-loginPinHint">Use 4-digit PIN auto-generated for your phone or received on WhatsApp</p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-loginStoreLabel">Select Pharmacy Store</label>
+            <select id="loginStoreSelect" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-500">
+              <option value="PHARM-DEFAULT">Pune City Pharmacy</option>
+            </select>
+          </div>
+
+          <div class="pt-2">
+            <button type="submit" id="patientLoginBtn"
+              class="w-full py-3 bg-brand-600 hover:bg-brand-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-md shadow-brand-600/20 transition-all flex items-center justify-center gap-2">
+              <span id="i18n-patientLoginBtnText">Log In & Access My Prescriptions & Refills</span>
+              <i data-lucide="arrow-right" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </form>
+
+        <!-- Inline Forgot / Reset PIN Recovery Panel -->
+        <div id="forgotPinPanel" class="hidden p-4 rounded-2xl bg-amber-50/80 border border-amber-200 space-y-3 animate-fade-in">
+          <div class="flex items-start justify-between">
+            <div>
+              <h4 class="text-xs font-bold text-amber-900 flex items-center gap-1.5">
+                <i data-lucide="key" class="w-3.5 h-3.5 text-amber-700"></i>
+                <span id="i18n-forgotPinTitle">PIN Recovery via WhatsApp</span>
+              </h4>
+              <p class="text-[11px] text-amber-700 mt-0.5" id="i18n-forgotPinSub">We will retrieve your 4-digit PIN for your registered number.</p>
+            </div>
+            <button type="button" onclick="toggleForgotPinView()" class="text-amber-500 hover:text-amber-800 text-xs font-bold">✕</button>
+          </div>
+
+          <div class="space-y-2">
+            <button type="button" onclick="handleForgotPin()" id="sendPinWaBtn"
+              class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5">
+              <i data-lucide="message-circle" class="w-4 h-4"></i>
+              <span id="i18n-sendPinWaBtnText">Send PIN via WhatsApp 📲</span>
+            </button>
+            <a id="directWaChatLink" href="#" target="_blank" class="hidden w-full py-2 bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-50 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5">
+              <i data-lucide="external-link" class="w-3.5 h-3.5 text-emerald-600"></i>
+              <span>Chat with Pharmacist for PIN</span>
+            </a>
+          </div>
+          <div id="forgotPinResult" class="hidden text-[11px] text-emerald-800 bg-white p-2.5 rounded-xl border border-emerald-200"></div>
         </div>
 
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-loginNameLabel">Patient Full Name (For Prescription)</label>
-          <input type="text" id="loginNameInput" placeholder="e.g. Aarav Patel"
-            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-500">
-        </div>
+        <p class="text-[11px] text-center text-slate-400">Your health data, past purchases, and doctor prescriptions are securely encrypted.</p>
+      </div>
 
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-loginPinLabel">Portal PIN / Password (WhatsApp)</label>
-          <input type="password" id="loginPinInput" placeholder="4-digit PIN (received on WhatsApp)" maxlength="6"
-            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-none focus:border-brand-500">
-          <p class="text-[10px] text-slate-400 mt-1" id="i18n-loginPinHint">Leave blank if logging in for first time</p>
-        </div>
+      <!-- ================= PHARMACY OWNER LOGIN VIEW ================= -->
+      <div id="authView-owner" class="hidden space-y-4">
+        <form id="ownerLoginForm" onsubmit="handleOwnerAuth(event)" class="space-y-3.5">
+          <div class="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-slate-600 text-xs">
+            Sign in as Pharmacy Owner or Staff to manage live customer orders, shortages, and remote cart synchronization.
+          </div>
 
-        <div>
-          <label class="block text-xs font-semibold text-slate-700 mb-1" id="i18n-loginStoreLabel">Preferred Pharmacy Store</label>
-          <select id="loginStoreSelect" class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-500">
-            <option value="PHARM-DEFAULT">Pune City Pharmacy</option>
-          </select>
-        </div>
+          <div id="ownerUserPassFields" class="space-y-3">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Owner / Staff Username</label>
+              <input type="text" id="ownerUsernameInput" placeholder="owner"
+                class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:outline-none focus:border-brand-500">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Password</label>
+              <input type="password" id="ownerPasswordInput" placeholder="••••••••"
+                class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-brand-500">
+            </div>
+          </div>
 
-        <div class="pt-2">
-          <button type="submit" class="w-full py-3 bg-brand-600 hover:bg-brand-700 active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-md shadow-brand-600/20 transition-all flex items-center justify-center gap-2">
-            <span>Log In & View My Records</span>
-            <i data-lucide="arrow-right" class="w-4 h-4"></i>
-          </button>
-        </div>
-      </form>
-      <p class="text-[11px] text-center text-slate-400">Your prescriptions and invoices are private and securely encrypted.</p>
+          <div id="ownerSecretField" class="hidden">
+            <label class="block text-xs font-semibold text-slate-700 mb-1">Emergency Admin Secret Key</label>
+            <input type="password" id="ownerSecretInput" placeholder="Enter admin secret..."
+              class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-none focus:border-brand-500">
+          </div>
+
+          <div class="flex items-center justify-between text-xs pt-1">
+            <button type="button" onclick="toggleOwnerAuthMode()" id="ownerToggleAuthBtn" class="text-brand-600 font-bold hover:underline">
+              Use Admin Secret Key
+            </button>
+            <a href="/owner" class="text-slate-400 hover:text-slate-700 flex items-center gap-1">
+              <span>Full Owner Console</span> &rarr;
+            </a>
+          </div>
+
+          <div class="pt-2">
+            <button type="submit" id="ownerLoginBtn"
+              class="w-full py-3 bg-slate-900 hover:bg-slate-800 active:scale-[0.98] text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-2">
+              <i data-lucide="shield" class="w-4 h-4 text-emerald-400"></i>
+              <span>Pharmacy Owner Sign In</span>
+            </button>
+          </div>
+        </form>
+      </div>
+
     </div>
   </div>
 
@@ -719,6 +857,16 @@
         orderBookedTitle: 'ऑर्डर यशस्वीरीत्या नोंदवली!',
         orderBookedSub: 'आपल्या फार्मसीला आपली ऑर्डर मिळाली आहे.',
         submitting: 'नोंदवत आहे...',
+        tabPatientLogin: 'पेशंट लॉगिन',
+        tabOwnerLogin: 'फार्मसी मालक',
+        loginPinLabel: '४-अंकी पोर्टल पिन *',
+        forgotPinLink: 'पिन विसरलात? / WhatsApp वर मिळवा',
+        forgotPinTitle: 'WhatsApp द्वारे पिन मिळवा',
+        forgotPinSub: 'आपल्या नोंदणीकृत मोबाईल नंबरसाठी ४-अंकी पिन प्राप्त करा.',
+        sendPinWaBtnText: 'WhatsApp वर पिन मिळवा 📲',
+        patientLoginBtnText: 'लॉगिन करा आणि औषधे पहा',
+        refillHistoryTitle: 'रिफिल डिलिव्हरी व मागील इतिहास',
+        specialHistoryTitle: 'स्पेशल शॉर्टेज औषध ऑर्डर्स व अ‍ॅडव्हान्स स्थिती',
       },
       hi: {
         currentLabel: 'हिंदी',
@@ -762,6 +910,16 @@
         orderBookedTitle: 'ऑर्डर सफलतापूर्वक दर्ज हुआ!',
         orderBookedSub: 'आपकी फार्मेसी को आपका ऑर्डर प्राप्त हो गया है।',
         submitting: 'दर्ज हो रहा है...',
+        tabPatientLogin: 'मरीज़ लॉगिन',
+        tabOwnerLogin: 'फार्मेसी मालिक',
+        loginPinLabel: '4-अंकीय पोर्टल पिन *',
+        forgotPinLink: 'पिन भूल गए? / WhatsApp पर पाएं',
+        forgotPinTitle: 'WhatsApp द्वारा पिन प्राप्त करें',
+        forgotPinSub: 'अपने पंजीकृत मोबाइल नंबर के लिए 4-अंकीय पिन प्राप्त करें।',
+        sendPinWaBtnText: 'WhatsApp पर पिन पाएं 📲',
+        patientLoginBtnText: 'लॉगिन करें और दवाइयां देखें',
+        refillHistoryTitle: 'रिफिल डिलीवरी व पुराना इतिहास',
+        specialHistoryTitle: 'स्पेशल शॉर्टेज दवा ऑर्डर्स व एडवांस स्थिति',
       },
       en: {
         currentLabel: 'English',
@@ -805,6 +963,16 @@
         orderBookedTitle: 'Order Queued Successfully!',
         orderBookedSub: 'Your pharmacy counter has received your prescription order.',
         submitting: 'Submitting...',
+        tabPatientLogin: 'Patient Login',
+        tabOwnerLogin: 'Pharmacy Owner',
+        loginPinLabel: '4-Digit Portal PIN *',
+        forgotPinLink: 'Forgot / Reset PIN?',
+        forgotPinTitle: 'PIN Recovery via WhatsApp',
+        forgotPinSub: 'Retrieve your 4-digit PIN for your registered mobile number.',
+        sendPinWaBtnText: 'Send PIN via WhatsApp 📲',
+        patientLoginBtnText: 'Log In & Access My Prescriptions & Refills',
+        refillHistoryTitle: 'Refill Fulfillment & Past Sold Booking History',
+        specialHistoryTitle: 'Special Shortage Medicine Requests & Advance Status',
       }
     };
 
@@ -862,6 +1030,16 @@
         'i18n-cartPosNote': t.cartPosNote,
         'i18n-successPosNote': t.successPosNote,
         'refillPosDisclaimerText': t.posDisclaimer,
+        'i18n-tabPatientLogin': t.tabPatientLogin,
+        'i18n-tabOwnerLogin': t.tabOwnerLogin,
+        'i18n-loginPinLabel': t.loginPinLabel,
+        'i18n-forgotPinLink': t.forgotPinLink,
+        'i18n-forgotPinTitle': t.forgotPinTitle,
+        'i18n-forgotPinSub': t.forgotPinSub,
+        'i18n-sendPinWaBtnText': t.sendPinWaBtnText,
+        'i18n-patientLoginBtnText': t.patientLoginBtnText,
+        'i18n-refillHistoryTitle': t.refillHistoryTitle,
+        'i18n-specialHistoryTitle': t.specialHistoryTitle,
       };
 
       for (const [id, val] of Object.entries(map)) {
@@ -926,10 +1104,20 @@
         if (res.ok && data.success) {
           closeSpecialOrderModal();
           document.getElementById('specialOrderForm').reset();
-          document.getElementById('successTitle').innerText = t.orderBookedTitle;
-          document.getElementById('successSub').innerText = t.orderBookedSub;
+          if (data.advanceAmount) {
+            document.getElementById('successTitle').innerText = 'Special Order Submitted — Advance Required';
+            document.getElementById('successSub').innerText = `An advance deposit of ₹${data.advanceAmount} is required to initiate procurement. Once confirmed, this medicine will be automatically queued into the Live Cart.`;
+            document.getElementById('successOrderTotal').innerText = `₹${data.advanceAmount} (Advance Deposit)`;
+            if (data.upiUri && document.getElementById('successWaLink')) {
+              document.getElementById('successWaLink').href = data.upiUri;
+              document.getElementById('successWaLink').innerText = `Pay Advance ₹${data.advanceAmount} via UPI 📱`;
+            }
+          } else {
+            document.getElementById('successTitle').innerText = t.orderBookedTitle;
+            document.getElementById('successSub').innerText = t.orderBookedSub;
+            document.getElementById('successOrderTotal').innerText = 'Counter Verification';
+          }
           document.getElementById('successOrderId').innerText = `#${data.orderId}`;
-          document.getElementById('successOrderTotal').innerText = 'Counter Verification';
           document.getElementById('successOrderStore').innerText = currentStoreInfo.name || 'Store';
           document.getElementById('successModal').classList.remove('hidden');
           lucide.createIcons();
@@ -958,6 +1146,7 @@
 
       // Check stored session
       const savedAuth = localStorage.getItem('customer_portal_session');
+      const ownerToken = localStorage.getItem('pharma_owner_token') || sessionStorage.getItem('pharma_owner_token');
       if (savedAuth) {
         try {
           customerSession = JSON.parse(savedAuth);
@@ -966,6 +1155,11 @@
           }
           updateAuthUI();
         } catch (_) {}
+      } else if (ownerToken) {
+        updateAuthUI();
+      } else {
+        // Enforce mandatory login gate when visiting /shop without active session!
+        openLoginModal(true);
       }
 
       await loadStoresList();
@@ -1197,29 +1391,209 @@
       lucide.createIcons();
     }
 
-    // ─── PATIENT AUTH & DATA SYNC ───────────────────────────────────────────────
-    function openLoginModal() {
-      document.getElementById('loginModal').classList.remove('hidden');
+    // ─── PATIENT & OWNER AUTH ───────────────────────────────────────────────
+    let isLoginMandatory = false;
+    let isOwnerSecretMode = false;
+
+    function openLoginModal(mandatory = false) {
+      isLoginMandatory = mandatory;
+      const modal = document.getElementById('loginModal');
+      const closeBtn = document.getElementById('closeLoginModalBtn');
+      if (closeBtn) {
+        const hasSession = Boolean(customerSession || localStorage.getItem('pharma_owner_token'));
+        if (mandatory && !hasSession) {
+          closeBtn.classList.add('hidden');
+        } else {
+          closeBtn.classList.remove('hidden');
+        }
+      }
+      modal.classList.remove('hidden');
+      lucide.createIcons();
     }
+
     function closeLoginModal() {
+      const hasSession = Boolean(customerSession || localStorage.getItem('pharma_owner_token'));
+      if (isLoginMandatory && !hasSession) {
+        return; // Locked until authenticated
+      }
       document.getElementById('loginModal').classList.add('hidden');
+      document.getElementById('loginErrorMsg').classList.add('hidden');
     }
-    function toggleUserMenu() {
-      document.getElementById('userMenuDropdown').classList.toggle('hidden');
+
+    function switchAuthTab(tab) {
+      const isPatient = tab === 'patient';
+      document.getElementById('authView-patient').classList.toggle('hidden', !isPatient);
+      document.getElementById('authView-owner').classList.toggle('hidden', isPatient);
+
+      const patientBtn = document.getElementById('authTabBtn-patient');
+      const ownerBtn = document.getElementById('authTabBtn-owner');
+
+      if (isPatient) {
+        patientBtn.className = 'py-2.5 px-3 rounded-xl bg-white text-brand-700 shadow-xs flex items-center justify-center gap-1.5 transition-all';
+        ownerBtn.className = 'py-2.5 px-3 rounded-xl text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5 transition-all';
+      } else {
+        ownerBtn.className = 'py-2.5 px-3 rounded-xl bg-white text-brand-700 shadow-xs flex items-center justify-center gap-1.5 transition-all';
+        patientBtn.className = 'py-2.5 px-3 rounded-xl text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5 transition-all';
+      }
+      document.getElementById('loginErrorMsg').classList.add('hidden');
+      lucide.createIcons();
+    }
+
+    function togglePinVisibility(inputId) {
+      const el = document.getElementById(inputId);
+      if (el) el.type = el.type === 'password' ? 'text' : 'password';
+    }
+
+    function toggleForgotPinView() {
+      const panel = document.getElementById('forgotPinPanel');
+      if (panel) panel.classList.toggle('hidden');
+      lucide.createIcons();
+    }
+
+    async function handleForgotPin() {
+      const phoneInput = document.getElementById('loginPhoneInput');
+      const phone = (phoneInput?.value || '').trim();
+      const errBox = document.getElementById('loginErrorMsg');
+      const errText = document.getElementById('loginErrorText');
+      const resultBox = document.getElementById('forgotPinResult');
+      const waBtn = document.getElementById('sendPinWaBtn');
+      const directWa = document.getElementById('directWaChatLink');
+
+      errBox.classList.add('hidden');
+
+      if (phone.length < 10) {
+        errText.innerText = 'Please enter your 10-digit mobile number above first.';
+        errBox.classList.remove('hidden');
+        phoneInput?.focus();
+        return;
+      }
+
+      waBtn.disabled = true;
+      waBtn.innerHTML = `<span>Retrieving PIN...</span>`;
+
+      try {
+        const res = await fetch('/api/catalog?action=forgot_pin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone, storeId: activeStoreId })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (data.pin) {
+            document.getElementById('loginPinInput').value = data.pin;
+          }
+          resultBox.innerHTML = `
+            <strong>Your 4-Digit Portal PIN is: <span class="font-mono text-base font-extrabold text-emerald-700">${data.pin}</span></strong>
+            <p class="text-[10px] text-emerald-600 mt-1">We have auto-filled your PIN above. Tap "Log In" to access your records.</p>
+          `;
+          resultBox.classList.remove('hidden');
+
+          if (data.whatsappUrl) {
+            directWa.href = data.whatsappUrl;
+            directWa.classList.remove('hidden');
+          }
+        } else {
+          errText.innerText = data.error || 'Could not retrieve PIN.';
+          errBox.classList.remove('hidden');
+        }
+      } catch (err) {
+        errText.innerText = 'Connection error retrieving PIN.';
+        errBox.classList.remove('hidden');
+      } finally {
+        waBtn.disabled = false;
+        waBtn.innerHTML = `<i data-lucide="message-circle" class="w-4 h-4"></i><span id="i18n-sendPinWaBtnText">Send PIN via WhatsApp 📲</span>`;
+        lucide.createIcons();
+      }
+    }
+
+    function toggleOwnerAuthMode() {
+      isOwnerSecretMode = !isOwnerSecretMode;
+      document.getElementById('ownerUserPassFields').classList.toggle('hidden', isOwnerSecretMode);
+      document.getElementById('ownerSecretField').classList.toggle('hidden', !isOwnerSecretMode);
+      document.getElementById('ownerToggleAuthBtn').innerText = isOwnerSecretMode ? 'Use Username & Password' : 'Use Admin Secret Key';
+    }
+
+    async function handleOwnerAuth(e) {
+      if (e) e.preventDefault();
+      const errBox = document.getElementById('loginErrorMsg');
+      const errText = document.getElementById('loginErrorText');
+      const btn = document.getElementById('ownerLoginBtn');
+
+      errBox.classList.add('hidden');
+      btn.disabled = true;
+      btn.innerHTML = `<span>Authenticating Owner...</span>`;
+
+      try {
+        let payload = { storeId: activeStoreId };
+        if (isOwnerSecretMode) {
+          payload.adminSecret = document.getElementById('ownerSecretInput').value.trim();
+        } else {
+          payload.username = document.getElementById('ownerUsernameInput').value.trim();
+          payload.password = document.getElementById('ownerPasswordInput').value;
+        }
+
+        const res = await fetch('/api/catalog?action=owner_login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (data.token) {
+            localStorage.setItem('pharma_owner_token', data.token);
+          }
+          if (payload.adminSecret) {
+            localStorage.setItem('pharma_owner_secret', payload.adminSecret);
+          }
+          isLoginMandatory = false;
+          closeLoginModal();
+          alert('Owner Authenticated Successfully! Opening Owner Remote Console...');
+          window.location.href = '/owner';
+        } else {
+          errText.innerText = data.error || 'Invalid owner credentials.';
+          errBox.classList.remove('hidden');
+        }
+      } catch (err) {
+        errText.innerText = 'Owner login connection error.';
+        errBox.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i data-lucide="shield" class="w-4 h-4 text-emerald-400"></i><span>Pharmacy Owner Sign In</span>`;
+        lucide.createIcons();
+      }
     }
 
     async function handlePatientLogin(e) {
-      e.preventDefault();
+      if (e) e.preventDefault();
       const phone = document.getElementById('loginPhoneInput').value.trim();
-      const name = document.getElementById('loginNameInput').value.trim();
+      const pin = document.getElementById('loginPinInput').value.trim();
       const storeId = document.getElementById('loginStoreSelect').value;
+      const errBox = document.getElementById('loginErrorMsg');
+      const errText = document.getElementById('loginErrorText');
+      const btn = document.getElementById('patientLoginBtn');
+
+      errBox.classList.add('hidden');
+
+      if (phone.length < 10) {
+        errText.innerText = 'Please enter a valid 10-digit mobile number.';
+        errBox.classList.remove('hidden');
+        return;
+      }
+      if (!pin) {
+        errText.innerText = 'Please enter your 4-digit PIN. Tap "Forgot / Reset PIN" if you need it.';
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = `<span>Logging in...</span>`;
 
       try {
         const hp = document.getElementById('login_url_check')?.value || '';
         const res = await fetch('/api/catalog?action=customer_login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone, name, storeId, website_url_check: hp }),
+          body: JSON.stringify({ phone, pin, storeId, website_url_check: hp }),
         });
         const data = await res.json();
         if (res.ok && data.success) {
@@ -1229,6 +1603,7 @@
           customerOrders = data.orders || [];
 
           localStorage.setItem('customer_portal_session', JSON.stringify(customerSession));
+          isLoginMandatory = false;
           updateAuthUI();
           renderRefills(customerRefills);
           renderBills(customerBills);
@@ -1239,10 +1614,16 @@
             selectStore(data.customer.preferredStoreId);
           }
         } else {
-          alert(data.error || 'Login failed. Please check phone number.');
+          errText.innerText = data.error || 'Login failed. Please verify your phone and PIN.';
+          errBox.classList.remove('hidden');
         }
       } catch (err) {
-        alert('Network connection error.');
+        errText.innerText = 'Network connection error. Please try again.';
+        errBox.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span id="i18n-patientLoginBtnText">Log In & Access My Prescriptions & Refills</span><i data-lucide="arrow-right" class="w-4 h-4"></i>`;
+        lucide.createIcons();
       }
     }
 
@@ -1266,6 +1647,7 @@
     }
 
     function updateAuthUI() {
+      const ownerToken = localStorage.getItem('pharma_owner_token') || sessionStorage.getItem('pharma_owner_token');
       if (customerSession) {
         document.getElementById('loginBtn').classList.add('hidden');
         document.getElementById('userProfilePill').classList.remove('hidden');
@@ -1276,6 +1658,12 @@
         // Pre-fill checkout form
         if (document.getElementById('custName')) document.getElementById('custName').value = customerSession.name || '';
         if (document.getElementById('custPhone')) document.getElementById('custPhone').value = customerSession.phone || '';
+      } else if (ownerToken) {
+        document.getElementById('loginBtn').classList.add('hidden');
+        document.getElementById('userProfilePill').classList.remove('hidden');
+        document.getElementById('navUserName').innerText = 'Pharmacy Owner';
+        document.getElementById('dropdownUserName').innerText = 'Owner Console';
+        document.getElementById('dropdownUserPhone').innerText = 'Remote Staff Access';
       } else {
         document.getElementById('loginBtn').classList.remove('hidden');
         document.getElementById('userProfilePill').classList.add('hidden');
@@ -1285,6 +1673,8 @@
     function handlePatientLogout() {
       customerSession = null;
       localStorage.removeItem('customer_portal_session');
+      localStorage.removeItem('pharma_owner_token');
+      sessionStorage.removeItem('pharma_owner_token');
       location.reload();
     }
 
@@ -1302,6 +1692,7 @@
         countBadge.classList.add('hidden');
         const bar = document.getElementById('multiRefillActionBar');
         if (bar) bar.classList.add('hidden');
+        renderRefillsHistory();
         return;
       }
 
@@ -1377,6 +1768,93 @@
 
       lucide.createIcons();
       updateRefillSelectionUI();
+      renderRefillsHistory();
+    }
+
+    function renderRefillsHistory() {
+      const container = document.getElementById('refillsHistoryContainer');
+      if (!container) return;
+
+      const refillOrders = (customerOrders || []).filter(o => 
+        o.orderType === 'REFILL' || o.is_refill || (o.orderId && String(o.orderId).startsWith('RFL'))
+      );
+
+      const refillMedNames = new Set((customerRefills || []).map(r => (r.medicineName || '').toLowerCase().trim()));
+      const pastRefillBills = (customerBills || []).filter(b => 
+        (b.items || []).some(it => refillMedNames.has((it.name || '').toLowerCase().trim()))
+      );
+
+      if (!refillOrders.length && !pastRefillBills.length) {
+        container.innerHTML = `
+          <div class="p-6 bg-slate-50 border border-slate-200/80 rounded-2xl text-center text-xs text-slate-400">
+            No past refill fulfillment records found for this account. Your dispensed monthly refills will appear here automatically.
+          </div>
+        `;
+        return;
+      }
+
+      let html = '';
+
+      if (refillOrders.length > 0) {
+        html += refillOrders.map(o => {
+          const dateStr = o.createdAt ? new Date(o.createdAt).toLocaleDateString() : 'Recent';
+          const itemsList = (o.items || []).map(it => `${it.name} (x${it.qty})`).join(', ');
+          const total = Number(o.totalAmount || 0).toFixed(2);
+          const isLiveCart = o.status === 'In Live Cart' || o.status === 'Procuring';
+
+          return `
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div class="space-y-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-bold text-xs text-slate-900">Refill Booking #${o.orderId}</span>
+                  <span class="text-[11px] text-slate-400 font-mono">📅 Booked: ${dateStr}</span>
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${isLiveCart ? 'bg-sky-50 text-sky-800 border border-sky-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200'}">
+                    ${isLiveCart ? '🛒 In Live Cart' : (o.status || 'Booked')}
+                  </span>
+                </div>
+                <p class="text-xs text-slate-600 font-medium">${itemsList}</p>
+              </div>
+              <div class="flex items-center gap-3 justify-between sm:justify-end">
+                <span class="font-extrabold text-sm text-brand-700 font-mono">₹${total}</span>
+                <span class="text-[11px] text-slate-500 font-semibold bg-slate-100 px-2.5 py-1 rounded-xl">
+                  ${o.orderType === 'DELIVERY' ? '🛵 Home Delivery' : '🏪 Counter Pickup'}
+                </span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      if (pastRefillBills.length > 0) {
+        html += pastRefillBills.map(b => {
+          const dateStr = b.date || 'Recent';
+          const itemsList = (b.items || []).map(it => `${it.name} (x${it.qty})`).join(', ');
+          const total = Number(b.totalAmount || b.net_amount || 0).toFixed(2);
+          return `
+            <div class="bg-white p-4 rounded-2xl border border-emerald-100 bg-emerald-50/20 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div class="space-y-1">
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="font-bold text-xs text-emerald-950">Dispensed Bill ${b.invoiceNo}</span>
+                  <span class="text-[11px] text-slate-400 font-mono">📅 Sold: ${dateStr}</span>
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    ✅ Sold & Fulfilled
+                  </span>
+                </div>
+                <p class="text-xs text-slate-700 font-medium">${itemsList}</p>
+              </div>
+              <div class="flex items-center gap-3 justify-between sm:justify-end">
+                <span class="font-extrabold text-sm text-emerald-800 font-mono">₹${total}</span>
+                <span class="text-[10px] text-emerald-700 font-bold bg-emerald-100/60 border border-emerald-200 px-2 py-0.5 rounded-lg">
+                  Counter Receipt
+                </span>
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
+      container.innerHTML = html;
+      lucide.createIcons();
     }
 
     function toggleRefillSelect(id) {
@@ -1545,14 +2023,23 @@
         container.innerHTML = `<div class="py-12 text-center text-slate-400 text-xs">${t.emptyBills}</div>`;
         return;
       }
-      container.innerHTML = bills.map(b => `
-        <div class="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 shadow-xs space-y-3">
+      container.innerHTML = bills.map(b => {
+        const isUnpaid = b.payment_status === 'UNPAID' || b.is_credit || b.unpaid;
+        const total = Number(b.totalAmount || b.net_amount || 0).toFixed(2);
+        const upiId = currentStoreInfo?.upi_id || 'pharmacy@upi';
+        const upiUri = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(currentStoreInfo?.name || 'Pharmacy')}&am=${total}&cu=INR&tn=${encodeURIComponent('Bill ' + b.invoiceNo)}`;
+
+        return `
+        <div class="bg-white p-4 sm:p-5 rounded-3xl border ${isUnpaid ? 'border-amber-300 bg-amber-50/20' : 'border-slate-200/90'} shadow-xs space-y-3">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 border-b border-slate-100 pb-2.5 text-xs">
             <div>
               <span class="font-extrabold text-slate-900 text-sm">${b.invoiceNo}</span>
               <span class="text-slate-400 ml-2">Date: ${b.date}</span>
             </div>
-            <div class="text-xs font-extrabold text-brand-700">Total: ₹${Number(b.totalAmount || 0).toFixed(2)}</div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-extrabold text-brand-700">₹${total}</span>
+              ${isUnpaid ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">Credit / Due</span>' : '<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">Paid</span>'}
+            </div>
           </div>
 
           <div class="space-y-1 text-xs">
@@ -1563,74 +2050,163 @@
               </div>
             `).join('')}
           </div>
-        </div>
-      `).join('');
-      lucide.createIcons();
-    }
 
-    // ─── RENDERING ORDERS ───────────────────────────────────────────────────────
-    function renderOrders(orders) {
-      const container = document.getElementById('ordersListContainer');
-      const t = i18n[currentLang] || i18n.mr;
-      if (!orders.length) {
-        container.innerHTML = `<div class="py-12 text-center text-slate-400 text-xs">${t.emptyOrders}</div>`;
-        return;
-      }
-      container.innerHTML = orders.map(o => {
-        const isLiveCart = o.status === 'In Live Cart' || o.status === 'Procuring';
-        const isPaid = o.payment_status === 'CONFIRMED' || o.payment_status === 'PAYMENT_CONFIRMED';
-        const isDeclared = Boolean(o.payment_declared);
-        const isCredit = o.paymentMethod === 'CREDIT' || o.isCredit;
-        const total = Number(o.totalAmount || 0).toFixed(2);
-        const upiId = o.upi_id || 'pharmacy@upi';
-        const upiUri = o.upi_uri || `upi://pay?pa=${upiId}&pn=AI%20Pharmacy&am=${total}&cu=INR&tn=Order%20${o.orderId}`;
-
-        let statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">● ${o.status || 'Pending'}</span>`;
-        if (isLiveCart) {
-          statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-sky-50 text-sky-800 border border-sky-200">🛒 In Live Cart</span>`;
-        } else if (isDeclared) {
-          statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">⏳ Awaiting Verification</span>`;
-        } else if (isPaid) {
-          statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">✅ Paid & Confirmed</span>`;
-        } else if (isCredit) {
-          statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">💳 Khata (Pay Later)</span>`;
-        }
-
-        const canDeclarePayment = !isPaid && !isDeclared && !isCredit && o.status !== 'Cancelled';
-
-        return `
-        <div class="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 shadow-xs space-y-3">
-          <div class="flex items-center justify-between text-xs">
-            <div>
-              <span class="font-bold text-slate-900">Order #${o.orderId}</span>
-              <span class="text-slate-400 text-[11px] block">${new Date(o.createdAt).toLocaleDateString()}</span>
-            </div>
-            ${statusBadge}
-          </div>
-          <div class="text-xs text-slate-600">
-            ${(o.items || []).map(i => `${i.name} (x${i.qty})`).join(', ')}
-          </div>
-          <div class="flex justify-between items-center pt-2 border-t border-slate-100 text-xs font-bold text-slate-900">
-            <span>Bill: ₹${total}</span>
-            <span class="text-slate-500 font-normal">${o.orderType === 'DELIVERY' ? '🛵 Home Delivery' : '🏪 Counter Pickup'}</span>
-          </div>
-
-          ${canDeclarePayment ? `
-          <div class="p-3 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-2">
+          ${isUnpaid ? `
+          <div class="p-3 rounded-2xl bg-amber-50 border border-amber-200/90 space-y-2 mt-2">
             <div class="flex items-center justify-between text-[11px]">
-              <span class="text-slate-700 font-semibold">UPI ID: <span class="font-mono font-bold text-slate-900">${upiId}</span></span>
-              <a href="${upiUri}" class="text-brand-600 font-bold hover:underline">Pay ₹${total}</a>
+              <span class="text-amber-900 font-bold">💳 Outstanding Khata Bill</span>
+              <a href="${upiUri}" class="text-brand-700 font-bold hover:underline">Pay ₹${total} via UPI</a>
             </div>
-            <button onclick="declareOrderPayment('${o.orderId}', '${total}')"
+            <button onclick="declareOrderPayment('${b.invoiceNo}', '${total}')"
               class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs">
               <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
-              <span>I Have Paid (Confirm Payment)</span>
+              <span>I Have Paid (Settle Credit Bill)</span>
             </button>
           </div>
           ` : ''}
         </div>
       `;
       }).join('');
+      lucide.createIcons();
+    }
+
+    // ─── RENDERING ORDERS ───────────────────────────────────────────────────────
+    function renderOrders(orders) {
+      const specialContainer = document.getElementById('specialOrdersContainer');
+      const generalContainer = document.getElementById('ordersListContainer');
+      const t = i18n[currentLang] || i18n.mr;
+
+      const specialOrders = (orders || []).filter(o => 
+        o.isSpecialOrder || (o.orderId && String(o.orderId).startsWith('SP-')) || (o.notes && String(o.notes).includes('Special'))
+      );
+      const generalOrders = (orders || []).filter(o => 
+        !o.isSpecialOrder && (!o.orderId || !String(o.orderId).startsWith('SP-')) && (!o.notes || !String(o.notes).includes('Special'))
+      );
+
+      // 1. Render Special Shortage Orders
+      if (specialContainer) {
+        if (!specialOrders.length) {
+          specialContainer.innerHTML = `<div class="py-6 text-center text-slate-400 text-xs">No special shortage medicine requests submitted yet. Use "Special Order (Shortage)" tab to request rare medicines.</div>`;
+        } else {
+          specialContainer.innerHTML = specialOrders.map(o => {
+            const isLiveCart = o.status === 'In Live Cart' || o.status === 'Procuring' || o.status === 'Advance Paid — Queued for Live Cart';
+            const isPaid = o.payment_status === 'CONFIRMED' || o.payment_status === 'PAYMENT_CONFIRMED';
+            const isDeclared = Boolean(o.payment_declared);
+            const isAdvancePending = Boolean(o.status === 'Pending Advance Confirmation' || o.advance_status === 'PENDING');
+            const total = Number(o.totalAmount || 0).toFixed(2);
+            const payAmount = isAdvancePending ? Number(o.advance_amount || 100).toFixed(2) : total;
+            const upiId = o.upi_id || 'pharmacy@upi';
+            const upiUri = o.upi_uri || `upi://pay?pa=${upiId}&pn=AI%20Pharmacy&am=${payAmount}&cu=INR&tn=Advance%20${o.orderId}`;
+            const dateStr = o.createdAt ? new Date(o.createdAt).toLocaleDateString() : 'Recent';
+
+            let statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">● ${o.status || 'Pending'}</span>`;
+            if (isAdvancePending) {
+              statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">⏳ Advance Payment Required (₹${payAmount})</span>`;
+            } else if (isLiveCart) {
+              statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-sky-50 text-sky-800 border border-sky-200">🛒 In Live Cart / Procuring</span>`;
+            } else if (isDeclared) {
+              statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">⏳ Awaiting Advance Verification</span>`;
+            } else if (isPaid) {
+              statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">✅ Advance Confirmed</span>`;
+            }
+
+            return `
+              <div class="bg-white p-4 sm:p-5 rounded-3xl border border-amber-200/90 bg-amber-50/10 shadow-xs space-y-3">
+                <div class="flex items-center justify-between text-xs">
+                  <div>
+                    <span class="font-extrabold text-amber-950">Special Request #${o.orderId}</span>
+                    <span class="text-slate-400 text-[11px] block">📅 Requested: ${dateStr}</span>
+                  </div>
+                  ${statusBadge}
+                </div>
+                <div class="text-xs text-slate-800 font-bold">
+                  💊 ${(o.items || []).map(i => `${i.name} (Quantity: ${i.qty})`).join(', ') || o.medicineName || 'Shortage Medicine'}
+                </div>
+                ${o.notes ? `<div class="text-[11px] text-slate-500 bg-slate-50 p-2 rounded-xl border border-slate-100">Notes: ${o.notes}</div>` : ''}
+
+                ${isAdvancePending ? `
+                <div class="p-3 rounded-2xl bg-amber-50 border border-amber-200 space-y-2 mt-2">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-amber-900 font-bold">Advance Deposit Required: <span class="font-mono text-sm text-brand-700">₹${payAmount}</span></span>
+                    <a href="${upiUri}" class="text-brand-600 font-bold hover:underline">Pay ₹${payAmount} via UPI 📱</a>
+                  </div>
+                  <button onclick="declareOrderPayment('${o.orderId}', '${payAmount}')"
+                    class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs">
+                    <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+                    <span>Confirm Advance Deposit Paid</span>
+                  </button>
+                </div>
+                ` : ''}
+              </div>
+            `;
+          }).join('');
+        }
+      }
+
+      // 2. Render General Orders
+      if (generalContainer) {
+        if (!generalOrders.length) {
+          generalContainer.innerHTML = `<div class="py-8 text-center text-slate-400 text-xs">${t.emptyOrders}</div>`;
+        } else {
+          generalContainer.innerHTML = generalOrders.map(o => {
+            const isLiveCart = o.status === 'In Live Cart' || o.status === 'Procuring';
+            const isPaid = o.payment_status === 'CONFIRMED' || o.payment_status === 'PAYMENT_CONFIRMED';
+            const isDeclared = Boolean(o.payment_declared);
+            const isCredit = o.paymentMethod === 'CREDIT' || o.isCredit;
+            const total = Number(o.totalAmount || 0).toFixed(2);
+            const upiId = o.upi_id || 'pharmacy@upi';
+            const upiUri = o.upi_uri || `upi://pay?pa=${upiId}&pn=AI%20Pharmacy&am=${total}&cu=INR&tn=Order%20${o.orderId}`;
+            const dateStr = o.createdAt ? new Date(o.createdAt).toLocaleDateString() : 'Recent';
+
+            let statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">● ${o.status || 'Pending'}</span>`;
+            if (isLiveCart) {
+              statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-sky-50 text-sky-800 border border-sky-200">🛒 In Live Cart</span>`;
+            } else if (isDeclared) {
+              statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">⏳ Awaiting Verification</span>`;
+            } else if (isPaid) {
+              statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">✅ Paid & Confirmed</span>`;
+            } else if (isCredit) {
+              statusBadge = `<span class="px-2.5 py-1 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200">💳 Khata (Pay Later)</span>`;
+            }
+
+            const canDeclare = !isPaid && !isDeclared && !isCredit && o.status !== 'Cancelled';
+
+            return `
+              <div class="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/90 shadow-xs space-y-3">
+                <div class="flex items-center justify-between text-xs">
+                  <div>
+                    <span class="font-bold text-slate-900">Order #${o.orderId}</span>
+                    <span class="text-slate-400 text-[11px] block">📅 ${dateStr}</span>
+                  </div>
+                  ${statusBadge}
+                </div>
+                <div class="text-xs text-slate-600">
+                  ${(o.items || []).map(i => `${i.name} (x${i.qty})`).join(', ')}
+                </div>
+                <div class="flex justify-between items-center pt-2 border-t border-slate-100 text-xs font-bold text-slate-900">
+                  <span>Bill: ₹${total}</span>
+                  <span class="text-slate-500 font-normal">${o.orderType === 'DELIVERY' ? '🛵 Home Delivery' : '🏪 Counter Pickup'}</span>
+                </div>
+
+                ${canDeclare ? `
+                <div class="p-3 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-2">
+                  <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-slate-700 font-semibold">UPI ID: <span class="font-mono font-bold text-slate-900">${upiId}</span></span>
+                    <a href="${upiUri}" class="text-brand-600 font-bold hover:underline">Pay ₹${total} via UPI</a>
+                  </div>
+                  <button onclick="declareOrderPayment('${o.orderId}', '${total}')"
+                    class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-xs">
+                    <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i>
+                    <span>I Have Paid (Confirm Payment)</span>
+                  </button>
+                </div>
+                ` : ''}
+              </div>
+            `;
+          }).join('');
+        }
+      }
+
       lucide.createIcons();
     }
 

@@ -380,7 +380,7 @@ router.post('/counter-session', async (req, res) => {
 
 // Create a new sale
 router.post('/', async (req, res) => {
-  let db;
+  let db: any;
   try {
     // Non-destructively invoke the global Verification Layer pre-save checks
     const verification = await verificationService.verifyPOSBill(req.body);
@@ -1173,6 +1173,13 @@ router.post('/', async (req, res) => {
         console.warn('[Sales Learning] Failed to record bill learning feedback:', learnErr);
       }
     })();
+
+    // Auto-ensure customer portal account and PIN for customers billed at POS
+    if (cleanPhone && cleanPhone.length === 10) {
+      import('./customerPortal.js').then(({ ensureCustomerPortalAccount }) => {
+        ensureCustomerPortalAccount(db, customerId, cleanPhone, patient_name || 'Customer', targetStoreId).catch(() => {});
+      }).catch(() => {});
+    }
 
     // Trigger WhatsApp notification — ONLY IF user explicitly enabled sendWhatsApp
     if (Boolean(sendWhatsApp)) {

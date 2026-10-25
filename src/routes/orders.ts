@@ -207,6 +207,12 @@ router.post('/batch', async (req, res) => {
       throw txErr;
     }
 
+    if (cleanPhone && cleanPhone.length >= 10) {
+      import('./customerPortal.js').then(({ ensureCustomerPortalAccount }) => {
+        ensureCustomerPortalAccount(db, batchCustomerId, cleanPhone, cleanReqName, targetStoreId).catch(() => {});
+      }).catch(() => {});
+    }
+
     // Send ONE SINGLE CONSOLIDATED WHATSAPP MESSAGE for all items in the order IF user explicitly requested sendWhatsApp
     if (Boolean(sendWhatsApp || req.body.sendWhatsApp) && cleanPhone) {
       const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
@@ -432,9 +438,14 @@ router.post('/', async (req, res) => {
     if (cleanPhone && cleanPhone.length >= 10) {
       try {
         const existingCust = await db.get('SELECT id, name FROM customers WHERE phone = ?', [cleanPhone]);
+        let cId = existingCust?.id || singleCustomerId;
         if (!existingCust) {
-          await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [requester.trim(), cleanPhone]);
+          const cRes = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [requester.trim(), cleanPhone]);
+          cId = cRes.lastID ? Number(cRes.lastID) : cId;
         }
+        import('./customerPortal.js').then(({ ensureCustomerPortalAccount }) => {
+          ensureCustomerPortalAccount(db, cId, cleanPhone, requester.trim(), targetStoreId).catch(() => {});
+        }).catch(() => {});
       } catch (_) {}
     }
 

@@ -60,6 +60,18 @@ class StartupSyncCoordinator {
           console.warn('[StartupSyncCoordinator] Cloud cart queue drain warning:', err?.message || err);
         }
       })();
+
+      // Trigger automatic sync of all existing patients to portal accounts (auto-generates PINs for old patients)
+      void (async () => {
+        try {
+          const { syncAllCustomersToPortal } = await import('../routes/customerPortal.js');
+          const { dbManager } = await import('../database/connection.js');
+          const db = await dbManager.getConnection();
+          await syncAllCustomersToPortal(db);
+        } catch (err: any) {
+          console.warn('[StartupSyncCoordinator] Patient portal accounts sync warning:', err?.message || err);
+        }
+      })();
     }
   }
 
