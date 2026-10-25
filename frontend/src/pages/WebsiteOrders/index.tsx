@@ -534,8 +534,8 @@ export default function WebsiteOrders() {
 
       return true;
     }).sort((a, b) => {
-      const timeA = new Date(a.created_at || a.date).getTime();
-      const timeB = new Date(b.created_at || b.date).getTime();
+      const timeA = new Date(a.created_at || a.date || 0).getTime() || 0;
+      const timeB = new Date(b.created_at || b.date || 0).getTime() || 0;
       if (timeB !== timeA) return timeB - timeA;
       return (Number(b.id) || 0) - (Number(a.id) || 0);
     });

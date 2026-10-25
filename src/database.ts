@@ -549,6 +549,7 @@ async function ensureRefillCartLinkSchema(db: any) {
       company TEXT,
       ptr REAL DEFAULT 0,
       mrp REAL DEFAULT 0,
+      scheme TEXT DEFAULT NULL,
       last_ordered_at INTEGER,
       last_order_date TEXT,
       source TEXT DEFAULT 'order',
@@ -558,6 +559,9 @@ async function ensureRefillCartLinkSchema(db: any) {
     )
   `);
   await db.run('CREATE INDEX IF NOT EXISTS idx_pharmarack_dist_prod_store ON pharmarack_distributor_products (store_id, last_ordered_at DESC)');
+  await ensureColumns(db, 'pharmarack_distributor_products', {
+    scheme: 'TEXT DEFAULT NULL'
+  });
   try {
     await db.run(`
       INSERT OR IGNORE INTO pharmarack_distributor_products

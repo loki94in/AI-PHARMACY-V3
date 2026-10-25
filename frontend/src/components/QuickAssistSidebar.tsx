@@ -1995,7 +1995,18 @@ export const QuickAssistSidebar = memo(({
             </button>
           </div>
           {groupedWebsiteOrders.length === 0 ? (
-            <p className="text-xs text-muted/60 italic pl-2 py-1">No pending online orders</p>
+            <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-bg2/40 border border-border/40">
+              <span className="text-xs text-muted/60 italic">No pending online orders</span>
+              <button
+                onClick={() => {
+                  setExpanded(false);
+                  navigate('/website-orders');
+                }}
+                className="text-[10px] text-cyan-400 hover:underline font-bold cursor-pointer"
+              >
+                All Orders →
+              </button>
+            </div>
           ) : (
             <div className="flex flex-col gap-2.5">
               {groupedWebsiteOrders.map(group => {

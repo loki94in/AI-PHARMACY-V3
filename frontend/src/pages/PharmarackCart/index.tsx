@@ -902,6 +902,12 @@ export default function PharmarackCart() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const currentTab = searchParams.get('tab') || 'cart';
+
+  useEffect(() => {
+    if (searchParams.get('tab') === 'online-orders') {
+      navigate('/website-orders', { replace: true });
+    }
+  }, [searchParams, navigate]);
   const [distributors, setDistributors] = useState<Distributor[]>(() => cachedDistributors);
   const [userCheckOverrides, setUserCheckOverrides] = useState<Record<string, boolean>>(() => loadUserCheckOverrides());
   const userCheckOverridesRef = useRef(userCheckOverrides);
@@ -975,7 +981,6 @@ export default function PharmarackCart() {
   const [priceHistoryCache, setPriceHistoryCache] = useState<Record<string, LocalPriceHistoryRow[]>>(() => cachedPriceHistory);
   const [sendingNotifId, setSendingNotifId] = useState<number | null>(null);
   const [pendingOrders, setPendingOrders] = useState<SpecialOrder[]>(() => cachedPendingOrders);
-  const [allOnlineOrders, setAllOnlineOrders] = useState<SpecialOrder[]>([]);
   const [pendingRefills, setPendingRefills] = useState<Refill[]>(() => cachedPendingRefills);
   const [todaySoldMeds, setTodaySoldMeds] = useState<Set<string>>(() => new Set());
 
@@ -1240,301 +1245,6 @@ export default function PharmarackCart() {
     );
   };
 
-  // ── Online Orders Split-Pane Date & Management State ──
-  const [onlineDateSearchQuery, setOnlineDateSearchQuery] = useState<string>('');
-  const [onlineOrderSearchQuery, setOnlineOrderSearchQuery] = useState<string>('');
-  const [onlineStatusFilter, setOnlineStatusFilter] = useState<'All' | 'Pending' | 'Ready' | 'Fulfilled'>('All');
-  const [onlineCategory, setOnlineCategory] = useState<'today' | 'all' | 'online' | 'refills' | 'special'>('today');
-  const [selectedOnlineOrderDate, setSelectedOnlineOrderDate] = useState<string>(() => getTodayString());
-  const [expandedOnlineMonths, setExpandedOnlineMonths] = useState<Set<string>>(() => new Set<string>());
-  const userExpandedOnlineMonthsRef = useRef<Set<string>>(new Set<string>());
-
-  const getOrderDateKey = (order: SpecialOrder): string => {
-    const raw = order.date || (order as any).created_at || '';
-    if (!raw) return getTodayString();
-    const match = String(raw).match(/^\d{4}-\d{2}-\d{2}/);
-    if (match) return match[0];
-    const d = new Date(raw);
-    if (!isNaN(d.getTime())) {
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${y}-${m}-${day}`;
-    }
-    return getTodayString();
-  };
-
-  const { onlineOrderDateMap, onlineOrderDates } = React.useMemo(() => {
-    const map: Record<string, SpecialOrder[]> = {};
-    allOnlineOrders.forEach(order => {
-      const dKey = getOrderDateKey(order);
-      if (!map[dKey]) map[dKey] = [];
-      map[dKey].push(order);
-    });
-
-    // Ensure today's date exists even if 0 orders
-    const today = getTodayString();
-    if (!map[today]) {
-      map[today] = [];
-    }
-
-    const sortedDates = Object.keys(map).sort((a, b) => b.localeCompare(a));
-    return { onlineOrderDateMap: map, onlineOrderDates: sortedDates };
-  }, [allOnlineOrders]);
-
-  // Keep selectedOnlineOrderDate valid
-  useEffect(() => {
-    if (onlineOrderDates.length > 0 && !onlineOrderDates.includes(selectedOnlineOrderDate)) {
-      setSelectedOnlineOrderDate(onlineOrderDates.includes(getTodayString()) ? getTodayString() : onlineOrderDates[0]);
-    }
-  }, [onlineOrderDates, selectedOnlineOrderDate]);
-
-  // Group onlineOrderDates into Recent (Last 7 Days) and Older Monthly groups
-  const { recentOnlineDates, olderOnlineMonthGroups } = React.useMemo(() => {
-    const now = new Date();
-    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-
-    const filteredDates = onlineDateSearchQuery.trim()
-      ? onlineOrderDates.filter(d => {
-          const q = onlineDateSearchQuery.trim().toLowerCase();
-          if (d.toLowerCase().includes(q)) return true;
-          const dateObj = new Date(d);
-          if (!isNaN(dateObj.getTime())) {
-            const formatted = dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', weekday: 'short' }).toLowerCase();
-            if (formatted.includes(q)) return true;
-          }
-          return false;
-        })
-      : onlineOrderDates;
-
-    const recent: string[] = [];
-    const olderByMonth = new Map<string, { monthKey: string; monthLabel: string; dates: string[] }>();
-
-    filteredDates.forEach(d => {
-      const parts = d.split('-');
-      let dateMidnight = 0;
-      if (parts.length === 3) {
-        const y = parseInt(parts[0], 10);
-        const m = parseInt(parts[1], 10) - 1;
-        const day = parseInt(parts[2], 10);
-        dateMidnight = new Date(y, m, day).getTime();
-      } else {
-        dateMidnight = new Date(d).getTime();
-      }
-
-      const diff = todayMidnight - dateMidnight;
-      if (diff <= SEVEN_DAYS_MS && diff >= -86400000) {
-        recent.push(d);
-      } else {
-        const monthKey = d.slice(0, 7); // YYYY-MM
-        if (!olderByMonth.has(monthKey)) {
-          let monthLabel = monthKey;
-          if (parts.length >= 2) {
-            const monthDate = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, 1);
-            if (!isNaN(monthDate.getTime())) {
-              monthLabel = monthDate.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
-            }
-          }
-          olderByMonth.set(monthKey, {
-            monthKey,
-            monthLabel,
-            dates: []
-          });
-        }
-        olderByMonth.get(monthKey)!.dates.push(d);
-      }
-    });
-
-    const monthGroups = Array.from(olderByMonth.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
-    return { recentOnlineDates: recent, olderOnlineMonthGroups: monthGroups };
-  }, [onlineOrderDates, onlineDateSearchQuery]);
-
-  useEffect(() => {
-    if (onlineDateSearchQuery.trim()) {
-      setExpandedOnlineMonths(new Set(olderOnlineMonthGroups.map(g => g.monthKey)));
-    } else {
-      setExpandedOnlineMonths(new Set(userExpandedOnlineMonthsRef.current));
-    }
-  }, [onlineDateSearchQuery, olderOnlineMonthGroups]);
-
-  const toggleOnlineMonth = (monthKey: string) => {
-    setExpandedOnlineMonths(prev => {
-      const next = new Set(prev);
-      if (next.has(monthKey)) {
-        next.delete(monthKey);
-        userExpandedOnlineMonthsRef.current.delete(monthKey);
-      } else {
-        next.add(monthKey);
-        userExpandedOnlineMonthsRef.current.add(monthKey);
-      }
-      return next;
-    });
-  };
-
-  const handleSelectOnlineDate = (d: string) => {
-    setSelectedOnlineOrderDate(d);
-    if (d === getTodayString()) {
-      setOnlineCategory('today');
-    } else if (onlineCategory === 'today') {
-      setOnlineCategory('all');
-    }
-  };
-
-  const renderOnlineDateButton = (d: string, isIndented = false) => {
-    const isToday = d === getTodayString();
-    const isSelected = d === selectedOnlineOrderDate;
-    const dateObj = new Date(d);
-    const formattedDisplay = isNaN(dateObj.getTime())
-      ? d
-      : dateObj.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', weekday: 'short' });
-    const count = (onlineOrderDateMap[d] || []).length;
-
-    return (
-      <button
-        key={d}
-        type="button"
-        onClick={() => handleSelectOnlineDate(d)}
-        className={`w-full text-left p-2.5 rounded-xl transition-all cursor-pointer flex items-center justify-between gap-2 border ${
-          isSelected
-            ? 'bg-primary/15 border-primary/40 text-text shadow-xs shadow-primary/5'
-            : 'bg-bg2/50 border-glass-border/40 text-muted hover:text-text hover:bg-bg2/90'
-        } ${isIndented ? 'text-xs' : ''}`}
-      >
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Globe size={13} className={isSelected ? 'text-primary shrink-0' : 'text-muted/60 shrink-0'} />
-          <div className="min-w-0">
-            <div className={`text-xs font-bold truncate ${isSelected ? 'text-text font-black' : 'text-text/85'}`}>
-              {formattedDisplay}
-            </div>
-            <div className="text-[9px] text-muted font-mono">{d}</div>
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {count > 0 && (
-            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${isSelected ? 'bg-primary text-white' : 'bg-bg3 text-muted border border-glass-border'}`}>
-              {count}
-            </span>
-          )}
-          {isToday && (
-            <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-              Today
-            </span>
-          )}
-        </div>
-      </button>
-    );
-  };
-
-  const currentOnlineOrders = React.useMemo(() => {
-    let orders = onlineOrderDateMap[selectedOnlineOrderDate] || [];
-    if (onlineStatusFilter !== 'All') {
-      orders = orders.filter(o => {
-        if (onlineStatusFilter === 'Pending') {
-          return ['Pending', 'Confirmed', 'Waiting'].includes(o.status);
-        }
-        return (o.status || '').toLowerCase() === onlineStatusFilter.toLowerCase();
-      });
-    }
-    if (onlineOrderSearchQuery.trim()) {
-      const q = onlineOrderSearchQuery.trim().toLowerCase();
-      orders = orders.filter(o => 
-        (o.product && o.product.toLowerCase().includes(q)) ||
-        (o.requester && o.requester.toLowerCase().includes(q)) ||
-        (o.phone && o.phone.toLowerCase().includes(q)) ||
-        String(o.id).includes(q)
-      );
-    }
-    return orders;
-  }, [onlineOrderDateMap, selectedOnlineOrderDate, onlineStatusFilter, onlineOrderSearchQuery]);
-
-  // Filter patient refills matching selected date (or all pending refills if viewing today)
-  const filteredRefills = React.useMemo(() => {
-    const isSelectedDateToday = selectedOnlineOrderDate === getTodayString();
-    let list = pendingRefills.filter(r => {
-      if (isSelectedDateToday) return true;
-      const rDate = r.next_refill_date ? r.next_refill_date.slice(0, 10) : '';
-      return rDate === selectedOnlineOrderDate;
-    });
-
-    if (onlineOrderSearchQuery.trim()) {
-      const q = onlineOrderSearchQuery.trim().toLowerCase();
-      list = list.filter(r => 
-        (r.medicine_name && r.medicine_name.toLowerCase().includes(q)) ||
-        (r.patient_name && r.patient_name.toLowerCase().includes(q)) ||
-        (r.patient_phone && r.patient_phone.toLowerCase().includes(q)) ||
-        String(r.id).includes(q)
-      );
-    }
-    return list;
-  }, [pendingRefills, selectedOnlineOrderDate, onlineOrderSearchQuery]);
-
-  // Split currentOnlineOrders into 3 channels
-  const { onlineWebsiteOrders, webRefillOrders, specialShortageOrders } = React.useMemo(() => {
-    const website: SpecialOrder[] = [];
-    const webRefill: SpecialOrder[] = [];
-    const shortage: SpecialOrder[] = [];
-
-    currentOnlineOrders.forEach(order => {
-      if (order.customer_order_source === 'website_refill') {
-        webRefill.push(order);
-      } else if (order.customer_order_source === 'website' || order.customer_order_source === 'whatsapp') {
-        website.push(order);
-      } else {
-        shortage.push(order);
-      }
-    });
-
-    return { onlineWebsiteOrders: website, webRefillOrders: webRefill, specialShortageOrders: shortage };
-  }, [currentOnlineOrders]);
-
-  // Aggregate category counts
-  const todayTotalOrdersCount = React.useMemo(() => {
-    const todayOrders = onlineOrderDateMap[getTodayString()] || [];
-    return todayOrders.length + pendingRefills.length;
-  }, [onlineOrderDateMap, pendingRefills]);
-
-  const onlineCategoryCount = onlineWebsiteOrders.length;
-  const refillsCategoryCount = webRefillOrders.length + filteredRefills.length;
-  const specialCategoryCount = specialShortageOrders.length;
-  const totalSelectedCount = onlineCategoryCount + refillsCategoryCount + specialCategoryCount;
-
-  const handleUpdateOrderStatus = async (orderId: number, newStatus: string) => {
-    try {
-      const res = await api.updateOrder(orderId, { status: newStatus as any });
-      if (res && res.success) {
-        toastEvent.trigger(`Order #${orderId} marked as ${newStatus}`, 'success');
-        setAllOnlineOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
-        setPendingOrders(prev => {
-          if (['Fulfilled', 'Completed', 'Cancelled', 'Ready'].includes(newStatus)) {
-            return prev.filter(o => o.id !== orderId);
-          }
-          return prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o);
-        });
-        fetchPendingOrders();
-      } else {
-        toastEvent.trigger(res?.message || 'Failed to update order status', 'error');
-      }
-    } catch (err) {
-      console.error('Failed to update order status:', err);
-      toastEvent.trigger('Failed to update order status', 'error');
-    }
-  };
-
-  const handleWhatsAppCustomer = (order: SpecialOrder) => {
-    if (!order.phone) {
-      toastEvent.trigger('No customer phone number available', 'info');
-      return;
-    }
-    const statusMsg = order.status === 'Ready' 
-      ? 'is packed and ready for pickup' 
-      : order.status === 'Fulfilled' 
-        ? 'has been fulfilled' 
-        : 'is confirmed and being prepared';
-    const text = `Hello ${order.requester || 'Customer'}, your order for ${order.product} (Qty: ${order.qty || 1}) ${statusMsg} at our pharmacy. Thank you!`;
-    openOrReuseWhatsappTab('', order.phone, text);
-  };
-
   // Switch Supplier Modal State
   const [switchModalTarget, setSwitchModalTarget] = useState<{ item: CartLineItem; dist: Distributor } | null>(null);
   const [switchCatalogResults, setSwitchCatalogResults] = useState<LocalSwitchCatalogItem[]>([]);
@@ -1702,8 +1412,8 @@ export default function PharmarackCart() {
     return <span>{out}</span>;
   };
 
-  // Shortages Hub Subtab State (includes 'all_matches' for unified search across all 5 categories)
-  const [shortagesSubTab, setShortagesSubTab] = useState<'all_matches' | 'requests' | 'refills' | 'sales_suggestions' | 'ordered_recently' | 'past_purchases'>('requests');
+  // Shortages Hub Subtab State (includes 'all_matches' for unified view across all categories)
+  const [shortagesSubTab, setShortagesSubTab] = useState<'all_matches' | 'requests' | 'refills' | 'sales_suggestions' | 'ordered_recently' | 'past_purchases'>('all_matches');
 
   // Latest sent order history map by store ID / store name
   const [latestSentMap, setLatestSentMap] = useState<Record<string, LocalSentMapEntry>>({});
@@ -2872,7 +2582,6 @@ export default function PharmarackCart() {
     try {
       const data = await api.getOrders();
       if (Array.isArray(data)) {
-        setAllOnlineOrders(data);
         // Show pending, confirmed, or waiting requests (placed orders are hidden from pending list)
         const filtered = data.filter(o => 
           ['Pending', 'Confirmed', 'Waiting'].includes(o.status) && 
@@ -5201,280 +4910,6 @@ export default function PharmarackCart() {
   const totalQty = distributors.reduce((s, d) => s + d.items.reduce((q, i) => q + (i.qty || 1), 0), 0);
   const totalAmount = distributors.reduce((s, d) => s + d.items.reduce((a, i) => a + getCartItemAmount(i), 0), 0);
 
-  const renderSpecialOrderCard = (order: SpecialOrder) => {
-    const inCart = Boolean(getOrderItemInCart(order));
-    const isWebsite = order.customer_order_source === 'website';
-    const isRefill = order.customer_order_source === 'website_refill';
-    const isWhatsApp = order.customer_order_source === 'whatsapp';
-
-    return (
-      <div key={order.id} className="p-4 rounded-2xl border border-glass-border/60 bg-bg/40 flex flex-col justify-between gap-3 shadow-md hover:border-glass-border transition-all">
-        <div className="space-y-3">
-          {/* Card Header: Customer & Source Badges */}
-          <div className="flex items-center justify-between pb-2 border-b border-glass-border/30">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm font-extrabold text-text truncate">
-                {order.requester || 'Customer'}
-              </span>
-              {order.phone && (
-                <button
-                  type="button"
-                  onClick={() => handleWhatsAppCustomer(order)}
-                  className="text-xs font-mono text-muted hover:text-emerald-400 flex items-center gap-1 transition-colors cursor-pointer"
-                  title="Chat on WhatsApp"
-                >
-                  <Phone size={11} className="text-muted" />
-                  <span>{order.phone}</span>
-                </button>
-              )}
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-bg3 text-muted border border-glass-border">
-                #{order.id}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              {/* Source Badge */}
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono border ${
-                isWebsite
-                  ? 'bg-sky-500/20 text-sky-400 border-sky-500/30'
-                  : isRefill
-                    ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                    : isWhatsApp
-                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                      : 'bg-purple-500/20 text-purple-400 border-purple-500/30'
-              }`}>
-                {isWebsite ? '🌐 Website' : isRefill ? '🔄 Web Refill' : isWhatsApp ? '💬 WhatsApp' : '📋 Shortage'}
-              </span>
-
-              {/* Priority Badge */}
-              {order.priority && order.priority !== 'Normal' && (
-                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  order.priority === 'Urgent'
-                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
-                    : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                }`}>
-                  {order.priority}
-                </span>
-              )}
-
-              {/* Status Chip */}
-              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${
-                order.status === 'Fulfilled' || order.status === 'Completed'
-                  ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                  : order.status === 'Ready'
-                    ? 'bg-sky-500/20 text-sky-400 border-sky-500/30'
-                    : order.status === 'Ordered'
-                      ? 'bg-purple-500/20 text-purple-400 border-purple-500/30'
-                      : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-              }`}>
-                {order.status === 'Fulfilled' || order.status === 'Completed' ? '● Fulfilled' : order.status === 'Ready' ? '● Ready' : order.status === 'Ordered' ? '● In PO' : '○ Pending'}
-              </span>
-            </div>
-          </div>
-
-          {/* Medicine Name & Details */}
-          <div className="space-y-1.5">
-            <div className="text-sm font-extrabold text-text">
-              {highlightMatch(order.product, onlineOrderSearchQuery)}
-            </div>
-            <div className="flex items-center gap-3 text-xs text-muted flex-wrap">
-              <span>Required Qty: <strong className="text-primary font-mono">{order.qty || 1}</strong></span>
-              {order.advance_payment ? (
-                <span>Advance: <strong className="text-emerald-400 font-mono">₹{order.advance_payment}</strong></span>
-              ) : null}
-              {order.pharmarack_distributor && (
-                <span>Distributor: <strong className="text-text">{order.pharmarack_distributor}</strong></span>
-              )}
-            </div>
-            {order.notes && (
-              <div className="text-xs text-muted/85 italic bg-bg2/50 px-2.5 py-1.5 rounded-xl border border-glass-border/30">
-                "{order.notes}"
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Bottom Action Controls */}
-        <div className="pt-2.5 border-t border-glass-border/30 flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2">
-            {/* Add to Live Cart Button */}
-            <button
-              type="button"
-              onClick={() => !inCart && liveCartAddEvent.triggerOpen(order.product, order.qty, order.id)}
-              disabled={inCart}
-              className={`py-1.5 px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                inCart
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default'
-                  : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer shadow-xs'
-              }`}
-              title={inCart ? 'Already added to active cart' : 'Add to Pharmarack live cart'}
-            >
-              {inCart ? <CheckCircle2 size={13} className="text-emerald-400" /> : <ShoppingCart size={13} />}
-              <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
-            </button>
-
-            {/* Open in POS Button */}
-            <button
-              type="button"
-              onClick={() => navigate(`/pos?search=${encodeURIComponent(order.product)}`)}
-              className="py-1.5 px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 bg-bg3 hover:bg-glass-bg border border-glass-border text-text transition-all active:scale-95 cursor-pointer"
-              title="Search and bill this medicine in POS"
-            >
-              <Store size={13} className="text-primary" />
-              <span>Open in POS</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* WhatsApp Button */}
-            {order.phone && (
-              <button
-                type="button"
-                onClick={() => handleWhatsAppCustomer(order)}
-                className="py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center gap-1 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 transition-all active:scale-95 cursor-pointer"
-                title="Message customer via WhatsApp"
-              >
-                <MessageSquare size={12} />
-                <span>WhatsApp</span>
-              </button>
-            )}
-
-            {/* Status Transition Button */}
-            {order.status !== 'Fulfilled' && order.status !== 'Completed' ? (
-              order.status === 'Ready' ? (
-                <button
-                  type="button"
-                  onClick={() => handleUpdateOrderStatus(order.id, 'Fulfilled')}
-                  className="py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center gap-1 bg-emerald-500 text-white hover:bg-emerald-600 transition-all active:scale-95 cursor-pointer shadow-xs"
-                  title="Mark order as fulfilled and delivered"
-                >
-                  <Check size={12} />
-                  <span>Fulfill</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => handleUpdateOrderStatus(order.id, 'Ready')}
-                  className="py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center gap-1 bg-sky-500 text-white hover:bg-sky-600 transition-all active:scale-95 cursor-pointer shadow-xs"
-                  title="Mark order as ready for pickup"
-                >
-                  <CheckCircle2 size={12} />
-                  <span>Mark Ready</span>
-                </button>
-              )
-            ) : null}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderRefillCard = (refill: Refill) => {
-    const inCart = Boolean(getRefillItemInCart(refill));
-
-    return (
-      <div key={`refill-${refill.id}`} className="p-4 rounded-2xl border border-glass-border/60 bg-bg/40 flex flex-col justify-between gap-3 shadow-md hover:border-glass-border transition-all">
-        <div className="space-y-3">
-          {/* Card Header: Patient & Refill Badge */}
-          <div className="flex items-center justify-between pb-2 border-b border-glass-border/30">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm font-extrabold text-text truncate">
-                {refill.patient_name || 'Patient'}
-              </span>
-              {refill.patient_phone && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const text = `Hello ${refill.patient_name}, your refill for ${refill.medicine_name} is due at our pharmacy. Would you like us to keep it ready for you?`;
-                    openOrReuseWhatsappTab('', refill.patient_phone, text);
-                  }}
-                  className="text-xs font-mono text-muted hover:text-emerald-400 flex items-center gap-1 transition-colors cursor-pointer"
-                  title="Chat on WhatsApp"
-                >
-                  <Phone size={11} className="text-muted" />
-                  <span>{refill.patient_phone}</span>
-                </button>
-              )}
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-bg3 text-muted border border-glass-border">
-                Refill #{refill.id}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full font-mono border bg-amber-500/20 text-amber-400 border-amber-500/30">
-                🔄 Patient Refill
-              </span>
-              <span className="text-[10px] font-mono font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20">
-                Due: {refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Soon'}
-              </span>
-            </div>
-          </div>
-
-          {/* Medicine Name & Details */}
-          <div className="space-y-1.5">
-            <div className="text-sm font-extrabold text-text">
-              {highlightMatch(refill.medicine_name || '', onlineOrderSearchQuery)}
-            </div>
-            <div className="flex items-center gap-3 text-xs text-muted flex-wrap">
-              <span>Required Qty: <strong className="text-primary font-mono">{refill.quantity_needed || 1}</strong></span>
-              <span>In Stock: <strong className="text-text font-mono">{refill.in_stock_qty || 0}</strong></span>
-              {refill.refill_interval_days && (
-                <span>Cycle: <strong className="text-muted font-mono">{refill.refill_interval_days}d</strong></span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom Action Controls */}
-        <div className="pt-2.5 border-t border-glass-border/30 flex items-center justify-between gap-2 flex-wrap">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => !inCart && liveCartAddEvent.triggerOpen(refill.medicine_name, refill.quantity_needed || 1)}
-              disabled={inCart}
-              className={`py-1.5 px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
-                inCart
-                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default'
-                  : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer shadow-xs'
-              }`}
-              title={inCart ? 'Already added to active cart' : 'Add to Pharmarack live cart'}
-            >
-              {inCart ? <CheckCircle2 size={13} className="text-emerald-400" /> : <ShoppingCart size={13} />}
-              <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => navigate(`/pos?search=${encodeURIComponent(refill.medicine_name || '')}`)}
-              className="py-1.5 px-3 rounded-xl text-xs font-bold flex items-center gap-1.5 bg-bg3 hover:bg-glass-bg border border-glass-border text-text transition-all active:scale-95 cursor-pointer"
-              title="Search and bill in POS"
-            >
-              <Store size={13} className="text-primary" />
-              <span>Open in POS</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {refill.patient_phone && (
-              <button
-                type="button"
-                onClick={() => {
-                  const text = `Hello ${refill.patient_name}, your refill for ${refill.medicine_name} is due at our pharmacy. Would you like us to keep it ready for you?`;
-                  openOrReuseWhatsappTab('', refill.patient_phone, text);
-                }}
-                className="py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center gap-1 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 transition-all active:scale-95 cursor-pointer"
-                title="Message patient via WhatsApp"
-              >
-                <MessageSquare size={12} />
-                <span>WhatsApp</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="flex-1 flex flex-col overflow-hidden text-text gap-1 p-1.5 sm:p-2 pb-2 relative w-full h-full">
       {/* Top Integrated Scheduler & Navigation Bar */}
@@ -5487,463 +4922,9 @@ export default function PharmarackCart() {
         hasUnreadSentHistory={hasUnreadSentHistory}
         activeCount={distributors.reduce((acc, d) => acc + (d.items || []).filter(i => isItemIncludedInDispatch(i, d) && !isItemAlreadySent(i, d)).length, 0)}
         reorderCount={visiblePendingOrders.length + visiblePendingRefills.length + reorderSuggestions.length + reorderRecentItems.length + purchaseHistoryItems.length}
-        onlineOrdersCount={todayTotalOrdersCount || (allOnlineOrders.length > 0 ? allOnlineOrders.filter(o => ['Pending', 'Confirmed', 'Waiting'].includes(o.status)).length : visiblePendingOrders.length)}
       />
 
-      {currentTab === 'online-orders' ? (
-        /* ── Split-Pane Online Orders Master-Detail View (Same UI/UX as Sent PO History) ── */
-        <div className="flex-1 flex overflow-hidden bg-transparent border border-glass-border/40 rounded-3xl min-h-0">
-
-          {/* Left Master Sidebar: Historical & Today Order Dates */}
-          <div className="w-72 md:w-80 shrink-0 border-r border-glass-border/40 flex flex-col bg-bg3/20 overflow-hidden">
-            <div className="p-4 border-b border-glass-border/40 flex items-center justify-between shrink-0 bg-transparent">
-              <div className="flex items-center gap-2">
-                <Globe size={16} className="text-primary" />
-                <h4 className="text-xs font-bold uppercase tracking-wider text-text">Order Dates</h4>
-              </div>
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-mono">
-                {onlineOrderDates.length} Days
-              </span>
-            </div>
-
-            {/* Quick Button: All Today's Orders */}
-            <div className="p-2.5 border-b border-glass-border/30 bg-bg2/20 shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedOnlineOrderDate(getTodayString());
-                  setOnlineCategory('today');
-                }}
-                className={`w-full flex items-center justify-between p-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-                  selectedOnlineOrderDate === getTodayString() && onlineCategory === 'today'
-                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-xs'
-                    : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/15'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Clock size={13} className="text-emerald-400" />
-                  <span>🌟 All Today's Orders</span>
-                </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">
-                  {todayTotalOrdersCount} Orders
-                </span>
-              </button>
-            </div>
-
-            {/* Quick Filter Search Bar */}
-            {onlineOrderDates.length > 5 && (
-              <div className="p-2.5 border-b border-glass-border/30 bg-bg2/20 shrink-0">
-                <div className="relative">
-                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                  <input
-                    type="text"
-                    value={onlineDateSearchQuery}
-                    onChange={e => setOnlineDateSearchQuery(e.target.value)}
-                    placeholder="Filter dates (e.g. Oct, 24)..."
-                    className="w-full pl-8 pr-7 py-1.5 text-xs bg-bg border border-glass-border/60 rounded-xl text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary/60 transition-all"
-                  />
-                  {onlineDateSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setOnlineDateSearchQuery('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text p-0.5 rounded-md cursor-pointer"
-                    >
-                      <X size={12} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Dates List */}
-            <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
-              {onlineOrderDates.length === 0 ? (
-                <div className="text-center py-10 text-xs text-muted animate-pulse">
-                  Loading order dates…
-                </div>
-              ) : recentOnlineDates.length === 0 && olderOnlineMonthGroups.length === 0 ? (
-                <div className="text-center py-10 text-xs text-muted italic">
-                  No dates found matching "{onlineDateSearchQuery}".
-                </div>
-              ) : (
-                <>
-                  {/* Recent (Last 7 Days) Section - Always Expanded */}
-                  {recentOnlineDates.length > 0 && (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between px-1 pb-1">
-                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted flex items-center gap-1.5">
-                          <Clock size={11} className="text-primary" />
-                          Recent (Last 7 Days)
-                        </span>
-                        <span className="text-[9px] font-mono font-bold text-muted px-1.5 py-0.2 rounded bg-bg3 border border-glass-border">
-                          {recentOnlineDates.length}
-                        </span>
-                      </div>
-                      <div className="space-y-1.5">
-                        {recentOnlineDates.map(d => renderOnlineDateButton(d, false))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Older History (Monthly Collapsible Accordions) */}
-                  {olderOnlineMonthGroups.length > 0 && (
-                    <div className="space-y-2 pt-1 border-t border-glass-border/30">
-                      <div className="px-1 pb-0.5">
-                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted flex items-center gap-1.5">
-                          <Folder size={11} className="text-amber-500" />
-                          Older History
-                        </span>
-                      </div>
-
-                      {olderOnlineMonthGroups.map(group => {
-                        const isExpanded = expandedOnlineMonths.has(group.monthKey);
-                        const hasSelectedDate = group.dates.includes(selectedOnlineOrderDate);
-
-                        return (
-                          <div
-                            key={group.monthKey}
-                            className={`rounded-2xl border transition-all ${
-                              hasSelectedDate
-                                ? 'border-primary/40 bg-bg2/40'
-                                : 'border-glass-border/50 bg-bg2/20 hover:border-glass-border'
-                            } overflow-hidden`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => toggleOnlineMonth(group.monthKey)}
-                              className="w-full flex items-center justify-between p-2.5 text-xs font-bold text-text hover:bg-bg2/60 transition-colors cursor-pointer text-left"
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                {isExpanded ? (
-                                  <FolderOpen size={13} className="text-amber-500 shrink-0" />
-                                ) : (
-                                  <Folder size={13} className="text-amber-500/70 shrink-0" />
-                                )}
-                                <span className="truncate">{group.monthLabel}</span>
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className="text-[9px] font-mono font-bold text-muted px-1.5 py-0.2 rounded bg-bg3 border border-glass-border">
-                                  {group.dates.length}
-                                </span>
-                                {isExpanded ? (
-                                  <ChevronUp size={12} className="text-muted" />
-                                ) : (
-                                  <ChevronDown size={12} className="text-muted" />
-                                )}
-                              </div>
-                            </button>
-
-                            {isExpanded && (
-                              <div className="px-2 pb-2.5 pt-1 space-y-1.5 border-t border-glass-border/20 bg-bg/20">
-                                {group.dates.map(d => renderOnlineDateButton(d, true))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Right Detail Panel: Online Orders for Selected Date */}
-          <div className="flex-1 flex flex-col overflow-hidden p-6 space-y-4 min-h-0 bg-glass-bg/20">
-            {/* Top Bar: Title & Primary Controls */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-glass-border/40 pb-3 shrink-0">
-              <div>
-                <h3 className="text-base font-bold text-text uppercase tracking-wide flex items-center gap-2">
-                  <Globe size={18} className="text-primary" />
-                  {onlineCategory === 'today' ? "🌟 All Today's Orders" : onlineCategory === 'online' ? "🌐 Online Orders" : onlineCategory === 'refills' ? "🔄 Refill Requests" : onlineCategory === 'special' ? "📋 Special Orders" : "All Orders"}: {selectedOnlineOrderDate ? (isNaN(new Date(selectedOnlineOrderDate).getTime()) ? selectedOnlineOrderDate : new Date(selectedOnlineOrderDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', weekday: 'short' })) : 'Select Date'}
-                </h3>
-                <p className="text-xs text-muted mt-0.5">
-                  {onlineCategory === 'today'
-                    ? "Complete overview of all incoming customer orders, due refills, and shortage requests for today"
-                    : `Customer website, WhatsApp, refills, and shortage orders recorded for ${selectedOnlineOrderDate}`}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                {/* Search in Date */}
-                <div className="relative">
-                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-                  <input
-                    type="text"
-                    value={onlineOrderSearchQuery}
-                    onChange={e => setOnlineOrderSearchQuery(e.target.value)}
-                    placeholder="Search medicine / customer..."
-                    className="pl-7 pr-6 py-1.5 text-xs bg-bg border border-glass-border/60 rounded-xl text-text placeholder:text-muted/60 focus:outline-hidden focus:border-primary/60 transition-all w-44 sm:w-52"
-                  />
-                  {onlineOrderSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setOnlineOrderSearchQuery('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text p-0.5 rounded-md cursor-pointer"
-                    >
-                      <X size={11} />
-                    </button>
-                  )}
-                </div>
-
-                {/* Status Filter */}
-                <div className="flex items-center bg-bg border border-glass-border rounded-xl p-0.5 text-xs">
-                  {(['All', 'Pending', 'Ready', 'Fulfilled'] as const).map(st => (
-                    <button
-                      key={st}
-                      type="button"
-                      onClick={() => setOnlineStatusFilter(st)}
-                      className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                        onlineStatusFilter === st
-                          ? 'bg-primary text-white shadow-xs'
-                          : 'text-muted hover:text-text'
-                      }`}
-                    >
-                      {st}
-                    </button>
-                  ))}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    fetchPendingOrders();
-                    fetchPendingRefills();
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-bg3 hover:bg-glass-bg border border-glass-border text-text text-xs font-bold shadow-xs transition-all active:scale-95 cursor-pointer"
-                  title="Refresh online orders & refills"
-                >
-                  <RotateCw size={12} className="text-muted" />
-                  <span>Refresh</span>
-                </button>
-
-                <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-bg3 border border-glass-border text-text font-mono">
-                  {totalSelectedCount} Total
-                </span>
-              </div>
-            </div>
-
-            {/* Dedicated Category Headers: All Today's Orders, Online, Refills, Special */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1.5 shrink-0 border-b border-glass-border/30">
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedOnlineOrderDate(getTodayString());
-                  setOnlineCategory('today');
-                }}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  onlineCategory === 'today' && selectedOnlineOrderDate === getTodayString()
-                    ? 'bg-emerald-500 text-white shadow-xs font-black'
-                    : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 hover:bg-emerald-500/20'
-                }`}
-                title="View all of today's incoming orders, refills, and shortage requests"
-              >
-                <span>🌟 All Today's Orders</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${onlineCategory === 'today' && selectedOnlineOrderDate === getTodayString() ? 'bg-emerald-600/80 text-white' : 'bg-emerald-500/20 text-emerald-300'}`}>
-                  {todayTotalOrdersCount}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setOnlineCategory('online')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  onlineCategory === 'online'
-                    ? 'bg-sky-500 text-white shadow-xs font-black'
-                    : 'bg-sky-500/10 text-sky-400 border border-sky-500/25 hover:bg-sky-500/20'
-                }`}
-                title="View customer website and WhatsApp orders"
-              >
-                <Globe size={13} />
-                <span>Online Orders</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${onlineCategory === 'online' ? 'bg-sky-600/80 text-white' : 'bg-sky-500/20 text-sky-300'}`}>
-                  {onlineCategoryCount}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setOnlineCategory('refills')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  onlineCategory === 'refills'
-                    ? 'bg-amber-500 text-white shadow-xs font-black'
-                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/25 hover:bg-amber-500/20'
-                }`}
-                title="View patient refill requests and due refill reminders"
-              >
-                <RotateCw size={13} />
-                <span>Refills</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${onlineCategory === 'refills' ? 'bg-amber-600/80 text-white' : 'bg-amber-500/20 text-amber-300'}`}>
-                  {refillsCategoryCount}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setOnlineCategory('special')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  onlineCategory === 'special'
-                    ? 'bg-purple-500 text-white shadow-xs font-black'
-                    : 'bg-purple-500/10 text-purple-400 border border-purple-500/25 hover:bg-purple-500/20'
-                }`}
-                title="View in-shop customer shortage requests"
-              >
-                <Package size={13} />
-                <span>Special Orders / Shortages</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${onlineCategory === 'special' ? 'bg-purple-600/80 text-white' : 'bg-purple-500/20 text-purple-300'}`}>
-                  {specialCategoryCount}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setOnlineCategory('all')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  onlineCategory === 'all'
-                    ? 'bg-primary text-white shadow-xs font-black'
-                    : 'bg-bg2 text-muted hover:text-text border border-glass-border/40'
-                }`}
-                title="View all orders across all categories for this date"
-              >
-                <span>All ({selectedOnlineOrderDate === getTodayString() ? 'Today' : selectedOnlineOrderDate})</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${onlineCategory === 'all' ? 'bg-primary/80 text-white' : 'bg-bg3 text-muted'}`}>
-                  {totalSelectedCount}
-                </span>
-              </button>
-            </div>
-
-            {/* Orders Area */}
-            <div className="flex-1 overflow-y-auto pr-1 space-y-6 custom-scrollbar">
-              {/* Present Day Banner when today is selected */}
-              {selectedOnlineOrderDate === getTodayString() && (
-                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-emerald-500/5 to-transparent border border-emerald-500/30 flex items-center justify-between gap-4 flex-wrap shrink-0">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center shrink-0">
-                      <Clock size={16} />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-extrabold uppercase tracking-wide text-text flex items-center gap-2">
-                        Present Day's Orders ({getTodayString()})
-                        <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                          Active Today
-                        </span>
-                      </h4>
-                      <p className="text-[11px] text-muted mt-0.5">
-                        All active incoming customer orders, due refills, and shortage requests for today in one unified overview.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs">
-                    <span className="font-mono text-muted">Online: <strong className="text-sky-400">{onlineWebsiteOrders.length}</strong></span>
-                    <span className="text-muted/40">•</span>
-                    <span className="font-mono text-muted">Refills: <strong className="text-amber-400">{refillsCategoryCount}</strong></span>
-                    <span className="text-muted/40">•</span>
-                    <span className="font-mono text-muted">Special: <strong className="text-purple-400">{specialCategoryCount}</strong></span>
-                  </div>
-                </div>
-              )}
-
-              {/* SECTION 1: Online Orders (Website & WhatsApp) */}
-              {(onlineCategory === 'today' || onlineCategory === 'all' || onlineCategory === 'online') && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between pb-1.5 border-b border-glass-border/30">
-                    <div className="flex items-center gap-2">
-                      <Globe size={14} className="text-sky-400" />
-                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-text">
-                        Online Orders (Website & WhatsApp)
-                      </h4>
-                      <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30 font-mono">
-                        {onlineWebsiteOrders.length}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-muted">Customer web shop and WhatsApp orders</span>
-                  </div>
-
-                  {onlineWebsiteOrders.length === 0 ? (
-                    onlineCategory === 'online' ? (
-                      <div className="text-center py-10 text-xs text-muted italic">
-                        No online website or WhatsApp orders found for {selectedOnlineOrderDate}.
-                      </div>
-                    ) : null
-                  ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      {onlineWebsiteOrders.map(renderSpecialOrderCard)}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* SECTION 2: Patient Refills */}
-              {(onlineCategory === 'today' || onlineCategory === 'all' || onlineCategory === 'refills') && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between pb-1.5 border-b border-glass-border/30">
-                    <div className="flex items-center gap-2">
-                      <RotateCw size={14} className="text-amber-400" />
-                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-text">
-                        Patient Refills & Web Refill Requests
-                      </h4>
-                      <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 font-mono">
-                        {webRefillOrders.length + filteredRefills.length}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-muted">Chronic prescription cycles and customer web refills</span>
-                  </div>
-
-                  {webRefillOrders.length === 0 && filteredRefills.length === 0 ? (
-                    onlineCategory === 'refills' ? (
-                      <div className="text-center py-10 text-xs text-muted italic">
-                        No patient refill requests found for {selectedOnlineOrderDate}.
-                      </div>
-                    ) : null
-                  ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      {webRefillOrders.map(renderSpecialOrderCard)}
-                      {filteredRefills.map(renderRefillCard)}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* SECTION 3: Customer Special Orders & Shortages */}
-              {(onlineCategory === 'today' || onlineCategory === 'all' || onlineCategory === 'special') && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between pb-1.5 border-b border-glass-border/30">
-                    <div className="flex items-center gap-2">
-                      <Package size={14} className="text-purple-400" />
-                      <h4 className="text-xs font-extrabold uppercase tracking-wider text-text">
-                        Customer Special Orders & Shortage Requests
-                      </h4>
-                      <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/30 font-mono">
-                        {specialShortageOrders.length}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-muted">In-shop customer shortage requests</span>
-                  </div>
-
-                  {specialShortageOrders.length === 0 ? (
-                    onlineCategory === 'special' ? (
-                      <div className="text-center py-10 text-xs text-muted italic">
-                        No customer special shortage orders found for {selectedOnlineOrderDate}.
-                      </div>
-                    ) : null
-                  ) : (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                      {specialShortageOrders.map(renderSpecialOrderCard)}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Overall empty state when all 3 sections are empty */}
-              {onlineWebsiteOrders.length === 0 && webRefillOrders.length === 0 && filteredRefills.length === 0 && specialShortageOrders.length === 0 && (
-                <div className="text-center py-20 text-xs text-muted italic select-none">
-                  No orders or requests found for date {selectedOnlineOrderDate} with filter "{onlineCategory !== 'today' && onlineCategory !== 'all' ? onlineCategory : onlineStatusFilter}".
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : currentTab === 'sent-history' ? (
+      {currentTab === 'sent-history' ? (
         /* ── Split-Pane Sent Orders History Master-Detail View ── */
         <div className="flex-1 flex overflow-hidden bg-transparent border border-glass-border/40 rounded-3xl min-h-0">
 
@@ -6261,26 +5242,24 @@ export default function PharmarackCart() {
                   </span>
                 </h3>
                 <p className="text-[10px] text-muted tracking-wider mt-1">
-                  Customer requests, refill reminders, sales-weighted restock suggestions, and recently ordered medicines.
+                  Customer requests, refill reminders, sales-weighted restock suggestions, and recently ordered or cart-added medicines.
                 </p>
               </div>
             </div>
 
             {/* Sub-Tabs Selector */}
             <div className="flex items-center gap-1.5 bg-bg p-1 rounded-xl border border-glass-border overflow-x-auto">
-              {reorderSearchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setShortagesSubTab('all_matches')}
-                  className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${shortagesSubTab === 'all_matches'
-                    ? 'bg-amber-500/20 text-amber-400 font-black shadow-xs border border-amber-500/30'
-                    : 'text-muted hover:text-text hover:bg-bg3'
-                    }`}
-                >
-                  <Search size={12} />
-                  <span>All Matches ({totalReorderMatchesCount})</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setShortagesSubTab('all_matches')}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${shortagesSubTab === 'all_matches'
+                  ? 'bg-amber-500/20 text-amber-400 font-black shadow-xs border border-amber-500/30'
+                  : 'text-muted hover:text-text hover:bg-bg3'
+                  }`}
+              >
+                <Layers size={12} />
+                <span>{reorderSearchQuery ? `All Matches (${totalReorderMatchesCount})` : `All Items (${totalReorderMatchesCount})`}</span>
+              </button>
 
               <button
                 type="button"
@@ -6327,7 +5306,7 @@ export default function PharmarackCart() {
                   }`}
               >
                 <RotateCw size={12} />
-                <span>Ordered Recently ({filteredReorderRecentItems.length})</span>
+                <span>Recent & Cart Items ({filteredReorderRecentItems.length})</span>
               </button>
 
               <button
@@ -6356,8 +5335,6 @@ export default function PharmarackCart() {
                   setReorderSearchQuery(val);
                   if (val.trim()) {
                     setShortagesSubTab('all_matches');
-                  } else if (shortagesSubTab === 'all_matches') {
-                    setShortagesSubTab('requests');
                   }
                 }}
                 placeholder="Search by medicine name (or a request / order number)..."
@@ -6368,9 +5345,6 @@ export default function PharmarackCart() {
                   type="button"
                   onClick={() => {
                     setReorderSearchQuery('');
-                    if (shortagesSubTab === 'all_matches') {
-                      setShortagesSubTab('requests');
-                    }
                   }}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text p-1 cursor-pointer"
                   title="Clear search"
@@ -6396,20 +5370,25 @@ export default function PharmarackCart() {
               totalReorderMatchesCount === 0 ? (
                 <div className="text-center py-16 flex flex-col items-center justify-center gap-2">
                   <AlertCircle size={32} className="text-muted/60" />
-                  <p className="text-sm font-bold text-text">No medicines found matching "{reorderSearchQuery}"</p>
-                  <p className="text-xs text-muted max-w-md">
-                    Searched across Special Requests, Refills Due, Sales Restock, Recent Orders, and Past Purchase Bills. No matching records found.
+                  <p className="text-sm font-bold text-text">
+                    {reorderSearchQuery ? `No medicines found matching "${reorderSearchQuery}"` : 'No medicines currently flagged for reorder'}
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setReorderSearchQuery('');
-                      setShortagesSubTab('requests');
-                    }}
-                    className="mt-2 px-3.5 py-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-glass-border text-xs font-bold text-text cursor-pointer transition-all active:scale-95"
-                  >
-                    Clear Search
-                  </button>
+                  <p className="text-xs text-muted max-w-md">
+                    {reorderSearchQuery
+                      ? 'Searched across Special Requests, Refills Due, Sales Restock, Recent Orders & Cart Additions, and Past Purchase Bills. No matching records found.'
+                      : 'No customer special requests, refills due within 7 days, sales restock alerts, or recent orders/cart additions recorded yet.'}
+                  </p>
+                  {reorderSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReorderSearchQuery('');
+                      }}
+                      className="mt-2 px-3.5 py-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-glass-border text-xs font-bold text-text cursor-pointer transition-all active:scale-95"
+                    >
+                      Clear Search
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-6">
@@ -6565,7 +5544,7 @@ export default function PharmarackCart() {
                       <div className="flex items-center gap-2 pb-1.5 border-b border-violet-500/20">
                         <RotateCw size={14} className="text-violet-400" />
                         <span className="text-xs font-black text-violet-400 uppercase tracking-wider">
-                          Ordered Recently ({filteredReorderRecentItems.length})
+                          Recent Orders & Cart Additions ({filteredReorderRecentItems.length})
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -6581,11 +5560,18 @@ export default function PharmarackCart() {
                                     <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
                                       {highlightMatch(item.medicineName, reorderSearchQuery)}
                                     </div>
-                                    {item.packaging && (
-                                      <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
-                                        {item.packaging}
-                                      </span>
-                                    )}
+                                    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                      {item.packaging && (
+                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
+                                          {item.packaging}
+                                        </span>
+                                      )}
+                                      {item.scheme && (
+                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">
+                                          🎁 {item.scheme}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                   {item.receiptStatus === 'RECEIVED' ? (
                                     <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0 flex items-center gap-1">
@@ -6690,14 +5676,14 @@ export default function PharmarackCart() {
                 <div className="flex items-center justify-between p-3 rounded-2xl bg-primary/10 border border-primary/20 text-xs">
                   <div className="flex items-center gap-2 text-text font-bold">
                     <Globe size={15} className="text-primary" />
-                    <span>Manage all online website and shortage requests in the Split-Pane view</span>
+                    <span>Manage customer website and WhatsApp orders in the dedicated Online Orders page</span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setSearchParams({ tab: 'online-orders' })}
+                    onClick={() => navigate('/website-orders')}
                     className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-primary text-white font-bold hover:bg-primary/80 transition-all cursor-pointer shadow-xs active:scale-95"
                   >
-                    <span>Open Split-Pane View</span>
+                    <span>Go to Online Orders</span>
                     <ArrowRight size={13} />
                   </button>
                 </div>
@@ -6874,7 +5860,7 @@ export default function PharmarackCart() {
             {shortagesSubTab === 'ordered_recently' && (
               filteredReorderRecentItems.length === 0 ? (
                 <div className="text-center py-16 text-xs text-muted italic">
-                  {reorderSearchQuery ? `No recently ordered medicines matching "${reorderSearchQuery}".` : 'No medicines ordered in the configured lookback window.'}
+                  {reorderSearchQuery ? `No recently ordered or cart-added medicines matching "${reorderSearchQuery}".` : 'No medicines ordered or added to cart in the configured lookback window.'}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -6896,11 +5882,18 @@ export default function PharmarackCart() {
                               <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
                                 {highlightMatch(item.medicineName, reorderSearchQuery)}
                               </div>
-                              {item.packaging && (
-                                <span className="inline-block mt-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
-                                  {item.packaging}
-                                </span>
-                              )}
+                              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                                {item.packaging && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
+                                    {item.packaging}
+                                  </span>
+                                )}
+                                {item.scheme && (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">
+                                    🎁 {item.scheme}
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             {/* Inward / Receipt Status */}

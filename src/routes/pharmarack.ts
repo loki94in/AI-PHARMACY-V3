@@ -1614,12 +1614,13 @@ export async function upsertDistributorProducts(
       const company = String(item.company || item.Company || '').trim();
       const ptr = Number(item.ptr || item.PTR || item.rate || item.HiddenPTR || item.NetRate || 0);
       const mrp = Number(item.mrp || item.MRP || 0);
+      const scheme = String(item.scheme || item.Scheme || item.ProductScheme || '').trim();
       const orderDateStr = orderDate || (item.createdDate ? String(item.createdDate).slice(0, 10) : todayStr);
 
       await db.run(
         `INSERT INTO pharmarack_distributor_products
-           (store_id, product_code, product_id, product_name, packaging, company, ptr, mrp, last_ordered_at, last_order_date, source, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           (store_id, product_code, product_id, product_name, packaging, company, ptr, mrp, scheme, last_ordered_at, last_order_date, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT(store_id, product_code) DO UPDATE SET
            product_id = CASE WHEN excluded.product_id != '' THEN excluded.product_id ELSE pharmarack_distributor_products.product_id END,
            product_name = excluded.product_name,
@@ -1627,11 +1628,12 @@ export async function upsertDistributorProducts(
            company = CASE WHEN excluded.company != '' THEN excluded.company ELSE pharmarack_distributor_products.company END,
            ptr = CASE WHEN excluded.ptr > 0 THEN excluded.ptr ELSE pharmarack_distributor_products.ptr END,
            mrp = CASE WHEN excluded.mrp > 0 THEN excluded.mrp ELSE pharmarack_distributor_products.mrp END,
+           scheme = CASE WHEN excluded.scheme != '' THEN excluded.scheme ELSE pharmarack_distributor_products.scheme END,
            last_ordered_at = MAX(COALESCE(pharmarack_distributor_products.last_ordered_at, 0), excluded.last_ordered_at),
            last_order_date = COALESCE(excluded.last_order_date, pharmarack_distributor_products.last_order_date),
            source = excluded.source,
            updated_at = CURRENT_TIMESTAMP`,
-        [storeId, productCode, prodId, productName, packaging, company, ptr, mrp, now, orderDateStr, source]
+        [storeId, productCode, prodId, productName, packaging, company, ptr, mrp, scheme, now, orderDateStr, source]
       ).catch((e: any) => console.warn('[DistributorProducts] Upsert error:', e?.message));
     }
   } catch (err) {
@@ -2281,6 +2283,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
 
   if (cartSuccess) {
     void autoSaveMedicineDistributorLinks(items);
+    void upsertDistributorProducts(items, undefined, undefined, 'live_cart');
     invalidatePharmarackCartCache();
     // P1 events-not-timers: every cart WRITE pushes one SSE frame so any open
     // Pharmarack Cart page (this tab or another device) silently re-syncs.
@@ -4538,6 +4541,7 @@ router.get('/reorder-recent', async (req, res) => {
       ptr?: number;
       mrp?: number;
       packaging?: string;
+      scheme?: string;
       receiptStatus: 'RECEIVED' | 'PENDING_INWARD';
       receivedInvoiceNo?: string;
       receivedDate?: string;
@@ -4572,10 +4576,61 @@ router.get('/reorder-recent', async (req, res) => {
           ptr: Number(item.ptr || item.rate || 0),
           mrp: Number(item.mrp || 0),
           packaging: item.packaging || item.Packing || '',
+          scheme: String(item.scheme || item.Scheme || item.ProductScheme || '').trim(),
           receiptStatus: 'PENDING_INWARD',
           highestStockDistributor: null
         });
       }
+    }
+
+    // Ingest medicines recorded from live cart additions and distributor product memory
+    const cartCutoffMs = Date.now() - (windowDays * 24 * 60 * 60 * 1000);
+    const cartAndCatalogProducts = await db.all(
+      `SELECT p.*, COALESCE(m.store_name, d.name, '') as store_name
+       FROM pharmarack_distributor_products p
+       LEFT JOIN pharmarack_distributor_mappings m ON m.store_id = p.store_id
+       LEFT JOIN distributors d ON d.id = m.distributor_id
+       WHERE p.last_ordered_at >= ?
+       ORDER BY p.last_ordered_at DESC`,
+      [cartCutoffMs]
+    );
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const nowObj = new Date();
+    const todayStr = `${nowObj.getFullYear()}-${pad(nowObj.getMonth() + 1)}-${pad(nowObj.getDate())}`;
+
+    for (const p of cartAndCatalogProducts) {
+      const name = (p.product_name || '').trim();
+      if (!name) continue;
+      const comboKey = `${name.toLowerCase()}:::${p.store_id || p.store_name || ''}`;
+      if (byMedicine.has(comboKey)) continue;
+
+      let formattedDate = p.last_order_date || '';
+      if (!formattedDate && p.last_ordered_at) {
+        const dObj = new Date(Number(p.last_ordered_at));
+        if (!isNaN(dObj.getTime())) {
+          formattedDate = `${dObj.getFullYear()}-${pad(dObj.getMonth() + 1)}-${pad(dObj.getDate())}`;
+        }
+      }
+      if (!formattedDate) formattedDate = todayStr;
+
+      byMedicine.set(comboKey, {
+        medicineName: name,
+        lastOrderedDate: formattedDate,
+        lastQty: 1,
+        lastDistributorName: p.store_name || '',
+        storeId: p.store_id || null,
+        storeName: p.store_name || '',
+        orderId: 0,
+        productCode: p.product_code || '',
+        productId: Number(p.product_id || 0),
+        ptr: Number(p.ptr || 0),
+        mrp: Number(p.mrp || 0),
+        packaging: p.packaging || '',
+        scheme: String(p.scheme || '').trim(),
+        receiptStatus: 'PENDING_INWARD',
+        highestStockDistributor: null
+      });
     }
 
     const itemsList = Array.from(byMedicine.values());

@@ -257,6 +257,7 @@ export interface ReorderRecentItem {
   lastRate?: number;
   mrp?: number;
   packaging?: string;
+  scheme?: string;
   receiptStatus?: 'RECEIVED' | 'PENDING_INWARD';
   receivedInvoiceNo?: string;
   receivedDate?: string;
