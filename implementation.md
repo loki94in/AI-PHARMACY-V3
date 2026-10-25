@@ -163,3 +163,11 @@ sequenceDiagram
     - Configured `"buildCommand": "echo 'No build required for static website'"` in root [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json).
     - Updated CORS headers (`x-owner-token`, `Authorization`) and mapped `/owner` to `/owner.html` in root [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json).
     - Verified guardrails (`npm run guardrails`) clean, updated knowledge graph (`node scripts/quick-update.mjs`), and committed to GitHub.
+
+- [x] Task 9: Universal Link Synchronization & Serverless Route Harmonization
+  - **Completed**:
+    - Standardized root [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json) rewrites to target `/api/*.js` directly, matching native Vercel serverless function discovery in the root `api/` directory.
+    - Added explicit `functions: { "api/*.js": { "maxDuration": 10 } }` to root [`vercel.json`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/vercel.json).
+    - Updated navigation header in [`website/public/owner.html`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/website/public/owner.html) to include direct bidirectional navigation to License Admin (`/license`) alongside Patient Shop (`/shop`).
+    - Updated navigation in [`website/public/index.html`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/website/public/index.html) to link directly to the new Owner Console (`/owner`).
+    - Verified guardrails and synchronized knowledge graph.

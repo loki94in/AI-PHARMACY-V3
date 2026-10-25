@@ -3,6 +3,11 @@
   "outputDirectory": "website/public",
   "installCommand": "npm --prefix website install",
   "buildCommand": "echo 'No build required for static website'",
+  "functions": {
+    "api/*.js": {
+      "maxDuration": 10
+    }
+  },
   "headers": [
     {
       "source": "/api/(.*)",
@@ -14,14 +19,14 @@
     }
   ],
   "rewrites": [
-    { "source": "/api/catalog/(.*)", "destination": "/website/api/catalog.js?action=$1" },
-    { "source": "/api/catalog", "destination": "/website/api/catalog.js" },
-    { "source": "/api/license/(.*)", "destination": "/website/api/license.js?action=$1" },
-    { "source": "/api/license", "destination": "/website/api/license.js" },
-    { "source": "/api/telemetry/(.*)", "destination": "/website/api/telemetry.js?action=$1" },
-    { "source": "/api/telemetry", "destination": "/website/api/telemetry.js" },
-    { "source": "/api/updates/(.*)", "destination": "/website/api/updates.js?action=$1" },
-    { "source": "/api/updates", "destination": "/website/api/updates.js" },
+    { "source": "/api/catalog/(.*)", "destination": "/api/catalog.js?action=$1" },
+    { "source": "/api/catalog", "destination": "/api/catalog.js" },
+    { "source": "/api/license/(.*)", "destination": "/api/license.js?action=$1" },
+    { "source": "/api/license", "destination": "/api/license.js" },
+    { "source": "/api/telemetry/(.*)", "destination": "/api/telemetry.js?action=$1" },
+    { "source": "/api/telemetry", "destination": "/api/telemetry.js" },
+    { "source": "/api/updates/(.*)", "destination": "/api/updates.js?action=$1" },
+    { "source": "/api/updates", "destination": "/api/updates.js" },
     { "source": "/shop", "destination": "/catalog.html" },
     { "source": "/catalog", "destination": "/catalog.html" },
     { "source": "/portal", "destination": "/portal.html" },
