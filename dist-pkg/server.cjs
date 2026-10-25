@@ -29539,6 +29539,5091 @@ var init_refillOrderReconciler = __esm({
   }
 });
 
+// src/services/storeContextService.ts
+function resolveStoreId(req) {
+  const headerVal = req.headers["x-store-id"];
+  if (headerVal && typeof headerVal === "string") {
+    const parsed = parseInt(headerVal, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  const queryVal = req.query?.store_id;
+  if (queryVal && typeof queryVal === "string") {
+    const parsed = parseInt(queryVal, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 1;
+}
+var StoreContextService, storeContextService;
+var init_storeContextService = __esm({
+  "src/services/storeContextService.ts"() {
+    "use strict";
+    init_connection();
+    init_storeSettingsService();
+    StoreContextService = class {
+      /**
+       * Retrieves list of all stores
+       */
+      async listStores(dbInstance, includeInactive = false) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const sql = includeInactive ? "SELECT * FROM stores ORDER BY id ASC" : "SELECT * FROM stores WHERE is_active = 1 ORDER BY id ASC";
+        const rows = await db2.all(sql).catch(() => []);
+        if (rows.length === 0) {
+          const defaultPhone = await getStorePhone(db2, 1);
+          const defaultName = await getStoreMedicalName(db2, 1);
+          return [{ id: 1, name: defaultName || "Main Store", code: "STORE-A", phone: defaultPhone, is_central: 1, is_active: 1 }];
+        }
+        for (const r of rows) {
+          if (!r.phone || !r.phone.trim()) {
+            r.phone = await getStorePhone(db2, r.id);
+          }
+          if (!r.name || r.name === "Main Store" || r.name.toLowerCase() === "main store") {
+            const configuredName = await getStoreMedicalName(db2, r.id);
+            if (configuredName && configuredName !== "AI PHARMACY" && configuredName.toLowerCase() !== "main store") {
+              r.name = configuredName;
+              await db2.run("UPDATE stores SET name = ? WHERE id = ? AND (name = ? OR name IS NULL OR name = ?)", [configuredName, r.id, "Main Store", ""]).catch(() => {
+              });
+            }
+          }
+        }
+        return rows;
+      }
+      /**
+       * Get store by ID
+       */
+      async getStoreById(storeId, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const row = await db2.get("SELECT * FROM stores WHERE id = ?", [storeId]);
+        if (!row) return null;
+        if (!row.phone || !row.phone.trim()) {
+          row.phone = await getStorePhone(db2, row.id);
+        }
+        if (!row.name || row.name === "Main Store" || row.name.toLowerCase() === "main store") {
+          const configuredName = await getStoreMedicalName(db2, row.id);
+          if (configuredName && configuredName !== "AI PHARMACY" && configuredName.toLowerCase() !== "main store") {
+            row.name = configuredName;
+            await db2.run("UPDATE stores SET name = ? WHERE id = ? AND (name = ? OR name IS NULL OR name = ?)", [configuredName, row.id, "Main Store", ""]).catch(() => {
+            });
+          }
+        }
+        return row;
+      }
+      /**
+       * Create a new store
+       */
+      async createStore(input, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const name = (input.name || "").trim();
+        if (!name) {
+          throw new Error("Store name is required");
+        }
+        const code = (input.code || `STORE-${Date.now().toString(36).toUpperCase()}`).trim();
+        const address = (input.address || "").trim();
+        const phone = (input.phone || "").trim();
+        const email = (input.email || "").trim();
+        const isCentral = input.is_central ? 1 : 0;
+        const result = await db2.run(
+          `INSERT INTO stores (name, code, address, phone, email, is_central, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [name, code, address, phone, email, isCentral]
+        );
+        const newId = result.lastID;
+        const store = await this.getStoreById(newId, db2);
+        if (!store) throw new Error("Failed to retrieve created store");
+        return store;
+      }
+      /**
+       * Update an existing store
+       */
+      async updateStore(storeId, input, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const existing = await this.getStoreById(storeId, db2);
+        if (!existing) {
+          throw new Error(`Store #${storeId} not found`);
+        }
+        const name = input.name !== void 0 ? input.name.trim() : existing.name;
+        const code = input.code !== void 0 ? input.code.trim() : existing.code;
+        const address = input.address !== void 0 ? input.address.trim() : existing.address;
+        const phone = input.phone !== void 0 ? input.phone.trim() : existing.phone;
+        const email = input.email !== void 0 ? input.email.trim() : existing.email;
+        const isCentral = input.is_central !== void 0 ? input.is_central ? 1 : 0 : existing.is_central;
+        const isActive = input.is_active !== void 0 ? input.is_active ? 1 : 0 : existing.is_active;
+        await db2.run(
+          `UPDATE stores 
+       SET name = ?, code = ?, address = ?, phone = ?, email = ?, is_central = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [name, code, address, phone, email, isCentral, isActive, storeId]
+        );
+        const updated = await this.getStoreById(storeId, db2);
+        if (!updated) throw new Error(`Failed to reload store #${storeId}`);
+        return updated;
+      }
+      /**
+       * Get store setting by key
+       */
+      async getStoreSetting(storeId, key, defaultValue = "", dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        try {
+          const row = await db2.get(
+            "SELECT value FROM store_settings WHERE store_id = ? AND key = ?",
+            [storeId, key]
+          );
+          if (row && row.value !== null && row.value !== void 0) {
+            return String(row.value);
+          }
+        } catch (_) {
+        }
+        return defaultValue;
+      }
+      /**
+       * Set store setting by key
+       */
+      async setStoreSetting(storeId, key, value, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        await db2.run(
+          `INSERT INTO store_settings (store_id, key, value, updated_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(store_id, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+          [storeId, key, value]
+        );
+      }
+      /**
+       * Get all settings for a store
+       */
+      async getAllStoreSettings(storeId, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const rows = await db2.all(
+          "SELECT key, value FROM store_settings WHERE store_id = ?",
+          [storeId]
+        ).catch(() => []);
+        const settings = {};
+        for (const r of rows) {
+          settings[r.key] = r.value;
+        }
+        return settings;
+      }
+    };
+    storeContextService = new StoreContextService();
+  }
+});
+
+// src/services/paymentQrService.ts
+var paymentQrService_exports = {};
+__export(paymentQrService_exports, {
+  DEFAULT_QR_CONFIGS: () => DEFAULT_QR_CONFIGS,
+  paymentQrService: () => paymentQrService
+});
+var import_path19, import_fs19, import_qrcode, import_canvas, DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
+var init_paymentQrService = __esm({
+  "src/services/paymentQrService.ts"() {
+    "use strict";
+    import_path19 = __toESM(require("path"), 1);
+    import_fs19 = __toESM(require("fs"), 1);
+    init_connection();
+    init_storeSettingsService();
+    init_config();
+    import_qrcode = __toESM(require("qrcode"), 1);
+    import_canvas = require("canvas");
+    DEFAULT_QR_CONFIGS = [
+      {
+        id: "QR_1",
+        label: "Pharmacy Counter UPI (QR 1)",
+        payee_name: "AI Pharmacy Counter 1",
+        upi_id: "aipharmacy1@upi",
+        qr_image_url: "",
+        is_active: true
+      },
+      {
+        id: "QR_2",
+        label: "Pharmacy Merchant UPI (QR 2)",
+        payee_name: "AI Pharmacy Merchant",
+        upi_id: "aipharmacy2@upi",
+        qr_image_url: "",
+        is_active: true
+      },
+      {
+        id: "QR_3",
+        label: "Pharmacy Direct UPI (QR 3)",
+        payee_name: "AI Pharmacy Store 3",
+        upi_id: "aipharmacy3@upi",
+        qr_image_url: "",
+        is_active: true
+      }
+    ];
+    PaymentQrService = class {
+      /**
+       * Load the 3 QR configurations from app_settings with fallback defaults
+       */
+      async getQrConfigs() {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          "SELECT key, value FROM app_settings WHERE key LIKE 'payment_qr_%'"
+        ).catch(() => []);
+        const settingsMap = /* @__PURE__ */ new Map();
+        for (const r of rows) {
+          settingsMap.set(r.key, r.value);
+        }
+        const configs = [];
+        const qrIds = ["QR_1", "QR_2", "QR_3"];
+        for (const id of qrIds) {
+          const lower = id.toLowerCase();
+          const defaultConf = DEFAULT_QR_CONFIGS.find((d) => d.id === id);
+          configs.push({
+            id,
+            label: settingsMap.get(`payment_${lower}_label`) || defaultConf.label,
+            payee_name: settingsMap.get(`payment_${lower}_payee_name`) || defaultConf.payee_name,
+            upi_id: settingsMap.get(`payment_${lower}_upi_id`) || defaultConf.upi_id,
+            qr_image_url: settingsMap.get(`payment_${lower}_image_url`) || defaultConf.qr_image_url || "",
+            is_active: settingsMap.get(`payment_${lower}_active`) !== "false"
+          });
+        }
+        return configs;
+      }
+      /**
+       * Save QR configurations
+       */
+      async saveQrConfigs(configs) {
+        const db2 = await dbManager.getConnection();
+        for (const conf of configs) {
+          const lower = conf.id.toLowerCase();
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_label`, conf.label]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_payee_name`, conf.payee_name]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_upi_id`, conf.upi_id]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_image_url`, conf.qr_image_url || ""]
+          );
+          await db2.run(
+            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [`payment_${lower}_active`, conf.is_active ? "true" : "false"]
+          );
+        }
+      }
+      /**
+       * Allocate the next alternating QR code for a new order.
+       * Rule (§13): selected_qr != previous_order_qr
+       */
+      async allocateNextQr() {
+        const db2 = await dbManager.getConnection();
+        const configs = await this.getQrConfigs();
+        const activeConfigs = configs.filter((c) => c.is_active && c.upi_id);
+        if (activeConfigs.length === 0) {
+          return DEFAULT_QR_CONFIGS[0];
+        }
+        if (activeConfigs.length === 1) {
+          return activeConfigs[0];
+        }
+        const lastRow = await db2.get(
+          "SELECT value FROM app_settings WHERE key = 'last_selected_payment_qr'"
+        ).catch(() => null);
+        const lastQrId = lastRow?.value || "";
+        const eligibleConfigs = activeConfigs.filter((c) => c.id !== lastQrId);
+        const pool = eligibleConfigs.length > 0 ? eligibleConfigs : activeConfigs;
+        const selected = pool[Math.floor(Math.random() * pool.length)];
+        await db2.run(
+          "INSERT INTO app_settings (key, value) VALUES ('last_selected_payment_qr', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          [selected.id]
+        ).catch(() => {
+        });
+        return selected;
+      }
+      /**
+       * Generate standard UPI payment URI
+       */
+      buildUpiUri(upiId, payeeName, amount, orderId) {
+        const cleanAmount = Number(amount || 0).toFixed(2);
+        const encodedName = encodeURIComponent(payeeName || "AI Pharmacy");
+        const note = encodeURIComponent(`Order #${orderId}`);
+        return `upi://pay?pa=${upiId}&pn=${encodedName}&am=${cleanAmount}&cu=INR&tr=${orderId}&tn=${note}`;
+      }
+      /**
+       * Resolve configured store name from app_settings
+       */
+      async getStoreName() {
+        try {
+          const db2 = await dbManager.getConnection();
+          return await getStoreMedicalName(db2);
+        } catch {
+          return "AI PHARMACY";
+        }
+      }
+      /**
+       * Generate Branded Visual Payment Card (Sample 3) on disk.
+       * Includes store header, Special Order number, medicine name, amount badge,
+       * high-resolution Level-H QR code, UPI ID banner, and supported apps footer.
+       */
+      async generatePaymentCard(options) {
+        const uploadsDir = import_path19.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs19.default.existsSync(uploadsDir)) {
+          import_fs19.default.mkdirSync(uploadsDir, { recursive: true });
+        }
+        const cleanFilename = options.filename ? options.filename.endsWith(".png") ? options.filename : `${options.filename}.png` : `payment_card_${options.orderNumber.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
+        const fullPath = import_path19.default.join(uploadsDir, cleanFilename);
+        const storeName = (options.storeName || await this.getStoreName()).toUpperCase();
+        const qrBuffer = await import_qrcode.default.toBuffer(options.upiUri, {
+          width: 380,
+          margin: 1,
+          errorCorrectionLevel: "H"
+        });
+        const qrImg = await (0, import_canvas.loadImage)(qrBuffer);
+        const width = 540;
+        const height = 720;
+        const canvas = (0, import_canvas.createCanvas)(width, height);
+        const ctx = canvas.getContext("2d");
+        const drawRoundRect = (x, y, w, h, r) => {
+          const anyCtx = ctx;
+          if (typeof anyCtx.roundRect === "function") {
+            ctx.beginPath();
+            anyCtx.roundRect(x, y, w, h, r);
+          } else {
+            const radius = Array.isArray(r) ? r[0] : r;
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.arcTo(x + w, y, x + w, y + h, radius);
+            ctx.arcTo(x + w, y + h, x, y + h, radius);
+            ctx.arcTo(x, y + h, x, y, radius);
+            ctx.arcTo(x, y, x + w, y, radius);
+            ctx.closePath();
+          }
+        };
+        ctx.fillStyle = "#ffffff";
+        drawRoundRect(0, 0, width, height, 24);
+        ctx.fill();
+        ctx.strokeStyle = "#e2e8f0";
+        ctx.lineWidth = 2;
+        drawRoundRect(1, 1, width - 2, height - 2, 24);
+        ctx.stroke();
+        ctx.fillStyle = "#0f766e";
+        drawRoundRect(0, 0, width, 120, [24, 24, 0, 0]);
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 26px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(storeName, width / 2, 45);
+        ctx.fillStyle = "#ccfbf1";
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText(`Special Order: ${options.orderNumber}`, width / 2, 78);
+        if (options.medicineName) {
+          ctx.fillStyle = "#99f6e4";
+          ctx.font = "14px sans-serif";
+          const medText = options.medicineName.length > 38 ? `${options.medicineName.substring(0, 36)}...` : options.medicineName;
+          ctx.fillText(`\u{1F48A} ${medText}`, width / 2, 103);
+        }
+        const badgeW = 280;
+        const badgeH = 48;
+        const badgeX = (width - badgeW) / 2;
+        const badgeY = 135;
+        ctx.fillStyle = "#f0fdf4";
+        ctx.strokeStyle = "#22c55e";
+        ctx.lineWidth = 2;
+        drawRoundRect(badgeX, badgeY, badgeW, badgeH, 12);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#15803d";
+        ctx.font = "bold 20px sans-serif";
+        ctx.fillText(`BOOKING ADVANCE: \u20B9${Number(options.amount || 0).toFixed(2)}`, width / 2, badgeY + 31);
+        const qrSize = 360;
+        const qrX = (width - qrSize) / 2;
+        const qrY = 195;
+        ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
+        const pillW = 460;
+        const pillH = 44;
+        const pillX = (width - pillW) / 2;
+        const pillY = 575;
+        ctx.fillStyle = "#f8fafc";
+        ctx.strokeStyle = "#cbd5e1";
+        ctx.lineWidth = 1.5;
+        drawRoundRect(pillX, pillY, pillW, pillH, 10);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#1e293b";
+        ctx.font = "bold 15px sans-serif";
+        ctx.fillText(`UPI ID: ${options.upiId.trim()}`, width / 2, pillY + 28);
+        ctx.fillStyle = "#64748b";
+        ctx.font = "13px sans-serif";
+        ctx.fillText("Accepted on GPay \u2022 PhonePe \u2022 Paytm \u2022 Any UPI App", width / 2, 650);
+        const buffer = canvas.toBuffer("image/png");
+        import_fs19.default.writeFileSync(fullPath, buffer);
+        return fullPath;
+      }
+      /**
+       * Generate PNG Buffer for a given UPI URI to send over WhatsApp
+       */
+      async generateQrBuffer(upiUri) {
+        return import_qrcode.default.toBuffer(upiUri, { width: 300, margin: 2 });
+      }
+      /**
+       * Generate payment file on disk for a given UPI URI.
+       * If card options are provided, generates the full visual card (Sample 3).
+       * Otherwise falls back to clean QR code.
+       */
+      async generateQrFile(upiUri, filename, options) {
+        if (options && options.orderNumber && options.amount !== void 0 && options.upiId) {
+          return this.generatePaymentCard({
+            upiUri,
+            orderNumber: options.orderNumber,
+            medicineName: options.medicineName,
+            amount: options.amount,
+            payeeName: options.payeeName,
+            upiId: options.upiId,
+            storeName: options.storeName,
+            filename
+          });
+        }
+        const uploadsDir = import_path19.default.resolve(getAppDataDir(), "uploads");
+        if (!import_fs19.default.existsSync(uploadsDir)) {
+          import_fs19.default.mkdirSync(uploadsDir, { recursive: true });
+        }
+        const cleanFilename = filename.endsWith(".png") ? filename : `${filename}.png`;
+        const fullPath = import_path19.default.join(uploadsDir, cleanFilename);
+        const buffer = await this.generateQrBuffer(upiUri);
+        import_fs19.default.writeFileSync(fullPath, buffer);
+        return fullPath;
+      }
+      /**
+       * Fetch QR details locked to a specific order
+       */
+      async getOrderQrDetails(orderId) {
+        const db2 = await dbManager.getConnection();
+        const order = await db2.get(
+          "SELECT id, payment_qr_id, total_amount, advance_payment, payment_status FROM special_orders WHERE id = ?",
+          [orderId]
+        );
+        if (!order) return null;
+        const configs = await this.getQrConfigs();
+        const assignedId = order.payment_qr_id || "QR_1";
+        const config2 = configs.find((c) => c.id === assignedId) || configs[0] || DEFAULT_QR_CONFIGS[0];
+        const amount = Number(order.total_amount || order.advance_payment || 0);
+        return {
+          qr_id: config2.id,
+          label: config2.label,
+          payee_name: config2.payee_name,
+          upi_id: config2.upi_id,
+          upi_uri: this.buildUpiUri(config2.upi_id, config2.payee_name, amount, order.id),
+          qr_image_url: config2.qr_image_url || "",
+          amount,
+          payment_status: order.payment_status || "UNPAID"
+        };
+      }
+    };
+    paymentQrService = new PaymentQrService();
+  }
+});
+
+// src/services/returnWindowService.ts
+var DEFAULT_RETURN_WINDOW_DAYS, RETURN_WINDOW_MS, ReturnWindowService, returnWindowService;
+var init_returnWindowService = __esm({
+  "src/services/returnWindowService.ts"() {
+    "use strict";
+    init_connection();
+    init_eventService();
+    DEFAULT_RETURN_WINDOW_DAYS = 15;
+    RETURN_WINDOW_MS = 14 * 24 * 60 * 60 * 1e3;
+    ReturnWindowService = class {
+      /**
+       * Fetches the configured return window duration from app_settings (default 15 days).
+       */
+      async getConfiguredReturnWindowDays(storeIdOrDb, customDb) {
+        try {
+          let db2;
+          if (customDb) {
+            db2 = customDb;
+          } else if (storeIdOrDb && typeof storeIdOrDb.get === "function") {
+            db2 = storeIdOrDb;
+          } else {
+            db2 = await dbManager.getConnection();
+          }
+          const row = await db2.get("SELECT value FROM app_settings WHERE key = 'return_window_days'");
+          if (row && row.value) {
+            const val = parseInt(row.value, 10);
+            if (!isNaN(val) && val > 0) return val;
+          }
+        } catch (_) {
+        }
+        return DEFAULT_RETURN_WINDOW_DAYS;
+      }
+      /**
+       * Calculates the return window deadline given a delivered timestamp and optional days
+       */
+      calculateReturnWindowUntil(deliveredAt, windowDays) {
+        const deliveredDate = new Date(deliveredAt);
+        const days = windowDays !== void 0 && windowDays > 0 ? windowDays : DEFAULT_RETURN_WINDOW_DAYS;
+        const deadlineMs = deliveredDate.getTime() + days * 24 * 60 * 60 * 1e3;
+        return new Date(deadlineMs).toISOString();
+      }
+      /**
+       * Evaluates the return window status for an order
+       */
+      evaluateOrderReturnStatus(order) {
+        const orderId = order.id;
+        const deliveryStatus = order.delivery_status || (order.status === "Delivered" ? "delivered" : "pending");
+        const deliveredAt = order.delivered_at || null;
+        const overrideBy = order.return_override_by || null;
+        const overrideReason = order.return_override_reason || null;
+        const overrideAt = order.return_override_at || null;
+        if (overrideBy) {
+          return {
+            orderId,
+            deliveryStatus,
+            deliveredAt,
+            returnWindowUntil: order.return_window_until || null,
+            returnStatus: "override_approved",
+            daysRemaining: 0,
+            isEligible: true,
+            overrideReason,
+            overrideBy,
+            overrideAt
+          };
+        }
+        if (order.return_status === "returned") {
+          return {
+            orderId,
+            deliveryStatus,
+            deliveredAt,
+            returnWindowUntil: order.return_window_until || null,
+            returnStatus: "returned",
+            daysRemaining: 0,
+            isEligible: false
+          };
+        }
+        if (deliveryStatus !== "delivered" || !deliveredAt) {
+          return {
+            orderId,
+            deliveryStatus,
+            deliveredAt: null,
+            returnWindowUntil: null,
+            returnStatus: "none",
+            daysRemaining: 0,
+            isEligible: false
+          };
+        }
+        const windowUntil = order.return_window_until || this.calculateReturnWindowUntil(deliveredAt);
+        const deadline = new Date(windowUntil).getTime();
+        const now = Date.now();
+        const msRemaining = deadline - now;
+        const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1e3 * 60 * 60 * 24)));
+        const isEligible = msRemaining > 0;
+        const returnStatus = isEligible ? "eligible" : "expired";
+        return {
+          orderId,
+          deliveryStatus: "delivered",
+          deliveredAt,
+          returnWindowUntil: windowUntil,
+          returnStatus,
+          daysRemaining,
+          isEligible
+        };
+      }
+      /**
+       * Marks an order as delivered, stamping delivered_at and calculating the 14-day return window
+       */
+      async markDelivered(orderId, deliveredAtDate, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const deliveredAt = (deliveredAtDate || /* @__PURE__ */ new Date()).toISOString();
+        const windowDays = await this.getConfiguredReturnWindowDays(db2);
+        const returnWindowUntil = this.calculateReturnWindowUntil(deliveredAt, windowDays);
+        await db2.run(
+          `UPDATE special_orders
+       SET delivery_status = 'delivered',
+           status = 'Delivered',
+           auto_remind = 0,
+           delivered_at = ?,
+           return_window_until = ?,
+           return_status = 'eligible',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [deliveredAt, returnWindowUntil, orderId]
+        );
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'delivered', ?, 'system', CURRENT_TIMESTAMP)`,
+          [orderId, `Order delivered. ${windowDays}-day return window open until ${returnWindowUntil}`]
+        );
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "delivered" });
+        } catch (_) {
+        }
+        const updatedOrder = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        return this.evaluateOrderReturnStatus(updatedOrder);
+      }
+      /**
+       * Background scan: automatically closes expired 14-day return windows without deleting records
+       */
+      async checkAndCloseExpiredReturnWindows(dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        const expiredOrders = await db2.all(
+          `SELECT id, delivered_at, return_window_until 
+       FROM special_orders
+       WHERE delivery_status = 'delivered'
+         AND return_status = 'eligible'
+         AND return_window_until IS NOT NULL
+         AND return_window_until <= ?
+         AND return_override_by IS NULL`,
+          [nowIso]
+        ).catch(() => []);
+        if (expiredOrders.length === 0) return 0;
+        for (const order of expiredOrders) {
+          await db2.run(
+            `UPDATE special_orders
+         SET return_status = 'expired',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [order.id]
+          );
+          await db2.run(
+            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+         VALUES (?, 'return_window_expired', '14-day return period ended. Return window closed automatically.', 'system', CURRENT_TIMESTAMP)`,
+            [order.id]
+          );
+        }
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), expiredCount: expiredOrders.length });
+        } catch (_) {
+        }
+        return expiredOrders.length;
+      }
+      /**
+       * Human exception override: Pharmacist/Manager approves return after expiration
+       */
+      async applyReturnOverride(orderId, opts, dbInstance) {
+        const db2 = dbInstance || await dbManager.getConnection();
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) {
+          throw new Error(`Order #${orderId} not found`);
+        }
+        const overrideBy = (opts.overrideBy || "Admin").trim();
+        const reason = (opts.reason || "Management approval").trim();
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        await db2.run(
+          `UPDATE special_orders
+       SET return_status = 'override_approved',
+           return_override_by = ?,
+           return_override_reason = ?,
+           return_override_at = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+          [overrideBy, reason, nowIso, orderId]
+        );
+        await db2.run(
+          `INSERT INTO action_logs (action_type, description, metadata, created_at)
+       VALUES ('return_override', ?, ?, CURRENT_TIMESTAMP)`,
+          [
+            `Return window manually overridden for Order #${orderId} by ${overrideBy}`,
+            JSON.stringify({ orderId, overrideBy, reason, previousStatus: order.return_status })
+          ]
+        );
+        await db2.run(
+          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+       VALUES (?, 'return_override', ?, ?, CURRENT_TIMESTAMP)`,
+          [orderId, `Return window override granted by ${overrideBy}. Reason: ${reason}`, overrideBy]
+        );
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "return_override" });
+        } catch (_) {
+        }
+        const updated = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        return this.evaluateOrderReturnStatus(updated);
+      }
+    };
+    returnWindowService = new ReturnWindowService();
+  }
+});
+
+// src/services/cloudflareTunnelService.ts
+var cloudflareTunnelService_exports = {};
+__export(cloudflareTunnelService_exports, {
+  cloudflareTunnelService: () => cloudflareTunnelService,
+  default: () => cloudflareTunnelService_default
+});
+var import_child_process3, import_http, import_fs20, import_path20, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
+var init_cloudflareTunnelService = __esm({
+  "src/services/cloudflareTunnelService.ts"() {
+    "use strict";
+    import_child_process3 = require("child_process");
+    import_http = __toESM(require("http"), 1);
+    import_fs20 = __toESM(require("fs"), 1);
+    import_path20 = __toESM(require("path"), 1);
+    init_connection();
+    init_eventService();
+    init_config();
+    CloudflareTunnelService = class _CloudflareTunnelService {
+      static instance;
+      childProcess = null;
+      isRunning = false;
+      publicUrl = null;
+      currentMode = "quick";
+      startedAt = null;
+      lastError = null;
+      isShuttingDown = false;
+      constructor() {
+      }
+      static getInstance() {
+        if (!_CloudflareTunnelService.instance) {
+          _CloudflareTunnelService.instance = new _CloudflareTunnelService();
+        }
+        return _CloudflareTunnelService.instance;
+      }
+      /**
+       * Reads settings from app_settings table
+       */
+      async getSettings() {
+        try {
+          const db2 = await dbManager.getConnection();
+          const rows = await db2.all(
+            `SELECT key, value FROM app_settings WHERE key IN ('cloudflare_tunnel_token', 'cloudflare_tunnel_custom_domain', 'cloudflare_tunnel_autostart')`
+          );
+          const map = {};
+          for (const r of rows) map[r.key] = r.value;
+          return {
+            token: (map["cloudflare_tunnel_token"] || "").trim(),
+            customDomain: (map["cloudflare_tunnel_custom_domain"] || "").trim(),
+            autostart: map["cloudflare_tunnel_autostart"] === "1"
+          };
+        } catch {
+          return { token: "", customDomain: "", autostart: false };
+        }
+      }
+      /**
+       * Check which local port is responsive (Vite 5173 or Backend 5174)
+       */
+      checkPort(port) {
+        return new Promise((resolve) => {
+          const req = import_http.default.get(`http://127.0.0.1:${port}/`, (res) => {
+            resolve(true);
+            res.resume();
+          });
+          req.on("error", () => resolve(false));
+          req.setTimeout(1e3, () => {
+            req.destroy();
+            resolve(false);
+          });
+        });
+      }
+      /**
+       * Resolves the best available cloudflared binary on the current OS
+       */
+      resolveBinary() {
+        const isWindows = process.platform === "win32";
+        if (isWindows) {
+          const candidates = [
+            import_path20.default.join(process.cwd(), "node_modules", ".bin", "cloudflared.exe"),
+            import_path20.default.join(process.cwd(), "cloudflared.exe")
+          ];
+          for (const p of candidates) {
+            if (import_fs20.default.existsSync(p)) return { binary: p, spawnArgsPrefix: [], useShell: false };
+          }
+          const localAppData = process.env.LOCALAPPDATA;
+          if (localAppData) {
+            const npxDir = import_path20.default.join(localAppData, "npm-cache", "_npx");
+            if (import_fs20.default.existsSync(npxDir)) {
+              try {
+                const dirs = import_fs20.default.readdirSync(npxDir);
+                for (const d of dirs) {
+                  const binPath = import_path20.default.join(npxDir, d, "node_modules", "cloudflared", "bin", "cloudflared.exe");
+                  if (import_fs20.default.existsSync(binPath)) {
+                    return { binary: binPath, spawnArgsPrefix: [], useShell: false };
+                  }
+                }
+              } catch (_) {
+              }
+            }
+          }
+          return { binary: "npx.cmd", spawnArgsPrefix: ["-y", "cloudflared"], useShell: true };
+        }
+        return { binary: "cloudflared", spawnArgsPrefix: [], useShell: false };
+      }
+      /**
+       * Initializes the service on server boot.
+       * Auto-starts the tunnel if cloudflare_tunnel_autostart === '1'
+       */
+      async init() {
+        try {
+          const settings = await this.getSettings();
+          if (settings.autostart) {
+            console.log("[CloudflareTunnel] Autostart is enabled. Launching online store tunnel in 5s...");
+            setTimeout(() => {
+              this.start().catch((err) => {
+                console.error("[CloudflareTunnel] Autostart failed:", err);
+              });
+            }, 5e3);
+          }
+        } catch (err) {
+          console.warn("[CloudflareTunnel] Init warning:", err);
+        }
+      }
+      /**
+       * Starts the Cloudflare Tunnel
+       */
+      async start() {
+        if (this.isRunning && this.childProcess) {
+          return this.getStatus();
+        }
+        this.isShuttingDown = false;
+        this.lastError = null;
+        const settings = await this.getSettings();
+        const hasToken = !!settings.token;
+        this.currentMode = hasToken ? "token" : "quick";
+        let args = [];
+        if (hasToken) {
+          args = ["tunnel", "run", "--token", settings.token];
+          if (settings.customDomain) {
+            this.publicUrl = settings.customDomain.startsWith("http") ? settings.customDomain : `https://${settings.customDomain}`;
+          }
+        } else {
+          let targetPort = config.port || parseInt(process.env.PORT || "5175", 10);
+          const isTargetActive = await this.checkPort(targetPort);
+          if (!isTargetActive) {
+            const is5175 = await this.checkPort(5175);
+            if (is5175) {
+              targetPort = 5175;
+            } else {
+              const is5174 = await this.checkPort(5174);
+              if (is5174) targetPort = 5174;
+            }
+          }
+          const localTarget = `http://127.0.0.1:${targetPort}`;
+          const hostHeader = `127.0.0.1:${targetPort}`;
+          args = [
+            "tunnel",
+            "--url",
+            localTarget,
+            "--http-host-header",
+            hostHeader
+          ];
+        }
+        const isWindows = process.platform === "win32";
+        if (isWindows) {
+          try {
+            (0, import_child_process3.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
+          } catch (_) {
+          }
+        }
+        const { binary, spawnArgsPrefix, useShell } = this.resolveBinary();
+        const spawnArgs = [...spawnArgsPrefix, ...args];
+        console.log(`[CloudflareTunnel] Spawning cloudflared (${binary}) in ${this.currentMode} mode...`);
+        try {
+          this.childProcess = (0, import_child_process3.spawn)(binary, spawnArgs, {
+            stdio: ["ignore", "pipe", "pipe"],
+            shell: useShell,
+            detached: false
+          });
+          this.isRunning = true;
+          this.startedAt = Date.now();
+          const parseOutput = (chunk) => {
+            const text = chunk.toString();
+            if (this.currentMode === "quick") {
+              const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
+              if (match) {
+                this.publicUrl = match[0];
+                console.log(`[CloudflareTunnel] Live quick tunnel established: ${this.publicUrl}`);
+                this.persistLastUrl(this.publicUrl);
+                this.broadcastStatus();
+              }
+            }
+            if (text.includes("ERR ") || text.includes("Error:")) {
+              const errLine = text.split("\n").find((l) => l.includes("ERR") || l.includes("Error:"));
+              if (errLine && !errLine.includes("context canceled")) {
+                this.lastError = errLine.trim();
+              }
+            }
+          };
+          this.childProcess.stdout?.on("data", parseOutput);
+          this.childProcess.stderr?.on("data", parseOutput);
+          this.childProcess.on("error", (err) => {
+            console.error("[CloudflareTunnel] Process error:", err.message);
+            this.lastError = err.message;
+            this.isRunning = false;
+            this.publicUrl = null;
+            this.broadcastStatus();
+          });
+          this.childProcess.on("exit", (code, signal) => {
+            console.log(`[CloudflareTunnel] Process exited (code: ${code}, signal: ${signal})`);
+            this.isRunning = false;
+            this.childProcess = null;
+            if (!this.isShuttingDown) {
+              this.publicUrl = null;
+            }
+            this.broadcastStatus();
+          });
+          this.broadcastStatus();
+          return this.getStatus();
+        } catch (err) {
+          console.error("[CloudflareTunnel] Failed to spawn cloudflared:", err);
+          this.isRunning = false;
+          this.lastError = err.message;
+          return this.getStatus();
+        }
+      }
+      /**
+       * Stops the active tunnel cleanly
+       */
+      async stop() {
+        this.isShuttingDown = true;
+        if (this.childProcess && !this.childProcess.killed) {
+          try {
+            if (process.platform === "win32") {
+              try {
+                (0, import_child_process3.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
+              } catch (_) {
+              }
+            } else {
+              this.childProcess.kill("SIGINT");
+            }
+          } catch (e) {
+            console.warn("[CloudflareTunnel] Error terminating process:", e);
+          }
+        }
+        this.childProcess = null;
+        this.isRunning = false;
+        this.publicUrl = null;
+        this.startedAt = null;
+        this.broadcastStatus();
+        return this.getStatus();
+      }
+      /**
+       * Returns current tunnel status
+       */
+      async getStatus() {
+        const settings = await this.getSettings();
+        return {
+          isRunning: this.isRunning,
+          url: this.publicUrl,
+          mode: this.currentMode,
+          customDomain: settings.customDomain || null,
+          tokenConfigured: !!settings.token,
+          autostart: settings.autostart,
+          startedAt: this.startedAt,
+          error: this.lastError
+        };
+      }
+      /**
+       * Configures Cloudflare Tunnel settings in app_settings
+       */
+      async configure(data) {
+        const db2 = await dbManager.getConnection();
+        if (data.token !== void 0) {
+          await db2.run(
+            `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('cloudflare_tunnel_token', ?)`,
+            [data.token.trim()]
+          );
+        }
+        if (data.customDomain !== void 0) {
+          await db2.run(
+            `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('cloudflare_tunnel_custom_domain', ?)`,
+            [data.customDomain.trim()]
+          );
+        }
+        if (data.autostart !== void 0) {
+          await db2.run(
+            `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('cloudflare_tunnel_autostart', ?)`,
+            [data.autostart ? "1" : "0"]
+          );
+        }
+        return this.getStatus();
+      }
+      async persistLastUrl(url) {
+        try {
+          const db2 = await dbManager.getConnection();
+          await db2.run(
+            `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('cloudflare_tunnel_last_url', ?)`,
+            [url]
+          );
+        } catch {
+        }
+      }
+      async broadcastStatus() {
+        try {
+          const status = await this.getStatus();
+          eventService.broadcast("tunnel_status_changed", status);
+        } catch {
+        }
+      }
+    };
+    cloudflareTunnelService = CloudflareTunnelService.getInstance();
+    cloudflareTunnelService_default = cloudflareTunnelService;
+  }
+});
+
+// src/services/barcodeService.ts
+async function generateInvoiceBarcodeData(invoiceNo, dateStr) {
+  const cleanInvoiceNo = invoiceNo.trim();
+  const cleanDate = dateStr ? dateStr.split("T")[0] : (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const barcodeText = `${cleanInvoiceNo}|${cleanDate}`;
+  const qrBuffer = await import_qrcode2.default.toBuffer(barcodeText, { width: 160, margin: 1 });
+  const qrDataUrl = `data:image/png;base64,${qrBuffer.toString("base64")}`;
+  const canvas = (0, import_canvas2.createCanvas)(320, 90);
+  (0, import_jsbarcode.default)(canvas, cleanInvoiceNo, {
+    format: "CODE128",
+    width: 2,
+    height: 50,
+    displayValue: true,
+    fontSize: 14,
+    margin: 8,
+    background: "#ffffff",
+    lineColor: "#000000"
+  });
+  const code128Buffer = canvas.toBuffer("image/png");
+  const code128DataUrl = `data:image/png;base64,${code128Buffer.toString("base64")}`;
+  return {
+    barcodeText,
+    qrBuffer,
+    qrDataUrl,
+    code128Buffer,
+    code128DataUrl
+  };
+}
+async function generateProductBarcodeData(name, batch) {
+  const cleanName = (name || "Unknown").trim();
+  const cleanBatch = (batch || "N/A").trim();
+  const codeText = `${cleanName}|${cleanBatch}`;
+  const qrBuffer = await import_qrcode2.default.toBuffer(codeText, { width: 160, margin: 1 });
+  const canvas = (0, import_canvas2.createCanvas)(360, 70);
+  (0, import_jsbarcode.default)(canvas, codeText, {
+    format: "CODE128",
+    width: 1.6,
+    height: 46,
+    displayValue: false,
+    margin: 4,
+    background: "#ffffff",
+    lineColor: "#000000"
+  });
+  const code128Buffer = canvas.toBuffer("image/png");
+  return { qrText: codeText, code128Text: codeText, qrBuffer, code128Buffer };
+}
+var import_jsbarcode, import_canvas2, import_qrcode2;
+var init_barcodeService = __esm({
+  "src/services/barcodeService.ts"() {
+    "use strict";
+    import_jsbarcode = __toESM(require("jsbarcode"), 1);
+    import_canvas2 = require("canvas");
+    import_qrcode2 = __toESM(require("qrcode"), 1);
+  }
+});
+
+// src/services/pdfInvoiceService.ts
+var pdfInvoiceService_exports = {};
+__export(pdfInvoiceService_exports, {
+  PdfInvoiceService: () => PdfInvoiceService,
+  pdfInvoiceService: () => pdfInvoiceService
+});
+var import_pdfkit, import_qrcode3, import_path21, import_fs21, PdfInvoiceService, pdfInvoiceService;
+var init_pdfInvoiceService = __esm({
+  "src/services/pdfInvoiceService.ts"() {
+    "use strict";
+    import_pdfkit = __toESM(require("pdfkit"), 1);
+    import_qrcode3 = __toESM(require("qrcode"), 1);
+    init_connection();
+    import_path21 = __toESM(require("path"), 1);
+    import_fs21 = __toESM(require("fs"), 1);
+    init_config();
+    init_barcodeService();
+    init_customerPortal();
+    PdfInvoiceService = class {
+      async generateInvoicePdf(invoiceId, outPath, includeStampAndSig = true) {
+        const db2 = await dbManager.getConnection();
+        await db2.run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
+        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
+        const settings = {};
+        settingsRows.forEach((r) => {
+          settings[r.key] = r.value;
+        });
+        const invoice = await db2.get(
+          `SELECT si.invoice_no, si.date, si.total_amount, si.tax_amount, si.payment_medium, si.payment_status, si.discount, si.subtotal,
+              c.name as customer_name, c.phone as customer_phone, c.address as customer_address,
+              d.name as doctor_name
+       FROM sales_invoices si
+       LEFT JOIN customers c ON si.customer_id = c.id
+       LEFT JOIN doctors d ON si.doctor_id = d.id
+       WHERE si.id = ?`,
+          [invoiceId]
+        );
+        if (!invoice) {
+          throw new Error(`Invoice ID ${invoiceId} not found`);
+        }
+        const items = await db2.all(
+          `SELECT si.quantity, si.unit_price, si.loose_qty, si.discount_per, m.name as medicine_name, COALESCE(m.pack_size, 1) as pack_size,
+              im.batch_no
+       FROM sale_items si
+       JOIN inventory_master im ON si.inventory_id = im.id
+       JOIN medicines m ON im.medicine_id = m.id
+       WHERE si.invoice_id = ?`,
+          [invoiceId]
+        );
+        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "PHARMACY INVOICE";
+        const shopAddress = settings.address || settings.shop_address || "";
+        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
+        const shopLicence = settings.drug_license || settings.shop_licence || settings.license_number || settings.dl_number || settings.drug_licence_no || "";
+        const shopGstin = settings.gstin || "";
+        const barcodeData = await generateInvoiceBarcodeData(invoice.invoice_no, invoice.date);
+        return new Promise(async (resolve, reject) => {
+          try {
+            const doc = new import_pdfkit.default({ size: "A4", margin: 30 });
+            const stream = import_fs21.default.createWriteStream(outPath);
+            stream.on("error", reject);
+            stream.on("finish", resolve);
+            doc.pipe(stream);
+            doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
+            if (shopAddress) {
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
+            }
+            const contactParts = [];
+            if (shopPhone) contactParts.push(`Phone: ${shopPhone}`);
+            if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
+            if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
+            if (contactParts.length > 0) {
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
+            }
+            doc.moveDown(0.8);
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+            doc.moveDown(0.6);
+            const infoTop = doc.y;
+            doc.fontSize(9).fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text(`Invoice No: `, 30, infoTop, { continued: true }).font("Helvetica").text(invoice.invoice_no);
+            doc.font("Helvetica-Bold").text(`Date: `, 30, doc.y + 3, { continued: true }).font("Helvetica").text(new Date(invoice.date).toLocaleString("en-IN"));
+            doc.font("Helvetica-Bold").text(`Payment: `, 30, doc.y + 3, { continued: true }).font("Helvetica").text(`${invoice.payment_medium || "CASH"} (${invoice.payment_status || "PAID"})`);
+            const docNameRaw = (invoice.doctor_name || "").trim();
+            if (docNameRaw) {
+              const docDisplayName = docNameRaw.toLowerCase().startsWith("dr") ? docNameRaw : `Dr. ${docNameRaw}`;
+              doc.font("Helvetica-Bold").fillColor("#0284c7").text(`Prescribed By: `, 30, doc.y + 3, { continued: true }).font("Helvetica-Bold").text(docDisplayName);
+            }
+            const leftBottomY = doc.y;
+            doc.fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text("Billed To:", 320, infoTop);
+            doc.font("Helvetica").text(`Name: ${invoice.customer_name || "Walk-in Customer"}`, 320, doc.y + 3);
+            if (invoice.customer_phone) {
+              doc.text(`Phone: ${invoice.customer_phone}`, 320, doc.y + 3);
+            }
+            if (invoice.customer_address) {
+              doc.text(`Address: ${invoice.customer_address}`, 320, doc.y + 3);
+            }
+            const rightBottomY = doc.y;
+            const drawTableHeader = (yPos) => {
+              doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
+              doc.text("Sr", 30, yPos, { width: 22 });
+              doc.text("Medicine / Product Name", 55, yPos, { width: 180 });
+              doc.text("Batch No.", 240, yPos, { width: 75 });
+              doc.text("Qty", 320, yPos, { width: 55, align: "right" });
+              doc.text("Unit Price", 380, yPos, { width: 85, align: "right" });
+              doc.text("Total", 470, yPos, { width: 95, align: "right" });
+              doc.moveTo(30, yPos + 12).lineTo(565, yPos + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            };
+            let currentBillPage = 1;
+            let tableTop = Math.max(leftBottomY, rightBottomY) + 15;
+            drawTableHeader(tableTop);
+            let currentItemY = tableTop + 18;
+            const PAGE_1_ITEM_LIMIT_Y = 440;
+            const CONT_PAGE_ITEM_LIMIT_Y = 560;
+            items.forEach((item, index) => {
+              const discPer = item.discount_per || 0;
+              const discountedPrice = item.unit_price * (1 - discPer / 100);
+              const packSize = item.pack_size || 1;
+              const looseQty = item.loose_qty || 0;
+              const itemTotal = discountedPrice * item.quantity + discountedPrice / packSize * looseQty;
+              const nameText = discPer > 0 ? `${item.medicine_name} (${discPer}% Off)` : item.medicine_name;
+              const rowHeight = Math.max(doc.heightOfString(nameText, { width: 180 }), 14);
+              const currentLimitY = currentBillPage === 1 ? PAGE_1_ITEM_LIMIT_Y : CONT_PAGE_ITEM_LIMIT_Y;
+              if (currentItemY + rowHeight > currentLimitY && index < items.length) {
+                doc.fontSize(7.5).font("Helvetica-Oblique").fillColor("#64748b").text(
+                  "(Continued on Next Page...)",
+                  30,
+                  currentItemY + 2,
+                  { align: "right", width: 535 }
+                );
+                doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+                  `Invoice ${invoice.invoice_no} \u2022 Page ${currentBillPage} \u2022 Continued on next page`,
+                  30,
+                  785,
+                  { align: "center", width: doc.page.width - 60 }
+                );
+                doc.addPage({ size: "A4", margin: 30 });
+                currentBillPage++;
+                doc.font("Helvetica-Bold").fontSize(12).fillColor("#0284c7").text(shopName, 30, 30);
+                doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(
+                  `Tax Invoice No: ${invoice.invoice_no} \u2014 Date: ${new Date(invoice.date).toLocaleDateString("en-IN")} (Continued - Page ${currentBillPage})`,
+                  30,
+                  46
+                );
+                doc.moveTo(30, 58).lineTo(565, 58).strokeColor("#e2e8f0").lineWidth(1).stroke();
+                tableTop = 66;
+                drawTableHeader(tableTop);
+                currentItemY = tableTop + 18;
+              }
+              doc.fontSize(8.5).fillColor("#0f172a");
+              doc.font("Helvetica-Bold").text(String(index + 1), 30, currentItemY, { width: 22 });
+              doc.font("Helvetica").text(nameText, 55, currentItemY, { width: 180 });
+              doc.text(item.batch_no ? String(item.batch_no) : "-", 240, currentItemY, { width: 75 });
+              const qtyText = looseQty > 0 ? `${item.quantity} S + ${looseQty} L` : String(item.quantity);
+              doc.text(qtyText, 320, currentItemY, { width: 55, align: "right" });
+              doc.text(`Rs. ${discountedPrice.toFixed(2)}`, 380, currentItemY, { width: 85, align: "right" });
+              doc.text(`Rs. ${itemTotal.toFixed(2)}`, 470, currentItemY, { width: 95, align: "right" });
+              currentItemY += rowHeight + 4;
+            });
+            if (currentItemY > 580) {
+              doc.fontSize(7.5).font("Helvetica-Oblique").fillColor("#64748b").text(
+                "(Totals continued on Next Page...)",
+                30,
+                currentItemY + 2,
+                { align: "right", width: 535 }
+              );
+              doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+                `Invoice ${invoice.invoice_no} \u2022 Page ${currentBillPage}`,
+                30,
+                785,
+                { align: "center", width: doc.page.width - 60 }
+              );
+              doc.addPage({ size: "A4", margin: 30 });
+              currentBillPage++;
+              doc.font("Helvetica-Bold").fontSize(12).fillColor("#0284c7").text(shopName, 30, 30);
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(
+                `Tax Invoice No: ${invoice.invoice_no} \u2014 Final Totals & Authorization (Page ${currentBillPage})`,
+                30,
+                46
+              );
+              doc.moveTo(30, 58).lineTo(565, 58).strokeColor("#e2e8f0").lineWidth(1).stroke();
+              currentItemY = 70;
+            }
+            doc.y = currentItemY;
+            doc.moveDown(0.5);
+            doc.moveTo(380, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(0.5).stroke();
+            doc.moveDown(0.4);
+            let discount = invoice.discount || 0;
+            let tax = invoice.tax_amount || 0;
+            let total = invoice.total_amount;
+            let subtotal = total - tax;
+            if (invoice.payment_medium === "CREDIT" && discount > 0) {
+              subtotal = invoice.subtotal || invoice.total_amount + discount - invoice.tax_amount;
+              tax = invoice.tax_amount || 0;
+              total = subtotal + tax;
+              discount = 0;
+            } else if (discount > 0) {
+              const subtotalInclusive = invoice.subtotal || invoice.total_amount + discount;
+              subtotal = subtotalInclusive / 1.05;
+              tax = invoice.tax_amount || 0;
+              total = invoice.total_amount;
+            }
+            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica");
+            doc.text("Subtotal:", 380, doc.y, { width: 85, align: "right" });
+            doc.fillColor("#0f172a").text(`Rs. ${subtotal.toFixed(2)}`, 470, doc.y - 9, { width: 95, align: "right" });
+            if (discount > 0 && invoice.payment_medium !== "CREDIT") {
+              const discountExclusive = discount / 1.05;
+              doc.moveDown(0.3);
+              doc.fillColor("#64748b").text("Discount:", 380, doc.y, { width: 85, align: "right" });
+              doc.fillColor("#e11d48").text(`-Rs. ${discountExclusive.toFixed(2)}`, 470, doc.y - 9, { width: 95, align: "right" });
+            }
+            doc.moveDown(0.3);
+            doc.fillColor("#64748b").text("Tax (5%):", 380, doc.y, { width: 85, align: "right" });
+            doc.fillColor("#0f172a").text(`Rs. ${tax.toFixed(2)}`, 470, doc.y - 9, { width: 95, align: "right" });
+            doc.moveDown(0.5);
+            const grandTotalY = doc.y;
+            doc.fontSize(11).fillColor("#0f172a").font("Helvetica-Bold");
+            doc.text("Grand Total:", 360, grandTotalY, { width: 105, align: "right" });
+            doc.text(`Rs. ${total.toFixed(2)}`, 470, grandTotalY, { width: 95, align: "right" });
+            const barcodeY = Math.min(Math.max(doc.y + 15, 660), 730);
+            try {
+              doc.image(barcodeData.qrBuffer, 30, barcodeY, { width: 48, height: 48 });
+              doc.image(barcodeData.code128Buffer, 88, barcodeY + 2, { width: 130, height: 40 });
+              doc.fontSize(6.5).font("Helvetica").fillColor("#64748b").text(`Scannable Bill Barcode: ${barcodeData.barcodeText}`, 30, barcodeY + 50);
+            } catch (bcErr) {
+              console.warn("[PdfInvoice] Failed to embed barcode image in PDF:", bcErr);
+            }
+            const uploadsDir = import_path21.default.resolve(getAppDataDir(), "uploads");
+            const customStampPath = import_path21.default.join(uploadsDir, "custom_stamp.png");
+            const customSigPath = import_path21.default.join(uploadsDir, "custom_signature.png");
+            if (includeStampAndSig) {
+              const defaultStampX = 280;
+              const defaultStampY = Math.min(Math.max(grandTotalY + 15, 520), 640);
+              const stampX = settings.stamp_pos_x ? Math.max(30, Math.min(500, parseFloat(settings.stamp_pos_x))) : defaultStampX;
+              const stampY = settings.stamp_pos_y ? Math.max(300, Math.min(680, parseFloat(settings.stamp_pos_y))) : defaultStampY;
+              const stampScale = settings.stamp_scale ? parseFloat(settings.stamp_scale) : 100;
+              const stampWidth = Math.round(80 * (stampScale / 100));
+              const stampRot = settings.stamp_rotation !== void 0 ? parseFloat(settings.stamp_rotation) : -12;
+              if (import_fs21.default.existsSync(customStampPath)) {
+                doc.save();
+                if (stampRot !== 0) {
+                  doc.rotate(stampRot, { origin: [stampX + stampWidth / 2, stampY + stampWidth / 2] });
+                }
+                doc.image(customStampPath, stampX, stampY, { width: stampWidth });
+                doc.restore();
+              } else {
+                doc.save();
+                doc.translate(stampX + stampWidth / 2, stampY + stampWidth / 2);
+                doc.rotate(stampRot);
+                const radiusOuter = Math.round(34 * (stampScale / 100));
+                const radiusInner = Math.round(30 * (stampScale / 100));
+                const stampColor = invoice.payment_status === "UNPAID" ? "#f59e0b" : "#10b981";
+                doc.strokeColor(stampColor).lineWidth(1.5);
+                doc.circle(0, 0, radiusOuter).stroke();
+                doc.circle(0, 0, radiusInner).stroke();
+                doc.fillColor(stampColor).fontSize(6 * (stampScale / 100)).font("Helvetica");
+                doc.text(shopName, -30 * (stampScale / 100), -16 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
+                doc.fontSize(7 * (stampScale / 100));
+                if (invoice.payment_status === "UNPAID") {
+                  doc.font("Helvetica-Bold").text("CREDIT ACCOUNT", -30 * (stampScale / 100), -3 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
+                  doc.font("Helvetica").fontSize(6 * (stampScale / 100)).text("PAYMENT PENDING", -30 * (stampScale / 100), 8 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
+                } else {
+                  doc.font("Helvetica-Bold").text("PAID & VERIFIED", -30 * (stampScale / 100), -3 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
+                  doc.font("Helvetica").fontSize(6 * (stampScale / 100)).text("THANK YOU", -30 * (stampScale / 100), 8 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
+                }
+                doc.restore();
+              }
+              const defaultSigX = 425;
+              const defaultSigY = barcodeY - 5;
+              const sigX = settings.sig_pos_x ? Math.max(30, Math.min(500, parseFloat(settings.sig_pos_x))) : defaultSigX;
+              const sigY = settings.sig_pos_y ? Math.max(300, Math.min(720, parseFloat(settings.sig_pos_y))) : defaultSigY;
+              const sigScale = settings.sig_scale ? parseFloat(settings.sig_scale) : 100;
+              const sigWidth = Math.round(75 * (sigScale / 100));
+              if (import_fs21.default.existsSync(customSigPath)) {
+                doc.image(customSigPath, sigX, sigY, { width: sigWidth });
+              }
+              doc.moveTo(sigX - 10, sigY + 48).lineTo(sigX + sigWidth + 10, sigY + 48).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
+              doc.fontSize(7.5).font("Helvetica-Bold").fillColor("#475569").text("Authorized Signatory", sigX - 10, sigY + 51, { width: sigWidth + 20, align: "center" });
+            } else {
+              const sigX = 430;
+              const sigY = barcodeY + 25;
+              doc.moveTo(sigX, sigY).lineTo(sigX + 110, sigY).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
+              doc.fontSize(7.5).font("Helvetica-Bold").fillColor("#475569").text("Authorized Signatory", sigX, sigY + 4, { width: 110, align: "center" });
+            }
+            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+              includeStampAndSig ? "This is a computer generated document. Stamped digitally." : "This is an official document. Signed and stamped manually.",
+              30,
+              785,
+              { align: "center", width: doc.page.width - 60 }
+            );
+            if (settings.print_portal_guide_page !== "0" && settings.enable_portal_guide_page !== "0") {
+              await this.appendCustomerPortalGuidePage(doc, db2, settings, {
+                name: invoice.customer_name,
+                phone: invoice.customer_phone
+              });
+            }
+            doc.end();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+      /**
+       * Generate an itemized Customer Credit Ledger / Statement PDF
+       */
+      async generateCreditStatementPdf(customerId, outPath) {
+        const db2 = await dbManager.getConnection();
+        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
+        const settings = {};
+        settingsRows.forEach((r) => {
+          settings[r.key] = r.value;
+        });
+        const customer = await db2.get("SELECT * FROM customers WHERE id = ?", [customerId]);
+        if (!customer) {
+          throw new Error(`Customer ID ${customerId} not found`);
+        }
+        const pendingInvoices = await db2.all(
+          `SELECT si.invoice_no, si.date, si.total_amount, si.payment_status
+       FROM sales_invoices si
+       WHERE si.customer_id = ? AND (si.payment_medium = 'CREDIT' OR si.payment_status = 'UNPAID' OR si.payment_status = 'PENDING') AND si.payment_status != 'PAID'
+       ORDER BY si.date ASC, si.id ASC`,
+          [customerId]
+        );
+        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "PHARMACY CREDIT LEDGER";
+        const shopAddress = settings.address || settings.shop_address || "";
+        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
+        const shopLicence = settings.drug_license || settings.shop_licence || settings.license_number || settings.dl_number || settings.drug_licence_no || "";
+        const shopGstin = settings.gstin || "";
+        return new Promise(async (resolve, reject) => {
+          try {
+            const doc = new import_pdfkit.default({ size: "A4", margin: 30 });
+            const stream = import_fs21.default.createWriteStream(outPath);
+            stream.on("error", reject);
+            stream.on("finish", resolve);
+            doc.pipe(stream);
+            doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
+            if (shopAddress) {
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
+            }
+            const contactParts = [];
+            if (shopPhone) contactParts.push(`Phone: ${shopPhone}`);
+            if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
+            if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
+            if (contactParts.length > 0) {
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
+            }
+            doc.moveDown(0.8);
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a").text("CUSTOMER CREDIT STATEMENT & LEDGER SUMMARY", { align: "center" });
+            doc.moveDown(0.8);
+            const infoTop = doc.y;
+            doc.fontSize(9).fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text("Customer Details:", 30, infoTop);
+            doc.font("Helvetica").text(`Name: ${customer.name || "Customer"}`, 30, doc.y + 3);
+            if (customer.phone) doc.text(`Phone: ${customer.phone}`, 30, doc.y + 3);
+            if (customer.address) doc.text(`Address: ${customer.address}`, 30, doc.y + 3);
+            const dueDateStr = customer.credit_due_date ? new Date(customer.credit_due_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "As agreed";
+            doc.font("Helvetica-Bold").text("Account Summary:", 320, infoTop);
+            doc.font("Helvetica").text(`Statement Date: ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, 320, doc.y + 3);
+            doc.text(`Due Date: ${dueDateStr}`, 320, doc.y + 3);
+            const creditBal = Number(customer.credit_balance || 0);
+            doc.font("Helvetica-Bold").fillColor("#e11d48").text(`Outstanding Balance: Rs. ${creditBal.toFixed(2)}`, 320, doc.y + 3);
+            doc.moveDown(1.2);
+            const tableTop = doc.y;
+            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
+            doc.text("Bill / Invoice #", 30, tableTop, { width: 160 });
+            doc.text("Date", 200, tableTop, { width: 110 });
+            doc.text("Status", 320, tableTop, { width: 110 });
+            doc.text("Amount (Rs.)", 440, tableTop, { width: 125, align: "right" });
+            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            let totalCalculated = 0;
+            if (pendingInvoices.length > 0) {
+              pendingInvoices.forEach((inv) => {
+                const itemY = doc.y;
+                doc.fontSize(8.5).fillColor("#0f172a").font("Helvetica");
+                const amt = Number(inv.total_amount || 0);
+                totalCalculated += amt;
+                const dFormatted = inv.date ? new Date(inv.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-";
+                doc.text(inv.invoice_no, 30, itemY, { width: 160 });
+                doc.text(dFormatted, 200, itemY, { width: 110 });
+                doc.text(inv.payment_status || "UNPAID", 320, itemY, { width: 110 });
+                doc.text(`Rs. ${amt.toFixed(2)}`, 440, itemY, { width: 125, align: "right" });
+                doc.moveDown(0.9);
+              });
+            } else {
+              doc.fontSize(8.5).fillColor("#64748b").font("Helvetica").text("No pending credit bills recorded.", 30, doc.y, { align: "center" });
+              doc.moveDown(1.2);
+            }
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            const finalTotal = creditBal > 0 ? creditBal : totalCalculated;
+            doc.fontSize(11).fillColor("#0f172a").font("Helvetica-Bold");
+            doc.text("Total Outstanding Payable:", 250, doc.y, { width: 180, align: "right" });
+            doc.fillColor("#e11d48").text(`Rs. ${finalTotal.toFixed(2)}`, 440, doc.y - 11, { width: 125, align: "right" });
+            const stampY = Math.min(Math.max(doc.y + 15, 650), 730);
+            doc.save();
+            doc.translate(480, stampY);
+            doc.rotate(-10);
+            doc.strokeColor("#f59e0b").lineWidth(1.8);
+            doc.circle(0, 0, 32).stroke();
+            doc.fillColor("#f59e0b").fontSize(6.5).font("Helvetica-Bold");
+            doc.text("CREDIT ACCOUNT", -28, -8, { width: 56, align: "center" });
+            doc.text("STATEMENT", -28, 2, { width: 56, align: "center" });
+            doc.restore();
+            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+              "This is an official pharmacy credit ledger statement. Stamped digitally.",
+              30,
+              785,
+              { align: "center", width: doc.page.width - 60 }
+            );
+            if (settings.print_portal_guide_page !== "0" && settings.enable_portal_guide_page !== "0") {
+              await this.appendCustomerPortalGuidePage(doc, db2, settings, {
+                name: customer.name,
+                phone: customer.phone,
+                customerId: customer.id
+              });
+            }
+            doc.end();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+      /**
+       * Generate a Patient Refill Reminder / Advisory Slip PDF
+       */
+      async generateRefillSchedulePdf(refillId, outPath) {
+        const db2 = await dbManager.getConnection();
+        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
+        const settings = {};
+        settingsRows.forEach((r) => {
+          settings[r.key] = r.value;
+        });
+        const refill = await db2.get(
+          `SELECT pr.*, c.name as customer_name, c.phone as customer_phone, c.address as customer_address
+       FROM patient_refills pr
+       LEFT JOIN customers c ON pr.customer_id = c.id
+       WHERE pr.id = ?`,
+          [refillId]
+        );
+        if (!refill) {
+          throw new Error(`Refill record ID ${refillId} not found`);
+        }
+        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "AI PHARMACY CARE";
+        const shopAddress = settings.address || settings.shop_address || "";
+        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
+        const shopLicence = settings.drug_license || settings.shop_licence || settings.license_number || settings.dl_number || settings.drug_licence_no || "";
+        const shopGstin = settings.gstin || "";
+        return new Promise(async (resolve, reject) => {
+          try {
+            const doc = new import_pdfkit.default({ size: "A4", margin: 30 });
+            const stream = import_fs21.default.createWriteStream(outPath);
+            stream.on("error", reject);
+            stream.on("finish", resolve);
+            doc.pipe(stream);
+            doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
+            if (shopAddress) {
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
+            }
+            const contactParts = [];
+            if (shopPhone) contactParts.push(`Helpline: ${shopPhone}`);
+            if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
+            if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
+            if (contactParts.length > 0) {
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
+            }
+            doc.moveDown(0.8);
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a").text("PRESCRIPTION REFILL ADVISORY & SCHEDULE", { align: "center" });
+            doc.moveDown(1);
+            const infoTop = doc.y;
+            doc.fontSize(9).fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text("Patient Information:", 30, infoTop);
+            doc.font("Helvetica").text(`Name: ${refill.patient_name || refill.customer_name || "Patient"}`, 30, doc.y + 3);
+            doc.text(`Phone: ${refill.patient_phone || refill.customer_phone || "-"}`, 30, doc.y + 3);
+            const nextDateStr = refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Immediate";
+            doc.font("Helvetica-Bold").text("Refill Schedule Details:", 320, infoTop);
+            doc.font("Helvetica").text(`Refill Due Date: ${nextDateStr}`, 320, doc.y + 3);
+            doc.text(`Cycle Interval: ${refill.refill_days || 30} Days`, 320, doc.y + 3);
+            doc.moveDown(1.2);
+            const tableTop = doc.y;
+            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
+            doc.text("Prescribed Medicine", 30, tableTop, { width: 280 });
+            doc.text("Dosage / Frequency", 320, tableTop, { width: 130 });
+            doc.text("Quantity", 460, tableTop, { width: 105, align: "right" });
+            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            const medY = doc.y;
+            doc.fontSize(9).fillColor("#0f172a").font("Helvetica");
+            doc.text(refill.medicine_name || "Prescribed Medicine", 30, medY, { width: 280 });
+            doc.text(refill.dosage || "As directed", 320, medY, { width: 130 });
+            doc.text(String(refill.quantity_needed || refill.quantity || 1), 460, medY, { width: 105, align: "right" });
+            doc.moveDown(1.5);
+            doc.fontSize(8.5).fillColor("#0284c7").font("Helvetica-Bold").text("Refill Advisory Note:");
+            doc.fontSize(8.5).fillColor("#334155").font("Helvetica").text(
+              "To ensure uninterrupted course continuity of your essential medications, please collect your scheduled refill at your earliest convenience or contact our pharmacy desk for prompt delivery.",
+              { width: 535, align: "justify" }
+            );
+            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+              "This is a verified pharmacy refill advisory slip.",
+              30,
+              785,
+              { align: "center", width: doc.page.width - 60 }
+            );
+            if (settings.print_portal_guide_page !== "0" && settings.enable_portal_guide_page !== "0") {
+              await this.appendCustomerPortalGuidePage(doc, db2, settings, {
+                name: refill.patient_name || refill.customer_name,
+                phone: refill.patient_phone || refill.customer_phone,
+                customerId: refill.customer_id
+              });
+            }
+            doc.end();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+      /**
+       * Generate Special Order Arrival / Collection Slip PDF
+       */
+      async generateSpecialOrderSlipPdf(orderId, outPath) {
+        const db2 = await dbManager.getConnection();
+        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
+        const settings = {};
+        settingsRows.forEach((r) => {
+          settings[r.key] = r.value;
+        });
+        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
+        if (!order) {
+          throw new Error(`Special Order ID ${orderId} not found`);
+        }
+        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "AI PHARMACY";
+        const shopAddress = settings.address || settings.shop_address || "";
+        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
+        const shopLicence = settings.drug_license || settings.shop_licence || settings.license_number || settings.dl_number || settings.drug_licence_no || "";
+        const shopGstin = settings.gstin || "";
+        return new Promise(async (resolve, reject) => {
+          try {
+            const doc = new import_pdfkit.default({ size: "A4", margin: 30 });
+            const stream = import_fs21.default.createWriteStream(outPath);
+            stream.on("error", reject);
+            stream.on("finish", resolve);
+            doc.pipe(stream);
+            doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
+            if (shopAddress) {
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
+            }
+            const contactParts = [];
+            if (shopPhone) contactParts.push(`Phone: ${shopPhone}`);
+            if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
+            if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
+            if (contactParts.length > 0) {
+              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
+            }
+            doc.moveDown(0.8);
+            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a").text("SPECIAL MEDICINE ORDER ARRIVAL & PICKUP SLIP", { align: "center" });
+            doc.moveDown(1);
+            const infoTop = doc.y;
+            doc.fontSize(9).fillColor("#0f172a");
+            doc.font("Helvetica-Bold").text("Customer Details:", 30, infoTop);
+            doc.font("Helvetica").text(`Name: ${order.requester || "Customer"}`, 30, doc.y + 3);
+            doc.text(`Phone: ${order.phone || "-"}`, 30, doc.y + 3);
+            doc.font("Helvetica-Bold").text("Order Details:", 320, infoTop);
+            doc.font("Helvetica").text(`Order Reference: #SO-${order.id}`, 320, doc.y + 3);
+            doc.text(`Arrival Date: ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, 320, doc.y + 3);
+            doc.font("Helvetica-Bold").fillColor("#10b981").text("Status: READY FOR PICKUP", 320, doc.y + 3);
+            doc.moveDown(1.2);
+            const tableTop = doc.y;
+            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
+            doc.text("Requested Product / Medicine", 30, tableTop, { width: 370 });
+            doc.text("Quantity", 410, tableTop, { width: 155, align: "right" });
+            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
+            doc.moveDown(0.8);
+            const prodY = doc.y;
+            doc.fontSize(9.5).fillColor("#0f172a").font("Helvetica-Bold");
+            doc.text(order.product || "Special Requested Medicine", 30, prodY, { width: 370 });
+            doc.text(`${order.qty || 1} units`, 410, prodY, { width: 155, align: "right" });
+            doc.moveDown(1.5);
+            doc.fontSize(8.5).fillColor("#0284c7").font("Helvetica-Bold").text("Pickup Instructions:");
+            doc.fontSize(8.5).fillColor("#334155").font("Helvetica").text(
+              "Your specially requested medicine has arrived and is securely reserved at the pharmacy counter. Please present this slip or your phone number upon collection.",
+              { width: 535, align: "justify" }
+            );
+            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
+              "This is an authentic pharmacy collection slip.",
+              30,
+              785,
+              { align: "center", width: doc.page.width - 60 }
+            );
+            if (settings.print_portal_guide_page !== "0" && settings.enable_portal_guide_page !== "0") {
+              await this.appendCustomerPortalGuidePage(doc, db2, settings, {
+                name: order.requester,
+                phone: order.phone,
+                customerId: order.customer_id
+              });
+            }
+            doc.end();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+      /**
+       * Append a 2nd page to customer-facing PDFs with full instructions on how to
+       * log in, reorder refills, reset PIN, and access the customer web portal.
+       * Uses Template 4: Senior & High-Contrast Quick-Scan Flyer with direct clickable login links.
+       */
+      async appendCustomerPortalGuidePage(doc, db2, settings, customerInfo) {
+        const rawPhone = customerInfo.phone || "";
+        const cleanPhone = normalizePhone(rawPhone);
+        const customerName = (customerInfo.name || "Valued Patient").trim();
+        let pinDisplay = "1234";
+        if (cleanPhone || customerInfo.customerId) {
+          try {
+            const acc = await db2.get(
+              "SELECT pin_display FROM customer_portal_accounts WHERE login_id = ? OR customer_id = ? LIMIT 1",
+              [cleanPhone, customerInfo.customerId || 0]
+            );
+            if (acc?.pin_display) {
+              pinDisplay = String(acc.pin_display).trim();
+            }
+          } catch (_) {
+          }
+        }
+        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "AI PHARMACY";
+        const shopAddress = settings.address || settings.shop_address || "";
+        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
+        let liveUrl = "https://tanmaymedical.com/portal";
+        try {
+          liveUrl = await getLivePortalUrl(db2, cleanPhone || void 0);
+        } catch (_) {
+        }
+        let qrBuffer = null;
+        try {
+          qrBuffer = await import_qrcode3.default.toBuffer(liveUrl, {
+            width: 180,
+            margin: 1,
+            color: { dark: "#1e40af", light: "#ffffff" }
+          });
+        } catch (_) {
+        }
+        doc.addPage({ size: "A4", margin: 30 });
+        doc.font("Helvetica-Bold").fontSize(16).fillColor("#1e40af").text(shopName, { align: "center" });
+        doc.font("Helvetica-Bold").fontSize(11).fillColor("#0f172a").text("FAST MEDICINE REORDER SLIP \u2014 KEEP FOR FUTURE ORDERS", { align: "center" });
+        doc.font("Helvetica").fontSize(8.5).fillColor("#475569").text("No typing required! Scan with any phone camera or click the link to reorder medicines.", { align: "center" });
+        doc.moveDown(0.5);
+        doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#1e40af").lineWidth(1.5).stroke();
+        doc.moveDown(0.6);
+        const mainTop = doc.y;
+        const mainH = 145;
+        doc.roundedRect(30, mainTop, 535, mainH, 10).fillColor("#eff6ff").strokeColor("#3b82f6").lineWidth(1.5).fillAndStroke();
+        doc.rect(45, mainTop + 12, 120, 120).fillColor("#ffffff").strokeColor("#bfdbfe").lineWidth(1).fillAndStroke();
+        if (qrBuffer) {
+          doc.image(qrBuffer, 52, mainTop + 16, { width: 106 });
+        }
+        doc.link(45, mainTop + 12, 120, 120, liveUrl);
+        doc.fontSize(6.5).font("Helvetica-Bold").fillColor("#1e40af").text("CLICK TO OPEN LINK", 45, mainTop + 124, { width: 120, align: "center" });
+        const rightX = 180;
+        doc.font("Helvetica-Bold").fontSize(11.5).fillColor("#1e40af").text("SCAN OR CLICK TO OPEN YOUR MEDICINE PORTAL", rightX, mainTop + 13);
+        doc.font("Helvetica").fontSize(8).fillColor("#1e293b").text("Scan with your phone camera or visit the link below from any phone or PC:", rightX, mainTop + 29);
+        doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a").text("Patient: ", rightX, mainTop + 46, { continued: true }).font("Helvetica").text(customerName);
+        doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a").text("Login Mobile: ", rightX, mainTop + 61, { continued: true }).font("Helvetica-Bold").fillColor("#1d4ed8").text(cleanPhone ? `+91 ${cleanPhone}` : "Your Registered Mobile");
+        doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a").text("Your 4-Digit PIN: ", rightX, mainTop + 78);
+        const pinBlockX = rightX + 85;
+        const pinDigits = (pinDisplay || "1234").slice(0, 4).padEnd(4, "0").split("");
+        pinDigits.forEach((d, i) => {
+          doc.rect(pinBlockX + i * 22, mainTop + 74, 18, 20).fillColor("#ffffff").strokeColor("#1e40af").lineWidth(1).fillAndStroke();
+          doc.font("Helvetica-Bold").fontSize(10).fillColor("#1e40af").text(d, pinBlockX + i * 22, mainTop + 79, { width: 18, align: "center" });
+        });
+        const displayUrl = liveUrl.replace(/^https?:\/\//i, "");
+        doc.font("Helvetica-Bold").fontSize(8.5).fillColor("#0f172a").text("Direct Login Link: ", rightX, mainTop + 101, { continued: true }).font("Helvetica-Bold").fillColor("#2563eb").text(displayUrl.length > 38 ? `${displayUrl.slice(0, 36)}...` : displayUrl, {
+          link: liveUrl,
+          underline: true
+        });
+        doc.fontSize(7.5).font("Helvetica-Bold").fillColor("#059669").text("\u2022 Forgot PIN? Login with 1-tap WhatsApp OTP anytime.", rightX, mainTop + 118);
+        const stepsTop = mainTop + mainH + 16;
+        doc.font("Helvetica-Bold").fontSize(11).fillColor("#0f172a").text("3 SIMPLE STEPS TO GET YOUR MEDICINES", 30, stepsTop);
+        const sW = 171;
+        const sH = 110;
+        const sY = stepsTop + 16;
+        doc.roundedRect(30, sY, sW, sH, 8).fillColor("#ffffff").strokeColor("#cbd5e1").lineWidth(1.2).fillAndStroke();
+        doc.rect(30, sY, sW, 26).fillColor("#1e40af").fill();
+        doc.font("Helvetica-Bold").fontSize(9).fillColor("#ffffff").text("STEP 1: SCAN OR OPEN", 30, sY + 8, { width: sW, align: "center" });
+        doc.font("Helvetica").fontSize(8).fillColor("#334155").text(
+          `Point your phone camera at the QR code above or visit ${displayUrl.split("/")[0]}.
+
+Enter your mobile number and your 4-digit PIN (${pinDisplay || "1234"}) or use WhatsApp OTP.`,
+          38,
+          sY + 34,
+          { width: sW - 16, lineGap: 2 }
+        );
+        doc.roundedRect(30 + sW + 11, sY, sW, sH, 8).fillColor("#ffffff").strokeColor("#cbd5e1").lineWidth(1.2).fillAndStroke();
+        doc.rect(30 + sW + 11, sY, sW, 26).fillColor("#059669").fill();
+        doc.font("Helvetica-Bold").fontSize(9).fillColor("#ffffff").text("STEP 2: 1-CLICK REORDER", 30 + sW + 11, sY + 8, { width: sW, align: "center" });
+        doc.font("Helvetica").fontSize(8).fillColor("#334155").text(
+          'Tap "Select All Refills" to order your regular medicines instantly.\n\nOr click "Upload Prescription" to send a photo of any new doctor prescription.',
+          38 + sW + 11,
+          sY + 34,
+          { width: sW - 16, lineGap: 2 }
+        );
+        doc.roundedRect(30 + (sW + 11) * 2, sY, sW, sH, 8).fillColor("#ffffff").strokeColor("#cbd5e1").lineWidth(1.2).fillAndStroke();
+        doc.rect(30 + (sW + 11) * 2, sY, sW, 26).fillColor("#c2410c").fill();
+        doc.font("Helvetica-Bold").fontSize(9).fillColor("#ffffff").text("STEP 3: PICKUP / DELIVERY", 30 + (sW + 11) * 2, sY + 8, { width: sW, align: "center" });
+        doc.font("Helvetica").fontSize(8).fillColor("#334155").text(
+          "Pick up at our pharmacy counter with zero wait time, or choose Doorstep Delivery.\n\nPay conveniently via UPI QR (GPay, PhonePe, Paytm) or Cash.",
+          38 + (sW + 11) * 2,
+          sY + 34,
+          { width: sW - 16, lineGap: 2 }
+        );
+        const faqTop = sY + sH + 14;
+        const faqH = 68;
+        doc.roundedRect(30, faqTop, 535, faqH, 8).fillColor("#f8fafc").strokeColor("#cbd5e1").lineWidth(1).fillAndStroke();
+        doc.font("Helvetica-Bold").fontSize(8.5).fillColor("#0f172a").text("NEED HELP ORDERING OR FORGOT YOUR PIN?", 42, faqTop + 10);
+        doc.fontSize(7.5).font("Helvetica").fillColor("#475569");
+        doc.text(
+          `\u2022 Forgot PIN: Click "Login via WhatsApp OTP" on the website to sign in instantly with a 6-digit WhatsApp code.
+\u2022 Set Your Own PIN: Once logged in, go to Settings -> "Change PIN" to choose your own memorable PIN.
+\u2022 Phone Support: Call our pharmacy counter at ${shopPhone || "8080888041"} and our pharmacist will assist you immediately.`,
+          42,
+          faqTop + 24,
+          { width: 510, lineGap: 2.5 }
+        );
+        const footerY = 770;
+        doc.moveTo(30, footerY).lineTo(565, footerY).strokeColor("#cbd5e1").lineWidth(0.8).stroke();
+        doc.fontSize(8).font("Helvetica-Bold").fillColor("#0f172a").text(
+          `${shopName} \u2022 Counter Pickup Hours: 8:00 AM - 10:30 PM Daily`,
+          30,
+          footerY + 8,
+          { align: "center" }
+        );
+        if (shopAddress || shopPhone) {
+          doc.fontSize(7).font("Helvetica").fillColor("#64748b").text(
+            `${shopAddress}${shopPhone ? ` | Phone: ${shopPhone}` : ""}`,
+            30,
+            footerY + 20,
+            { align: "center" }
+          );
+        }
+        doc.fontSize(6.5).font("Helvetica").fillColor("#94a3b8").text(
+          "AI Pharmacy Patient Care & Self-Service Portal \u2022 100% Genuine Medicines Guarantee",
+          30,
+          footerY + 31,
+          { align: "center" }
+        );
+      }
+      /**
+       * Generate a standalone 1-Page Customer Portal Guide & Login Slip PDF
+       */
+      async generateCustomerPortalGuidePdf(phone, outPath) {
+        const db2 = await dbManager.getConnection();
+        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
+        const settings = {};
+        settingsRows.forEach((r) => {
+          settings[r.key] = r.value;
+        });
+        const cleanPhone = normalizePhone(phone);
+        const customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+        return new Promise(async (resolve, reject) => {
+          try {
+            const doc = new import_pdfkit.default({ size: "A4", margin: 30 });
+            const stream = import_fs21.default.createWriteStream(outPath);
+            stream.on("error", reject);
+            stream.on("finish", resolve);
+            doc.pipe(stream);
+            await this.appendCustomerPortalGuidePage(doc, db2, settings, {
+              name: customer?.name || "Valued Patient",
+              phone: cleanPhone,
+              customerId: customer?.id
+            });
+            doc.end();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      }
+    };
+    pdfInvoiceService = new PdfInvoiceService();
+  }
+});
+
+// src/utils/logger.ts
+var AppLogger, logger;
+var init_logger = __esm({
+  "src/utils/logger.ts"() {
+    "use strict";
+    AppLogger = class {
+      formatMessage(level, message, context) {
+        const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+        const mod = context?.module ? `[${context.module}]` : "";
+        const op = context?.operation ? `[${context.operation}]` : "";
+        const req = context?.requestId ? `[req:${context.requestId}]` : "";
+        const dur = context?.durationMs !== void 0 ? ` (${context.durationMs}ms)` : "";
+        return `${timestamp} ${level.padEnd(5)} ${mod}${op}${req} ${message}${dur}`;
+      }
+      debug(message, context) {
+        if (process.env.DEBUG || process.env.NODE_ENV !== "production") {
+          console.debug(this.formatMessage("DEBUG", message, context));
+        }
+      }
+      info(message, context) {
+        console.log(this.formatMessage("INFO", message, context));
+      }
+      warn(message, context) {
+        console.warn(this.formatMessage("WARN", message, context));
+      }
+      error(message, error, context) {
+        const formatted = this.formatMessage("ERROR", message, context);
+        if (error) {
+          console.error(formatted, error);
+        } else {
+          console.error(formatted);
+        }
+      }
+    };
+    logger = new AppLogger();
+  }
+});
+
+// src/services/auth/customerAuthService.ts
+var customerAuthService_exports = {};
+__export(customerAuthService_exports, {
+  customerAuthService: () => customerAuthService,
+  generateRandomOtp: () => generateRandomOtp,
+  generateRandomPin: () => generateRandomPin,
+  hashPin: () => hashPin,
+  normalizePhone: () => normalizePhone2
+});
+function normalizePhone2(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith("0")) {
+    return digits.slice(1);
+  }
+  if (digits.length > 10) {
+    return digits.slice(-10);
+  }
+  return digits;
+}
+function hashPin(pin) {
+  const salt = "pharmacy_portal_salt_2026";
+  return import_crypto3.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
+}
+function generateRandomPin() {
+  return Math.floor(1e3 + Math.random() * 9e3).toString();
+}
+function generateRandomOtp() {
+  return Math.floor(1e5 + Math.random() * 9e5).toString();
+}
+var import_crypto3, SESSION_SECRET, CustomerAuthService, customerAuthService;
+var init_customerAuthService = __esm({
+  "src/services/auth/customerAuthService.ts"() {
+    "use strict";
+    import_crypto3 = __toESM(require("crypto"), 1);
+    init_connection();
+    init_whatsappQueueWorker();
+    init_logger();
+    init_nameFormatter();
+    init_storeSettingsService();
+    SESSION_SECRET = process.env.CUSTOMER_PORTAL_SECRET || "pharmacy_portal_session_secret_2026";
+    CustomerAuthService = class {
+      /**
+       * Create an HMAC-signed token and store session in customer_sessions
+       */
+      async createSession(customerId, phone, channel = "portal", reqMetadata) {
+        const payload = `${customerId}:${phone}:${Date.now()}`;
+        const signature = import_crypto3.default.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+        const token = Buffer.from(`${payload}:${signature}`).toString("base64");
+        try {
+          const db2 = await dbManager.getConnection();
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
+          await db2.run(
+            `INSERT INTO customer_sessions (
+           customer_id, phone, session_token, channel, device_info, ip_address,
+           logged_in_at, last_active_at, duration_seconds, is_active, expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
+            [
+              customerId,
+              phone,
+              token,
+              channel,
+              reqMetadata?.userAgent || null,
+              reqMetadata?.ip || null,
+              expiresAt
+            ]
+          );
+        } catch (err) {
+          logger.warn("Failed to record customer session in DB", { module: "CustomerAuthService", error: err });
+        }
+        return token;
+      }
+      /**
+       * Verify customer session token
+       */
+      async verifySession(tokenStr) {
+        try {
+          if (!tokenStr) return null;
+          const decoded = Buffer.from(tokenStr, "base64").toString("utf8");
+          const parts = decoded.split(":");
+          if (parts.length !== 4) return null;
+          const [customerIdStr, phone, timestampStr, signature] = parts;
+          const customerId = parseInt(customerIdStr, 10);
+          const timestamp = parseInt(timestampStr, 10);
+          if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
+          const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
+          const expectedSignature = import_crypto3.default.createHmac("sha256", SESSION_SECRET).update(expectedPayload).digest("hex");
+          if (import_crypto3.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+            return { customerId, phone };
+          }
+        } catch (_) {
+        }
+        return null;
+      }
+      /**
+       * Request OTP for customer mobile login - strictly for existing CRM patients
+       */
+      async requestOtp(phoneRaw) {
+        const phone = normalizePhone2(phoneRaw);
+        if (!phone || phone.length < 10) {
+          throw new Error("Valid 10-digit mobile number is required");
+        }
+        const db2 = await dbManager.getConnection();
+        let customer = await db2.get(
+          `SELECT id, name, phone FROM customers WHERE phone LIKE ? OR phone = ? LIMIT 1`,
+          [`%${phone}%`, phone]
+        );
+        if (!customer) {
+          const defaultName = `Customer ${phone.slice(-4)}`;
+          const insResult = await db2.run(
+            `INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
+            [defaultName, phone]
+          );
+          customer = { id: insResult.lastID, name: defaultName, phone };
+          logger.info(`Auto-registered customer for phone ${phone}`, { module: "CustomerAuthService", customerId: customer.id });
+        }
+        const loginId = phone;
+        let account = await db2.get(
+          `SELECT id, customer_id, login_id FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?`,
+          [customer.id, loginId]
+        );
+        if (!account) {
+          const pin = generateRandomPin();
+          const pHash = hashPin(pin);
+          await db2.run(
+            `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status)
+         VALUES (?, ?, ?, ?, 1, 'active')`,
+            [customer.id, loginId, pHash, pin]
+          );
+        }
+        await db2.run(
+          `UPDATE customer_portal_otps SET is_used = 1 WHERE login_id = ? AND is_used = 0`,
+          [loginId]
+        );
+        const otp = generateRandomOtp();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1e3).toISOString();
+        await db2.run(
+          `INSERT INTO customer_portal_otps (login_id, otp_code, expires_at, is_used)
+       VALUES (?, ?, ?, 0)`,
+          [loginId, otp, expiresAt]
+        );
+        try {
+          const storeName = await getStoreMedicalName(db2, 1) || "Your Pharmacy";
+          const msgText = `*${storeName} Portal Login*
+
+Your One-Time Password (OTP) is: *${otp}*
+
+Valid for 10 minutes. Do not share this OTP with anyone.`;
+          await whatsappQueueWorker.enqueue(
+            `91${phone}`,
+            msgText,
+            "portal_otp",
+            customer?.name || "Customer"
+          );
+          logger.info(`OTP queued for 91${phone}`, { module: "CustomerAuthService", operation: "requestOtp" });
+        } catch (msgErr) {
+          logger.warn("Failed to queue WhatsApp OTP, continuing", { module: "CustomerAuthService", error: msgErr });
+        }
+        return {
+          success: true,
+          message: "OTP sent to your WhatsApp number",
+          debugOtp: process.env.NODE_ENV !== "production" ? otp : void 0
+        };
+      }
+      /**
+       * Verify OTP and log customer in
+       */
+      async verifyOtp(phoneRaw, otpCode, reqMetadata) {
+        const phone = normalizePhone2(phoneRaw);
+        const otp = (otpCode || "").trim();
+        if (!phone || !otp) {
+          throw new Error("Phone and OTP code are required");
+        }
+        const db2 = await dbManager.getConnection();
+        const loginId = phone;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const otpRecord = await db2.get(
+          `SELECT * FROM customer_portal_otps 
+       WHERE login_id = ? AND otp_code = ? AND is_used = 0 AND expires_at > ?
+       ORDER BY created_at DESC LIMIT 1`,
+          [loginId, otp, now]
+        );
+        if (!otpRecord) {
+          throw new Error("Invalid or expired OTP");
+        }
+        await db2.run(`UPDATE customer_portal_otps SET is_used = 1 WHERE id = ?`, [otpRecord.id]);
+        const account = await db2.get(
+          `SELECT pa.*, c.name, c.phone, c.address, s.name as store_name
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       LEFT JOIN stores s ON s.id = pa.preferred_store_id
+       WHERE pa.login_id = ? OR c.phone LIKE ?`,
+          [loginId, `%${phone}%`]
+        );
+        if (!account) {
+          throw new Error("Customer account not found");
+        }
+        if (account.status === "blocked") {
+          throw new Error("Your account is inactive or blocked. Please contact pharmacy staff.");
+        }
+        await db2.run(
+          `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
+          [account.id]
+        );
+        const token = await this.createSession(account.customer_id, phone, "portal", reqMetadata);
+        return {
+          token,
+          customer: {
+            id: account.customer_id,
+            name: formatCustomerName(account.name || "Customer"),
+            phone: account.phone || phone,
+            address: account.address || "",
+            loginId: account.login_id,
+            preferredStoreId: account.preferred_store_id || 1,
+            storeName: account.store_name || "Main Pharmacy"
+          },
+          features: {
+            bills: true,
+            refills: true,
+            orders: true,
+            catalog: true,
+            prescriptions: true
+          }
+        };
+      }
+      /**
+       * Login with Login ID + PIN
+       */
+      async loginWithPin(loginIdRaw, pinRaw, reqMetadata) {
+        const loginId = (loginIdRaw || "").trim();
+        const pin = (pinRaw || "").trim();
+        if (!loginId || !pin) {
+          throw new Error("Login ID and PIN are required");
+        }
+        const db2 = await dbManager.getConnection();
+        const cleanPhone = normalizePhone2(loginId);
+        const account = await db2.get(
+          `SELECT pa.*, c.name, c.phone, c.address, s.name as store_name
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       LEFT JOIN stores s ON s.id = pa.preferred_store_id
+       WHERE pa.login_id = ? OR c.phone = ? OR c.phone LIKE ?`,
+          [loginId, cleanPhone, `%${cleanPhone}%`]
+        );
+        if (!account) {
+          throw new Error("Invalid Login ID or PIN");
+        }
+        if (account.status === "blocked") {
+          throw new Error("Your account is inactive or blocked. Please contact pharmacy staff.");
+        }
+        const hashedInput = hashPin(pin);
+        if (hashedInput !== account.pin_hash && pin !== account.pin_display) {
+          throw new Error("Invalid Login ID or PIN");
+        }
+        await db2.run(
+          `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
+          [account.id]
+        );
+        const phone = account.phone || cleanPhone;
+        const token = await this.createSession(account.customer_id, phone, "portal", reqMetadata);
+        return {
+          token,
+          customer: {
+            id: account.customer_id,
+            name: formatCustomerName(account.name || "Customer"),
+            phone,
+            address: account.address || "",
+            loginId: account.login_id,
+            preferredStoreId: account.preferred_store_id || 1,
+            storeName: account.store_name || "Main Pharmacy"
+          },
+          features: {
+            bills: true,
+            refills: true,
+            orders: true,
+            catalog: true,
+            prescriptions: true
+          }
+        };
+      }
+      /**
+       * Heartbeat to track active presence and calculate session duration
+       */
+      async recordHeartbeat(sessionToken) {
+        try {
+          const db2 = await dbManager.getConnection();
+          const session = await db2.get(
+            `SELECT id, customer_id, logged_in_at FROM customer_sessions 
+         WHERE session_token = ? AND is_active = 1 LIMIT 1`,
+            [sessionToken]
+          );
+          if (!session) return { success: false, durationSeconds: 0 };
+          const loggedInTime = new Date(session.logged_in_at).getTime();
+          const now = Date.now();
+          const durationSeconds = Math.max(0, Math.floor((now - loggedInTime) / 1e3));
+          await db2.run(
+            `UPDATE customer_sessions 
+         SET last_active_at = CURRENT_TIMESTAMP,
+             duration_seconds = ?
+         WHERE id = ?`,
+            [durationSeconds, session.id]
+          );
+          await db2.run(
+            `UPDATE customer_portal_accounts 
+         SET total_time_spent_seconds = COALESCE(total_time_spent_seconds, 0) + 30
+         WHERE customer_id = ?`,
+            [session.customer_id]
+          );
+          return { success: true, durationSeconds };
+        } catch (err) {
+          logger.warn("Heartbeat update failed", { module: "CustomerAuthService", error: err });
+          return { success: false, durationSeconds: 0 };
+        }
+      }
+      /**
+       * Terminate session on explicit customer logout and finalize duration
+       */
+      async logoutSession(sessionToken) {
+        try {
+          const db2 = await dbManager.getConnection();
+          const session = await db2.get(
+            `SELECT id, customer_id, logged_in_at FROM customer_sessions 
+         WHERE session_token = ? AND is_active = 1 LIMIT 1`,
+            [sessionToken]
+          );
+          if (!session) return { success: false, durationSeconds: 0 };
+          const loggedInTime = new Date(session.logged_in_at).getTime();
+          const now = Date.now();
+          const durationSeconds = Math.max(0, Math.floor((now - loggedInTime) / 1e3));
+          await db2.run(
+            `UPDATE customer_sessions 
+         SET is_active = 0,
+             logged_out_at = CURRENT_TIMESTAMP,
+             duration_seconds = ?,
+             last_active_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+            [durationSeconds, session.id]
+          );
+          await db2.run(
+            `UPDATE customer_portal_accounts 
+         SET last_logout_at = CURRENT_TIMESTAMP
+         WHERE customer_id = ?`,
+            [session.customer_id]
+          );
+          logger.info(`Session logged out (duration: ${durationSeconds}s)`, {
+            module: "CustomerAuthService",
+            operation: "logoutSession",
+            customerId: session.customer_id
+          });
+          return { success: true, durationSeconds };
+        } catch (err) {
+          logger.error("Logout session failed", err, { module: "CustomerAuthService" });
+          return { success: false, durationSeconds: 0 };
+        }
+      }
+      /**
+       * Get customer session history for CRM auditing
+       */
+      async getCustomerSessions(customerId) {
+        const db2 = await dbManager.getConnection();
+        const account = await db2.get(
+          `SELECT total_login_count, total_time_spent_seconds, last_login_at, last_logout_at
+       FROM customer_portal_accounts WHERE customer_id = ?`,
+          [customerId]
+        );
+        const sessions = await db2.all(
+          `SELECT id, channel, device_info, ip_address, logged_in_at, last_active_at, logged_out_at, duration_seconds, is_active
+       FROM customer_sessions
+       WHERE customer_id = ?
+       ORDER BY id DESC LIMIT 50`,
+          [customerId]
+        );
+        return {
+          stats: {
+            totalLogins: account?.total_login_count || sessions.length,
+            totalTimeSpentSeconds: account?.total_time_spent_seconds || 0,
+            lastLoginAt: account?.last_login_at || null,
+            lastLogoutAt: account?.last_logout_at || null,
+            activeSessionsCount: sessions.filter((s) => s.is_active === 1).length
+          },
+          sessions
+        };
+      }
+    };
+    customerAuthService = new CustomerAuthService();
+  }
+});
+
+// src/services/cloudCatalogSyncService.ts
+var cloudCatalogSyncService_exports = {};
+__export(cloudCatalogSyncService_exports, {
+  getAdminSecret: () => getAdminSecret2,
+  pullCloudOrdersToLocal: () => pullCloudOrdersToLocal,
+  pushLocalCatalogToCloud: () => pushLocalCatalogToCloud,
+  scheduleCloudAutoPush: () => scheduleCloudAutoPush,
+  startCloudOrderSyncPoller: () => startCloudOrderSyncPoller
+});
+async function getAdminSecret2() {
+  if (process.env.ADMIN_SECRET && process.env.ADMIN_SECRET.trim() !== "") {
+    return process.env.ADMIN_SECRET.trim();
+  }
+  try {
+    const db2 = await dbManager.getConnection();
+    const row = await db2.get(
+      "SELECT value FROM app_settings WHERE key = 'cloud_admin_secret' OR key = 'admin_secret'"
+    );
+    if (row?.value && row.value.trim() !== "") {
+      return row.value.trim();
+    }
+  } catch (_) {
+  }
+  return "";
+}
+async function pushLocalCatalogToCloud() {
+  const db2 = await dbManager.getConnection();
+  const rows = await db2.all(`
+    SELECT m.id, m.name, m.generic_name as composition, m.manufacturer, m.category,
+           COALESCE(
+             (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0),
+             (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id),
+             m.mrp,
+             0
+           ) as mrp,
+           COALESCE(
+             (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0),
+             (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id),
+             m.sell_price,
+             m.mrp,
+             0
+           ) as sell_price,
+           m.packaging as pack,
+           COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
+    FROM medicines m
+    LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+    WHERE (pcv.is_portal_visible = 1 OR pcv.is_website_visible = 1 OR (SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id) > 0)
+    ORDER BY m.name ASC
+    LIMIT 1000
+  `);
+  if (!rows || rows.length === 0) {
+    return { success: false, message: "No medicines found to publish to cloud." };
+  }
+  const storeRows = await db2.all(`SELECT key, value FROM app_settings WHERE key LIKE 'pharmacy_%'`);
+  const storeMap = {};
+  storeRows.forEach((r) => {
+    storeMap[r.key] = r.value;
+  });
+  const storeName = await getStoreMedicalName(db2);
+  const storePhone = await getStorePhone(db2);
+  const storeAddress = await getStoreAddress(db2);
+  const storeMapUrl = await getStoreGoogleMapsUrl(db2);
+  const storeInfo = {
+    name: storeName,
+    tagline: storeMap["pharmacy_tagline"] || "",
+    phone: storePhone,
+    whatsapp: storePhone.replace(/\D/g, ""),
+    address: storeAddress,
+    googleMapsUrl: storeMapUrl,
+    hours: storeMap["pharmacy_hours"] || "",
+    deliveryAvailable: true
+  };
+  const medicines = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    composition: r.composition || "",
+    category: r.category || "General",
+    manufacturer: r.manufacturer || "Pharmacy Stock",
+    pack: r.pack || "Standard Pack",
+    mrp: Number(r.mrp || 0),
+    sell_price: Number(r.sell_price || r.mrp || 0),
+    in_stock: Number(r.stock_qty || 0) > 0,
+    stock_qty: Number(r.stock_qty || 0)
+  }));
+  const customerBills = {};
+  try {
+    const recentSales = await db2.all(`
+      SELECT si.id, si.invoice_no, si.total_amount, si.date, c.phone as customer_phone
+      FROM sales_invoices si
+      JOIN customers c ON c.id = si.customer_id
+      WHERE c.phone IS NOT NULL AND (si.payment_status IS NULL OR si.payment_status != 'cancelled')
+      ORDER BY si.date DESC LIMIT 150
+    `);
+    for (const s of recentSales) {
+      const cleanPhone = String(s.customer_phone).replace(/\D/g, "");
+      if (cleanPhone.length >= 10) {
+        if (!customerBills[cleanPhone]) customerBills[cleanPhone] = [];
+        if (customerBills[cleanPhone].length < 5) {
+          const items = await db2.all(`
+            SELECT sit.quantity as qty, sit.unit_price as price, COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as name
+            FROM sale_items sit
+            LEFT JOIN inventory_master im ON im.id = sit.inventory_id
+            LEFT JOIN medicines m ON m.id = im.medicine_id
+            WHERE sit.invoice_id = ?
+          `, [s.id]).catch(() => []);
+          customerBills[cleanPhone].push({
+            invoiceNo: s.invoice_no,
+            date: s.date,
+            storeName: storeInfo.name,
+            totalAmount: s.total_amount,
+            items
+          });
+        }
+      }
+    }
+  } catch (_) {
+  }
+  const customerRefills = {};
+  try {
+    const refills = await db2.all(`
+      SELECT pr.id, pr.refill_interval_days, pr.quantity_needed, pr.next_refill_date,
+             m.name as medicineName, m.packaging as pack,
+             COALESCE(
+               (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0),
+               (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id),
+               m.sell_price,
+               m.mrp,
+               0
+             ) as price,
+             COALESCE(
+               (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0),
+               (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id),
+               m.mrp,
+               0
+             ) as mrp,
+             c.phone as customer_phone
+      FROM patient_refills pr
+      JOIN medicines m ON m.id = pr.medicine_id
+      JOIN customers c ON c.id = pr.customer_id
+      WHERE pr.is_active = 1 AND c.phone IS NOT NULL
+    `);
+    for (const r of refills) {
+      const cleanPhone = String(r.customer_phone).replace(/\D/g, "");
+      if (cleanPhone.length >= 10) {
+        if (!customerRefills[cleanPhone]) customerRefills[cleanPhone] = [];
+        customerRefills[cleanPhone].push({
+          id: `RFL-${r.id}`,
+          medicineName: r.medicineName,
+          pack: r.pack || "Standard",
+          dosage: "Prescribed Daily Dosage",
+          daysInterval: r.refill_interval_days || 30,
+          nextDueDate: r.next_refill_date || "Monthly",
+          price: r.price
+        });
+      }
+    }
+  } catch (_) {
+  }
+  let ownerAuth = [];
+  try {
+    const ownerUsers = await db2.all(
+      "SELECT id, username, password_hash, salt FROM pharmacy_users WHERE role = 'owner' AND is_active = 1"
+    );
+    ownerAuth = (ownerUsers || []).map((u) => ({
+      id: u.id,
+      username: u.username,
+      password_hash: u.password_hash,
+      salt: u.salt
+    }));
+  } catch (_) {
+  }
+  const secret = await getAdminSecret2();
+  if (!secret) {
+    return {
+      success: false,
+      message: "Cloud sync not configured: ADMIN_SECRET is missing. Please configure ADMIN_SECRET in Settings or environment variables."
+    };
+  }
+  try {
+    const res = await fetch(`${CLOUD_SERVER_URL2}/api/catalog/sync`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-secret": secret
+      },
+      body: JSON.stringify({ storeInfo, medicines, customerBills, customerRefills, ownerAuth })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      return {
+        success: true,
+        message: `Successfully synchronized ${medicines.length} medicines to 24/7 Cloud Shop!`,
+        count: medicines.length
+      };
+    }
+    return { success: false, message: data.error || "Failed to sync to cloud" };
+  } catch (err) {
+    console.error("[CloudCatalogSync] push error:", err);
+    return { success: false, message: err.message };
+  }
+}
+async function pullCloudOrdersToLocal() {
+  const secret = await getAdminSecret2();
+  if (!secret) {
+    return { success: false, message: "Cloud sync not configured: ADMIN_SECRET is missing." };
+  }
+  const db2 = await dbManager.getConnection();
+  try {
+    const res = await fetch(`${CLOUD_SERVER_URL2}/api/catalog/orders`, {
+      headers: { "x-admin-secret": secret }
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, message: data.error || "Failed to fetch cloud orders" };
+    }
+    const orders = data.orders || [];
+    if (orders.length === 0) {
+      return { success: true, message: "Zero pending orders in cloud queue.", ordersImported: 0 };
+    }
+    const { normalizeLanguage: normalizeLanguage2 } = await Promise.resolve().then(() => (init_whatsappLocalizer(), whatsappLocalizer_exports));
+    const importedIds = [];
+    let newImportCount = 0;
+    for (const o of orders) {
+      const cleanPhone = String(o.phone || "").replace(/\D/g, "").slice(-10);
+      const rawLang = o.preferredLanguage || o.language;
+      if (rawLang && cleanPhone.length === 10) {
+        const normLang = normalizeLanguage2(rawLang);
+        await db2.run(
+          `UPDATE customers SET preferred_language = ? WHERE phone LIKE ?`,
+          [normLang, `%${cleanPhone}%`]
+        ).catch(() => {
+        });
+        await db2.run(
+          `UPDATE whatsapp_chats SET language = ? WHERE resolved_number LIKE ?`,
+          [normLang, `%${cleanPhone}%`]
+        ).catch(() => {
+        });
+      }
+      const exists = await db2.get(`SELECT id FROM special_orders WHERE sync_id = ?`, [o.orderId]);
+      if (!exists) {
+        newImportCount++;
+        const itemsSummary = (o.items || []).map((it) => `${it.name} (x${it.qty || 1})`).join(", ");
+        const addressNotes = o.address ? `Delivery Address: ${o.address}` : "Counter Store Pickup";
+        const fullNotes = o.notes ? `${addressNotes} | Notes: ${o.notes}` : addressNotes;
+        const isRefill = Boolean(o.isRefill || o.orderType === "REFILL" || o.action === "refill_request");
+        const isSpecialOrder = Boolean(o.isSpecialOrder || o.orderType === "SPECIAL_ORDER");
+        let matchedCustomerId = null;
+        let customerName = o.customerName || "Online Customer";
+        if (cleanPhone.length === 10) {
+          const cust = await db2.get(`SELECT id, name FROM customers WHERE phone LIKE ?`, [`%${cleanPhone}%`]);
+          if (cust) {
+            matchedCustomerId = cust.id;
+            if (!o.customerName) customerName = cust.name;
+          }
+        }
+        const paymentMethod = o.paymentMethod || (o.payment_declared ? "UPI" : o.isCredit ? "CREDIT" : "COUNTER_PICKUP");
+        const paymentStatus = o.payment_declared ? "PENDING_VERIFICATION" : paymentMethod === "CREDIT" ? "UNPAID" : o.payment_status || "PENDING";
+        const paymentNotes = o.payment_declared ? ` [Payment Declared: ${o.payment_declared.method || "UPI"}]` : paymentMethod === "CREDIT" ? " [Payment Method: CREDIT / PAY LATER]" : "";
+        const orderNotesWithPayment = `${fullNotes}${paymentNotes}`;
+        if (isRefill) {
+          if (matchedCustomerId) {
+            for (const it of o.items || []) {
+              const refill = await db2.get(
+                `SELECT pr.id FROM patient_refills pr 
+                 JOIN medicines m ON m.id = pr.medicine_id
+                 WHERE pr.customer_id = ? AND (LOWER(m.name) = LOWER(?) OR LOWER(m.name) LIKE LOWER(?)) LIMIT 1`,
+                [matchedCustomerId, it.name, `%${it.name}%`]
+              );
+              if (refill) {
+                await db2.run(
+                  `UPDATE patient_refills 
+                   SET next_refill_date = date('now'), source = 'website', cart_status = 'pending', updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ?`,
+                  [refill.id]
+                ).catch(() => {
+                });
+              } else {
+                const med = await db2.get(
+                  `SELECT id FROM medicines WHERE LOWER(name) = LOWER(?) OR LOWER(name) LIKE LOWER(?) LIMIT 1`,
+                  [it.name, `%${it.name}%`]
+                );
+                if (med) {
+                  await db2.run(
+                    `INSERT INTO patient_refills (
+                      customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, quantity_needed, next_refill_date, is_active, source, cart_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, date('now'), 1, 'website', 'pending')`,
+                    [matchedCustomerId, customerName, cleanPhone, med.id, 30, it.qty || 1]
+                  ).catch(() => {
+                  });
+                }
+              }
+            }
+          }
+          await db2.run(
+            `INSERT INTO special_orders (
+              store_id, requester, phone, notes, product, medicine_name, qty,
+              status, priority, customer_order_source, order_type, total_amount, sync_id,
+              payment_method, payment_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              1,
+              customerName,
+              o.phone || "",
+              `[Website Refill Request #${o.orderId}] ${orderNotesWithPayment}`,
+              itemsSummary,
+              itemsSummary,
+              o.items?.reduce((sum, it) => sum + (it.qty || 1), 0) || 1,
+              "Pending",
+              "High",
+              "website_refill",
+              "REFILL",
+              o.totalAmount || 0,
+              o.orderId,
+              paymentMethod,
+              paymentStatus
+            ]
+          );
+        } else if (isSpecialOrder) {
+          await db2.run(
+            `INSERT INTO special_orders (
+              store_id, requester, phone, notes, product, medicine_name, qty,
+              status, priority, customer_order_source, order_type, total_amount, sync_id,
+              payment_method, payment_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              1,
+              customerName,
+              o.phone || "",
+              `[Special Shortage Request #${o.orderId}] ${orderNotesWithPayment}`,
+              itemsSummary,
+              itemsSummary,
+              o.items?.reduce((sum, it) => sum + (it.qty || 1), 0) || 1,
+              "Pending",
+              "High",
+              "website_special_order",
+              "SPECIAL_ORDER",
+              o.totalAmount || 0,
+              o.orderId,
+              paymentMethod,
+              paymentStatus
+            ]
+          );
+        } else {
+          await db2.run(
+            `INSERT INTO special_orders (
+              store_id, requester, phone, notes, product, medicine_name, qty,
+              status, priority, customer_order_source, order_type, total_amount, sync_id,
+              payment_method, payment_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              1,
+              customerName,
+              o.phone || "",
+              orderNotesWithPayment,
+              itemsSummary,
+              itemsSummary,
+              o.items?.reduce((sum, it) => sum + (it.qty || 1), 0) || 1,
+              "Pending",
+              "High",
+              "website_247",
+              o.orderType || "DELIVERY",
+              o.totalAmount || 0,
+              o.orderId,
+              paymentMethod,
+              paymentStatus
+            ]
+          );
+        }
+      }
+      importedIds.push(o.orderId);
+    }
+    if (importedIds.length > 0) {
+      await fetch(`${CLOUD_SERVER_URL2}/api/catalog/orders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-secret": secret
+        },
+        body: JSON.stringify({ orderIds: importedIds })
+      }).catch((err) => console.warn("[CloudCatalogSync] order ack failed:", err?.message || err));
+    }
+    if (newImportCount > 0) {
+      try {
+        const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
+        eventService2.broadcast("order_created", { count: newImportCount, source: "cloud_sync" });
+        eventService2.broadcast("refill_updated", { source: "cloud_sync" });
+        eventService2.broadcast("toast_alert", {
+          type: "success",
+          message: `\u{1F4E5} ${newImportCount} new order(s)/refill(s) received from 24/7 Web Portal!`,
+          link: "/crm?tab=special_orders"
+        });
+      } catch (_) {
+      }
+      try {
+        const { startupSyncCoordinator: startupSyncCoordinator2 } = await Promise.resolve().then(() => (init_startupSyncCoordinator(), startupSyncCoordinator_exports));
+        void startupSyncCoordinator2.runRefillAutoCartCatchUp("cloud_pull");
+      } catch (err) {
+        console.warn("[CloudCatalogSync] runRefillAutoCartCatchUp error:", err);
+      }
+    }
+    try {
+      const { cartQueueSyncService: cartQueueSyncService2 } = await Promise.resolve().then(() => (init_cartQueueSyncService(), cartQueueSyncService_exports));
+      await cartQueueSyncService2.drainCartAddQueue();
+    } catch (qErr) {
+      console.warn("[CloudCatalogSync] cart queue drain error:", qErr.message);
+    }
+    return {
+      success: true,
+      message: `Successfully imported ${newImportCount} new online order(s) into counter queue!`,
+      ordersImported: newImportCount
+    };
+  } catch (err) {
+    console.error("[CloudCatalogSync] pull error:", err);
+    return { success: false, message: err.message };
+  }
+}
+function scheduleCloudAutoPush(trigger = "event") {
+  const now = Date.now();
+  if (autoPushPending) return;
+  const delay = Math.max(0, AUTO_PUSH_DEBOUNCE_MS - (now - lastAutoPushAt));
+  autoPushPending = true;
+  if (autoPushTimer) clearTimeout(autoPushTimer);
+  autoPushTimer = setTimeout(async () => {
+    autoPushPending = false;
+    lastAutoPushAt = Date.now();
+    try {
+      const db2 = await dbManager.getConnection();
+      const autoSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'cloud_sync_auto'");
+      if (autoSetting && (autoSetting.value === "0" || autoSetting.value === "false")) {
+        return;
+      }
+      const secret = await getAdminSecret2();
+      if (!secret) return;
+      const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
+      if (activityTracker2.isIdle()) {
+        lastAutoPushAt = Date.now() - (AUTO_PUSH_DEBOUNCE_MS - 6e4);
+        return;
+      }
+      await pushLocalCatalogToCloud();
+    } catch (err) {
+      console.warn(`[CloudCatalogSync] Auto-push error (${trigger}):`, err?.message || err);
+    }
+  }, delay);
+}
+function startCloudOrderSyncPoller() {
+  if (pollerActive) return;
+  pollerActive = true;
+  setTimeout(async () => {
+    try {
+      await pullCloudOrdersToLocal();
+    } catch (_) {
+    }
+  }, 8e3);
+  Promise.resolve().then(() => (init_eventService(), eventService_exports)).then(({ eventService: eventService2 }) => {
+    eventService2.on("server_event", (event) => {
+      if (["refill_updated", "order_created", "sale_saved"].includes(event?.type)) {
+        scheduleCloudAutoPush(event.type);
+      }
+    });
+  }).catch(() => {
+  });
+  setInterval(async () => {
+    if (isPulling) return;
+    try {
+      const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
+      if (activityTracker2.isIdle()) return;
+      isPulling = true;
+      await pullCloudOrdersToLocal();
+    } catch (_) {
+    } finally {
+      isPulling = false;
+    }
+  }, 6e4);
+}
+var CLOUD_SERVER_URL2, pollerActive, isPulling, lastAutoPushAt, autoPushPending, autoPushTimer, AUTO_PUSH_DEBOUNCE_MS;
+var init_cloudCatalogSyncService = __esm({
+  "src/services/cloudCatalogSyncService.ts"() {
+    "use strict";
+    init_connection();
+    init_storeSettingsService();
+    CLOUD_SERVER_URL2 = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
+    pollerActive = false;
+    isPulling = false;
+    lastAutoPushAt = 0;
+    autoPushPending = false;
+    autoPushTimer = null;
+    AUTO_PUSH_DEBOUNCE_MS = 5 * 60 * 1e3;
+  }
+});
+
+// src/routes/customerPortal.ts
+var customerPortal_exports = {};
+__export(customerPortal_exports, {
+  createCustomerToken: () => createCustomerToken,
+  default: () => customerPortal_default,
+  ensureCustomerPortalAccount: () => ensureCustomerPortalAccount,
+  generateRandomOtp: () => generateRandomOtp2,
+  generateRandomPin: () => generateRandomPin2,
+  get247CloudPortalUrl: () => get247CloudPortalUrl,
+  getLivePortalUrl: () => getLivePortalUrl,
+  hashPin: () => hashPin2,
+  normalizePhone: () => normalizePhone,
+  syncAllCustomersToPortal: () => syncAllCustomersToPortal,
+  verifyCustomerToken: () => verifyCustomerToken
+});
+async function getLivePortalUrl(db2, phone) {
+  let base = null;
+  try {
+    const tunnelStatus = await cloudflareTunnelService.getStatus();
+    if (tunnelStatus.isRunning && tunnelStatus.url) {
+      base = tunnelStatus.url;
+    }
+  } catch (_) {
+  }
+  if (!base) {
+    const row = await db2.get("SELECT value FROM app_settings WHERE key = 'cloud_catalog_url' OR key = 'cloudflare_tunnel_custom_domain'");
+    if (row?.value && typeof row.value === "string" && row.value.trim() !== "") {
+      const val = row.value.trim();
+      base = !val.startsWith("http://") && !val.startsWith("https://") ? `https://${val}` : val;
+    }
+  }
+  if (!base) {
+    base = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
+  }
+  const cleanBase = (base || "").replace(/\/+$/, "");
+  const query = phone ? `?phone=${phone}` : "";
+  const isCloudHost = cleanBase.includes("vercel.app") || cleanBase.includes("ai-pharmacy-os");
+  const path63 = isCloudHost ? "/shop" : "/portal";
+  return `${cleanBase}${path63}${query}`;
+}
+async function get247CloudPortalUrl(db2, phone) {
+  let base = "";
+  try {
+    const row = await db2.get("SELECT value FROM app_settings WHERE key = 'cloud_catalog_url'");
+    if (row?.value && typeof row.value === "string" && row.value.trim() !== "") {
+      base = row.value.trim();
+    }
+  } catch (_) {
+  }
+  if (!base) {
+    base = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
+  }
+  const cleanBase = base.replace(/\/+$/, "");
+  const query = phone ? `?phone=${phone}` : "";
+  return `${cleanBase}/shop${query}`;
+}
+function normalizePhone(raw) {
+  const digits = String(raw || "").replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("91")) {
+    return digits.slice(2);
+  }
+  if (digits.length === 11 && digits.startsWith("0")) {
+    return digits.slice(1);
+  }
+  if (digits.length > 10) {
+    return digits.slice(-10);
+  }
+  return digits;
+}
+function hashPin2(pin) {
+  const salt = "pharmacy_portal_salt_2026";
+  return import_crypto4.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
+}
+function generateRandomPin2() {
+  return Math.floor(1e3 + Math.random() * 9e3).toString();
+}
+function generateRandomOtp2() {
+  return Math.floor(1e5 + Math.random() * 9e5).toString();
+}
+async function ensureCustomerPortalAccount(db2, customerId, phone, name, preferredStoreId = 1) {
+  const cleanPhone = normalizePhone(phone);
+  if (!cleanPhone || cleanPhone.length !== 10) return null;
+  try {
+    let targetCustomerId = customerId ? parseInt(String(customerId), 10) : null;
+    const cleanName = formatCustomerName(name || "Customer");
+    if (!targetCustomerId) {
+      const existingCust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+      if (existingCust) {
+        targetCustomerId = existingCust.id;
+      } else {
+        const custRes = await db2.run(
+          "INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+          [cleanName, cleanPhone]
+        );
+        targetCustomerId = custRes.lastID ? Number(custRes.lastID) : null;
+      }
+    }
+    const existingAccount = await db2.get(
+      "SELECT id, pin_display FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ? LIMIT 1",
+      [targetCustomerId, cleanPhone]
+    );
+    if (existingAccount) {
+      if (targetCustomerId) {
+        await db2.run(
+          "UPDATE customer_portal_accounts SET customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          [targetCustomerId, existingAccount.id]
+        );
+      }
+      return { accountId: existingAccount.id, pin: existingAccount.pin_display || "1234", isNew: false };
+    }
+    const pin = generateRandomPin2();
+    const pinHashed = hashPin2(pin);
+    const storeId = parseInt(String(preferredStoreId), 10) || 1;
+    const accRes = await db2.run(
+      `INSERT INTO customer_portal_accounts 
+       (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [targetCustomerId, cleanPhone, pinHashed, pin, storeId]
+    );
+    return { accountId: Number(accRes.lastID), pin, isNew: true };
+  } catch (err) {
+    console.warn("[CustomerPortal] ensureCustomerPortalAccount error:", err);
+    return null;
+  }
+}
+function createCustomerToken(customerId, phone) {
+  const payload = `${customerId}:${phone}:${Date.now()}`;
+  const signature = import_crypto4.default.createHmac("sha256", SESSION_SECRET2).update(payload).digest("hex");
+  return Buffer.from(`${payload}:${signature}`).toString("base64");
+}
+function verifyCustomerToken(tokenStr) {
+  try {
+    if (!tokenStr) return null;
+    const decoded = Buffer.from(tokenStr, "base64").toString("utf8");
+    const parts = decoded.split(":");
+    if (parts.length !== 4) return null;
+    const [customerIdStr, phone, timestampStr, signature] = parts;
+    const customerId = parseInt(customerIdStr, 10);
+    const timestamp = parseInt(timestampStr, 10);
+    if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
+    const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
+    const expectedSignature = import_crypto4.default.createHmac("sha256", SESSION_SECRET2).update(expectedPayload).digest("hex");
+    if (import_crypto4.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+      return { customerId, phone };
+    }
+  } catch (_) {
+  }
+  return null;
+}
+async function syncAllCustomersToPortal(db2) {
+  const customers = await db2.all(
+    `SELECT id, name, phone FROM customers WHERE phone IS NOT NULL AND TRIM(phone) != ''`
+  );
+  const existingAccounts = await db2.all(`SELECT customer_id, login_id FROM customer_portal_accounts`);
+  const existingCustIds = new Set(existingAccounts.map((a) => a.customer_id).filter(Boolean));
+  const existingLogins = new Set(existingAccounts.map((a) => a.login_id).filter(Boolean));
+  let syncedCount = 0;
+  for (const cust of customers) {
+    const cleanPhone = normalizePhone(cust.phone);
+    if (!cleanPhone || cleanPhone.length !== 10) continue;
+    if (existingCustIds.has(cust.id) || existingLogins.has(cleanPhone)) continue;
+    const pin = generateRandomPin2();
+    const pHash = hashPin2(pin);
+    await db2.run(
+      `INSERT INTO customer_portal_accounts 
+       (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status, total_login_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, 'active', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [cust.id, cleanPhone, pHash, pin]
+    );
+    existingCustIds.add(cust.id);
+    existingLogins.add(cleanPhone);
+    syncedCount++;
+  }
+  const totalRow = await db2.get('SELECT COUNT(*) as total FROM customer_portal_accounts WHERE status = "active"');
+  return {
+    syncedCount,
+    totalAccounts: totalRow?.total || 0
+  };
+}
+function loadCatalogAndImages() {
+  const now = Date.now();
+  if (catalogCache && imageStateCache && now - lastCacheLoad < 6e4) {
+    return { catalog: catalogCache, images: imageStateCache };
+  }
+  try {
+    const csvPath = import_path22.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
+    if (import_fs22.default.existsSync(csvPath)) {
+      const content = import_fs22.default.readFileSync(csvPath, "utf-8");
+      const lines = content.split(/\r?\n/);
+      const items = [];
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        let inQuotes = false;
+        let cur = "";
+        const parts = [];
+        for (let c = 0; c < line.length; c++) {
+          const ch = line[c];
+          if (ch === '"') inQuotes = !inQuotes;
+          else if (ch === "," && !inQuotes) {
+            parts.push(cur.trim());
+            cur = "";
+          } else {
+            cur += ch;
+          }
+        }
+        parts.push(cur.trim());
+        items.push({
+          category: parts[0]?.replace(/^"|"$/g, ""),
+          name: parts[1]?.replace(/^"|"$/g, ""),
+          pack: parts[2]?.replace(/^"|"$/g, ""),
+          schedule: parts[3]?.replace(/^"|"$/g, ""),
+          composition: parts[4]?.replace(/^"|"$/g, ""),
+          manufacturer: parts[5]?.replace(/^"|"$/g, ""),
+          mrp: parseFloat(parts[6]) || 0,
+          sell_price: parseFloat(parts[7]) || parseFloat(parts[6]) || 0
+        });
+      }
+      try {
+        const clinicalCsvPath = import_path22.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
+        if (import_fs22.default.existsSync(clinicalCsvPath)) {
+          const clinContent = import_fs22.default.readFileSync(clinicalCsvPath, "utf-8");
+          const clinLines = clinContent.split(/\r?\n/);
+          for (let j = 1; j < clinLines.length; j++) {
+            const clinLine = clinLines[j].trim();
+            if (!clinLine) continue;
+            if (clinLine.startsWith("TB,") || clinLine.startsWith('"TB",')) {
+              const p = clinLine.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || [];
+              const name = (p[1] || "").replace(/^"|"$/g, "").trim();
+              if (name && !items.some((it) => it.name === name)) {
+                items.push({
+                  category: "Tuberculosis (TB) Care",
+                  name,
+                  pack: (p[2] || "").replace(/^"|"$/g, "").trim(),
+                  schedule: (p[3] || "").replace(/^"|"$/g, "").trim(),
+                  composition: (p[4] || "").replace(/^"|"$/g, "").trim(),
+                  manufacturer: (p[5] || "").replace(/^"|"$/g, "").trim(),
+                  mrp: 0,
+                  sell_price: 0
+                });
+              }
+            }
+          }
+        }
+      } catch (_) {
+      }
+      catalogCache = items;
+    }
+  } catch (e) {
+    catalogCache = [];
+  }
+  try {
+    const statePath = import_path22.default.resolve(process.cwd(), "data/image_download_state.json");
+    if (import_fs22.default.existsSync(statePath)) {
+      const stateData = JSON.parse(import_fs22.default.readFileSync(statePath, "utf-8"));
+      imageStateCache = stateData.products || {};
+    }
+  } catch (e) {
+    imageStateCache = {};
+  }
+  lastCacheLoad = now;
+  return { catalog: catalogCache || [], images: imageStateCache || {} };
+}
+var import_express, import_crypto4, import_fs22, import_path22, router, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
+var init_customerPortal = __esm({
+  "src/routes/customerPortal.ts"() {
+    "use strict";
+    import_express = __toESM(require("express"), 1);
+    import_crypto4 = __toESM(require("crypto"), 1);
+    import_fs22 = __toESM(require("fs"), 1);
+    import_path22 = __toESM(require("path"), 1);
+    init_connection();
+    init_whatsappQueueWorker();
+    init_eventService();
+    init_nameFormatter();
+    init_storeSettingsService();
+    init_storeContextService();
+    init_catalogImageService();
+    init_paymentQrService();
+    init_orderScheduleService();
+    init_returnWindowService();
+    init_cloudflareTunnelService();
+    init_phoneValidation();
+    init_config();
+    init_pdfInvoiceService();
+    router = import_express.default.Router();
+    SESSION_SECRET2 = process.env.CUSTOMER_PORTAL_SECRET || "pharmacy_portal_session_secret_2026";
+    router.get("/accounts", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const query = (req.query.search || "").trim();
+        const storeFilter = req.query.store_id ? parseInt(req.query.store_id, 10) : null;
+        let sql = `
+      SELECT 
+        pa.id,
+        pa.customer_id,
+        pa.login_id,
+        pa.pin_display,
+        pa.preferred_store_id,
+        pa.status,
+        pa.last_login_at,
+        COALESCE(pa.total_login_count, 0) as total_login_count,
+        COALESCE(pa.total_time_spent_seconds, 0) as total_time_spent_seconds,
+        pa.last_logout_at,
+        pa.created_at,
+        c.name as customer_name,
+        c.address as customer_address,
+        s.name as preferred_store_name,
+        (SELECT COUNT(*) FROM patient_refills pr WHERE pr.customer_id = pa.customer_id AND pr.is_active = 1) as active_refills_count,
+        (SELECT COUNT(*) FROM sales_invoices sl WHERE sl.customer_id = pa.customer_id) as total_bills_count
+      FROM customer_portal_accounts pa
+      JOIN customers c ON c.id = pa.customer_id
+      LEFT JOIN stores s ON s.id = pa.preferred_store_id
+      WHERE 1=1
+    `;
+        const params = [];
+        if (query) {
+          sql += ` AND (c.name LIKE ? OR pa.login_id LIKE ?)`;
+          params.push(`%${query}%`, `%${query}%`);
+        }
+        if (storeFilter && !isNaN(storeFilter)) {
+          sql += ` AND pa.preferred_store_id = ?`;
+          params.push(storeFilter);
+        }
+        sql += ` ORDER BY pa.created_at DESC LIMIT 100`;
+        const accounts = await db2.all(sql, params);
+        res.json({ success: true, count: accounts.length, accounts });
+      } catch (err) {
+        console.error("[CustomerPortal] List accounts error:", err);
+        res.status(500).json({ error: "Failed to fetch portal accounts" });
+      }
+    });
+    router.get("/live-url", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const phone = req.query.phone ? String(req.query.phone) : void 0;
+        const portalUrl = await getLivePortalUrl(db2, phone);
+        const cloudUrl = await get247CloudPortalUrl(db2, phone);
+        const loginUrl = portalUrl.includes("vercel.app") || portalUrl.includes("/shop") ? portalUrl : portalUrl.replace(/\/portal(\?|$)/, "/customer-login$1");
+        res.json({
+          success: true,
+          portal_url: portalUrl,
+          cloud_url: cloudUrl,
+          login_url: loginUrl,
+          phone: phone || null
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+    router.get("/accounts/:id/sessions", async (req, res) => {
+      try {
+        const accountId = parseInt(String(req.params.id), 10);
+        const db2 = await dbManager.getConnection();
+        const account = await db2.get(`SELECT customer_id FROM customer_portal_accounts WHERE id = ?`, [accountId]);
+        if (!account) {
+          return res.status(404).json({ error: "Portal account not found" });
+        }
+        const { customerAuthService: customerAuthService2 } = await Promise.resolve().then(() => (init_customerAuthService(), customerAuthService_exports));
+        const sessionData = await customerAuthService2.getCustomerSessions(account.customer_id);
+        res.json({ success: true, ...sessionData });
+      } catch (err) {
+        console.error("[CustomerPortal] Fetch sessions error:", err);
+        res.status(500).json({ error: "Failed to fetch customer sessions" });
+      }
+    });
+    router.post("/accounts/sync-all", async (req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const result = await syncAllCustomersToPortal(db2);
+        res.json({
+          success: true,
+          synced_count: result.syncedCount,
+          total_accounts: result.totalAccounts,
+          message: `Successfully synced ${result.syncedCount} patient(s) with unique web login PINs!`
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Sync all error:", err);
+        res.status(500).json({ error: "Failed to sync customer portal accounts" });
+      }
+    });
+    router.post("/accounts/generate", async (req, res) => {
+      const {
+        customer_id,
+        phone,
+        name,
+        preferred_store_id = 1,
+        custom_pin,
+        send_whatsapp = true
+      } = req.body;
+      const phoneCheck = validate10DigitPhone(phone, { allowBlank: false, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      const cleanPhone = phoneCheck.cleanPhone;
+      try {
+        const db2 = await dbManager.getConnection();
+        let targetCustomerId = customer_id ? parseInt(String(customer_id), 10) : null;
+        const cleanName = formatCustomerName(name || "Customer");
+        if (!targetCustomerId) {
+          const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          if (existingCust) {
+            targetCustomerId = existingCust.id;
+            if (cleanName && cleanName !== "Customer" && existingCust.name !== cleanName) {
+              await db2.run("UPDATE customers SET name = ? WHERE id = ?", [cleanName, targetCustomerId]);
+            }
+          } else {
+            const custRes = await db2.run(
+              "INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+              [cleanName, cleanPhone]
+            );
+            targetCustomerId = custRes.lastID ? Number(custRes.lastID) : null;
+          }
+        } else {
+          const existingCust = await db2.get("SELECT id, name FROM customers WHERE id = ?", [targetCustomerId]);
+          if (existingCust && cleanName && cleanName !== "Customer" && existingCust.name !== cleanName) {
+            await db2.run("UPDATE customers SET name = ? WHERE id = ?", [cleanName, targetCustomerId]);
+          }
+        }
+        const pin = custom_pin && String(custom_pin).length === 4 ? String(custom_pin) : generateRandomPin2();
+        const pinHashed = hashPin2(pin);
+        const storeId = parseInt(String(preferred_store_id), 10) || 1;
+        const existingAccount = await db2.get("SELECT id FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?", [
+          targetCustomerId,
+          cleanPhone
+        ]);
+        let accountId;
+        if (existingAccount) {
+          await db2.run(
+            `UPDATE customer_portal_accounts 
+         SET customer_id = ?, login_id = ?, pin_hash = ?, pin_display = ?, preferred_store_id = ?, status = 'active', updated_at = CURRENT_TIMESTAMP 
+         WHERE id = ?`,
+            [targetCustomerId, cleanPhone, pinHashed, pin, storeId, existingAccount.id]
+          );
+          accountId = existingAccount.id;
+        } else {
+          const accRes = await db2.run(
+            `INSERT INTO customer_portal_accounts 
+         (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [targetCustomerId, cleanPhone, pinHashed, pin, storeId]
+          );
+          accountId = Number(accRes.lastID);
+        }
+        let whatsappQueued = false;
+        if (send_whatsapp) {
+          try {
+            const storeInfo = await storeContextService.getStoreById(storeId);
+            const storeName = storeInfo?.name || await getStoreMedicalNameAndPhone(db2);
+            const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+            const portalUrl = await getLivePortalUrl(db2, cleanPhone);
+            const msg = `*Welcome to ${storeName} Online Portal!*
+
+Hello ${cleanName}, your direct refill account is ready:
+
+\u{1F4F1} *Login ID:* ${cleanPhone}
+\u{1F511} *4-Digit PIN:* ${pin}
+\u{1F4CD} *Collection Branch:* ${storeName}
+
+*Direct Login Link:* ${portalUrl}
+
+Login to view your past store bills, choose medicines, and reorder for quick counter pickup!`;
+            await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_credentials", cleanName);
+            whatsappQueued = true;
+          } catch (waErr) {
+            console.warn("[CustomerPortal] WhatsApp send warning:", waErr);
+          }
+        }
+        res.status(201).json({
+          success: true,
+          account_id: accountId,
+          customer_id: targetCustomerId,
+          login_id: cleanPhone,
+          pin,
+          preferred_store_id: storeId,
+          whatsapp_queued: whatsappQueued
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Generate account error:", err);
+        res.status(500).json({ error: "Failed to generate portal credentials: " + (err.message || "Unknown error") });
+      }
+    });
+    router.post("/accounts/:id/send-credentials", async (req, res) => {
+      const accountId = parseInt(req.params.id, 10);
+      if (isNaN(accountId)) return res.status(400).json({ error: "Invalid account ID" });
+      try {
+        const db2 = await dbManager.getConnection();
+        const account = await db2.get(
+          `SELECT pa.*, c.name as customer_name, s.name as store_name
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       LEFT JOIN stores s ON s.id = pa.preferred_store_id
+       WHERE pa.id = ?`,
+          [accountId]
+        );
+        if (!account) return res.status(404).json({ error: "Portal account not found" });
+        let pin = account.pin_display;
+        if (!pin) {
+          pin = generateRandomPin2();
+          const pinHashed = hashPin2(pin);
+          await db2.run(
+            "UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [pinHashed, pin, accountId]
+          );
+        }
+        const cleanPhone = account.login_id;
+        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+        const storeName = account.store_name || await getStoreMedicalNameAndPhone(db2);
+        const customerName = formatCustomerName(account.customer_name);
+        const portalUrl = await getLivePortalUrl(db2, cleanPhone);
+        const msg = `*Your ${storeName} Login Credentials*
+
+Hello ${customerName},
+Here are your online refill portal details:
+
+\u{1F4F1} *Login ID:* ${cleanPhone}
+\u{1F511} *PIN:* ${pin}
+\u{1F4CD} *Branch:* ${storeName}
+
+*Direct Login Link:* ${portalUrl}
+
+Tap the link to login, select medicines from your previous bills, and place your pickup order.`;
+        const queueId = await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_credentials_resend", customerName);
+        res.json({
+          success: true,
+          message: "Credentials sent to WhatsApp",
+          queue_id: queueId,
+          login_id: cleanPhone,
+          pin
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Resend credentials error:", err);
+        res.status(500).json({ error: "Failed to send credentials" });
+      }
+    });
+    router.get("/accounts/:id/guide-pdf", async (req, res) => {
+      const accountId = parseInt(req.params.id, 10);
+      if (isNaN(accountId)) return res.status(400).json({ error: "Invalid account ID" });
+      try {
+        const db2 = await dbManager.getConnection();
+        const account = await db2.get(
+          "SELECT login_id FROM customer_portal_accounts WHERE id = ?",
+          [accountId]
+        );
+        if (!account || !account.login_id) {
+          return res.status(404).json({ error: "Portal account not found" });
+        }
+        const tempDir = getAppDataDir();
+        const outPath = import_path22.default.join(tempDir, `portal_guide_${account.login_id}_${Date.now()}.pdf`);
+        await pdfInvoiceService.generateCustomerPortalGuidePdf(account.login_id, outPath);
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `inline; filename="Portal_Guide_${account.login_id}.pdf"`);
+        const stream = import_fs22.default.createReadStream(outPath);
+        stream.pipe(res);
+        stream.on("end", () => {
+          import_fs22.default.unlink(outPath, () => {
+          });
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Guide PDF error:", err);
+        res.status(500).json({ error: "Failed to generate guide PDF" });
+      }
+    });
+    router.get("/guide-pdf", async (req, res) => {
+      const phone = req.query.phone || "";
+      const cleanPhone = normalizePhone(phone);
+      if (!cleanPhone || cleanPhone.length !== 10) {
+        return res.status(400).json({ error: "Valid 10-digit phone number required" });
+      }
+      try {
+        const tempDir = getAppDataDir();
+        const outPath = import_path22.default.join(tempDir, `portal_guide_${cleanPhone}_${Date.now()}.pdf`);
+        await pdfInvoiceService.generateCustomerPortalGuidePdf(cleanPhone, outPath);
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `inline; filename="Portal_Guide_${cleanPhone}.pdf"`);
+        const stream = import_fs22.default.createReadStream(outPath);
+        stream.pipe(res);
+        stream.on("end", () => {
+          import_fs22.default.unlink(outPath, () => {
+          });
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Guide PDF by phone error:", err);
+        res.status(500).json({ error: "Failed to generate guide PDF" });
+      }
+    });
+    router.put("/accounts/:id", async (req, res) => {
+      const accountId = parseInt(req.params.id, 10);
+      const { status, preferred_store_id, custom_pin, override_pin, send_whatsapp = true } = req.body;
+      try {
+        const db2 = await dbManager.getConnection();
+        const updates = [];
+        const params = [];
+        if (status && ["active", "disabled", "suspended"].includes(status)) {
+          updates.push("status = ?");
+          params.push(status);
+        }
+        if (preferred_store_id) {
+          updates.push("preferred_store_id = ?");
+          params.push(parseInt(String(preferred_store_id), 10) || 1);
+        }
+        let updatedPin = null;
+        const pinToSet = String(custom_pin || override_pin || "").trim();
+        if (pinToSet && pinToSet.length >= 4) {
+          const hashed = hashPin2(pinToSet);
+          updates.push("pin_hash = ?", "pin_display = ?");
+          params.push(hashed, pinToSet);
+          updatedPin = pinToSet;
+        }
+        if (updates.length === 0) return res.status(400).json({ error: "No valid fields to update" });
+        updates.push("updated_at = CURRENT_TIMESTAMP");
+        params.push(accountId);
+        await db2.run(`UPDATE customer_portal_accounts SET ${updates.join(", ")} WHERE id = ?`, params);
+        if (updatedPin && send_whatsapp) {
+          try {
+            const account = await db2.get(
+              `SELECT pa.*, c.name as customer_name, s.name as store_name
+           FROM customer_portal_accounts pa
+           JOIN customers c ON c.id = pa.customer_id
+           LEFT JOIN stores s ON s.id = pa.preferred_store_id
+           WHERE pa.id = ?`,
+              [accountId]
+            );
+            if (account) {
+              const cleanPhone = account.login_id;
+              const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+              const storeName = account.store_name || await getStoreMedicalNameAndPhone(db2);
+              const customerName = formatCustomerName(account.customer_name);
+              const portalUrl = await getLivePortalUrl(db2, cleanPhone);
+              const msg = `*Your ${storeName} PIN Has Been Reset*
+
+Hello ${customerName},
+Your online refill portal PIN has been reset by the pharmacy.
+
+\u{1F4F1} *Login ID:* ${cleanPhone}
+\u{1F511} *New PIN:* ${updatedPin}
+\u{1F4CD} *Branch:* ${storeName}
+
+*Website:* ${portalUrl}`;
+              await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_pin_override", customerName);
+            }
+          } catch (_) {
+          }
+        }
+        res.json({ success: true, message: "Portal account updated successfully", pin: updatedPin });
+      } catch (err) {
+        console.error("[CustomerPortal] Update account error:", err);
+        res.status(500).json({ error: "Failed to update account" });
+      }
+    });
+    router.post("/auth/change-pin", async (req, res) => {
+      const { customer_id, phone, current_pin, new_pin } = req.body;
+      const cleanPhone = normalizePhone(phone);
+      const cleanCurrentPin = String(current_pin || "").trim();
+      const cleanNewPin = String(new_pin || "").trim();
+      if (!cleanNewPin || cleanNewPin.length < 4) {
+        return res.status(400).json({ error: "New PIN must be at least 4 digits" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        let account = null;
+        if (customer_id) {
+          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE customer_id = ?", [customer_id]);
+        } else if (cleanPhone) {
+          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE login_id = ?", [cleanPhone]);
+        }
+        if (!account) return res.status(404).json({ error: "Account not found" });
+        if (cleanCurrentPin) {
+          const currentHashed = hashPin2(cleanCurrentPin);
+          if (account.pin_hash !== currentHashed && account.pin_display !== cleanCurrentPin) {
+            return res.status(401).json({ error: "Current PIN is incorrect" });
+          }
+        }
+        const newHashed = hashPin2(cleanNewPin);
+        await db2.run(
+          "UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+          [newHashed, cleanNewPin, account.id]
+        );
+        try {
+          const cust = await db2.get("SELECT name FROM customers WHERE id = ?", [account.customer_id]);
+          const custName = formatCustomerName(cust?.name || "Customer");
+          const formattedPhone = account.login_id.length === 10 ? `91${account.login_id}` : account.login_id;
+          const storeName = await getStoreMedicalNameAndPhone(db2);
+          const msg = `*Security Update \u2014 ${storeName}*
+
+Hello ${custName},
+Your online refill portal PIN has been successfully changed.
+
+\u{1F511} *New PIN:* ${cleanNewPin}
+
+If you did not make this change, please contact your pharmacy immediately.`;
+          await whatsappQueueWorker.enqueue(formattedPhone, msg, "pin_changed_alert", custName);
+        } catch (_) {
+        }
+        res.json({ success: true, message: "PIN updated successfully", pin: cleanNewPin });
+      } catch (err) {
+        console.error("[CustomerPortal] Change PIN error:", err);
+        res.status(500).json({ error: "Failed to update PIN" });
+      }
+    });
+    router.post("/auth/login", async (req, res) => {
+      const { login_id, loginId, phone, pin } = req.body;
+      const rawId = login_id || loginId || phone;
+      const cleanPhone = normalizePhone(rawId);
+      const cleanPin = String(pin || "").trim();
+      if (!cleanPhone || cleanPhone.length < 10 || !cleanPin) {
+        return res.status(400).json({ error: "Phone number and 4-digit PIN are required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const hashed = hashPin2(cleanPin);
+        const account = await db2.get(
+          `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       WHERE (pa.login_id = ? OR c.phone = ? OR c.phone LIKE ?) AND pa.status = 'active'`,
+          [cleanPhone, cleanPhone, `%${cleanPhone}%`]
+        );
+        if (!account) {
+          return res.status(401).json({ error: "Invalid phone number or PIN. Please try again or request OTP." });
+        }
+        if (account.pin_hash !== hashed && account.pin_display !== cleanPin) {
+          return res.status(401).json({ error: "Invalid phone number or PIN. Please try again or request OTP." });
+        }
+        await db2.run(
+          `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
+          [account.id]
+        );
+        const token = createCustomerToken(account.cust_id, cleanPhone);
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
+        await db2.run(
+          `INSERT INTO customer_sessions (
+         customer_id, phone, session_token, channel, device_info, ip_address,
+         logged_in_at, last_active_at, duration_seconds, is_active, expires_at
+       ) VALUES (?, ?, ?, 'portal', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
+          [
+            account.cust_id,
+            cleanPhone,
+            token,
+            req.headers["user-agent"] || null,
+            req.ip || null,
+            expiresAt
+          ]
+        ).catch((e) => console.warn("[CustomerPortal] Record session warning:", e));
+        const stores = await storeContextService.listStores(void 0, false);
+        res.json({
+          success: true,
+          token,
+          customer: {
+            id: account.cust_id,
+            user_id: account.cust_id,
+            name: account.customer_name,
+            phone: account.login_id || cleanPhone,
+            address: account.customer_address || "",
+            preferred_store_id: account.preferred_store_id || 1
+          },
+          stores: stores.map((s) => ({
+            id: s.id,
+            name: s.name,
+            address: s.address || "",
+            phone: s.phone || ""
+          }))
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Login error:", err);
+        res.status(500).json({ error: "Login failed" });
+      }
+    });
+    router.post("/auth/register", async (req, res) => {
+      const { name, phone, address, pin } = req.body;
+      const phoneCheck = validate10DigitPhone(phone, { allowBlank: false, requireMobilePrefix: true });
+      if (!phoneCheck.isValid) {
+        return res.status(400).json({ error: phoneCheck.reason });
+      }
+      const cleanPhone = phoneCheck.cleanPhone;
+      const cleanPin = String(pin || "").trim();
+      const cleanName = formatCustomerName(name || "Customer");
+      const cleanAddress = String(address || "").trim();
+      if (!cleanPin || cleanPin.length < 4) {
+        return res.status(400).json({ error: "Please choose a 4-digit PIN for your account" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const hashed = hashPin2(cleanPin);
+        let customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+        let customerId;
+        if (!customer) {
+          const insRes = await db2.run(
+            "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+            [cleanName, cleanPhone, cleanAddress]
+          );
+          customerId = insRes.lastID;
+          customer = await db2.get("SELECT * FROM customers WHERE id = ?", [customerId]);
+        } else {
+          customerId = customer.id;
+          if (cleanAddress || cleanName && cleanName !== "Customer") {
+            await db2.run(
+              'UPDATE customers SET name = COALESCE(NULLIF(?, "Customer"), name), address = COALESCE(NULLIF(?, ""), address) WHERE id = ?',
+              [cleanName, cleanAddress, customerId]
+            );
+          }
+        }
+        let account = await db2.get(
+          "SELECT * FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?",
+          [customerId, cleanPhone]
+        );
+        if (account) {
+          await db2.run(
+            'UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, status = "active", last_login_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [hashed, cleanPin, account.id]
+          );
+        } else {
+          const accRes = await db2.run(
+            `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id, last_login_at)
+         VALUES (?, ?, ?, ?, 'active', 1, CURRENT_TIMESTAMP)`,
+            [customerId, cleanPhone, hashed, cleanPin]
+          );
+          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE id = ?", [accRes.lastID]);
+        }
+        const token = createCustomerToken(customerId, cleanPhone);
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
+        await db2.run(
+          `INSERT INTO customer_sessions (
+         customer_id, phone, session_token, channel, device_info, ip_address,
+         logged_in_at, last_active_at, duration_seconds, is_active, expires_at
+       ) VALUES (?, ?, ?, 'portal', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
+          [
+            customerId,
+            cleanPhone,
+            token,
+            req.headers["user-agent"] || null,
+            req.ip || null,
+            expiresAt
+          ]
+        ).catch((e) => console.warn("[CustomerPortal] Record session warning:", e));
+        const stores = await storeContextService.listStores(void 0, false);
+        try {
+          const medicalName = await getStoreMedicalNameAndPhone(db2);
+          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const welcomeMsg = `\u{1F389} *Welcome to ${medicalName}!* 
+
+Hello ${cleanName}, your online patient account is now active.
+
+\u{1F4F1} *Login Mobile:* ${cleanPhone}
+\u{1F511} *Your PIN:* ${cleanPin}
+
+You can now browse medicines, reorder refills, and view your medical bills anytime.`;
+          await whatsappQueueWorker.enqueue(formattedPhone, welcomeMsg, "portal_welcome", cleanName);
+        } catch (_) {
+        }
+        res.json({
+          success: true,
+          token,
+          message: "Account registered successfully!",
+          customer: {
+            id: customerId,
+            user_id: customerId,
+            name: cleanName,
+            phone: cleanPhone,
+            address: cleanAddress || customer.address || "",
+            preferred_store_id: account?.preferred_store_id || 1
+          },
+          stores: stores.map((s) => ({
+            id: s.id,
+            name: s.name,
+            address: s.address || "",
+            phone: s.phone || ""
+          }))
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Register error:", err);
+        res.status(500).json({ error: "Failed to register account" });
+      }
+    });
+    router.post("/auth/request-otp", async (req, res) => {
+      const { login_id, phone, loginId, name } = req.body;
+      const cleanPhone = normalizePhone(login_id || phone || loginId);
+      if (!cleanPhone || cleanPhone.length < 10) {
+        return res.status(400).json({ error: "Valid 10-digit mobile number required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        let customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+        if (!customer) {
+          const defaultName = formatCustomerName(name || "Customer");
+          const insResult = await db2.run(
+            "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+            [defaultName, cleanPhone, ""]
+          );
+          const newCustId = insResult.lastID;
+          customer = await db2.get("SELECT * FROM customers WHERE id = ?", [newCustId]);
+        }
+        let account = await db2.get(
+          "SELECT * FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?",
+          [customer.id, cleanPhone]
+        );
+        if (!account) {
+          const initialPin = generateRandomPin2();
+          const pHash = hashPin2(initialPin);
+          const accRes = await db2.run(
+            `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id)
+         VALUES (?, ?, ?, ?, 'active', 1)`,
+            [customer.id, cleanPhone, pHash, initialPin]
+          );
+          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE id = ?", [accRes.lastID]);
+        } else if (account.status !== "active") {
+          return res.status(403).json({ error: "Portal account disabled. Please contact your pharmacy branch." });
+        }
+        const otpCode = generateRandomOtp2();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1e3).toISOString().replace("T", " ").slice(0, 19);
+        await db2.run(
+          "INSERT INTO customer_portal_otps (login_id, otp_code, expires_at, is_used) VALUES (?, ?, ?, 0)",
+          [cleanPhone, otpCode, expiresAt]
+        );
+        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+        const custName = formatCustomerName(customer.name || "Customer");
+        const medicalName = await getStoreMedicalNameAndPhone(db2);
+        const otpMsg = `\u{1F510} *Your ${medicalName} Login OTP is: ${otpCode}*
+
+Valid for 10 minutes. Please do not share this code with anyone.`;
+        await whatsappQueueWorker.enqueue(formattedPhone, otpMsg, "portal_otp", custName);
+        res.json({
+          success: true,
+          message: "OTP sent to your registered WhatsApp number",
+          login_id: cleanPhone
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Request OTP error:", err);
+        res.status(500).json({ error: "Failed to send OTP" });
+      }
+    });
+    router.post("/auth/verify-otp", async (req, res) => {
+      const { login_id, phone, loginId, otp_code, otp } = req.body;
+      const cleanPhone = normalizePhone(login_id || phone || loginId);
+      const cleanOtp = String(otp_code || otp || "").trim();
+      if (!cleanPhone || !cleanOtp) {
+        return res.status(400).json({ error: "Phone number and OTP are required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const otpRow = await db2.get(
+          `SELECT * FROM customer_portal_otps 
+       WHERE login_id = ? AND otp_code = ? AND is_used = 0 AND expires_at > datetime('now')
+       ORDER BY id DESC LIMIT 1`,
+          [cleanPhone, cleanOtp]
+        );
+        if (!otpRow) {
+          return res.status(401).json({ error: "Invalid or expired OTP" });
+        }
+        await db2.run("UPDATE customer_portal_otps SET is_used = 1 WHERE id = ?", [otpRow.id]);
+        let account = await db2.get(
+          `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
+       FROM customer_portal_accounts pa
+       JOIN customers c ON c.id = pa.customer_id
+       WHERE (pa.login_id = ? OR c.phone = ?) AND pa.status = 'active'`,
+          [cleanPhone, cleanPhone]
+        );
+        if (!account) {
+          let customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          if (!customer) {
+            const insResult = await db2.run(
+              "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+              ["Customer", cleanPhone, ""]
+            );
+            customer = await db2.get("SELECT * FROM customers WHERE id = ?", [insResult.lastID]);
+          }
+          const initialPin = generateRandomPin2();
+          const pHash = hashPin2(initialPin);
+          await db2.run(
+            `INSERT OR REPLACE INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id)
+         VALUES (?, ?, ?, ?, 'active', 1)`,
+            [customer.id, cleanPhone, pHash, initialPin]
+          );
+          account = await db2.get(
+            `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
+         FROM customer_portal_accounts pa
+         JOIN customers c ON c.id = pa.customer_id
+         WHERE pa.login_id = ?`,
+            [cleanPhone]
+          );
+        }
+        await db2.run(
+          `UPDATE customer_portal_accounts 
+       SET last_login_at = CURRENT_TIMESTAMP,
+           total_login_count = COALESCE(total_login_count, 0) + 1 
+       WHERE id = ?`,
+          [account.id]
+        );
+        const token = createCustomerToken(account.cust_id, cleanPhone);
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
+        await db2.run(
+          `INSERT INTO customer_sessions (
+         customer_id, phone, session_token, channel, device_info, ip_address,
+         logged_in_at, last_active_at, duration_seconds, is_active, expires_at
+       ) VALUES (?, ?, ?, 'portal', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
+          [
+            account.cust_id,
+            cleanPhone,
+            token,
+            req.headers["user-agent"] || null,
+            req.ip || null,
+            expiresAt
+          ]
+        ).catch((e) => console.warn("[CustomerPortal] Record session warning:", e));
+        const stores = await storeContextService.listStores(void 0, false);
+        res.json({
+          success: true,
+          token,
+          customer: {
+            id: account.cust_id,
+            user_id: account.cust_id,
+            // permanent immutable internal identity (Rule 2)
+            name: account.customer_name,
+            phone: cleanPhone,
+            address: account.customer_address || "",
+            preferred_store_id: account.preferred_store_id || 1
+          },
+          stores: stores.map((s) => ({
+            id: s.id,
+            name: s.name,
+            address: s.address || "",
+            phone: s.phone || ""
+          }))
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Verify OTP error:", err);
+        res.status(500).json({ error: "OTP verification failed" });
+      }
+    });
+    router.get("/customer/bills", async (req, res) => {
+      const customerId = parseInt(req.query.customer_id, 10);
+      const phone = normalizePhone(req.query.phone);
+      const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 200);
+      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const verified = verifyCustomerToken(authHeader || req.query.token);
+      if (verified && customerId && verified.customerId !== customerId) {
+        return res.status(403).json({ error: "Access denied: Cannot access another customer's invoices" });
+      }
+      let custId = customerId || verified?.customerId || 0;
+      try {
+        const db2 = await dbManager.getConnection();
+        if (!custId && phone) {
+          const digits10 = phone.slice(-10);
+          const cust = await db2.get(
+            `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+            [phone, `%${digits10}`]
+          );
+          if (cust) custId = cust.id;
+        }
+        if (!custId) {
+          return res.status(400).json({ error: "customer_id or phone required" });
+        }
+        const sales = await db2.all(
+          `SELECT si.id, si.invoice_no, si.invoice_no as invoice_number, si.store_id,
+              si.total_amount, si.total_amount as net_amount, si.date, si.date as created_at,
+              COALESCE(si.pharmacy_name_snapshot, st.name, 'Pharmacy') as store_name
+       FROM sales_invoices si
+       LEFT JOIN stores st ON st.id = si.store_id
+       WHERE si.customer_id = ? AND (si.payment_status IS NULL OR si.payment_status != 'cancelled')
+       ORDER BY si.date DESC LIMIT ?`,
+          [custId, limit]
+        ).catch(() => []);
+        const enrichedBills = [];
+        for (const sale of sales) {
+          const items = await db2.all(
+            `SELECT sit.id,
+                sit.quantity,
+                sit.unit_price,
+                COALESCE(sit.mrp_snapshot, sit.mrp, 0) as mrp,
+                sit.discount_per,
+                (sit.quantity * sit.unit_price) as total_price,
+                COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as medicine_name,
+                COALESCE(m.generic_name, '') as generic_name,
+                im.medicine_id
+         FROM sale_items sit
+         LEFT JOIN inventory_master im ON im.id = sit.inventory_id
+         LEFT JOIN medicines m ON m.id = im.medicine_id
+         WHERE sit.invoice_id = ?
+         ORDER BY sit.id ASC`,
+            [sale.id]
+          ).catch(() => []);
+          enrichedBills.push({
+            ...sale,
+            items
+          });
+        }
+        res.json({ success: true, count: enrichedBills.length, bills: enrichedBills });
+      } catch (err) {
+        console.error("[CustomerPortal] Fetch customer bills error:", err);
+        res.status(500).json({ error: "Failed to fetch customer bills" });
+      }
+    });
+    router.get("/customer/refills", async (req, res) => {
+      const customerId = parseInt(req.query.customer_id, 10);
+      const phone = normalizePhone(req.query.phone);
+      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const verified = verifyCustomerToken(authHeader || req.query.token);
+      if (verified && customerId && verified.customerId !== customerId) {
+        return res.status(403).json({ error: "Access denied: Cannot access another customer's refills" });
+      }
+      let custId = customerId || verified?.customerId || 0;
+      if (!custId && !phone) {
+        return res.status(400).json({ error: "customer_id or phone required" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        let sql = `
+      SELECT 
+        pr.id,
+        pr.medicine_id,
+        m.name as medicine_name,
+        m.generic_name,
+        m.strength,
+        m.mrp,
+        m.sell_price,
+        pr.refill_interval_days,
+        pr.quantity_needed,
+        pr.last_refill_date,
+        pr.next_refill_date,
+        pr.status,
+        pr.paused_at,
+        pr.pause_reason,
+        pr.resume_at,
+        pr.store_id,
+        s.name as store_name
+      FROM patient_refills pr
+      JOIN medicines m ON m.id = pr.medicine_id
+      LEFT JOIN stores s ON s.id = pr.store_id
+      WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
+      ORDER BY pr.next_refill_date ASC
+    `;
+        const refills = await db2.all(sql, [custId || -1, `%${phone}%`]).catch(() => []);
+        res.json({ success: true, count: refills.length, refills });
+      } catch (err) {
+        console.error("[CustomerPortal] Fetch customer refills error:", err);
+        res.status(500).json({ error: "Failed to fetch refills" });
+      }
+    });
+    router.get("/customer/past-medicines", async (req, res) => {
+      const customerId = req.query.customer_id ? parseInt(req.query.customer_id, 10) : null;
+      const rawPhone = req.query.phone || "";
+      const phone = normalizePhone(rawPhone);
+      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const verified = verifyCustomerToken(authHeader || req.query.token);
+      if (verified && customerId && verified.customerId !== customerId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      let custId = customerId || verified?.customerId || 0;
+      const targetPhone = phone || verified?.phone || "";
+      const last102 = targetPhone.slice(-10);
+      try {
+        const db2 = await dbManager.getConnection();
+        if (!custId && last102) {
+          const cust = await db2.get(
+            `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+            [targetPhone, `%${last102}`]
+          );
+          if (cust) custId = cust.id;
+        }
+        if (!custId && !last102) {
+          return res.status(400).json({ error: "customer_id or phone is required" });
+        }
+        const itemsMap = /* @__PURE__ */ new Map();
+        try {
+          const refills = await db2.all(
+            `SELECT pr.id as refill_id, m.id as medicine_id, m.name as medicine_name,
+                pr.quantity_needed as qty, pr.refill_interval_days, pr.last_refill_date,
+                pr.next_refill_date,
+                COALESCE((SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0), (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id), m.mrp, 0) as mrp,
+                COALESCE((SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id AND im.quantity > 0), (SELECT MAX(im.mrp) FROM inventory_master im WHERE im.medicine_id = m.id), m.sell_price, m.mrp, 0) as sell_price,
+                s.name as store_name,
+                'refill' as item_type
+         FROM patient_refills pr
+         JOIN medicines m ON m.id = pr.medicine_id
+         LEFT JOIN stores s ON s.id = pr.store_id
+         WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
+         ORDER BY pr.id DESC LIMIT 20`,
+            [custId || -1, `%${last102}%`]
+          );
+          for (const r of refills) {
+            const key = (r.medicine_name || "").toLowerCase().trim();
+            if (key && !itemsMap.has(key)) {
+              itemsMap.set(key, r);
+            }
+          }
+        } catch (_) {
+        }
+        try {
+          const specialOrders = await db2.all(
+            `SELECT so.id as special_order_id, so.product as medicine_name,
+                so.qty, so.pharmarack_mrp as mrp, so.pharmarack_rate as sell_price,
+                so.pharmarack_distributor as store_name, so.status,
+                COALESCE(so.date, so.created_at) as last_refill_date,
+                'special_order' as item_type
+         FROM special_orders so
+         WHERE (so.customer_id = ? OR so.phone LIKE ?) AND so.product IS NOT NULL AND TRIM(so.product) != ''
+         ORDER BY so.id DESC LIMIT 20`,
+            [custId || -1, `%${last102}%`]
+          );
+          for (const s of specialOrders) {
+            const key = (s.medicine_name || "").toLowerCase().trim();
+            if (key && !itemsMap.has(key)) {
+              itemsMap.set(key, s);
+            }
+          }
+        } catch (_) {
+        }
+        try {
+          const sales = await db2.all(
+            `SELECT m.id as medicine_id, m.name as medicine_name,
+                s.quantity as qty, im.mrp, s.unit_price as sell_price,
+                si.date as last_refill_date, 'counter_sale' as item_type
+         FROM sales_invoices si
+         JOIN sale_items s ON s.invoice_id = si.id
+         JOIN inventory_master im ON im.id = s.inventory_id
+         JOIN medicines m ON m.id = im.medicine_id
+         WHERE (si.customer_id = ? OR si.customer_phone_snapshot LIKE ?)
+         ORDER BY si.id DESC LIMIT 20`,
+            [custId || -1, `%${last102}%`]
+          );
+          for (const sl of sales) {
+            const key = (sl.medicine_name || "").toLowerCase().trim();
+            if (key && !itemsMap.has(key)) {
+              itemsMap.set(key, sl);
+            }
+          }
+        } catch (_) {
+        }
+        const pastMedicines = Array.from(itemsMap.values());
+        res.json({ success: true, count: pastMedicines.length, medicines: pastMedicines });
+      } catch (err) {
+        console.error("[CustomerPortal] Fetch past medicines error:", err);
+        res.status(500).json({ error: "Failed to fetch past medicines" });
+      }
+    });
+    router.put("/customer/phone", async (req, res) => {
+      const { customer_id, new_phone } = req.body;
+      const cleanPhone = normalizePhone(new_phone);
+      if (!cleanPhone || cleanPhone.length < 10) {
+        return res.status(400).json({ error: "Valid 10-digit mobile number required" });
+      }
+      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const verified = verifyCustomerToken(authHeader || req.body.token);
+      const custId = parseInt(customer_id, 10) || verified?.customerId;
+      if (!custId) {
+        return res.status(400).json({ error: "customer_id is required" });
+      }
+      if (verified && verified.customerId !== custId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      try {
+        const db2 = await dbManager.getConnection();
+        const conflict = await db2.get("SELECT id FROM customers WHERE phone = ? AND id != ?", [cleanPhone, custId]);
+        if (conflict) {
+          return res.status(409).json({ error: "Phone number already in use by another customer" });
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          await db2.run("UPDATE customers SET phone = ? WHERE id = ?", [cleanPhone, custId]);
+          await db2.run(
+            "UPDATE customer_portal_accounts SET login_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?",
+            [cleanPhone, custId]
+          );
+          await db2.run("COMMIT");
+          const newToken = createCustomerToken(custId, cleanPhone);
+          res.json({
+            success: true,
+            message: "Phone number updated successfully",
+            customer_id: custId,
+            new_phone: cleanPhone,
+            token: newToken
+          });
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+      } catch (err) {
+        console.error("[CustomerPortal] Update phone error:", err);
+        res.status(500).json({ error: "Failed to update phone number" });
+      }
+    });
+    router.post("/customer/refill-order", async (req, res) => {
+      const {
+        customer_id,
+        customer_name,
+        customer_phone,
+        store_id = 1,
+        items,
+        payment_method = "COUNTER_PICKUP",
+        delivery_mode = "pickup",
+        delivery_address = "",
+        notes = ""
+      } = req.body;
+      if (!customer_name || !items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "Customer name and at least one medicine required" });
+      }
+      const cleanPhone = normalizePhone(customer_phone);
+      const cleanName = formatCustomerName(customer_name);
+      const targetStoreId = parseInt(String(store_id), 10) || 1;
+      const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
+      const cleanAddress = String(delivery_address || "").trim();
+      const isDelivery = delivery_mode === "delivery";
+      try {
+        const db2 = await dbManager.getConnection();
+        let custId = customer_id ? parseInt(String(customer_id), 10) : null;
+        let registeredCustomer = null;
+        if (custId) {
+          registeredCustomer = await db2.get("SELECT id, name, address FROM customers WHERE id = ?", [custId]);
+        } else if (cleanPhone) {
+          registeredCustomer = await db2.get("SELECT id, name, address FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
+          if (registeredCustomer) custId = registeredCustomer.id;
+        }
+        if (!registeredCustomer || !custId) {
+          if (cleanName && cleanPhone) {
+            const insRes = await db2.run(
+              "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+              [cleanName, cleanPhone, cleanAddress || "Website Customer"]
+            );
+            custId = Number(insRes.lastID);
+            registeredCustomer = { id: custId, name: cleanName, address: cleanAddress };
+          } else {
+            return res.status(400).json({
+              error: "Please provide valid customer name and mobile number to place order."
+            });
+          }
+        } else if (cleanAddress && !registeredCustomer.address) {
+          await db2.run("UPDATE customers SET address = ? WHERE id = ?", [cleanAddress, custId]).catch(() => {
+          });
+        }
+        const idempotencyKey = req.headers["idempotency-key"] || req.body.idempotency_key;
+        if (idempotencyKey) {
+          const recentOrder = await db2.get(
+            `SELECT id, product, qty FROM special_orders 
+         WHERE customer_id = ? AND notes LIKE ? AND created_at > datetime('now', '-2 minutes')
+         ORDER BY id DESC LIMIT 1`,
+            [custId, `%[Idempotency: ${idempotencyKey}]%`]
+          );
+          if (recentOrder) {
+            return res.json({
+              success: true,
+              message: "Order already received (idempotent)",
+              order_id: recentOrder.id,
+              customer_id: custId
+            });
+          }
+        }
+        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
+        const returnWindowDays = await returnWindowService.getConfiguredReturnWindowDays(targetStoreId);
+        const createdOrders = [];
+        const modeLabel = isDelivery ? "Home Delivery" : "In-Store Pickup";
+        const orderType = isDelivery ? "DELIVERY" : "PICKUP";
+        const deliveryStatus = isDelivery ? "pending_dispatch" : "counter_pickup";
+        const notePrefix = `[Website Order - ${modeLabel} - ${payment_method}]`;
+        const idempotencyTag = idempotencyKey ? ` [Idempotency: ${idempotencyKey}]` : "";
+        const fullNotes = `${notePrefix}${cleanAddress ? ` Delivery Address: ${cleanAddress}.` : ""}${notes ? ` Notes: ${notes}` : ""}${idempotencyTag}`;
+        const totalAmount = items.reduce(
+          (sum, it) => sum + (Number(it.qty || it.quantity_needed) || 1) * (Number(it.price || it.sell_price || it.mrp) || 0),
+          0
+        );
+        let allocatedQr = null;
+        if (payment_method === "UPI") {
+          allocatedQr = await paymentQrService.allocateNextQr();
+        }
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const item of items) {
+            const prodName = (item.product || item.medicine_name || item.name || "").trim();
+            if (!prodName) continue;
+            const qty = Number(item.qty || item.quantity_needed) || 1;
+            const price = Number(item.price || item.sell_price || item.mrp || 0);
+            const rawSource = String(req.body.customer_order_source || req.body.source || "website");
+            const orderSource = ["website", "manual_phone_order", "pharmacy_assisted"].includes(rawSource) ? rawSource : "website";
+            const result = await db2.run(
+              `INSERT INTO special_orders (
+            store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
+            advance_payment, notes, customer_order_source, delivery_status, return_status,
+            payment_status, pharmacy_verification_status, payment_qr_id, order_type, total_amount,
+            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+            schedule_calculated_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, ?, ?, 'none', 'UNPAID', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [
+                targetStoreId,
+                custId,
+                prodName,
+                cleanName,
+                cleanPhone,
+                qty,
+                todayStr2,
+                fullNotes,
+                orderSource,
+                deliveryStatus,
+                allocatedQr?.id || null,
+                orderType,
+                totalAmount,
+                calculatedSchedule.scheduledProcessingAt,
+                calculatedSchedule.estimatedDeliveryStart,
+                calculatedSchedule.estimatedDeliveryEnd,
+                calculatedSchedule.cutoffAt,
+                calculatedSchedule.timezone,
+                calculatedSchedule.scheduleStatus,
+                calculatedSchedule.scheduleReason,
+                calculatedSchedule.scheduleVersion,
+                calculatedSchedule.calculatedAt
+              ]
+            );
+            const orderId = Number(result.lastID);
+            createdOrders.push({ id: orderId, product: prodName, qty, price, payment_qr_id: allocatedQr?.id || null, itemType: item.itemType || "refill" });
+            await db2.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
+              [orderId, `Website order placed for ${modeLabel} (${orderType}) at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method} (ETA: ${calculatedSchedule.estimatedDeliveryWindowFormatted})`]
+            );
+          }
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        let liveCartAddedCount = 0;
+        let offlineQueuedCount = 0;
+        try {
+          const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
+          for (const ord of createdOrders) {
+            let isRefill = ord.itemType === "refill";
+            if (!isRefill && custId) {
+              const refillRow = await db2.get(
+                `SELECT id FROM patient_refills WHERE customer_id = ? AND LOWER(TRIM(medicine_name)) = LOWER(TRIM(?)) LIMIT 1`,
+                [custId, ord.product]
+              ).catch(() => null);
+              if (refillRow) isRefill = true;
+            }
+            if (isRefill) {
+              let resolvedStoreId = 0;
+              let resolvedStoreName = "";
+              let resolvedProdId = 0;
+              let resolvedProdCode = "";
+              let resolvedRate = 0;
+              let resolvedMrp = 0;
+              const linkRow = await db2.get(
+                `SELECT store_id, distributor_name, product_id, product_code, rate, mrp 
+             FROM medicine_distributor_links 
+             WHERE LOWER(TRIM(medicine_name)) = LOWER(TRIM(?)) 
+             ORDER BY is_preferred DESC LIMIT 1`,
+                [ord.product]
+              ).catch(() => null);
+              if (linkRow && linkRow.store_id) {
+                resolvedStoreId = Number(linkRow.store_id);
+                resolvedStoreName = linkRow.distributor_name || "";
+                resolvedProdId = Number(linkRow.product_id) || 0;
+                resolvedProdCode = String(linkRow.product_code || "");
+                resolvedRate = Number(linkRow.rate) || 0;
+                resolvedMrp = Number(linkRow.mrp) || 0;
+              } else {
+                const catRow = await db2.get(
+                  `SELECT store_id, store_name, product_id, product_code, rate, mrp 
+               FROM distributor_catalog 
+               WHERE (LOWER(TRIM(product_name)) = LOWER(TRIM(?)) OR LOWER(product_name) LIKE LOWER(?)) 
+                 AND store_id > 0
+               ORDER BY rate ASC LIMIT 1`,
+                  [ord.product, `%${ord.product}%`]
+                ).catch(() => null);
+                if (catRow && catRow.store_id) {
+                  resolvedStoreId = Number(catRow.store_id);
+                  resolvedStoreName = catRow.store_name || "";
+                  resolvedProdId = Number(catRow.product_id) || 0;
+                  resolvedProdCode = String(catRow.product_code || "");
+                  resolvedRate = Number(catRow.rate) || 0;
+                  resolvedMrp = Number(catRow.mrp) || 0;
+                }
+              }
+              const cartResult = await addItemsToPharmarackCart2([{
+                productName: ord.product,
+                product: ord.product,
+                productId: resolvedProdId,
+                productCode: resolvedProdCode,
+                storeId: resolvedStoreId,
+                storeName: resolvedStoreName || "Standard Distributor",
+                qty: ord.qty > 0 ? ord.qty : 1,
+                rate: resolvedRate,
+                mrp: resolvedMrp,
+                packaging: "1 strip",
+                mapped: resolvedStoreId > 0
+              }]).catch((err) => ({ success: false, error: err?.message || String(err), offline: false }));
+              if (cartResult.success && !cartResult.offline) {
+                liveCartAddedCount++;
+                await db2.run(
+                  `UPDATE special_orders 
+               SET needs_live_cart_sync = 0,
+                   status = 'In Live Cart',
+                   delivery_status = 'in_live_cart',
+                   pharmacy_verification_status = 'IN_LIVE_CART',
+                   pharmarack_distributor = ?,
+                   pharmarack_store_id = ?,
+                   pharmarack_product_id = ?,
+                   pharmarack_product_code = ?,
+                   pharmarack_rate = ?,
+                   pharmarack_mrp = ?,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+                  [resolvedStoreName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, ord.id]
+                ).catch(() => {
+                });
+                await db2.run(
+                  `INSERT OR REPLACE INTO online_order_items (
+                 order_id, product_name, product_name_snapshot, requested_qty, confirmed_qty, mrp, final_price, subtotal, item_status
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')`,
+                  [ord.id, ord.product, ord.product, ord.qty, ord.qty, resolvedMrp, resolvedRate, ord.qty * resolvedRate]
+                ).catch(() => {
+                });
+                await db2.run(
+                  `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+               VALUES (?, 'added_to_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+                  [ord.id, `Refill medicine "${ord.product}" (Qty: ${ord.qty}) auto-added to Pharmarack Live Cart (${resolvedStoreName || "Distributor"}).`]
+                ).catch(() => {
+                });
+              } else {
+                offlineQueuedCount++;
+                await db2.run(
+                  `UPDATE special_orders 
+               SET needs_live_cart_sync = 1,
+                   delivery_status = 'offline_queued',
+                   pharmacy_verification_status = 'OFFLINE_QUEUED',
+                   pharmarack_distributor = ?,
+                   pharmarack_store_id = ?,
+                   pharmarack_product_id = ?,
+                   pharmarack_product_code = ?,
+                   pharmarack_rate = ?,
+                   pharmarack_mrp = ?,
+                   cart_add_error = ?,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ?`,
+                  [resolvedStoreName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, cartResult.error || (cartResult.offline ? "Offline mode" : "Pending login"), ord.id]
+                ).catch(() => {
+                });
+                await db2.run(
+                  `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+               VALUES (?, 'offline_queued_for_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
+                  [ord.id, `Refill medicine "${ord.product}" queued for Live Cart auto-sync upon connection.`]
+                ).catch(() => {
+                });
+              }
+            }
+          }
+        } catch (cartErr) {
+          console.warn("[CustomerPortal] Auto-add to live cart warning:", cartErr);
+        }
+        if (custId) {
+          await db2.run(
+            `UPDATE customer_portal_accounts SET preferred_store_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?`,
+            [targetStoreId, custId]
+          ).catch(() => {
+          });
+        }
+        const storeInfo = await storeContextService.getStoreById(targetStoreId);
+        const storeName = storeInfo?.name || await getStoreMedicalNameAndPhone(db2);
+        const storeAddress = storeInfo?.address ? `
+\u{1F4CD} *Store Address:* ${storeInfo.address}` : "";
+        const storePhone = storeInfo?.phone ? `
+\u{1F4DE} *Contact:* ${storeInfo.phone}` : "";
+        if (cleanPhone && cleanPhone.length >= 10) {
+          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const orderIdsStr = createdOrders.map((o) => `#${o.id}`).join(", ");
+          const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join("\n");
+          const deliveryTimingBlock = isDelivery ? `
+\u{1F552} *Estimated Delivery Window:* ${calculatedSchedule.estimatedDeliveryWindowFormatted}` : `
+\u{1F552} *Estimated Ready Time:* ${calculatedSchedule.estimatedDeliveryWindowFormatted}`;
+          const scheduleReasonBlock = calculatedSchedule.scheduleReason ? `
+\u2139\uFE0F *Delivery Note:* ${calculatedSchedule.scheduleReason}` : "";
+          const returnNoteBlock = `
+\u{1F504} *Return Policy:* ${returnWindowDays}-day return window available on eligible delivered medicines.`;
+          let confirmMsg = isDelivery ? `*Online Order Received (${orderIdsStr})*
+
+Hello ${cleanName},
+Thank you for ordering at *${storeName}*.
+
+*Ordered Medicines:*
+${itemsSummary}
+
+\u{1F4B5} *Total:* \u20B9${totalAmount.toFixed(2)} (${payment_method})
+\u{1F69A} *Mode:* Home Delivery${deliveryTimingBlock}${scheduleReasonBlock}
+\u{1F4CD} *Address:* ${cleanAddress || "As per records"}${storePhone}${returnNoteBlock}
+
+*Our team is packaging your order and will alert you upon dispatch!*` : `*Refill Order Received (${orderIdsStr})*
+
+Hello ${cleanName},
+Thank you for placing your refill order at *${storeName}*.
+
+*Selected Medicines:*
+${itemsSummary}
+
+\u{1F4B5} *Total:* \u20B9${totalAmount.toFixed(2)} (${payment_method})
+\u{1F4CD} *Pickup Branch:* ${storeName}${storeAddress}${deliveryTimingBlock}${scheduleReasonBlock}${storePhone}${returnNoteBlock}
+
+*Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
+          if (liveCartAddedCount > 0) {
+            confirmMsg += `
+
+\u{1F6D2} *Distributor Live Cart:* ${liveCartAddedCount} regular prescription item(s) automatically added to distributor Live Cart for procurement.`;
+          } else if (offlineQueuedCount > 0) {
+            confirmMsg += `
+
+\u{1F6D2} *Procurement Status:* Regular items securely queued; will sync to distributor Live Cart automatically as connection establishes.`;
+          }
+          if (allocatedQr) {
+            const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalAmount, createdOrders[0]?.id || 1);
+            confirmMsg += `
+
+\u{1F4B3} *Payment Instructions (${allocatedQr.label}):*
+UPI ID: ${allocatedQr.upi_id}
+Payee: ${allocatedQr.payee_name}
+UPI Pay Link:
+${upiUri}
+
+*Important:* After transferring via UPI, click "I HAVE PAID" on the website to submit your payment for pharmacy verification.`;
+          }
+          try {
+            await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, "website_order_confirmation", cleanName);
+          } catch (waErr) {
+            console.warn("[CustomerPortal] WhatsApp confirmation warning:", waErr);
+          }
+        }
+        try {
+          eventService.broadcast("order_updated", { at: Date.now(), source: "website", store_id: targetStoreId });
+          eventService.broadcast("refill_updated", { at: Date.now(), source: "website", store_id: targetStoreId });
+          eventService.broadcast("website_order_created", { at: Date.now(), store_id: targetStoreId, customer: cleanName });
+        } catch (_) {
+        }
+        const primaryOrderId = createdOrders[0]?.id;
+        const paymentQrResponse = allocatedQr ? {
+          qr_id: allocatedQr.id,
+          label: allocatedQr.label,
+          payee_name: allocatedQr.payee_name,
+          upi_id: allocatedQr.upi_id,
+          qr_image_url: allocatedQr.qr_image_url || "",
+          amount: totalAmount,
+          upi_uri: paymentQrService.buildUpiUri(
+            allocatedQr.upi_id,
+            allocatedQr.payee_name,
+            totalAmount,
+            primaryOrderId || 1
+          )
+        } : null;
+        res.status(201).json({
+          success: true,
+          message: `${modeLabel} order placed successfully`,
+          store_id: targetStoreId,
+          store_name: storeName,
+          delivery_mode: modeLabel,
+          order_type: orderType,
+          orders: createdOrders,
+          order_id: primaryOrderId,
+          total_amount: totalAmount,
+          payment_method,
+          payment_qr: paymentQrResponse,
+          customer: { name: cleanName, phone: cleanPhone },
+          timing: calculatedSchedule,
+          returnPolicy: {
+            windowDays: returnWindowDays,
+            message: `${returnWindowDays}-day return window on eligible items upon delivery`
+          }
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Refill order error:", err);
+        res.status(500).json({ error: "Failed to place order: " + (err.message || "Unknown error") });
+      }
+    });
+    router.put("/customer/preferred-store", async (req, res) => {
+      try {
+        const { customer_id, phone, preferred_store_id } = req.body;
+        const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+        const verified = verifyCustomerToken(authHeader || req.query.token);
+        const custId = customer_id || verified?.customerId;
+        const cleanPhone = normalizePhone(phone || verified?.phone);
+        const storeId = parseInt(String(preferred_store_id), 10);
+        if (!storeId || isNaN(storeId)) {
+          return res.status(400).json({ error: "Valid preferred_store_id is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        if (custId) {
+          await db2.run(
+            `UPDATE customer_portal_accounts SET preferred_store_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?`,
+            [storeId, custId]
+          );
+        } else if (cleanPhone) {
+          await db2.run(
+            `UPDATE customer_portal_accounts SET preferred_store_id = ?, updated_at = CURRENT_TIMESTAMP WHERE login_id = ?`,
+            [storeId, cleanPhone]
+          );
+        }
+        res.json({ success: true, preferred_store_id: storeId, message: "Default store preference updated" });
+      } catch (err) {
+        console.error("[CustomerPortal] Update preferred store error:", err);
+        res.status(500).json({ error: "Failed to update preferred store: " + err.message });
+      }
+    });
+    catalogCache = null;
+    imageStateCache = null;
+    lastCacheLoad = 0;
+    router.get("/public-catalog", async (req, res) => {
+      try {
+        const category = String(req.query.category || "all").toLowerCase();
+        const search = String(req.query.search || "").trim();
+        const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+        const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || "40"), 10)));
+        const offset = (page - 1) * limit;
+        const storeId = req.query.store_id ? parseInt(String(req.query.store_id), 10) : null;
+        const { images } = loadCatalogAndImages();
+        const db2 = await dbManager.getConnection();
+        const conditions = ["pcv.is_portal_visible = 1"];
+        const params = [];
+        if (search) {
+          conditions.push(`(m.name LIKE ? OR m.generic_name LIKE ? OR m.manufacturer LIKE ?)`);
+          const s = `%${search}%`;
+          params.push(s, s, s);
+        }
+        if (category && category !== "all") {
+          conditions.push(`LOWER(m.category) LIKE ?`);
+          params.push(`%${category}%`);
+        }
+        const where = conditions.join(" AND ");
+        const totalRow = await db2.get(
+          `SELECT COUNT(*) as n FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE ${where}`,
+          params
+        ).catch(() => ({ n: 0 }));
+        const rows = await db2.all(
+          `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price,
+              m.packaging, m.strength, m.pack_size,
+              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id AND (? IS NULL OR im.store_id = ?)), 0) as stock_qty,
+              COALESCE(pcv.featured_rank, 0) as featured_rank,
+              mci.salt_composition, mci.sub_category, mci.medicine_desc, mci.side_effects
+       FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       LEFT JOIN medicine_clinical_info mci ON mci.medicine_id = m.id
+       WHERE ${where}
+       ORDER BY pcv.featured_rank DESC, m.name ASC
+       LIMIT ? OFFSET ?`,
+          [storeId, storeId, ...params, limit, offset]
+        ).catch(() => []);
+        const enriched = [];
+        for (const med of rows) {
+          let imageUrl = null;
+          let allImages = {};
+          let gallery = [];
+          const resolved = await catalogImageService.resolveProductImages(med.id);
+          if (resolved && resolved.primaryUrl) {
+            imageUrl = resolved.primaryUrl;
+            allImages = resolved.images;
+            gallery = resolved.gallery;
+          }
+          const imgData = images[med.name];
+          if (imgData && imgData.images && gallery.length < 2) {
+            const stateGallery = catalogImageService.extractGalleryFromState(imgData);
+            if (stateGallery.length > 0 && gallery.length === 0) {
+              gallery = stateGallery;
+              const primary = stateGallery.find((g) => g.is_primary) || stateGallery[0];
+              imageUrl = primary?.url || null;
+              stateGallery.forEach((g) => {
+                allImages[g.type] = g;
+              });
+            }
+          }
+          enriched.push({
+            id: med.id,
+            name: med.name,
+            category: med.sub_category || med.category || "General",
+            pack: med.packaging || med.pack_size || "",
+            composition: med.salt_composition || med.generic_name || "",
+            manufacturer: med.manufacturer || "",
+            description: med.medicine_desc || "",
+            side_effects: med.side_effects || "",
+            mrp: Number(med.mrp || 0),
+            sell_price: Number(med.sell_price || med.mrp || 0),
+            stock_qty: Number(med.stock_qty || 0),
+            in_stock: Number(med.stock_qty || 0) > 0,
+            featured_rank: med.featured_rank || 0,
+            image_url: imageUrl,
+            images: allImages,
+            gallery
+          });
+        }
+        res.json({
+          success: true,
+          category,
+          search,
+          page,
+          limit,
+          total_count: totalRow?.n || 0,
+          total_pages: Math.ceil((totalRow?.n || 0) / limit),
+          medicines: enriched
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Public catalog error:", err);
+        res.status(500).json({ error: "Failed to fetch catalog: " + err.message });
+      }
+    });
+    router.get("/categories-summary", async (_req, res) => {
+      try {
+        const db2 = await dbManager.getConnection();
+        const rows = await db2.all(
+          `SELECT m.category, COUNT(*) as n
+       FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE pcv.is_portal_visible = 1
+       GROUP BY m.category
+       ORDER BY n DESC`
+        ).catch(() => []);
+        const totalEnabled = rows.reduce((s, r) => s + (r.n || 0), 0);
+        res.json({ success: true, total: totalEnabled, by_category: rows });
+      } catch (err) {
+        console.error("[CustomerPortal] categories-summary error:", err);
+        res.status(500).json({ error: "Failed to load category summary" });
+      }
+    });
+    router.get("/standalone-catalog", (_req, res) => {
+      const filePath = import_path22.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
+      if (import_fs22.default.existsSync(filePath)) {
+        return res.sendFile(filePath);
+      }
+      res.status(404).send("Live catalog website file not found");
+    });
+    router.get("/customer/orders", async (req, res) => {
+      try {
+        const customerId = parseInt(req.query.customer_id || "0", 10);
+        const phone = req.query.phone || "";
+        const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 100);
+        const db2 = await dbManager.getConnection();
+        let resolvedCustomerId = customerId;
+        const cleanPhone = phone.replace(/\D/g, "");
+        const digits10 = cleanPhone.slice(-10);
+        if (!resolvedCustomerId && digits10) {
+          const cust = await db2.get(
+            `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
+            [phone, `%${digits10}`]
+          );
+          if (cust) resolvedCustomerId = cust.id;
+        }
+        if (!resolvedCustomerId && !digits10) {
+          return res.json({ success: true, count: 0, orders: [] });
+        }
+        const orders = await db2.all(
+          `SELECT
+         so.id,
+         so.store_id,
+         so.customer_id,
+         so.product,
+         so.qty,
+         so.status,
+         so.payment_status,
+         so.pharmacy_verification_status,
+         so.delivery_status,
+         so.order_type,
+         so.total_amount,
+         so.payment_qr_id,
+         so.scheduled_processing_at,
+         so.estimated_delivery_start,
+         so.estimated_delivery_end,
+         so.cutoff_at,
+         so.date,
+         so.created_at,
+         so.notes,
+         so.payment_screenshot_path,
+         so.screenshot_amount,
+         COALESCE(st.name, 'Main Branch') as store_name
+       FROM special_orders so
+       LEFT JOIN stores st ON st.id = so.store_id
+       WHERE (so.customer_id = ? OR (so.phone IS NOT NULL AND REPLACE(REPLACE(REPLACE(so.phone, ' ', ''), '-', ''), '+', '') LIKE ?))
+       ORDER BY so.id DESC
+       LIMIT ?`,
+          [resolvedCustomerId || 0, `%${digits10}`, limit]
+        ).catch(() => []);
+        const enriched = await Promise.all(orders.map(async (ord) => {
+          const items = await db2.all(
+            `SELECT id, medicine_id, product_name, requested_qty, confirmed_qty, mrp, confirmed_price, item_status
+         FROM online_order_items
+         WHERE order_id = ?
+         ORDER BY id ASC`,
+            [ord.id]
+          ).catch(() => []);
+          return {
+            ...ord,
+            items: items.length > 0 ? items : [{ product_name: ord.product, requested_qty: ord.qty, mrp: ord.total_amount }]
+          };
+        }));
+        res.json({ success: true, count: enriched.length, orders: enriched });
+      } catch (err) {
+        console.error("[CustomerPortal] customer/orders error:", err);
+        res.status(500).json({ error: "Failed to fetch customer orders" });
+      }
+    });
+    router.get("/history", async (req, res) => {
+      try {
+        const customerId = parseInt(req.query.customer_id || "0", 10);
+        const loginId = req.query.login_id || "";
+        const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 200);
+        const offset = parseInt(req.query.offset || "0", 10) || 0;
+        if (!customerId && !loginId) {
+          return res.status(400).json({ error: "customer_id or login_id is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        let resolvedCustomerId = customerId;
+        if (!resolvedCustomerId && loginId) {
+          const account = await db2.get(
+            "SELECT customer_id FROM customer_portal_accounts WHERE login_id = ? AND status = ?",
+            [loginId, "active"]
+          );
+          if (!account) return res.status(404).json({ error: "Customer account not found" });
+          resolvedCustomerId = account.customer_id;
+        }
+        const sales = await db2.all(
+          `SELECT
+         si.id as invoice_id,
+         si.invoice_no,
+         si.date,
+         si.business_date,
+         si.total_amount as grand_total,
+         si.online_order_id,
+         si.payment_medium,
+         si.payment_status as status,
+         COALESCE(si.pharmacy_name_snapshot, st.name, 'Pharmacy') as store_name
+       FROM sales_invoices si
+       LEFT JOIN stores st ON st.id = si.store_id
+       WHERE si.customer_id = ?
+         AND (si.payment_status IS NULL OR si.payment_status != 'cancelled')
+       ORDER BY si.date DESC
+       LIMIT ? OFFSET ?`,
+          [resolvedCustomerId, limit, offset]
+        ).catch(() => []);
+        const enriched = await Promise.all(sales.map(async (sale) => {
+          const items = await db2.all(
+            `SELECT
+           sit.id,
+           COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as medicine_name,
+           COALESCE(m.generic_name, '') as generic_name,
+           COALESCE(m.strength, '') as strength,
+           COALESCE(m.packaging, '') as packaging,
+           sit.quantity,
+           COALESCE(sit.mrp_snapshot, sit.mrp, 0) as mrp,
+           sit.unit_price as sell_price,
+           COALESCE(sit.discount_per, 0) as discount,
+           COALESCE(im.medicine_id, 0) as medicine_id
+         FROM sale_items sit
+         LEFT JOIN inventory_master im ON im.id = sit.inventory_id
+         LEFT JOIN medicines m ON m.id = im.medicine_id
+         WHERE sit.invoice_id = ?
+         ORDER BY sit.id ASC`,
+            [sale.invoice_id]
+          ).catch(() => []);
+          return { ...sale, items };
+        }));
+        const countRow = await db2.get(
+          "SELECT COUNT(*) as total FROM sales_invoices WHERE customer_id = ? AND (payment_status IS NULL OR payment_status != ?)",
+          [resolvedCustomerId, "cancelled"]
+        ).catch(() => ({ total: 0 }));
+        res.json({
+          customer_id: resolvedCustomerId,
+          total: countRow?.total || 0,
+          limit,
+          offset,
+          purchases: enriched
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] History error:", err);
+        res.status(500).json({ error: "Failed to load purchase history" });
+      }
+    });
+    router.post("/history/:invoiceId/refill", async (req, res) => {
+      try {
+        const invoiceId = parseInt(req.params.invoiceId, 10);
+        if (isNaN(invoiceId)) return res.status(400).json({ error: "Invalid invoice ID" });
+        const { customer_id, login_id, store_id = 1 } = req.body;
+        if (!customer_id && !login_id) {
+          return res.status(400).json({ error: "customer_id or login_id is required" });
+        }
+        const db2 = await dbManager.getConnection();
+        const targetStoreId = parseInt(String(store_id), 10) || 1;
+        let resolvedCustomerId = customer_id ? parseInt(String(customer_id), 10) : 0;
+        if (!resolvedCustomerId && login_id) {
+          const account = await db2.get(
+            "SELECT customer_id FROM customer_portal_accounts WHERE login_id = ? AND status = ?",
+            [login_id, "active"]
+          );
+          if (!account) return res.status(404).json({ error: "Customer account not found" });
+          resolvedCustomerId = account.customer_id;
+        }
+        const invoice = await db2.get(
+          "SELECT * FROM sales_invoices WHERE id = ? AND customer_id = ?",
+          [invoiceId, resolvedCustomerId]
+        );
+        if (!invoice) return res.status(404).json({ error: "Invoice not found for this customer" });
+        const origItems = await db2.all(
+          `SELECT COALESCE(im.medicine_id, 0) as medicine_id, sit.quantity, COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as medicine_name
+       FROM sale_items sit
+       LEFT JOIN inventory_master im ON im.id = sit.inventory_id
+       LEFT JOIN medicines m ON m.id = im.medicine_id
+       WHERE sit.invoice_id = ?`,
+          [invoiceId]
+        );
+        if (!origItems || origItems.length === 0) {
+          return res.status(400).json({ error: "No items found in original invoice" });
+        }
+        const customer = await db2.get("SELECT * FROM customers WHERE id = ?", [resolvedCustomerId]);
+        if (!customer) return res.status(404).json({ error: "Customer record not found" });
+        const refillItems = [];
+        const unavailableItems = [];
+        for (const orig of origItems) {
+          if (!orig.medicine_id) continue;
+          const currentBatch = await db2.get(
+            `SELECT MAX(mrp) as current_mrp, MAX(sell_price) as current_sell, SUM(quantity) as total_qty
+         FROM inventory_master
+         WHERE medicine_id = ? AND store_id = ? AND is_active = 1
+           AND quantity > 0
+           AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
+            [orig.medicine_id, targetStoreId]
+          ).catch(() => null);
+          if (!currentBatch || (currentBatch.total_qty || 0) <= 0) {
+            unavailableItems.push({ medicine_id: orig.medicine_id, name: orig.medicine_name });
+            continue;
+          }
+          refillItems.push({
+            medicine_id: orig.medicine_id,
+            product_name: orig.medicine_name,
+            qty: orig.quantity,
+            mrp: currentBatch.current_mrp || 0,
+            price: currentBatch.current_sell || currentBatch.current_mrp || 0
+          });
+        }
+        if (refillItems.length === 0) {
+          return res.status(409).json({
+            error: "None of the original items are currently available",
+            unavailable_items: unavailableItems
+          });
+        }
+        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
+        const returnWindowDays = await returnWindowService.getConfiguredReturnWindowDays(targetStoreId);
+        const cleanPhone = customer.phone ? String(customer.phone).replace(/\D/g, "") : "";
+        const cleanName = formatCustomerName(customer.name);
+        const createdOrders = [];
+        await db2.run("BEGIN TRANSACTION");
+        try {
+          for (const item of refillItems) {
+            const itemTotal = item.qty * (item.price || item.mrp || 0);
+            const result = await db2.run(
+              `INSERT INTO special_orders (
+            store_id, customer_id, product, requester, phone, qty, priority, status, date,
+            notified, advance_payment, notes, customer_order_source,
+            payment_status, pharmacy_verification_status, delivery_status, return_status,
+            total_amount, scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
+            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
+            schedule_calculated_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', CURRENT_TIMESTAMP, 0, 0,
+            ?, 'website', 'UNPAID', 'PENDING', 'pending', 'none',
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [
+                targetStoreId,
+                resolvedCustomerId,
+                item.product_name,
+                cleanName,
+                cleanPhone,
+                item.qty,
+                `[Refill from Invoice #${invoiceId}]`,
+                itemTotal,
+                calculatedSchedule.scheduledProcessingAt,
+                calculatedSchedule.estimatedDeliveryStart,
+                calculatedSchedule.estimatedDeliveryEnd,
+                calculatedSchedule.cutoffAt,
+                calculatedSchedule.timezone,
+                calculatedSchedule.scheduleStatus,
+                calculatedSchedule.scheduleReason,
+                calculatedSchedule.scheduleVersion,
+                calculatedSchedule.calculatedAt
+              ]
+            );
+            const orderId = Number(result.lastID);
+            createdOrders.push({ id: orderId, product: item.product_name, qty: item.qty });
+            await db2.run(
+              `INSERT INTO online_order_items (order_id, medicine_id, product_name, requested_qty, mrp, item_status)
+           VALUES (?, ?, ?, ?, ?, 'PENDING')`,
+              [orderId, item.medicine_id, item.product_name, item.qty, item.mrp]
+            );
+            await db2.run(
+              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
+           VALUES (?, 'refill_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
+              [orderId, `Refill order created from Invoice #${invoiceId}. Current MRP: \u20B9${item.mrp}. Estimated Delivery: ${calculatedSchedule.estimatedDeliveryWindowFormatted}`]
+            );
+          }
+          await db2.run("COMMIT");
+        } catch (txErr) {
+          await db2.run("ROLLBACK");
+          throw txErr;
+        }
+        eventService.broadcast("order_updated", { at: Date.now(), source: "refill" });
+        res.status(201).json({
+          success: true,
+          message: `Refill order created for ${createdOrders.length} item(s)`,
+          source_invoice_id: invoiceId,
+          orders: createdOrders,
+          unavailable_items: unavailableItems,
+          timing: calculatedSchedule,
+          returnPolicy: {
+            return_window_days: returnWindowDays,
+            policy_summary: `Medicines eligible for return up to ${returnWindowDays} days after delivery/sale`
+          }
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] Refill error:", err);
+        res.status(500).json({ error: "Failed to create refill order" });
+      }
+    });
+    router.get("/admin/catalog-visibility", async (req, res) => {
+      try {
+        const search = String(req.query.search || "").trim();
+        const filter = String(req.query.filter || "all").toLowerCase();
+        const category = String(req.query.category || "").trim();
+        const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
+        const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || "50"), 10)));
+        const offset = (page - 1) * limit;
+        const db2 = await dbManager.getConnection();
+        const conditions = [];
+        const params = [];
+        if (search) {
+          conditions.push(`(m.name LIKE ? OR m.generic_name LIKE ? OR m.manufacturer LIKE ?)`);
+          const s = `%${search}%`;
+          params.push(s, s, s);
+        }
+        if (category) {
+          conditions.push(`LOWER(m.category) LIKE ?`);
+          params.push(`%${category.toLowerCase()}%`);
+        }
+        if (filter === "enabled" || filter === "online") {
+          conditions.push(`pcv.is_portal_visible = 1`);
+        } else if (filter === "disabled" || filter === "offline") {
+          conditions.push(`(pcv.is_portal_visible IS NULL OR pcv.is_portal_visible = 0)`);
+        } else if (filter === "with_image") {
+          conditions.push(`EXISTS (SELECT 1 FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1)`);
+        } else if (filter === "in_stock") {
+          conditions.push(`EXISTS (SELECT 1 FROM inventory_master im WHERE im.medicine_id = m.id AND (im.quantity > 0 OR im.loose_quantity > 0))`);
+        }
+        const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+        const totalRow = await db2.get(
+          `SELECT COUNT(*) as n
+       FROM medicines m
+       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       ${where}`,
+          params
+        ).catch(() => ({ n: 0 }));
+        const rows = await db2.all(
+          `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price, m.packaging,
+              COALESCE(pcv.is_portal_visible, 0) as is_portal_visible,
+              COALESCE(pcv.is_website_visible, 0) as is_website_visible,
+              COALESCE(pcv.featured_rank, 0) as featured_rank,
+              pcv.updated_at as visibility_updated_at,
+              (SELECT ci.image_path FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1 AND ci.is_primary = 1 LIMIT 1) as primary_image,
+              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
+       FROM medicines m
+       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       ${where}
+       ORDER BY pcv.featured_rank DESC, is_portal_visible DESC, stock_qty DESC, m.name ASC
+       LIMIT ? OFFSET ?`,
+          [...params, limit, offset]
+        ).catch(() => []);
+        const countsRow = await db2.get(
+          `SELECT
+         COUNT(*) as total,
+         SUM(CASE WHEN pcv.is_portal_visible = 1 THEN 1 ELSE 0 END) as enabled_count,
+         SUM(CASE WHEN EXISTS (SELECT 1 FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1) THEN 1 ELSE 0 END) as with_image_count,
+         SUM(CASE WHEN EXISTS (SELECT 1 FROM inventory_master im WHERE im.medicine_id = m.id AND (im.quantity > 0 OR im.loose_quantity > 0)) THEN 1 ELSE 0 END) as in_stock_count
+       FROM medicines m
+       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id`
+        ).catch(() => ({ total: 0, enabled_count: 0, with_image_count: 0, in_stock_count: 0 }));
+        res.json({
+          success: true,
+          page,
+          limit,
+          total_count: totalRow?.n || 0,
+          total_pages: Math.ceil((totalRow?.n || 0) / limit),
+          stats: {
+            total_medicines: countsRow?.total || 0,
+            portal_enabled: countsRow?.enabled_count || 0,
+            with_image: countsRow?.with_image_count || 0,
+            in_stock: countsRow?.in_stock_count || 0
+          },
+          medicines: rows
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] admin/catalog-visibility error:", err);
+        res.status(500).json({ error: "Failed to load catalog visibility" });
+      }
+    });
+    router.put("/admin/catalog-visibility/:medicineId", async (req, res) => {
+      try {
+        const medicineId = parseInt(req.params.medicineId, 10);
+        if (isNaN(medicineId)) return res.status(400).json({ error: "Invalid medicine ID" });
+        const { is_portal_visible, is_website_visible, featured_rank } = req.body;
+        const db2 = await dbManager.getConnection();
+        const portalVal = is_portal_visible != null ? is_portal_visible ? 1 : 0 : null;
+        const websiteVal = is_website_visible != null ? is_website_visible ? 1 : 0 : portalVal;
+        await db2.run(
+          `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, featured_rank, updated_at)
+       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(medicine_id) DO UPDATE SET
+         is_portal_visible = COALESCE(excluded.is_portal_visible, is_portal_visible),
+         is_website_visible = COALESCE(excluded.is_website_visible, is_website_visible),
+         featured_rank = COALESCE(excluded.featured_rank, featured_rank),
+         updated_at = CURRENT_TIMESTAMP`,
+          [
+            medicineId,
+            portalVal,
+            websiteVal,
+            featured_rank != null ? parseInt(String(featured_rank), 10) : null
+          ]
+        );
+        const updated = await db2.get(
+          `SELECT m.id, m.name, pcv.is_portal_visible, pcv.is_website_visible, pcv.featured_rank
+       FROM medicines m
+       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
+       WHERE m.id = ?`,
+          [medicineId]
+        );
+        res.json({ success: true, medicine: updated });
+      } catch (err) {
+        console.error("[CustomerPortal] admin/catalog-visibility PUT error:", err);
+        res.status(500).json({ error: "Failed to update visibility" });
+      }
+    });
+    router.post("/admin/catalog-visibility/bulk", async (req, res) => {
+      try {
+        const { medicine_ids, is_portal_visible, is_website_visible } = req.body;
+        if (!Array.isArray(medicine_ids) || medicine_ids.length === 0) {
+          return res.status(400).json({ error: "medicine_ids array is required" });
+        }
+        if (medicine_ids.length > 500) {
+          return res.status(400).json({ error: "Max 500 medicines per bulk operation" });
+        }
+        const db2 = await dbManager.getConnection();
+        const portalVal = is_portal_visible ? 1 : 0;
+        const websiteVal = is_website_visible != null ? is_website_visible ? 1 : 0 : portalVal;
+        const placeholders = medicine_ids.map(() => "(?, ?, ?, CURRENT_TIMESTAMP)").join(", ");
+        const values = [];
+        medicine_ids.forEach((id) => values.push(id, portalVal, websiteVal));
+        await db2.run(
+          `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+       VALUES ${placeholders}
+       ON CONFLICT(medicine_id) DO UPDATE SET
+         is_portal_visible = excluded.is_portal_visible,
+         is_website_visible = excluded.is_website_visible,
+         updated_at = CURRENT_TIMESTAMP`,
+          values
+        );
+        res.json({
+          success: true,
+          updated_count: medicine_ids.length,
+          is_portal_visible: portalVal === 1
+        });
+      } catch (err) {
+        console.error("[CustomerPortal] admin/catalog-visibility bulk error:", err);
+        res.status(500).json({ error: "Failed to bulk update visibility" });
+      }
+    });
+    router.post("/admin/catalog-visibility/publish-in-stock", async (req, res) => {
+      try {
+        const { is_online = true } = req.body;
+        const onlineVal = is_online ? 1 : 0;
+        const db2 = await dbManager.getConnection();
+        await db2.run(`
+      INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
+      SELECT DISTINCT im.medicine_id, ?, ?, CURRENT_TIMESTAMP
+      FROM inventory_master im
+      WHERE (im.quantity > 0 OR im.loose_quantity > 0) AND im.medicine_id IS NOT NULL
+      ON CONFLICT(medicine_id) DO UPDATE SET
+        is_portal_visible = excluded.is_portal_visible,
+        is_website_visible = excluded.is_website_visible,
+        updated_at = CURRENT_TIMESTAMP
+    `, [onlineVal, onlineVal]);
+        res.json({ success: true, is_online: onlineVal === 1 });
+      } catch (err) {
+        console.error("[CustomerPortal] admin/catalog-visibility publish-in-stock error:", err);
+        res.status(500).json({ error: "Failed to publish in-stock medicines" });
+      }
+    });
+    router.post("/cloud/sync-catalog", async (_req, res) => {
+      try {
+        const { pushLocalCatalogToCloud: pushLocalCatalogToCloud2 } = await Promise.resolve().then(() => (init_cloudCatalogSyncService(), cloudCatalogSyncService_exports));
+        const result = await pushLocalCatalogToCloud2();
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
+    router.post("/cloud/pull-orders", async (_req, res) => {
+      try {
+        const { pullCloudOrdersToLocal: pullCloudOrdersToLocal2 } = await Promise.resolve().then(() => (init_cloudCatalogSyncService(), cloudCatalogSyncService_exports));
+        const result = await pullCloudOrdersToLocal2();
+        res.json(result);
+      } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+      }
+    });
+    customerPortal_default = router;
+  }
+});
+
 // src/services/refillService.ts
 var refillService_exports = {};
 __export(refillService_exports, {
@@ -29837,6 +34922,14 @@ ${medList}
 \u{1F449} *Please collect your medicine at your earliest convenience.*`;
     }
   } else {
+    let portalLink = "";
+    try {
+      const { getLivePortalUrl: getLivePortalUrl2 } = await Promise.resolve().then(() => (init_customerPortal(), customerPortal_exports));
+      const portalUrl = await getLivePortalUrl2(db2, patientPhone);
+      if (portalUrl) portalLink = `
+\u{1F310} *24/7 1-Click Refill Link:* ${portalUrl}`;
+    } catch (_) {
+    }
     if (items.length === 1) {
       msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
 
@@ -29844,7 +34937,7 @@ Dear ${patientName},
 Your regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.
 
 You may collect from ${storeLabel}.${timingInfo}
-\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
+\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}${portalLink}`;
     } else {
       const medList = items.map((it) => `\u2022 ${it.medicine_name} (Qty: ${it.quantity})`).join("\n");
       msg = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${configuredName}*
@@ -29855,7 +34948,7 @@ Your regular prescription is due for refill:
 ${medList}
 
 You may collect from ${storeLabel}.${timingInfo}
-\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}`;
+\u{1F449} *Reply "1" or "REFILL" to confirm.*${hoursPill}${portalLink}`;
     }
   }
   const needsLangBanner = await isFirstContactOrUnconfirmed(db2, patientPhone);
@@ -33230,13 +38323,13 @@ async function reconcilePaidAndFulfilledCartItems(distributors) {
   }
   return reconciledItems;
 }
-var import_express, import_path19, import_fs19, router, lastSearchOkAt, mappedStoreIdsCache, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
+var import_express2, import_path23, import_fs23, router2, lastSearchOkAt, mappedStoreIdsCache, searchRevalidations, serverCartCache, userCartProbeCache, USER_CART_PROBE_TTL_MS, invalidatePharmarackCartCache, isWarmingUpCart, startupCartWarmedUp, pharmarackDeleteChain, handleManualReauth, pharmarack_default;
 var init_pharmarack = __esm({
   "src/routes/pharmarack.ts"() {
     "use strict";
-    import_express = __toESM(require("express"), 1);
-    import_path19 = __toESM(require("path"), 1);
-    import_fs19 = __toESM(require("fs"), 1);
+    import_express2 = __toESM(require("express"), 1);
+    import_path23 = __toESM(require("path"), 1);
+    import_fs23 = __toESM(require("fs"), 1);
     init_connection();
     init_eventService();
     init_notificationService();
@@ -33256,11 +38349,11 @@ var init_pharmarack = __esm({
     init_whatsappQueueWorker();
     init_activityTracker();
     init_orderNameMatcher();
-    router = import_express.default.Router();
+    router2 = import_express2.default.Router();
     lastSearchOkAt = 0;
     mappedStoreIdsCache = null;
     searchRevalidations = /* @__PURE__ */ new Map();
-    router.get("/search", async (req, res) => {
+    router2.get("/search", async (req, res) => {
       const qRaw = (req.query.q || "").trim();
       if (!qRaw) {
         return res.json([]);
@@ -33285,7 +38378,7 @@ var init_pharmarack = __esm({
       }
       return res.json(outcome.items);
     });
-    router.get("/warmup-terms", async (_req, res) => {
+    router2.get("/warmup-terms", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -33351,7 +38444,7 @@ var init_pharmarack = __esm({
         ]);
       }
     });
-    router.get("/distributors", async (_req, res) => {
+    router2.get("/distributors", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -33393,7 +38486,7 @@ var init_pharmarack = __esm({
         return res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router.get("/distributor-mappings", async (_req, res) => {
+    router2.get("/distributor-mappings", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -33426,7 +38519,7 @@ var init_pharmarack = __esm({
         res.status(500).json({ error: "Failed to fetch distributor mappings" });
       }
     });
-    router.post("/distributor-mappings", async (req, res) => {
+    router2.post("/distributor-mappings", async (req, res) => {
       const { store_name, distributor_id, phone, delivery_boy_id, overwrite_distributor_name } = req.body;
       if (!store_name) {
         return res.status(400).json({ error: "store_name is required" });
@@ -33456,7 +38549,7 @@ var init_pharmarack = __esm({
         res.status(500).json({ error: "Failed to save distributor mapping: " + error.message });
       }
     });
-    router.post("/catalog/sync", async (_req, res) => {
+    router2.post("/catalog/sync", async (_req, res) => {
       try {
         const { pharmarackCatalogCache: pharmarackCatalogCache2 } = await Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports));
         res.json({ success: true, message: "Catalog sync started in background" });
@@ -33465,12 +38558,12 @@ var init_pharmarack = __esm({
         res.status(500).json({ error: "Failed to start catalog sync: " + err.message });
       }
     });
-    router.post("/session/warmup", async (_req, res) => {
+    router2.post("/session/warmup", async (_req, res) => {
       res.json({ success: true, message: "Session warm-up probe triggered" });
       tokenRefreshScheduler.runSessionHeartbeat("heartbeat").catch(() => {
       });
     });
-    router.post("/login-window", async (_req, res) => {
+    router2.post("/login-window", async (_req, res) => {
       if (isShutdownInProgress()) {
         return res.status(503).json({ error: "Application shutdown in progress" });
       }
@@ -33484,11 +38577,11 @@ var init_pharmarack = __esm({
       tokenRefreshScheduler.isLoginWindowActive = true;
       res.json({ success: true, message: "Opening login window..." });
       (async () => {
-        const mainProfilePath = import_path19.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        const mainProfilePath = import_path23.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
         try {
           console.log("[LoginWindow] Killing any orphan Chrome processes holding locks on pharmarack_profile...");
           await killOrphanChromeProcesses("pharmarack_profile");
-          if (!import_fs19.default.existsSync(mainProfilePath)) import_fs19.default.mkdirSync(mainProfilePath, { recursive: true });
+          if (!import_fs23.default.existsSync(mainProfilePath)) import_fs23.default.mkdirSync(mainProfilePath, { recursive: true });
           cleanProfileLockFiles(mainProfilePath);
           console.log("[LoginWindow] Spawning Chrome natively from:", chromePath);
           const { spawn: spawnProc } = await import("child_process");
@@ -33589,7 +38682,7 @@ var init_pharmarack = __esm({
         }
       })();
     });
-    router.post("/logout", async (_req, res) => {
+    router2.post("/logout", async (_req, res) => {
       try {
         console.log("[Pharmarack] User requested complete clean & logout. Purging session data...");
         invalidatePharmarackCartCache();
@@ -33620,7 +38713,7 @@ var init_pharmarack = __esm({
     };
     isWarmingUpCart = false;
     startupCartWarmedUp = false;
-    router.post("/cart/add", async (req, res) => {
+    router2.post("/cart/add", async (req, res) => {
       const { items } = req.body;
       if (!items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "No items provided" });
@@ -33643,7 +38736,7 @@ var init_pharmarack = __esm({
       }
     });
     pharmarackDeleteChain = Promise.resolve();
-    router.post("/delete-cart-item", async (req, res) => {
+    router2.post("/delete-cart-item", async (req, res) => {
       const { storeId, productId, productCode, productName, company, packaging, ptr, mrp, storeName } = req.body;
       if (!storeId || !productId && !productCode && !productName) {
         return res.status(400).json({ error: "Missing required item details for cart deletion" });
@@ -33685,7 +38778,7 @@ var init_pharmarack = __esm({
         return res.status(500).json({ success: false, error: err.message || "Internal error deleting item" });
       }
     });
-    router.post("/adjust-special-order", async (req, res) => {
+    router2.post("/adjust-special-order", async (req, res) => {
       const { product, qty, distributor } = req.body;
       if (!product) {
         return res.status(400).json({ error: "product is required" });
@@ -33697,7 +38790,7 @@ var init_pharmarack = __esm({
         return res.status(500).json({ error: err.message || "Failed to adjust special order in live cart" });
       }
     });
-    router.post("/sync-orders", async (_req, res) => {
+    router2.post("/sync-orders", async (_req, res) => {
       try {
         const { syncPharmarackOrders: syncPharmarackOrders2 } = await Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports));
         const result = await syncPharmarackOrders2(true);
@@ -33706,7 +38799,7 @@ var init_pharmarack = __esm({
         res.status(500).json({ ok: false, error: err?.message || "Failed to sync Pharmarack orders" });
       }
     });
-    router.get("/sync-orders/dry-run", async (_req, res) => {
+    router2.get("/sync-orders/dry-run", async (_req, res) => {
       try {
         const { dryRunOrderSync: dryRunOrderSync2 } = await Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports));
         res.json(await dryRunOrderSync2());
@@ -33714,7 +38807,7 @@ var init_pharmarack = __esm({
         res.status(500).json({ ok: false, error: err?.message || "Dry run failed" });
       }
     });
-    router.get("/sync-orders/audit", async (req, res) => {
+    router2.get("/sync-orders/audit", async (req, res) => {
       try {
         const { getOrderSyncAudit: getOrderSyncAudit2 } = await Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports));
         res.json(await getOrderSyncAudit2(typeof req.query.date === "string" ? req.query.date : void 0));
@@ -33722,7 +38815,7 @@ var init_pharmarack = __esm({
         res.status(500).json({ error: err?.message || "Failed to load order sync audit" });
       }
     });
-    router.post("/cart/notify-manual", async (req, res) => {
+    router2.post("/cart/notify-manual", async (req, res) => {
       const { storeId, storeName, deliveryPersons, items, skipDistributor, orderNo, order_no } = req.body;
       if (!storeName || !items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Missing distributor info or items list" });
@@ -33745,7 +38838,7 @@ var init_pharmarack = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router.post("/cart/notify-delivery-boys-batch", async (req, res) => {
+    router2.post("/cart/notify-delivery-boys-batch", async (req, res) => {
       const { orders } = req.body;
       if (!orders || !Array.isArray(orders) || orders.length === 0) {
         return res.status(400).json({ error: "Missing or empty orders array" });
@@ -33762,7 +38855,7 @@ var init_pharmarack = __esm({
         res.status(500).json({ error: "Internal server error: " + err.message });
       }
     });
-    router.post("/cart/place-official-orders", async (req, res) => {
+    router2.post("/cart/place-official-orders", async (req, res) => {
       const { targetStoreNames, targetStoreIds, orders, deliveryBoyPhone, deliveryBoyName, storeInfo, skipWhatsAppQueue } = req.body;
       try {
         const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
@@ -34051,7 +39144,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message || "Failed to place official orders" });
       }
     });
-    router.post("/cart/open-official-window", async (_req, res) => {
+    router2.post("/cart/open-official-window", async (_req, res) => {
       try {
         const result = await pharmarackCheckoutService.openAuthenticatedCartWindow();
         res.json(result);
@@ -34060,7 +39153,7 @@ ${waiting.message}`;
         res.status(500).json({ ok: false, error: err.message || "Failed to open cart window" });
       }
     });
-    router.post("/cart/sync-post-checkout", async (req, res) => {
+    router2.post("/cart/sync-post-checkout", async (req, res) => {
       try {
         const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
         const { targetStoreNames, targetStoreIds } = req.body || {};
@@ -34111,7 +39204,7 @@ ${waiting.message}`;
         res.status(500).json({ success: false, error: err.message || "Post-checkout sync failed" });
       }
     });
-    router.get("/cart", async (req, res) => {
+    router2.get("/cart", async (req, res) => {
       try {
         const forceRefresh = req.query.fresh === "true" || req.query.refresh === "true";
         if (!forceRefresh && serverCartCache && Date.now() - serverCartCache.ts < 3e4) {
@@ -34184,10 +39277,10 @@ ${waiting.message}`;
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router.get("/startup-sync-status", (_req, res) => {
+    router2.get("/startup-sync-status", (_req, res) => {
       res.json({ success: true, ...startupSyncCoordinator.getStatus() });
     });
-    router.get("/live-cart-summary", async (_req, res) => {
+    router2.get("/live-cart-summary", async (_req, res) => {
       try {
         const settings = await getPharmarackSettings();
         const token = settings["pharmarack_session_token"] || "";
@@ -34401,7 +39494,7 @@ ${waiting.message}`;
         return res.status(500).json({ error: "Failed to fetch live cart summary: " + err.message });
       }
     });
-    router.get("/auto-verify", async (_req, res) => {
+    router2.get("/auto-verify", async (_req, res) => {
       try {
         const settings = await getPharmarackSettings();
         const token = settings["pharmarack_session_token"] || "";
@@ -34441,7 +39534,7 @@ ${waiting.message}`;
         return res.status(500).json({ error: "Internal server error" });
       }
     });
-    router.get("/session-status", async (_req, res) => {
+    router2.get("/session-status", async (_req, res) => {
       try {
         const isRefreshing = tokenRefreshScheduler.getStatus().isRefreshing;
         const settings = await getPharmarackSettings();
@@ -34497,7 +39590,7 @@ ${waiting.message}`;
         return res.status(500).json({ error: "Internal server error" });
       }
     });
-    router.post("/logout", async (_req, res) => {
+    router2.post("/logout", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', '')");
@@ -34506,9 +39599,9 @@ ${waiting.message}`;
         Promise.resolve().then(() => (init_pharmarackCatalogCache(), pharmarackCatalogCache_exports)).then((m) => m.stopCatalogSyncCron()).catch(() => {
         });
         await db2.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
-        const pharmarackProfilePath = import_path19.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-        if (import_fs19.default.existsSync(pharmarackProfilePath)) {
-          import_fs19.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
+        const pharmarackProfilePath = import_path23.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        if (import_fs23.default.existsSync(pharmarackProfilePath)) {
+          import_fs23.default.rmSync(pharmarackProfilePath, { recursive: true, force: true });
           console.log("Cleared Pharmarack Puppeteer profile directory.");
         }
         res.json({ success: true, message: "Logged out and cleared Pharmarack session successfully" });
@@ -34517,7 +39610,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to clear session: " + err.message });
       }
     });
-    router.get("/sent-orders/dates", async (_req, res) => {
+    router2.get("/sent-orders/dates", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all(`
@@ -34534,7 +39627,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to fetch sent order dates: " + err.message });
       }
     });
-    router.post("/order-check", async (req, res) => {
+    router2.post("/order-check", async (req, res) => {
       try {
         const { distributor, lines } = req.body || {};
         if (!String(distributor || "").trim() || !Array.isArray(lines)) return res.status(400).json({ error: "distributor and lines are required" });
@@ -34549,7 +39642,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Order check failed: " + err.message });
       }
     });
-    router.get("/sent-orders", async (req, res) => {
+    router2.get("/sent-orders", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         let targetDate = (req.query.date || "").trim();
@@ -34666,7 +39759,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to fetch sent orders: " + err.message });
       }
     });
-    router.post("/sent-orders/:id/send-dispatch", async (req, res) => {
+    router2.post("/sent-orders/:id/send-dispatch", async (req, res) => {
       const id = Number(req.params.id);
       if (!id || isNaN(id)) {
         return res.status(400).json({ error: "Valid sent order id is required" });
@@ -34757,7 +39850,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message || "Failed to send dispatch message" });
       }
     });
-    router.post("/sync-historical-orders", async (req, res) => {
+    router2.post("/sync-historical-orders", async (req, res) => {
       try {
         const days = parseInt(req.body?.days, 10) || 30;
         const { syncHistoricalPharmarackOrders: syncHistoricalPharmarackOrders2 } = await Promise.resolve().then(() => (init_pharmarackOrderSyncService(), pharmarackOrderSyncService_exports));
@@ -34768,7 +39861,7 @@ ${waiting.message}`;
         res.status(500).json({ success: false, error: "Historical order sync failed: " + err.message });
       }
     });
-    router.get("/sent-orders/latest-map", async (_req, res) => {
+    router2.get("/sent-orders/latest-map", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -34833,7 +39926,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to fetch latest sent map: " + err.message });
       }
     });
-    router.get("/skipped-medicines", async (_req, res) => {
+    router2.get("/skipped-medicines", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rows = await db2.all("SELECT medicine_name_clean, original_name, skipped_at FROM live_cart_skipped_medicines ORDER BY skipped_at DESC");
@@ -34842,7 +39935,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to fetch skipped medicines: " + err.message });
       }
     });
-    router.post("/skipped-medicines", async (req, res) => {
+    router2.post("/skipped-medicines", async (req, res) => {
       try {
         const { medicine_name } = req.body || {};
         if (!medicine_name || !String(medicine_name).trim()) {
@@ -34863,7 +39956,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to save skipped medicine: " + err.message });
       }
     });
-    router.delete("/skipped-medicines/:name", async (req, res) => {
+    router2.delete("/skipped-medicines/:name", async (req, res) => {
       try {
         const clean2 = String(req.params.name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
         const db2 = await dbManager.getConnection();
@@ -34873,7 +39966,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to remove skipped medicine: " + err.message });
       }
     });
-    router.get("/distributor-purchased-check", async (req, res) => {
+    router2.get("/distributor-purchased-check", async (req, res) => {
       try {
         const storeName = String(req.query.store_name || "").trim();
         const medName = String(req.query.medicine_name || "").trim();
@@ -34926,7 +40019,7 @@ ${waiting.message}`;
         res.json({ success: true, exists: false });
       }
     });
-    router.get("/distributor-medicines/:storeId", async (req, res) => {
+    router2.get("/distributor-medicines/:storeId", async (req, res) => {
       try {
         const storeId = parseInt(req.params.storeId, 10);
         if (!storeId || isNaN(storeId)) {
@@ -34967,7 +40060,7 @@ ${waiting.message}`;
         res.status(500).json({ success: false, error: "Failed to fetch distributor medicines: " + err.message });
       }
     });
-    router.get("/reorder-recent", async (req, res) => {
+    router2.get("/reorder-recent", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { getReorderWindowMonths: getReorderWindowMonths2 } = await Promise.resolve().then(() => (init_medicineSalesMetricsService(), medicineSalesMetricsService_exports));
@@ -35043,7 +40136,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to fetch recently reordered medicines: " + err.message });
       }
     });
-    router.get("/purchase-reorder-history", async (req, res) => {
+    router2.get("/purchase-reorder-history", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const rawMonths = parseInt(req.query.months, 10);
@@ -35209,7 +40302,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to fetch purchase reorder history: " + err.message });
       }
     });
-    router.get("/check-medicine-stock", async (req, res) => {
+    router2.get("/check-medicine-stock", async (req, res) => {
       try {
         const rawName = (req.query.name || "").trim();
         if (!rawName || rawName.length < 2) {
@@ -35259,7 +40352,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to check stock: " + err.message });
       }
     });
-    router.get("/order-by-id/:orderId", async (req, res) => {
+    router2.get("/order-by-id/:orderId", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const orderId = req.params.orderId;
@@ -35293,7 +40386,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to fetch order: " + err.message });
       }
     });
-    router.post("/log-placed-order", async (req, res) => {
+    router2.post("/log-placed-order", async (req, res) => {
       try {
         const { store_id, store_name, items, delivery_persons, order_no, delivery_boy_id, delivery_boy_notified } = req.body;
         if (!store_name || !items) {
@@ -35395,7 +40488,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    router.post("/check-overstock", async (req, res) => {
+    router2.post("/check-overstock", async (req, res) => {
       try {
         const { productName, _company, _packaging, _distributorStoreId, requestedQty = 1 } = req.body;
         if (!productName || typeof productName !== "string") {
@@ -35566,7 +40659,7 @@ ${waiting.message}`;
         return res.status(500).json({ error: "Failed to check overstock status: " + err.message });
       }
     });
-    router.get("/auto-refill-suggestions", async (_req, res) => {
+    router2.get("/auto-refill-suggestions", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         let rows = await db2.all(`
@@ -35611,7 +40704,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to fetch auto-refill suggestions: " + err.message });
       }
     });
-    router.get("/session-logs", async (_req, res) => {
+    router2.get("/session-logs", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const sixtyDaysAgo = Date.now() - 60 * 86400 * 1e3;
@@ -35629,7 +40722,7 @@ ${waiting.message}`;
         res.status(500).json({ success: false, error: err.message });
       }
     });
-    router.get("/dispatch-schedule", async (_req, res) => {
+    router2.get("/dispatch-schedule", async (_req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const pausedRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_paused_dispatch_dates'");
@@ -35652,7 +40745,7 @@ ${waiting.message}`;
         res.status(500).json({ error: "Failed to fetch schedule: " + err.message });
       }
     });
-    router.post("/dispatch-schedule", async (req, res) => {
+    router2.post("/dispatch-schedule", async (req, res) => {
       try {
         const { pausedDates, timerSec } = req.body;
         const db2 = await dbManager.getConnection();
@@ -35699,10 +40792,10 @@ ${waiting.message}`;
         return res.status(500).json({ success: false, error: err.message });
       }
     };
-    router.post("/trigger-reauth", handleManualReauth);
-    router.post("/login", handleManualReauth);
-    router.post("/refresh-token", handleManualReauth);
-    router.get("/closure-status", async (_req, res) => {
+    router2.post("/trigger-reauth", handleManualReauth);
+    router2.post("/login", handleManualReauth);
+    router2.post("/refresh-token", handleManualReauth);
+    router2.get("/closure-status", async (_req, res) => {
       try {
         const config2 = await marketClosureService.getConfig();
         res.json({ success: true, config: config2 });
@@ -35710,7 +40803,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    router.post("/closure-status", async (req, res) => {
+    router2.post("/closure-status", async (req, res) => {
       try {
         const config2 = await marketClosureService.saveConfig(req.body);
         res.json({ success: true, config: config2 });
@@ -35718,7 +40811,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    router.get("/closure-buffer", async (_req, res) => {
+    router2.get("/closure-buffer", async (_req, res) => {
       try {
         const result = await marketClosureService.getBufferAnalysis();
         res.json({ success: true, ...result });
@@ -35726,7 +40819,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    router.post("/stage-closure-notices", async (req, res) => {
+    router2.post("/stage-closure-notices", async (req, res) => {
       try {
         const { refillIds, customTemplate } = req.body;
         if (!Array.isArray(refillIds) || refillIds.length === 0) {
@@ -35738,7 +40831,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    router.post("/add-closure-buffer-to-cart", async (req, res) => {
+    router2.post("/add-closure-buffer-to-cart", async (req, res) => {
       try {
         const { items } = req.body;
         if (!Array.isArray(items) || items.length === 0) {
@@ -35750,7 +40843,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    router.get("/affected-closure-patients", async (req, res) => {
+    router2.get("/affected-closure-patients", async (req, res) => {
       try {
         const startDate = String(req.query.startDate || req.query.date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
         const endDate = req.query.endDate ? String(req.query.endDate) : startDate;
@@ -35773,7 +40866,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    router.post("/send-closure-notices", async (req, res) => {
+    router2.post("/send-closure-notices", async (req, res) => {
       try {
         const { selectedPatients, messageTemplate, nextWorkingDate, nextDeliveryTime, reason } = req.body;
         if (!Array.isArray(selectedPatients) || selectedPatients.length === 0) {
@@ -35794,7 +40887,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    router.get("/cloud-cart-queue/status", async (req, res) => {
+    router2.get("/cloud-cart-queue/status", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const modeRow = await db2.get("SELECT value FROM app_settings WHERE key = 'cloud_cart_queue_mode'");
@@ -35816,7 +40909,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    router.post("/cloud-cart-queue/drain", async (req, res) => {
+    router2.post("/cloud-cart-queue/drain", async (req, res) => {
       try {
         const { cartQueueSyncService: cartQueueSyncService2 } = await Promise.resolve().then(() => (init_cartQueueSyncService(), cartQueueSyncService_exports));
         const result = await cartQueueSyncService2.drainCartAddQueue();
@@ -35825,319 +40918,7 @@ ${waiting.message}`;
         res.status(500).json({ error: err.message });
       }
     });
-    pharmarack_default = router;
-  }
-});
-
-// src/services/paymentQrService.ts
-var paymentQrService_exports = {};
-__export(paymentQrService_exports, {
-  DEFAULT_QR_CONFIGS: () => DEFAULT_QR_CONFIGS,
-  paymentQrService: () => paymentQrService
-});
-var import_path20, import_fs20, import_qrcode, import_canvas, DEFAULT_QR_CONFIGS, PaymentQrService, paymentQrService;
-var init_paymentQrService = __esm({
-  "src/services/paymentQrService.ts"() {
-    "use strict";
-    import_path20 = __toESM(require("path"), 1);
-    import_fs20 = __toESM(require("fs"), 1);
-    init_connection();
-    init_storeSettingsService();
-    init_config();
-    import_qrcode = __toESM(require("qrcode"), 1);
-    import_canvas = require("canvas");
-    DEFAULT_QR_CONFIGS = [
-      {
-        id: "QR_1",
-        label: "Pharmacy Counter UPI (QR 1)",
-        payee_name: "AI Pharmacy Counter 1",
-        upi_id: "aipharmacy1@upi",
-        qr_image_url: "",
-        is_active: true
-      },
-      {
-        id: "QR_2",
-        label: "Pharmacy Merchant UPI (QR 2)",
-        payee_name: "AI Pharmacy Merchant",
-        upi_id: "aipharmacy2@upi",
-        qr_image_url: "",
-        is_active: true
-      },
-      {
-        id: "QR_3",
-        label: "Pharmacy Direct UPI (QR 3)",
-        payee_name: "AI Pharmacy Store 3",
-        upi_id: "aipharmacy3@upi",
-        qr_image_url: "",
-        is_active: true
-      }
-    ];
-    PaymentQrService = class {
-      /**
-       * Load the 3 QR configurations from app_settings with fallback defaults
-       */
-      async getQrConfigs() {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(
-          "SELECT key, value FROM app_settings WHERE key LIKE 'payment_qr_%'"
-        ).catch(() => []);
-        const settingsMap = /* @__PURE__ */ new Map();
-        for (const r of rows) {
-          settingsMap.set(r.key, r.value);
-        }
-        const configs = [];
-        const qrIds = ["QR_1", "QR_2", "QR_3"];
-        for (const id of qrIds) {
-          const lower = id.toLowerCase();
-          const defaultConf = DEFAULT_QR_CONFIGS.find((d) => d.id === id);
-          configs.push({
-            id,
-            label: settingsMap.get(`payment_${lower}_label`) || defaultConf.label,
-            payee_name: settingsMap.get(`payment_${lower}_payee_name`) || defaultConf.payee_name,
-            upi_id: settingsMap.get(`payment_${lower}_upi_id`) || defaultConf.upi_id,
-            qr_image_url: settingsMap.get(`payment_${lower}_image_url`) || defaultConf.qr_image_url || "",
-            is_active: settingsMap.get(`payment_${lower}_active`) !== "false"
-          });
-        }
-        return configs;
-      }
-      /**
-       * Save QR configurations
-       */
-      async saveQrConfigs(configs) {
-        const db2 = await dbManager.getConnection();
-        for (const conf of configs) {
-          const lower = conf.id.toLowerCase();
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_label`, conf.label]
-          );
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_payee_name`, conf.payee_name]
-          );
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_upi_id`, conf.upi_id]
-          );
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_image_url`, conf.qr_image_url || ""]
-          );
-          await db2.run(
-            "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [`payment_${lower}_active`, conf.is_active ? "true" : "false"]
-          );
-        }
-      }
-      /**
-       * Allocate the next alternating QR code for a new order.
-       * Rule (§13): selected_qr != previous_order_qr
-       */
-      async allocateNextQr() {
-        const db2 = await dbManager.getConnection();
-        const configs = await this.getQrConfigs();
-        const activeConfigs = configs.filter((c) => c.is_active && c.upi_id);
-        if (activeConfigs.length === 0) {
-          return DEFAULT_QR_CONFIGS[0];
-        }
-        if (activeConfigs.length === 1) {
-          return activeConfigs[0];
-        }
-        const lastRow = await db2.get(
-          "SELECT value FROM app_settings WHERE key = 'last_selected_payment_qr'"
-        ).catch(() => null);
-        const lastQrId = lastRow?.value || "";
-        const eligibleConfigs = activeConfigs.filter((c) => c.id !== lastQrId);
-        const pool = eligibleConfigs.length > 0 ? eligibleConfigs : activeConfigs;
-        const selected = pool[Math.floor(Math.random() * pool.length)];
-        await db2.run(
-          "INSERT INTO app_settings (key, value) VALUES ('last_selected_payment_qr', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-          [selected.id]
-        ).catch(() => {
-        });
-        return selected;
-      }
-      /**
-       * Generate standard UPI payment URI
-       */
-      buildUpiUri(upiId, payeeName, amount, orderId) {
-        const cleanAmount = Number(amount || 0).toFixed(2);
-        const encodedName = encodeURIComponent(payeeName || "AI Pharmacy");
-        const note = encodeURIComponent(`Order #${orderId}`);
-        return `upi://pay?pa=${upiId}&pn=${encodedName}&am=${cleanAmount}&cu=INR&tr=${orderId}&tn=${note}`;
-      }
-      /**
-       * Resolve configured store name from app_settings
-       */
-      async getStoreName() {
-        try {
-          const db2 = await dbManager.getConnection();
-          return await getStoreMedicalName(db2);
-        } catch {
-          return "AI PHARMACY";
-        }
-      }
-      /**
-       * Generate Branded Visual Payment Card (Sample 3) on disk.
-       * Includes store header, Special Order number, medicine name, amount badge,
-       * high-resolution Level-H QR code, UPI ID banner, and supported apps footer.
-       */
-      async generatePaymentCard(options) {
-        const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs20.default.existsSync(uploadsDir)) {
-          import_fs20.default.mkdirSync(uploadsDir, { recursive: true });
-        }
-        const cleanFilename = options.filename ? options.filename.endsWith(".png") ? options.filename : `${options.filename}.png` : `payment_card_${options.orderNumber.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
-        const fullPath = import_path20.default.join(uploadsDir, cleanFilename);
-        const storeName = (options.storeName || await this.getStoreName()).toUpperCase();
-        const qrBuffer = await import_qrcode.default.toBuffer(options.upiUri, {
-          width: 380,
-          margin: 1,
-          errorCorrectionLevel: "H"
-        });
-        const qrImg = await (0, import_canvas.loadImage)(qrBuffer);
-        const width = 540;
-        const height = 720;
-        const canvas = (0, import_canvas.createCanvas)(width, height);
-        const ctx = canvas.getContext("2d");
-        const drawRoundRect = (x, y, w, h, r) => {
-          const anyCtx = ctx;
-          if (typeof anyCtx.roundRect === "function") {
-            ctx.beginPath();
-            anyCtx.roundRect(x, y, w, h, r);
-          } else {
-            const radius = Array.isArray(r) ? r[0] : r;
-            ctx.beginPath();
-            ctx.moveTo(x + radius, y);
-            ctx.arcTo(x + w, y, x + w, y + h, radius);
-            ctx.arcTo(x + w, y + h, x, y + h, radius);
-            ctx.arcTo(x, y + h, x, y, radius);
-            ctx.arcTo(x, y, x + w, y, radius);
-            ctx.closePath();
-          }
-        };
-        ctx.fillStyle = "#ffffff";
-        drawRoundRect(0, 0, width, height, 24);
-        ctx.fill();
-        ctx.strokeStyle = "#e2e8f0";
-        ctx.lineWidth = 2;
-        drawRoundRect(1, 1, width - 2, height - 2, 24);
-        ctx.stroke();
-        ctx.fillStyle = "#0f766e";
-        drawRoundRect(0, 0, width, 120, [24, 24, 0, 0]);
-        ctx.fill();
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 26px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText(storeName, width / 2, 45);
-        ctx.fillStyle = "#ccfbf1";
-        ctx.font = "bold 16px sans-serif";
-        ctx.fillText(`Special Order: ${options.orderNumber}`, width / 2, 78);
-        if (options.medicineName) {
-          ctx.fillStyle = "#99f6e4";
-          ctx.font = "14px sans-serif";
-          const medText = options.medicineName.length > 38 ? `${options.medicineName.substring(0, 36)}...` : options.medicineName;
-          ctx.fillText(`\u{1F48A} ${medText}`, width / 2, 103);
-        }
-        const badgeW = 280;
-        const badgeH = 48;
-        const badgeX = (width - badgeW) / 2;
-        const badgeY = 135;
-        ctx.fillStyle = "#f0fdf4";
-        ctx.strokeStyle = "#22c55e";
-        ctx.lineWidth = 2;
-        drawRoundRect(badgeX, badgeY, badgeW, badgeH, 12);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = "#15803d";
-        ctx.font = "bold 20px sans-serif";
-        ctx.fillText(`BOOKING ADVANCE: \u20B9${Number(options.amount || 0).toFixed(2)}`, width / 2, badgeY + 31);
-        const qrSize = 360;
-        const qrX = (width - qrSize) / 2;
-        const qrY = 195;
-        ctx.drawImage(qrImg, qrX, qrY, qrSize, qrSize);
-        const pillW = 460;
-        const pillH = 44;
-        const pillX = (width - pillW) / 2;
-        const pillY = 575;
-        ctx.fillStyle = "#f8fafc";
-        ctx.strokeStyle = "#cbd5e1";
-        ctx.lineWidth = 1.5;
-        drawRoundRect(pillX, pillY, pillW, pillH, 10);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = "#1e293b";
-        ctx.font = "bold 15px sans-serif";
-        ctx.fillText(`UPI ID: ${options.upiId.trim()}`, width / 2, pillY + 28);
-        ctx.fillStyle = "#64748b";
-        ctx.font = "13px sans-serif";
-        ctx.fillText("Accepted on GPay \u2022 PhonePe \u2022 Paytm \u2022 Any UPI App", width / 2, 650);
-        const buffer = canvas.toBuffer("image/png");
-        import_fs20.default.writeFileSync(fullPath, buffer);
-        return fullPath;
-      }
-      /**
-       * Generate PNG Buffer for a given UPI URI to send over WhatsApp
-       */
-      async generateQrBuffer(upiUri) {
-        return import_qrcode.default.toBuffer(upiUri, { width: 300, margin: 2 });
-      }
-      /**
-       * Generate payment file on disk for a given UPI URI.
-       * If card options are provided, generates the full visual card (Sample 3).
-       * Otherwise falls back to clean QR code.
-       */
-      async generateQrFile(upiUri, filename, options) {
-        if (options && options.orderNumber && options.amount !== void 0 && options.upiId) {
-          return this.generatePaymentCard({
-            upiUri,
-            orderNumber: options.orderNumber,
-            medicineName: options.medicineName,
-            amount: options.amount,
-            payeeName: options.payeeName,
-            upiId: options.upiId,
-            storeName: options.storeName,
-            filename
-          });
-        }
-        const uploadsDir = import_path20.default.resolve(getAppDataDir(), "uploads");
-        if (!import_fs20.default.existsSync(uploadsDir)) {
-          import_fs20.default.mkdirSync(uploadsDir, { recursive: true });
-        }
-        const cleanFilename = filename.endsWith(".png") ? filename : `${filename}.png`;
-        const fullPath = import_path20.default.join(uploadsDir, cleanFilename);
-        const buffer = await this.generateQrBuffer(upiUri);
-        import_fs20.default.writeFileSync(fullPath, buffer);
-        return fullPath;
-      }
-      /**
-       * Fetch QR details locked to a specific order
-       */
-      async getOrderQrDetails(orderId) {
-        const db2 = await dbManager.getConnection();
-        const order = await db2.get(
-          "SELECT id, payment_qr_id, total_amount, advance_payment, payment_status FROM special_orders WHERE id = ?",
-          [orderId]
-        );
-        if (!order) return null;
-        const configs = await this.getQrConfigs();
-        const assignedId = order.payment_qr_id || "QR_1";
-        const config2 = configs.find((c) => c.id === assignedId) || configs[0] || DEFAULT_QR_CONFIGS[0];
-        const amount = Number(order.total_amount || order.advance_payment || 0);
-        return {
-          qr_id: config2.id,
-          label: config2.label,
-          payee_name: config2.payee_name,
-          upi_id: config2.upi_id,
-          upi_uri: this.buildUpiUri(config2.upi_id, config2.payee_name, amount, order.id),
-          qr_image_url: config2.qr_image_url || "",
-          amount,
-          payment_status: order.payment_status || "UNPAID"
-        };
-      }
-    };
-    paymentQrService = new PaymentQrService();
+    pharmarack_default = router2;
   }
 });
 
@@ -36707,14 +41488,14 @@ async function downloadMediaWithRetry(downloadFn, options = {}) {
   throw lastErr;
 }
 async function saveInboundMedia(msgId, buffer) {
-  await import_fs21.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
+  await import_fs24.default.promises.mkdir(INBOUND_MEDIA_DIR, { recursive: true });
   const safeId = String(msgId).replace(/[^a-zA-Z0-9_-]/g, "_");
-  const filePath = import_path21.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
-  await import_fs21.default.promises.writeFile(filePath, buffer);
+  const filePath = import_path24.default.join(INBOUND_MEDIA_DIR, `${safeId}.jpg`);
+  await import_fs24.default.promises.writeFile(filePath, buffer);
   try {
-    const uploadsDir = import_path21.default.resolve(getAppDataDir(), "uploads");
-    await import_fs21.default.promises.mkdir(uploadsDir, { recursive: true });
-    await import_fs21.default.promises.writeFile(import_path21.default.join(uploadsDir, `${safeId}.jpg`), buffer);
+    const uploadsDir = import_path24.default.resolve(getAppDataDir(), "uploads");
+    await import_fs24.default.promises.mkdir(uploadsDir, { recursive: true });
+    await import_fs24.default.promises.writeFile(import_path24.default.join(uploadsDir, `${safeId}.jpg`), buffer);
   } catch (_) {
   }
   return filePath;
@@ -41839,12 +46620,12 @@ Our team will keep your medicines ready for collection.${phoneSuffix}`;
         let proofImagePath;
         if (media?.data) {
           try {
-            const uploadsDir = import_path21.default.resolve(getAppDataDir(), "uploads");
-            if (!import_fs21.default.existsSync(uploadsDir)) {
-              import_fs21.default.mkdirSync(uploadsDir, { recursive: true });
+            const uploadsDir = import_path24.default.resolve(getAppDataDir(), "uploads");
+            if (!import_fs24.default.existsSync(uploadsDir)) {
+              import_fs24.default.mkdirSync(uploadsDir, { recursive: true });
             }
-            proofImagePath = import_path21.default.join(uploadsDir, `payment_proof_${soCode}.jpg`);
-            import_fs21.default.writeFileSync(proofImagePath, Buffer.from(media.data, "base64"));
+            proofImagePath = import_path24.default.join(uploadsDir, `payment_proof_${soCode}.jpg`);
+            import_fs24.default.writeFileSync(proofImagePath, Buffer.from(media.data, "base64"));
           } catch (saveErr) {
             console.error("[Intent Service] Failed to persist payment proof to disk:", saveErr);
           }
@@ -42048,7 +46829,7 @@ We will confirm your order shortly!`;
           if (pendingPayment && pendingPayment.special_order_id && imagePath) {
             const soId = pendingPayment.special_order_id;
             const soCode = pendingPayment.so_code || await generateStoreSpecialOrderCode(db2, 1, soId);
-            const webImagePath = imagePath ? `/uploads/${import_path21.default.basename(imagePath)}` : null;
+            const webImagePath = imagePath ? `/uploads/${import_path24.default.basename(imagePath)}` : null;
             await db2.run(
               `UPDATE special_orders
                SET payment_screenshot_path = ?, screenshot_amount = 50, payment_status = 'SCREENSHOT_RECEIVED', updated_at = datetime('now')
@@ -42831,7 +47612,7 @@ async function handleOcrComplete(data) {
             }
           }
         }
-        const safeWebPath = imagePath ? `/data/inbound_media/${import_path21.default.basename(imagePath)}` : null;
+        const safeWebPath = imagePath ? `/data/inbound_media/${import_path24.default.basename(imagePath)}` : null;
         await db2.run(
           `UPDATE special_orders
            SET payment_screenshot_path = ?,
@@ -43119,8 +47900,8 @@ Our registered pharmacist is reviewing it right now and will confirm available s
     }
     let visualBoostName = null;
     try {
-      if (imagePath && import_fs21.default.existsSync(imagePath)) {
-        const buf = import_fs21.default.readFileSync(imagePath);
+      if (imagePath && import_fs24.default.existsSync(imagePath)) {
+        const buf = import_fs24.default.readFileSync(imagePath);
         const ocrRawForVisual = [ocrResult?.text, messageBody].filter(Boolean).join(" ");
         const visualHits = await visualIndexService.fusedSearch(buf, ocrRawForVisual, { limit: 3, maxVisualDistance: 12 });
         if (visualHits.length > 0 && visualHits[0].fusedScore >= 75) {
@@ -43281,12 +48062,12 @@ We noticed we haven't received your \u20B950 booking advance payment for *${medN
     return 0;
   }
 }
-var import_fs21, import_path21, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, clarificationsTableEnsured, seenInboundMessageIds, seenInboundContentKeys, INBOUND_DEDUPE_WINDOW_MS, whatsappIntentService, whatsappIntentService_default;
+var import_fs24, import_path24, GATE_WITH_INTENT, GATE_IMPLICIT, INBOUND_MEDIA_DIR, clarificationsTableEnsured, seenInboundMessageIds, seenInboundContentKeys, INBOUND_DEDUPE_WINDOW_MS, whatsappIntentService, whatsappIntentService_default;
 var init_whatsappIntentService = __esm({
   "src/services/whatsappIntentService.ts"() {
     "use strict";
-    import_fs21 = __toESM(require("fs"), 1);
-    import_path21 = __toESM(require("path"), 1);
+    import_fs24 = __toESM(require("fs"), 1);
+    import_path24 = __toESM(require("path"), 1);
     init_connection();
     init_eventService();
     init_getMessage();
@@ -43303,7 +48084,7 @@ var init_whatsappIntentService = __esm({
     init_config();
     GATE_WITH_INTENT = 0.6;
     GATE_IMPLICIT = 0.72;
-    INBOUND_MEDIA_DIR = import_path21.default.resolve(process.cwd(), "data", "inbound_media");
+    INBOUND_MEDIA_DIR = import_path24.default.resolve(process.cwd(), "data", "inbound_media");
     clarificationsTableEnsured = false;
     seenInboundMessageIds = /* @__PURE__ */ new Map();
     seenInboundContentKeys = /* @__PURE__ */ new Map();
@@ -43730,11 +48511,11 @@ __export(prescriptionScannerService_exports, {
   default: () => prescriptionScannerService_default,
   prescriptionScannerService: () => prescriptionScannerService
 });
-var import_fs22, import_jimp7, import_tesseract2, PrescriptionScannerService, prescriptionScannerService, prescriptionScannerService_default;
+var import_fs25, import_jimp7, import_tesseract2, PrescriptionScannerService, prescriptionScannerService, prescriptionScannerService_default;
 var init_prescriptionScannerService = __esm({
   "src/services/prescriptionScannerService.ts"() {
     "use strict";
-    import_fs22 = __toESM(require("fs"), 1);
+    import_fs25 = __toESM(require("fs"), 1);
     import_jimp7 = require("jimp");
     import_tesseract2 = require("tesseract.js");
     init_connection();
@@ -43805,8 +48586,8 @@ var init_prescriptionScannerService = __esm({
             if (imageInput.startsWith("data:")) {
               const base64Data = imageInput.split(",")[1];
               rawBuffer = Buffer.from(base64Data, "base64");
-            } else if (import_fs22.default.existsSync(imageInput)) {
-              rawBuffer = await import_fs22.default.promises.readFile(imageInput);
+            } else if (import_fs25.default.existsSync(imageInput)) {
+              rawBuffer = await import_fs25.default.promises.readFile(imageInput);
             } else {
               rawBuffer = Buffer.from(imageInput, "base64");
             }
@@ -43862,8 +48643,8 @@ var init_prescriptionScannerService = __esm({
           if (imageInput.startsWith("data:")) {
             const base64Data = imageInput.split(",")[1];
             rawBuffer = Buffer.from(base64Data, "base64");
-          } else if (import_fs22.default.existsSync(imageInput)) {
-            rawBuffer = await import_fs22.default.promises.readFile(imageInput);
+          } else if (import_fs25.default.existsSync(imageInput)) {
+            rawBuffer = await import_fs25.default.promises.readFile(imageInput);
           } else {
             rawBuffer = Buffer.from(imageInput, "base64");
           }
@@ -44122,7 +48903,7 @@ __export(aiCameraService_exports, {
   aiCameraService: () => aiCameraService,
   default: () => aiCameraService_default
 });
-var import_tesseract3, import_jimp8, import_fs23, import_path22, AICameraService, aiCameraService, aiCameraService_default;
+var import_tesseract3, import_jimp8, import_fs26, import_path25, AICameraService, aiCameraService, aiCameraService_default;
 var init_aiCameraService = __esm({
   "src/services/aiCameraService.ts"() {
     "use strict";
@@ -44135,8 +48916,8 @@ var init_aiCameraService = __esm({
     init_onlineDataEnricher();
     init_visualIndexService();
     init_connection();
-    import_fs23 = __toESM(require("fs"), 1);
-    import_path22 = __toESM(require("path"), 1);
+    import_fs26 = __toESM(require("fs"), 1);
+    import_path25 = __toESM(require("path"), 1);
     AICameraService = class {
       worker = null;
       initialized = false;
@@ -45334,12 +50115,12 @@ var init_aiCameraService = __esm({
         const id = `audit_${timestamp}`;
         const filename = `${id}.jpg`;
         const rootDir = process.cwd();
-        const auditImagesDir = import_path22.default.resolve(rootDir, "data", "audit_images");
-        const auditQueuePath = import_path22.default.resolve(rootDir, "data", "audit_queue.json");
-        const imagePath = import_path22.default.join("data", "audit_images", filename);
-        const absoluteImagePath = import_path22.default.join(auditImagesDir, filename);
-        if (!import_fs23.default.existsSync(auditImagesDir)) {
-          import_fs23.default.mkdirSync(auditImagesDir, { recursive: true });
+        const auditImagesDir = import_path25.default.resolve(rootDir, "data", "audit_images");
+        const auditQueuePath = import_path25.default.resolve(rootDir, "data", "audit_queue.json");
+        const imagePath = import_path25.default.join("data", "audit_images", filename);
+        const absoluteImagePath = import_path25.default.join(auditImagesDir, filename);
+        if (!import_fs26.default.existsSync(auditImagesDir)) {
+          import_fs26.default.mkdirSync(auditImagesDir, { recursive: true });
         }
         let buffer;
         if (typeof imageData === "string") {
@@ -45367,15 +50148,15 @@ var init_aiCameraService = __esm({
             image.resize({ w: width, h: height });
           }
           const compressedBuffer = await image.getBuffer("image/jpeg");
-          await import_fs23.default.promises.writeFile(absoluteImagePath, compressedBuffer);
+          await import_fs26.default.promises.writeFile(absoluteImagePath, compressedBuffer);
         } catch (compressErr) {
           console.error("Failed to compress audit image with Jimp, saving original:", compressErr);
-          await import_fs23.default.promises.writeFile(absoluteImagePath, buffer);
+          await import_fs26.default.promises.writeFile(absoluteImagePath, buffer);
         }
         let queue2 = [];
-        if (import_fs23.default.existsSync(auditQueuePath)) {
+        if (import_fs26.default.existsSync(auditQueuePath)) {
           try {
-            const data = await import_fs23.default.promises.readFile(auditQueuePath, "utf8");
+            const data = await import_fs26.default.promises.readFile(auditQueuePath, "utf8");
             queue2 = JSON.parse(data || "[]");
           } catch (e) {
             console.error("Failed to read audit queue json:", e);
@@ -45394,11 +50175,11 @@ var init_aiCameraService = __esm({
         queue2.push(newEntry);
         try {
           const tempQueuePath = auditQueuePath + ".tmp";
-          await import_fs23.default.promises.writeFile(tempQueuePath, JSON.stringify(queue2, null, 2));
-          await import_fs23.default.promises.rename(tempQueuePath, auditQueuePath);
+          await import_fs26.default.promises.writeFile(tempQueuePath, JSON.stringify(queue2, null, 2));
+          await import_fs26.default.promises.rename(tempQueuePath, auditQueuePath);
         } catch (writeErr) {
           console.error("Failed to write audit queue atomically:", writeErr);
-          await import_fs23.default.promises.writeFile(auditQueuePath, JSON.stringify(queue2, null, 2));
+          await import_fs26.default.promises.writeFile(auditQueuePath, JSON.stringify(queue2, null, 2));
         }
         try {
           const db2 = await dbManager.getConnection();
@@ -45813,12 +50594,12 @@ __export(telegramBot_exports, {
   default: () => telegramBot_default,
   telegramBotService: () => telegramBotService
 });
-var import_path23, import_fs24, TelegramBotService, telegramBotService, telegramBot_default;
+var import_path26, import_fs27, TelegramBotService, telegramBotService, telegramBot_default;
 var init_telegramBot = __esm({
   "src/telegramBot.ts"() {
     "use strict";
-    import_path23 = __toESM(require("path"), 1);
-    import_fs24 = __toESM(require("fs"), 1);
+    import_path26 = __toESM(require("path"), 1);
+    import_fs27 = __toESM(require("fs"), 1);
     init_migrationValidation();
     init_nameNormalizer();
     init_connection();
@@ -46119,8 +50900,8 @@ Welcome back!`,
                 const imageBuffer = await response.arrayBuffer();
                 const buffer = Buffer.from(imageBuffer);
                 const tempFileName = `telegram_${Date.now()}_${msg.from?.id}.jpg`;
-                const tempFilePath = import_path23.default.join(getAppDataDir(), "uploads", "temp", tempFileName);
-                import_fs24.default.writeFileSync(tempFilePath, buffer);
+                const tempFilePath = import_path26.default.join(getAppDataDir(), "uploads", "temp", tempFileName);
+                import_fs27.default.writeFileSync(tempFilePath, buffer);
                 const { imageArchiveService: imageArchiveService2 } = await Promise.resolve().then(() => (init_imageArchiveService(), imageArchiveService_exports));
                 await imageArchiveService2.processAndRouteImage(tempFilePath);
                 const { aiCameraService: aiCameraService2 } = await Promise.resolve().then(() => (init_aiCameraService(), aiCameraService_exports));
@@ -48511,18 +53292,18 @@ async function runCensusQuery() {
 }
 function rotateHealthLogs(dataDir, logPath) {
   try {
-    const path310 = import_path24.default.join(dataDir, "system-health.jsonl.3");
-    const path210 = import_path24.default.join(dataDir, "system-health.jsonl.2");
-    const path1 = import_path24.default.join(dataDir, "system-health.jsonl.1");
-    if (import_fs25.default.existsSync(path210)) {
-      if (import_fs25.default.existsSync(path310)) import_fs25.default.unlinkSync(path310);
-      import_fs25.default.renameSync(path210, path310);
+    const path310 = import_path27.default.join(dataDir, "system-health.jsonl.3");
+    const path210 = import_path27.default.join(dataDir, "system-health.jsonl.2");
+    const path1 = import_path27.default.join(dataDir, "system-health.jsonl.1");
+    if (import_fs28.default.existsSync(path210)) {
+      if (import_fs28.default.existsSync(path310)) import_fs28.default.unlinkSync(path310);
+      import_fs28.default.renameSync(path210, path310);
     }
-    if (import_fs25.default.existsSync(path1)) {
-      import_fs25.default.renameSync(path1, path210);
+    if (import_fs28.default.existsSync(path1)) {
+      import_fs28.default.renameSync(path1, path210);
     }
-    if (import_fs25.default.existsSync(logPath)) {
-      import_fs25.default.renameSync(logPath, path1);
+    if (import_fs28.default.existsSync(logPath)) {
+      import_fs28.default.renameSync(logPath, path1);
     }
   } catch (err) {
     console.warn("[SystemHealthMonitor] Error rotating health logs:", err?.message || err);
@@ -48530,16 +53311,16 @@ function rotateHealthLogs(dataDir, logPath) {
 }
 function pruneOldHealthLogs(dataDir) {
   try {
-    if (!import_fs25.default.existsSync(dataDir)) return;
+    if (!import_fs28.default.existsSync(dataDir)) return;
     const now = Date.now();
     const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1e3;
-    const files = import_fs25.default.readdirSync(dataDir);
+    const files = import_fs28.default.readdirSync(dataDir);
     for (const f of files) {
       if (f.startsWith("system-health.jsonl")) {
-        const fullPath = import_path24.default.join(dataDir, f);
-        const st = import_fs25.default.statSync(fullPath);
+        const fullPath = import_path27.default.join(dataDir, f);
+        const st = import_fs28.default.statSync(fullPath);
         if (now - st.mtimeMs > FOURTEEN_DAYS_MS) {
-          import_fs25.default.unlinkSync(fullPath);
+          import_fs28.default.unlinkSync(fullPath);
           console.log(`[SystemHealthMonitor] Pruned old health log: ${f}`);
         }
       }
@@ -48549,18 +53330,18 @@ function pruneOldHealthLogs(dataDir) {
 }
 function appendHealthLog(tick) {
   try {
-    const dataDir = import_path24.default.resolve(getAppDataDir(), "data", "logs");
-    if (!import_fs25.default.existsSync(dataDir)) {
-      import_fs25.default.mkdirSync(dataDir, { recursive: true });
+    const dataDir = import_path27.default.resolve(getAppDataDir(), "data", "logs");
+    if (!import_fs28.default.existsSync(dataDir)) {
+      import_fs28.default.mkdirSync(dataDir, { recursive: true });
     }
-    const logPath = import_path24.default.join(dataDir, "system-health.jsonl");
-    if (import_fs25.default.existsSync(logPath)) {
-      const stats = import_fs25.default.statSync(logPath);
+    const logPath = import_path27.default.join(dataDir, "system-health.jsonl");
+    if (import_fs28.default.existsSync(logPath)) {
+      const stats = import_fs28.default.statSync(logPath);
       if (stats.size >= 2 * 1024 * 1024) {
         rotateHealthLogs(dataDir, logPath);
       }
     }
-    import_fs25.default.appendFileSync(logPath, JSON.stringify(tick) + "\n", "utf8");
+    import_fs28.default.appendFileSync(logPath, JSON.stringify(tick) + "\n", "utf8");
   } catch (err) {
     console.warn("[SystemHealthMonitor] Failed to write health log:", err?.message || err);
   }
@@ -48658,7 +53439,7 @@ async function runHealthTick() {
 function startSystemHealthMonitor() {
   if (monitorInterval) return;
   try {
-    const dataDir = import_path24.default.resolve(getAppDataDir(), "data", "logs");
+    const dataDir = import_path27.default.resolve(getAppDataDir(), "data", "logs");
     pruneOldHealthLogs(dataDir);
   } catch (_) {
   }
@@ -48684,21 +53465,21 @@ function getLiveHealthSnapshot() {
     bootPerf: getBootMilestones()
   };
 }
-var import_os2, import_fs25, import_path24, import_child_process3, import_util2, execAsync2, RING_BUFFER_CAP, tickHistory, latestTick, bootMilestones, isCensusRunning, lastCpuUsage, lastCpuTime, lastLagMs, consecutiveLowMemoryTicks, lastPressureAlertAt, monitorInterval, tickCount;
+var import_os2, import_fs28, import_path27, import_child_process4, import_util2, execAsync2, RING_BUFFER_CAP, tickHistory, latestTick, bootMilestones, isCensusRunning, lastCpuUsage, lastCpuTime, lastLagMs, consecutiveLowMemoryTicks, lastPressureAlertAt, monitorInterval, tickCount;
 var init_systemHealthMonitor = __esm({
   "src/systemHealthMonitor.ts"() {
     "use strict";
     import_os2 = __toESM(require("os"), 1);
-    import_fs25 = __toESM(require("fs"), 1);
-    import_path24 = __toESM(require("path"), 1);
-    import_child_process3 = require("child_process");
+    import_fs28 = __toESM(require("fs"), 1);
+    import_path27 = __toESM(require("path"), 1);
+    import_child_process4 = require("child_process");
     import_util2 = require("util");
     init_config();
     init_activityTracker();
     init_chromeBrowser();
     init_whatsappClient();
     init_localTime();
-    execAsync2 = (0, import_util2.promisify)(import_child_process3.exec);
+    execAsync2 = (0, import_util2.promisify)(import_child_process4.exec);
     RING_BUFFER_CAP = 120;
     tickHistory = [];
     latestTick = null;
@@ -48765,15 +53546,15 @@ __export(tokenRefreshScheduler_exports, {
 });
 function extractTokenFromProfile(profilePath) {
   try {
-    const levelDbDir = import_path25.default.resolve(profilePath, "Default", "Local Storage", "leveldb");
-    if (!import_fs26.default.existsSync(levelDbDir)) return null;
-    const files = import_fs26.default.readdirSync(levelDbDir);
+    const levelDbDir = import_path28.default.resolve(profilePath, "Default", "Local Storage", "leveldb");
+    if (!import_fs29.default.existsSync(levelDbDir)) return null;
+    const files = import_fs29.default.readdirSync(levelDbDir);
     let bestToken = null;
     let latestExp = 0;
     for (const file of files) {
       if (file.endsWith(".ldb") || file.endsWith(".log")) {
         try {
-          const buf = import_fs26.default.readFileSync(import_path25.default.join(levelDbDir, file));
+          const buf = import_fs29.default.readFileSync(import_path28.default.join(levelDbDir, file));
           const str = buf.toString("latin1");
           const matches = str.match(/eyJhbGciOiJIUzI1Ni[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g);
           if (matches) {
@@ -48803,12 +53584,12 @@ function extractTokenFromProfile(profilePath) {
     return null;
   }
 }
-var import_fs26, import_path25, TokenRefreshScheduler, tokenRefreshScheduler;
+var import_fs29, import_path28, TokenRefreshScheduler, tokenRefreshScheduler;
 var init_tokenRefreshScheduler = __esm({
   "src/services/tokenRefreshScheduler.ts"() {
     "use strict";
-    import_fs26 = __toESM(require("fs"), 1);
-    import_path25 = __toESM(require("path"), 1);
+    import_fs29 = __toESM(require("fs"), 1);
+    import_path28 = __toESM(require("path"), 1);
     init_lazyPuppeteer();
     init_connection();
     init_config();
@@ -48908,10 +53689,10 @@ var init_tokenRefreshScheduler = __esm({
         this.lastError = null;
         await killOrphanChromeProcesses("pharmarack_profile");
         cleanTempProfileFolders();
-        const mainProfilePath = import_path25.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        const mainProfilePath = import_path28.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
         try {
-          if (import_fs26.default.existsSync(mainProfilePath)) {
-            import_fs26.default.rmSync(mainProfilePath, { recursive: true, force: true });
+          if (import_fs29.default.existsSync(mainProfilePath)) {
+            import_fs29.default.rmSync(mainProfilePath, { recursive: true, force: true });
             console.log("[TokenRefreshScheduler] Main profile directory removed:", mainProfilePath);
           }
         } catch (err) {
@@ -49004,8 +53785,8 @@ var init_tokenRefreshScheduler = __esm({
           const db2 = await dbManager.getConnection();
           const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
           const token = tokenRow ? tokenRow.value : "";
-          const mainProfilePath = import_path25.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-          const hasStoredProfile = import_fs26.default.existsSync(mainProfilePath) && import_fs26.default.readdirSync(mainProfilePath).length > 0;
+          const mainProfilePath = import_path28.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+          const hasStoredProfile = import_fs29.default.existsSync(mainProfilePath) && import_fs29.default.readdirSync(mainProfilePath).length > 0;
           if (!token && !hasStoredProfile && triggerType !== "manual_reauth") {
             if (!this.hasLoggedNoToken) {
               console.log("[TokenRefreshScheduler] No token or browser profile found. Skipping background auto-refresh until user logs in.");
@@ -49067,8 +53848,8 @@ var init_tokenRefreshScheduler = __esm({
           const db2 = await dbManager.getConnection();
           const tokenRow = await db2.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
           let token = tokenRow?.value || "";
-          const mainProfilePath = import_path25.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-          const hasStoredProfile = import_fs26.default.existsSync(mainProfilePath) && import_fs26.default.readdirSync(mainProfilePath).length > 0;
+          const mainProfilePath = import_path28.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+          const hasStoredProfile = import_fs29.default.existsSync(mainProfilePath) && import_fs29.default.readdirSync(mainProfilePath).length > 0;
           if (!token && hasStoredProfile) {
             const extracted = extractTokenFromProfile(mainProfilePath);
             if (extracted) {
@@ -49195,9 +53976,9 @@ var init_tokenRefreshScheduler = __esm({
           console.error("[TokenRefreshScheduler] Chrome or Chromium browser path not found.");
           return null;
         }
-        const mainProfilePath = import_path25.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
-        if (!import_fs26.default.existsSync(mainProfilePath)) {
-          import_fs26.default.mkdirSync(mainProfilePath, { recursive: true });
+        const mainProfilePath = import_path28.default.resolve(getAppDataDir(), "data", "pharmarack_profile");
+        if (!import_fs29.default.existsSync(mainProfilePath)) {
+          import_fs29.default.mkdirSync(mainProfilePath, { recursive: true });
           console.log("[TokenRefreshScheduler] Initialized missing main profile folder at:", mainProfilePath);
         }
         const directToken = extractTokenFromProfile(mainProfilePath);
@@ -49239,7 +54020,7 @@ var init_tokenRefreshScheduler = __esm({
             if (isShutdownInProgress()) return null;
             console.log("[TokenRefreshScheduler] Main profile is locked. Copying to temp profile...", launchErr.message);
             const randomSuffix = Math.floor(Math.random() * 1e6);
-            const tempProfilePath = import_path25.default.resolve(getAppDataDir(), "data", `pharmarack_profile_temp_${Date.now()}_${randomSuffix}`);
+            const tempProfilePath = import_path28.default.resolve(getAppDataDir(), "data", `pharmarack_profile_temp_${Date.now()}_${randomSuffix}`);
             await copyProfileFolder(mainProfilePath, tempProfilePath, "[TokenRefreshScheduler]");
             cleanProfileLockFiles(tempProfilePath);
             browser = await puppeteer.launch({
@@ -49340,8 +54121,8 @@ var init_tokenRefreshScheduler = __esm({
               console.warn("[TokenRefreshScheduler] Could not copy temp profile back to main profile:", copyBackErr.message);
             }
             try {
-              if (import_fs26.default.existsSync(tempProfilePathToDelete)) {
-                import_fs26.default.rmSync(tempProfilePathToDelete, { recursive: true, force: true });
+              if (import_fs29.default.existsSync(tempProfilePathToDelete)) {
+                import_fs29.default.rmSync(tempProfilePathToDelete, { recursive: true, force: true });
                 console.log(`[TokenRefreshScheduler] Cleared temp profile directory at ${tempProfilePathToDelete}`);
               }
             } catch (rmErr) {
@@ -49867,7 +54648,7 @@ function deriveMediaKeys(mediaKey, mediaType = "image") {
   }
   const infoStr = MEDIA_HKDF_INFO_MAP[mediaType.toLowerCase()] || "WhatsApp Image Keys";
   const salt = Buffer.alloc(32);
-  const expanded = import_crypto3.default.hkdfSync("sha256", keyBuffer, salt, Buffer.from(infoStr), 112);
+  const expanded = import_crypto5.default.hkdfSync("sha256", keyBuffer, salt, Buffer.from(infoStr), 112);
   const expandedBuf = Buffer.from(expanded);
   return {
     iv: expandedBuf.subarray(0, 16),
@@ -49880,7 +54661,7 @@ function decryptCiphertext(encBuffer, cipherKey, iv) {
     throw new Error(`Ciphertext buffer too small: ${encBuffer.length} bytes`);
   }
   const ciphertext = encBuffer.subarray(0, encBuffer.length - 10);
-  const decipher = import_crypto3.default.createDecipheriv("aes-256-cbc", cipherKey, iv);
+  const decipher = import_crypto5.default.createDecipheriv("aes-256-cbc", cipherKey, iv);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 async function downloadAndDecryptCdnMedia(options, timeoutMs = 15e3) {
@@ -49958,11 +54739,11 @@ async function extractWhatsAppMedia(options, timeoutMs = 15e3) {
   }
   return null;
 }
-var import_crypto3, import_axios, MEDIA_HKDF_INFO_MAP, CDN_HOSTS;
+var import_crypto5, import_axios, MEDIA_HKDF_INFO_MAP, CDN_HOSTS;
 var init_whatsappMediaDecryptor = __esm({
   "src/utils/whatsappMediaDecryptor.ts"() {
     "use strict";
-    import_crypto3 = __toESM(require("crypto"), 1);
+    import_crypto5 = __toESM(require("crypto"), 1);
     import_axios = __toESM(require("axios"), 1);
     MEDIA_HKDF_INFO_MAP = {
       image: "WhatsApp Image Keys",
@@ -50028,12 +54809,12 @@ function loadWwebjs() {
   return wwebjsPromise;
 }
 function hasSavedSession() {
-  const sessionPath = import_path26.default.join(WWEBJS_AUTH_DIR, "session");
-  if (!import_fs27.default.existsSync(sessionPath)) return false;
+  const sessionPath = import_path29.default.join(WWEBJS_AUTH_DIR, "session");
+  if (!import_fs30.default.existsSync(sessionPath)) return false;
   try {
-    const defaultDir = import_path26.default.join(sessionPath, "Default");
-    const targetDir = import_fs27.default.existsSync(defaultDir) ? defaultDir : sessionPath;
-    const files = import_fs27.default.readdirSync(targetDir);
+    const defaultDir = import_path29.default.join(sessionPath, "Default");
+    const targetDir = import_fs30.default.existsSync(defaultDir) ? defaultDir : sessionPath;
+    const files = import_fs30.default.readdirSync(targetDir);
     const meaningfulFiles = files.filter(
       (f) => !/^(devtoolsactiveport|singleton|lock|\.lock|lockfile)$/i.test(f)
     );
@@ -50088,29 +54869,29 @@ async function isWhatsAppAutoConnectAllowed() {
   return false;
 }
 function safeRemoveDirectorySync(dirPath) {
-  if (!import_fs27.default.existsSync(dirPath)) return;
+  if (!import_fs30.default.existsSync(dirPath)) return;
   try {
-    import_fs27.default.rmSync(dirPath, { recursive: true, force: true });
+    import_fs30.default.rmSync(dirPath, { recursive: true, force: true });
   } catch (err) {
     try {
-      const entries = import_fs27.default.readdirSync(dirPath, { withFileTypes: true });
+      const entries = import_fs30.default.readdirSync(dirPath, { withFileTypes: true });
       for (const entry of entries) {
-        const fullPath = import_path26.default.join(dirPath, entry.name);
+        const fullPath = import_path29.default.join(dirPath, entry.name);
         try {
-          import_fs27.default.chmodSync(fullPath, 438);
+          import_fs30.default.chmodSync(fullPath, 438);
         } catch {
         }
         if (entry.isDirectory()) {
           safeRemoveDirectorySync(fullPath);
         } else {
           try {
-            import_fs27.default.unlinkSync(fullPath);
+            import_fs30.default.unlinkSync(fullPath);
           } catch {
           }
         }
       }
       try {
-        import_fs27.default.rmdirSync(dirPath);
+        import_fs30.default.rmdirSync(dirPath);
       } catch {
       }
     } catch {
@@ -50365,9 +55146,9 @@ async function shouldRouteToBusiness() {
   }
 }
 async function cleanupProfileLocks() {
-  const sessionPath = import_path26.default.join(WWEBJS_AUTH_DIR, "session");
+  const sessionPath = import_path29.default.join(WWEBJS_AUTH_DIR, "session");
   const lockNames = ["SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"];
-  const hasLocks = import_fs27.default.existsSync(sessionPath) && lockNames.some((f) => import_fs27.default.existsSync(import_path26.default.join(sessionPath, f)));
+  const hasLocks = import_fs30.default.existsSync(sessionPath) && lockNames.some((f) => import_fs30.default.existsSync(import_path29.default.join(sessionPath, f)));
   if (hasLocks && process.platform === "win32") {
     try {
       const filterPattern = sessionPath.replace(/\\/g, "*").replace(/\//g, "*");
@@ -50909,9 +55690,9 @@ function launchClientInstance(forceQr) {
     const puppeteerArgs = getCommonHeadlessChromiumArgs([
       "--js-flags=--max-old-space-size=256"
     ]);
-    const sessionDir = import_path26.default.join(WWEBJS_AUTH_DIR, "session");
+    const sessionDir = import_path29.default.join(WWEBJS_AUTH_DIR, "session");
     cleanProfileLockFiles(sessionDir);
-    cleanProfileLockFiles(import_path26.default.join(sessionDir, "Default"));
+    cleanProfileLockFiles(import_path29.default.join(sessionDir, "Default"));
     const client = new Client({
       authStrategy: new LocalAuth({ dataPath: WWEBJS_AUTH_DIR }),
       puppeteer: {
@@ -51458,9 +56239,9 @@ async function forceReconnect() {
   const authPath = WWEBJS_AUTH_DIR;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      if (import_fs27.default.existsSync(authPath)) {
+      if (import_fs30.default.existsSync(authPath)) {
         safeRemoveDirectorySync(authPath);
-        if (!import_fs27.default.existsSync(authPath) || !hasSavedSession()) {
+        if (!import_fs30.default.existsSync(authPath) || !hasSavedSession()) {
           console.log("[WhatsApp] Old session data cleared from", authPath);
           break;
         }
@@ -51687,9 +56468,9 @@ async function sendMessage(to, mediaPath, caption, file) {
             let tempSavedPath = null;
             const safeName = (file.filename || "media.png").replace(/[^a-zA-Z0-9._-]/g, "_");
             try {
-              if (!import_fs27.default.existsSync(UPLOADS_DIR)) import_fs27.default.mkdirSync(UPLOADS_DIR, { recursive: true });
-              tempSavedPath = import_path26.default.join(UPLOADS_DIR, `temp_${Date.now()}_${safeName}`);
-              import_fs27.default.writeFileSync(tempSavedPath, Buffer.from(file.data, "base64"));
+              if (!import_fs30.default.existsSync(UPLOADS_DIR)) import_fs30.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+              tempSavedPath = import_path29.default.join(UPLOADS_DIR, `temp_${Date.now()}_${safeName}`);
+              import_fs30.default.writeFileSync(tempSavedPath, Buffer.from(file.data, "base64"));
               const media = MessageMedia.fromFilePath(tempSavedPath);
               const isPdf = safeName.toLowerCase().endsWith(".pdf");
               sentMsg = await targetClient.sendMessage(targetChatId, media, {
@@ -51698,7 +56479,7 @@ async function sendMessage(to, mediaPath, caption, file) {
               });
             } catch (mediaErr) {
               console.warn(`[WhatsApp] Media attachment send failed to ${targetChatId}, trying direct phone route ${chatId}:`, mediaErr?.message || mediaErr);
-              if (tempSavedPath && import_fs27.default.existsSync(tempSavedPath) && targetChatId !== chatId) {
+              if (tempSavedPath && import_fs30.default.existsSync(tempSavedPath) && targetChatId !== chatId) {
                 try {
                   const mediaAlt = MessageMedia.fromFilePath(tempSavedPath);
                   sentMsg = await targetClient.sendMessage(chatId, mediaAlt, {
@@ -51708,7 +56489,7 @@ async function sendMessage(to, mediaPath, caption, file) {
                 } catch (_) {
                 }
               }
-              if (!sentMsg && tempSavedPath && import_fs27.default.existsSync(tempSavedPath)) {
+              if (!sentMsg && tempSavedPath && import_fs30.default.existsSync(tempSavedPath)) {
                 try {
                   const mediaDoc = MessageMedia.fromFilePath(tempSavedPath);
                   sentMsg = await targetClient.sendMessage(chatId, mediaDoc, {
@@ -51725,9 +56506,9 @@ async function sendMessage(to, mediaPath, caption, file) {
                 throw mediaErr;
               }
             } finally {
-              if (tempSavedPath && import_fs27.default.existsSync(tempSavedPath)) {
+              if (tempSavedPath && import_fs30.default.existsSync(tempSavedPath)) {
                 try {
-                  import_fs27.default.unlinkSync(tempSavedPath);
+                  import_fs30.default.unlinkSync(tempSavedPath);
                 } catch (_) {
                 }
               }
@@ -51743,7 +56524,7 @@ async function sendMessage(to, mediaPath, caption, file) {
             } catch (mediaErr) {
               const errMsg = mediaErr?.stack || mediaErr?.message || String(mediaErr);
               try {
-                import_fs27.default.writeFileSync("data/last_media_error.txt", `[${targetChatId}] ${errMsg}`);
+                import_fs30.default.writeFileSync("data/last_media_error.txt", `[${targetChatId}] ${errMsg}`);
               } catch (_) {
               }
               console.warn(`[WhatsApp] Media file send failed to ${targetChatId}:`, errMsg);
@@ -51893,7 +56674,7 @@ async function sendMessage(to, mediaPath, caption, file) {
           recentSendsCache.set(`${lidUser}:${msgHash}:${fullMsg.length}`, Date.now());
         }
         try {
-          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path26.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
+          const provisionalBody = file ? `[Document] ${file.filename || ""} ${caption || ""}`.trim() : mediaPath ? `[Document] ${import_path29.default.basename(mediaPath)} ${caption || ""}`.trim() : caption || "";
           const provTimestamp = Math.floor(Date.now() / 1e3);
           const provHasMedia = file || mediaPath ? 1 : 0;
           await db2.run(
@@ -51949,18 +56730,18 @@ async function sendMessage(to, mediaPath, caption, file) {
         continue;
       } else {
         if (file && file.mimetype && file.data) {
-          if (!import_fs27.default.existsSync(config.tempDir)) {
-            import_fs27.default.mkdirSync(config.tempDir, { recursive: true });
+          if (!import_fs30.default.existsSync(config.tempDir)) {
+            import_fs30.default.mkdirSync(config.tempDir, { recursive: true });
           }
-          const tempFilePath = import_path26.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
-          import_fs27.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
+          const tempFilePath = import_path29.default.join(config.tempDir, `wa_temp_${Date.now()}_${file.filename || "document.pdf"}`);
+          import_fs30.default.writeFileSync(tempFilePath, Buffer.from(file.data, "base64"));
           try {
             const result = await whatsappBusinessService.sendDocument(cleanPhone, tempFilePath, caption, file.filename);
             success = result.success;
             if (result.messageId) messageId = result.messageId;
           } finally {
-            if (import_fs27.default.existsSync(tempFilePath)) {
-              import_fs27.default.unlinkSync(tempFilePath);
+            if (import_fs30.default.existsSync(tempFilePath)) {
+              import_fs30.default.unlinkSync(tempFilePath);
             }
           }
         } else if (mediaPath) {
@@ -51984,7 +56765,7 @@ async function sendMessage(to, mediaPath, caption, file) {
       console.error("[WhatsApp Client Wrapper] Send failed:", err?.message || err);
       throw err;
     }
-    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path26.default.basename(mediaPath)} ${caption || ""}` : caption || "";
+    const bodyText = file ? `[Document] ${file.filename || ""} ${caption || ""}` : mediaPath ? `[Document] ${import_path29.default.basename(mediaPath)} ${caption || ""}` : caption || "";
     const timestamp = Math.floor(Date.now() / 1e3);
     const hasMedia = file || mediaPath ? 1 : 0;
     try {
@@ -52199,21 +56980,21 @@ async function getChatMessages(chatId, limit = 500) {
 }
 async function getMessageMedia(chatId, messageId) {
   const safeId = String(messageId || "").replace(/[^a-zA-Z0-9_-]/g, "_");
-  const inboundDir = import_path26.default.resolve(process.cwd(), "data", "inbound_media");
-  if (safeId && import_fs27.default.existsSync(inboundDir)) {
+  const inboundDir = import_path29.default.resolve(process.cwd(), "data", "inbound_media");
+  if (safeId && import_fs30.default.existsSync(inboundDir)) {
     for (const ext2 of [".jpg", ".jpeg", ".png", ".pdf"]) {
-      const p = import_path26.default.join(inboundDir, `${safeId}${ext2}`);
-      if (import_fs27.default.existsSync(p)) {
-        const data2 = import_fs27.default.readFileSync(p).toString("base64");
+      const p = import_path29.default.join(inboundDir, `${safeId}${ext2}`);
+      if (import_fs30.default.existsSync(p)) {
+        const data2 = import_fs30.default.readFileSync(p).toString("base64");
         const mimetype2 = ext2 === ".png" ? "image/png" : ext2 === ".pdf" ? "application/pdf" : "image/jpeg";
         return { mimetype: mimetype2, data: data2, filename: `${safeId}${ext2}` };
       }
     }
   }
-  if (!import_fs27.default.existsSync(UPLOADS_DIR)) {
-    import_fs27.default.mkdirSync(UPLOADS_DIR, { recursive: true });
+  if (!import_fs30.default.existsSync(UPLOADS_DIR)) {
+    import_fs30.default.mkdirSync(UPLOADS_DIR, { recursive: true });
   }
-  const files = import_fs27.default.readdirSync(UPLOADS_DIR);
+  const files = import_fs30.default.readdirSync(UPLOADS_DIR);
   const matchedFile = files.find((f) => f.startsWith(messageId));
   if (!matchedFile) {
     try {
@@ -52223,11 +57004,11 @@ async function getMessageMedia(chatId, messageId) {
       const downloaded = await downloadMessageMediaReliably(messageId, { chatId, maxWaitMs: 15e3 });
       if (downloaded?.data) {
         const buffer = Buffer.from(downloaded.data, "base64");
-        if (!import_fs27.default.existsSync(inboundDir)) import_fs27.default.mkdirSync(inboundDir, { recursive: true });
-        const filePath2 = import_path26.default.join(inboundDir, `${safeId}.jpg`);
-        import_fs27.default.writeFileSync(filePath2, buffer);
+        if (!import_fs30.default.existsSync(inboundDir)) import_fs30.default.mkdirSync(inboundDir, { recursive: true });
+        const filePath2 = import_path29.default.join(inboundDir, `${safeId}.jpg`);
+        import_fs30.default.writeFileSync(filePath2, buffer);
         try {
-          import_fs27.default.writeFileSync(import_path26.default.join(UPLOADS_DIR, `${safeId}.jpg`), buffer);
+          import_fs30.default.writeFileSync(import_path29.default.join(UPLOADS_DIR, `${safeId}.jpg`), buffer);
         } catch (_) {
         }
         return {
@@ -52241,14 +57022,14 @@ async function getMessageMedia(chatId, messageId) {
     }
     throw new Error(`Media not found locally for message ID: ${messageId}`);
   }
-  const filePath = import_path26.default.join(UPLOADS_DIR, matchedFile);
-  const ext = import_path26.default.extname(matchedFile).toLowerCase();
+  const filePath = import_path29.default.join(UPLOADS_DIR, matchedFile);
+  const ext = import_path29.default.extname(matchedFile).toLowerCase();
   let mimetype = "image/jpeg";
   if (ext === ".png") mimetype = "image/png";
   else if (ext === ".pdf") mimetype = "application/pdf";
   else if (ext === ".mp3") mimetype = "audio/mp3";
   else if (ext === ".mp4") mimetype = "video/mp4";
-  const data = import_fs27.default.readFileSync(filePath).toString("base64");
+  const data = import_fs30.default.readFileSync(filePath).toString("base64");
   return {
     mimetype,
     data,
@@ -52546,13 +57327,13 @@ async function resolveChatSession(chatId) {
     return false;
   }
 }
-var import_fs27, import_path26, import_child_process4, import_util3, wwebjsPromise, execAsync3, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, consecutiveInitFailures, MAX_AUTO_INIT_FAILURES, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, inboundWatchTimer, inboundWatchTick, INBOUND_WATCH_MS, recentSendsCache, waRegistrationCache;
+var import_fs30, import_path29, import_child_process5, import_util3, wwebjsPromise, execAsync3, UPLOADS_DIR, WWEBJS_AUTH_DIR, currentLifecycleStage, currentLifecycleProgress, currentLifecycleStatusText, lastInitError, clientInstance, activeClient, initPromise, initializing, isSyncing, qrTimeout, isLoginWindowActive, lastSyncFailureAt, lastSyncCooldownLoggedAt, SYNC_RETRY_COOLDOWN_MS, lastInitFailureAt, INIT_FAILURE_COOLDOWN_MS, consecutiveInitFailures, MAX_AUTO_INIT_FAILURES, waSleepTimer, lastWaActivityAt, isSleeping, WA_SLEEP_EVALUATOR_MS, currentQr, isReady, inboundWatchTimer, inboundWatchTick, INBOUND_WATCH_MS, recentSendsCache, waRegistrationCache;
 var init_whatsappClient = __esm({
   "src/whatsappClient.ts"() {
     "use strict";
-    import_fs27 = __toESM(require("fs"), 1);
-    import_path26 = __toESM(require("path"), 1);
-    import_child_process4 = require("child_process");
+    import_fs30 = __toESM(require("fs"), 1);
+    import_path29 = __toESM(require("path"), 1);
+    import_child_process5 = require("child_process");
     import_util3 = require("util");
     init_eventService();
     init_connection();
@@ -52561,9 +57342,9 @@ var init_whatsappClient = __esm({
     init_tokenRefreshScheduler();
     init_chromeBrowser();
     wwebjsPromise = null;
-    execAsync3 = (0, import_util3.promisify)(import_child_process4.exec);
-    UPLOADS_DIR = import_path26.default.resolve(getAppDataDir(), "uploads");
-    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path26.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path26.default.resolve(getAppDataDir(), ".wwebjs_auth");
+    execAsync3 = (0, import_util3.promisify)(import_child_process5.exec);
+    UPLOADS_DIR = import_path29.default.resolve(getAppDataDir(), "uploads");
+    WWEBJS_AUTH_DIR = process.env.WWEBJS_AUTH_DIR ? import_path29.default.resolve(process.env.WWEBJS_AUTH_DIR) : import_path29.default.resolve(getAppDataDir(), ".wwebjs_auth");
     process.on("unhandledRejection", (reason) => {
       const msg = reason?.message || String(reason);
       if (isPuppeteerDetachedError(msg)) {
@@ -54819,11 +59600,11 @@ async function rebuildAllExpiryCaches(force = false) {
   }
   activeRebuildPromise = (async () => {
     try {
-      const cacheDir = import_path27.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-      const manifestPath = import_path27.default.join(cacheDir, "manifest.json");
-      if (!force && import_fs28.default.existsSync(manifestPath)) {
+      const cacheDir = import_path30.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+      const manifestPath = import_path30.default.join(cacheDir, "manifest.json");
+      if (!force && import_fs31.default.existsSync(manifestPath)) {
         try {
-          const rawManifest = await import_fs28.default.promises.readFile(manifestPath, "utf-8");
+          const rawManifest = await import_fs31.default.promises.readFile(manifestPath, "utf-8");
           const manifest = JSON.parse(rawManifest);
           if (manifest && typeof manifest.totalMonthFiles === "number") {
             console.log(`[ExpiryCache] Valid cache manifest found (${manifest.totalMonthFiles} month file(s)). Reusing existing cache.`);
@@ -54853,8 +59634,8 @@ async function rebuildAllExpiryCaches(force = false) {
         WHERE ${INVENTORY_ACTIVE_WHERE}
         ORDER BY im.expiry_date ASC, m.name COLLATE NOCASE ASC
       `);
-      if (!import_fs28.default.existsSync(cacheDir)) {
-        await import_fs28.default.promises.mkdir(cacheDir, { recursive: true });
+      if (!import_fs31.default.existsSync(cacheDir)) {
+        await import_fs31.default.promises.mkdir(cacheDir, { recursive: true });
       }
       const groups = {};
       for (const r of rows) {
@@ -54869,20 +59650,20 @@ async function rebuildAllExpiryCaches(force = false) {
         items.sort((a, b) => (a.medicine_name || "").localeCompare(b.medicine_name || "", void 0, { sensitivity: "base", numeric: true }));
         const fileName = `expiry_${ym}.json`;
         validMonthFiles.add(fileName);
-        const filePath = import_path27.default.join(cacheDir, fileName);
-        await import_fs28.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
+        const filePath = import_path30.default.join(cacheDir, fileName);
+        await import_fs31.default.promises.writeFile(filePath, JSON.stringify(items, null, 2), "utf-8");
         written++;
       }
-      const existingFiles = await import_fs28.default.promises.readdir(cacheDir);
+      const existingFiles = await import_fs31.default.promises.readdir(cacheDir);
       for (const file of existingFiles) {
         if (file.startsWith("expiry_") && file.endsWith(".json") && !validMonthFiles.has(file)) {
           try {
-            await import_fs28.default.promises.unlink(import_path27.default.join(cacheDir, file));
+            await import_fs31.default.promises.unlink(import_path30.default.join(cacheDir, file));
           } catch (_) {
           }
         }
       }
-      await import_fs28.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
+      await import_fs31.default.promises.writeFile(manifestPath, JSON.stringify({ lastRebuilt: Date.now(), totalMonthFiles: written }), "utf-8");
       lastRebuildTime = Date.now();
       console.log(`[ExpiryCache] Rebuilt: ${written} month file(s) with stock. Empty months auto-removed.`);
     } catch (err) {
@@ -54895,8 +59676,8 @@ async function rebuildAllExpiryCaches(force = false) {
 }
 async function patchExpiryCacheForInventoryItem(inventoryId) {
   try {
-    const cacheDir = import_path27.default.resolve(getAppDataDir(), "data", "cache", "expiry");
-    if (!import_fs28.default.existsSync(cacheDir)) return;
+    const cacheDir = import_path30.default.resolve(getAppDataDir(), "data", "cache", "expiry");
+    if (!import_fs31.default.existsSync(cacheDir)) return;
     const db2 = await dbManager.getConnection();
     const item = await db2.get(`
       SELECT im.id, im.medicine_id, m.name as medicine_name, im.batch_no, im.expiry_date,
@@ -54919,11 +59700,11 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
     if (!item) return;
     const ym = getExpiryYearMonth(item.expiry_date);
     if (ym === "unknown") return;
-    const filePath = import_path27.default.join(cacheDir, `expiry_${ym}.json`);
+    const filePath = import_path30.default.join(cacheDir, `expiry_${ym}.json`);
     let monthItems = [];
-    if (import_fs28.default.existsSync(filePath)) {
+    if (import_fs31.default.existsSync(filePath)) {
       try {
-        monthItems = JSON.parse(await import_fs28.default.promises.readFile(filePath, "utf-8"));
+        monthItems = JSON.parse(await import_fs31.default.promises.readFile(filePath, "utf-8"));
       } catch {
         monthItems = [];
       }
@@ -54936,12 +59717,12 @@ async function patchExpiryCacheForInventoryItem(inventoryId) {
       );
     }
     if (monthItems.length === 0) {
-      if (import_fs28.default.existsSync(filePath)) {
-        await import_fs28.default.promises.unlink(filePath);
+      if (import_fs31.default.existsSync(filePath)) {
+        await import_fs31.default.promises.unlink(filePath);
         console.log(`[ExpiryCache] Patch: ${ym} file deleted (all items sold/returned).`);
       }
     } else {
-      await import_fs28.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
+      await import_fs31.default.promises.writeFile(filePath, JSON.stringify(monthItems, null, 2), "utf-8");
       console.log(`[ExpiryCache] Patch: ${ym} updated for inventory #${inventoryId} (qty=${item.quantity}).`);
     }
   } catch (err) {
@@ -54976,14 +59757,14 @@ function triggerExpiryCacheRebuildDebounced(inventoryIds, options) {
     }
   }, 800);
 }
-var import_path27, import_fs28, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
+var import_path30, import_fs31, activeRebuildPromise, lastRebuildTime, rebuildTimeout, pendingInventoryIds, fullExpiryRebuildRequested;
 var init_expiryAlertService = __esm({
   "src/services/expiryAlertService.ts"() {
     "use strict";
     init_connection();
     init_inventoryActive();
-    import_path27 = __toESM(require("path"), 1);
-    import_fs28 = __toESM(require("fs"), 1);
+    import_path30 = __toESM(require("path"), 1);
+    import_fs31 = __toESM(require("fs"), 1);
     init_config();
     activeRebuildPromise = null;
     lastRebuildTime = 0;
@@ -55539,173 +60320,6 @@ var init_packaging = __esm({
   }
 });
 
-// src/services/storeContextService.ts
-function resolveStoreId(req) {
-  const headerVal = req.headers["x-store-id"];
-  if (headerVal && typeof headerVal === "string") {
-    const parsed = parseInt(headerVal, 10);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
-  }
-  const queryVal = req.query?.store_id;
-  if (queryVal && typeof queryVal === "string") {
-    const parsed = parseInt(queryVal, 10);
-    if (!isNaN(parsed) && parsed > 0) return parsed;
-  }
-  return 1;
-}
-var StoreContextService, storeContextService;
-var init_storeContextService = __esm({
-  "src/services/storeContextService.ts"() {
-    "use strict";
-    init_connection();
-    init_storeSettingsService();
-    StoreContextService = class {
-      /**
-       * Retrieves list of all stores
-       */
-      async listStores(dbInstance, includeInactive = false) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const sql = includeInactive ? "SELECT * FROM stores ORDER BY id ASC" : "SELECT * FROM stores WHERE is_active = 1 ORDER BY id ASC";
-        const rows = await db2.all(sql).catch(() => []);
-        if (rows.length === 0) {
-          const defaultPhone = await getStorePhone(db2, 1);
-          const defaultName = await getStoreMedicalName(db2, 1);
-          return [{ id: 1, name: defaultName || "Main Store", code: "STORE-A", phone: defaultPhone, is_central: 1, is_active: 1 }];
-        }
-        for (const r of rows) {
-          if (!r.phone || !r.phone.trim()) {
-            r.phone = await getStorePhone(db2, r.id);
-          }
-          if (!r.name || r.name === "Main Store" || r.name.toLowerCase() === "main store") {
-            const configuredName = await getStoreMedicalName(db2, r.id);
-            if (configuredName && configuredName !== "AI PHARMACY" && configuredName.toLowerCase() !== "main store") {
-              r.name = configuredName;
-              await db2.run("UPDATE stores SET name = ? WHERE id = ? AND (name = ? OR name IS NULL OR name = ?)", [configuredName, r.id, "Main Store", ""]).catch(() => {
-              });
-            }
-          }
-        }
-        return rows;
-      }
-      /**
-       * Get store by ID
-       */
-      async getStoreById(storeId, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const row = await db2.get("SELECT * FROM stores WHERE id = ?", [storeId]);
-        if (!row) return null;
-        if (!row.phone || !row.phone.trim()) {
-          row.phone = await getStorePhone(db2, row.id);
-        }
-        if (!row.name || row.name === "Main Store" || row.name.toLowerCase() === "main store") {
-          const configuredName = await getStoreMedicalName(db2, row.id);
-          if (configuredName && configuredName !== "AI PHARMACY" && configuredName.toLowerCase() !== "main store") {
-            row.name = configuredName;
-            await db2.run("UPDATE stores SET name = ? WHERE id = ? AND (name = ? OR name IS NULL OR name = ?)", [configuredName, row.id, "Main Store", ""]).catch(() => {
-            });
-          }
-        }
-        return row;
-      }
-      /**
-       * Create a new store
-       */
-      async createStore(input, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const name = (input.name || "").trim();
-        if (!name) {
-          throw new Error("Store name is required");
-        }
-        const code = (input.code || `STORE-${Date.now().toString(36).toUpperCase()}`).trim();
-        const address = (input.address || "").trim();
-        const phone = (input.phone || "").trim();
-        const email = (input.email || "").trim();
-        const isCentral = input.is_central ? 1 : 0;
-        const result = await db2.run(
-          `INSERT INTO stores (name, code, address, phone, email, is_central, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-          [name, code, address, phone, email, isCentral]
-        );
-        const newId = result.lastID;
-        const store = await this.getStoreById(newId, db2);
-        if (!store) throw new Error("Failed to retrieve created store");
-        return store;
-      }
-      /**
-       * Update an existing store
-       */
-      async updateStore(storeId, input, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const existing = await this.getStoreById(storeId, db2);
-        if (!existing) {
-          throw new Error(`Store #${storeId} not found`);
-        }
-        const name = input.name !== void 0 ? input.name.trim() : existing.name;
-        const code = input.code !== void 0 ? input.code.trim() : existing.code;
-        const address = input.address !== void 0 ? input.address.trim() : existing.address;
-        const phone = input.phone !== void 0 ? input.phone.trim() : existing.phone;
-        const email = input.email !== void 0 ? input.email.trim() : existing.email;
-        const isCentral = input.is_central !== void 0 ? input.is_central ? 1 : 0 : existing.is_central;
-        const isActive = input.is_active !== void 0 ? input.is_active ? 1 : 0 : existing.is_active;
-        await db2.run(
-          `UPDATE stores 
-       SET name = ?, code = ?, address = ?, phone = ?, email = ?, is_central = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-          [name, code, address, phone, email, isCentral, isActive, storeId]
-        );
-        const updated = await this.getStoreById(storeId, db2);
-        if (!updated) throw new Error(`Failed to reload store #${storeId}`);
-        return updated;
-      }
-      /**
-       * Get store setting by key
-       */
-      async getStoreSetting(storeId, key, defaultValue = "", dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        try {
-          const row = await db2.get(
-            "SELECT value FROM store_settings WHERE store_id = ? AND key = ?",
-            [storeId, key]
-          );
-          if (row && row.value !== null && row.value !== void 0) {
-            return String(row.value);
-          }
-        } catch (_) {
-        }
-        return defaultValue;
-      }
-      /**
-       * Set store setting by key
-       */
-      async setStoreSetting(storeId, key, value, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        await db2.run(
-          `INSERT INTO store_settings (store_id, key, value, updated_at)
-       VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(store_id, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
-          [storeId, key, value]
-        );
-      }
-      /**
-       * Get all settings for a store
-       */
-      async getAllStoreSettings(storeId, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const rows = await db2.all(
-          "SELECT key, value FROM store_settings WHERE store_id = ?",
-          [storeId]
-        ).catch(() => []);
-        const settings = {};
-        for (const r of rows) {
-          settings[r.key] = r.value;
-        }
-        return settings;
-      }
-    };
-    storeContextService = new StoreContextService();
-  }
-});
-
 // src/services/activityLogger.ts
 var import_events2, ActivityLogger, activityLogger;
 var init_activityLogger = __esm({
@@ -55918,11 +60532,11 @@ __export(inventory_exports, {
 function invalidateInventoryCountCache() {
   inventoryCountCache.clear();
 }
-var import_express2, import_qrcode2, router2, INVENTORY_COUNT_TTL_MS, inventoryCountCache, inventory_default;
+var import_express3, import_qrcode4, router3, INVENTORY_COUNT_TTL_MS, inventoryCountCache, inventory_default;
 var init_inventory = __esm({
   "src/routes/inventory.ts"() {
     "use strict";
-    import_express2 = __toESM(require("express"), 1);
+    import_express3 = __toESM(require("express"), 1);
     init_inventoryService();
     init_inventoryCache();
     init_connection();
@@ -55935,9 +60549,9 @@ var init_inventory = __esm({
     init_stockCalculatorWorker();
     init_expiryAlertService();
     init_nameNormalizer();
-    import_qrcode2 = __toESM(require("qrcode"), 1);
-    router2 = import_express2.default.Router();
-    router2.use((req, res, next) => {
+    import_qrcode4 = __toESM(require("qrcode"), 1);
+    router3 = import_express3.default.Router();
+    router3.use((req, res, next) => {
       if (req.method !== "GET") {
         const origJson = res.json.bind(res);
         res.json = (body) => {
@@ -55959,7 +60573,7 @@ var init_inventory = __esm({
     });
     INVENTORY_COUNT_TTL_MS = 6e4;
     inventoryCountCache = /* @__PURE__ */ new Map();
-    router2.get("/", async (req, res) => {
+    router3.get("/", async (req, res) => {
       let db2;
       const page = parseInt(req.query.page) || 1;
       const search = (req.query.search || "").trim().replace(/\s+/g, " ");
@@ -56118,7 +60732,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.post("/override", async (req, res) => {
+    router3.post("/override", async (req, res) => {
       let db2;
       try {
         const { inventory_id, quantity, reason } = req.body;
@@ -56159,7 +60773,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.get("/peek/:medicine_id", async (req, res) => {
+    router3.get("/peek/:medicine_id", async (req, res) => {
       let db2;
       try {
         const { medicine_id } = req.params;
@@ -56185,7 +60799,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.get("/todays-receipts", async (req, res) => {
+    router3.get("/todays-receipts", async (req, res) => {
       try {
         const raw = typeof req.query.date === "string" ? req.query.date : "";
         const day = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : toLocalSqlDateTime().slice(0, 10);
@@ -56259,7 +60873,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.put("/:id", async (req, res) => {
+    router3.put("/:id", async (req, res) => {
       let db2;
       const { id } = req.params;
       const { quantity, rack_location, batch_no, expiry_date, reorder_level, name, mrp, loose_quantity, pack_size, sell_price } = req.body;
@@ -56363,7 +60977,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router2.post("/bulk-sell-prices", async (req, res) => {
+    router3.post("/bulk-sell-prices", async (req, res) => {
       let db2;
       try {
         const { items = [] } = req.body;
@@ -56392,7 +61006,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: error.message || "Failed to update sell prices" });
       }
     });
-    router2.delete("/:id", async (req, res) => {
+    router3.delete("/:id", async (req, res) => {
       let db2;
       const { id } = req.params;
       try {
@@ -56425,7 +61039,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: error.message || "Internal server error" });
       }
     });
-    router2.post("/bulk-action", async (req, res) => {
+    router3.post("/bulk-action", async (req, res) => {
       let db2;
       const { action, ids = [] } = req.body;
       try {
@@ -56451,7 +61065,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.post("/", async (req, res) => {
+    router3.post("/", async (req, res) => {
       const { name, api_reference, mrp, cost_price: _cost_price, batch_no: _batch_no, expiry_date: _expiry_date, quantity: _quantity, rack_location: _rack_location, category } = req.body;
       if (!name) return res.status(400).json({ error: "Medicine name is required" });
       let db2;
@@ -56484,7 +61098,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.post("/medicines/alias", async (req, res) => {
+    router3.post("/medicines/alias", async (req, res) => {
       const { alias_name, medicine_id, distributor_id } = req.body;
       if (!alias_name || !medicine_id) {
         return res.status(400).json({ error: "alias_name and medicine_id are required" });
@@ -56513,7 +61127,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to save alias" });
       }
     });
-    router2.get("/catalog-search", async (req, res) => {
+    router3.get("/catalog-search", async (req, res) => {
       let db2;
       try {
         const rawQ = (req.query.q || "").trim();
@@ -56670,7 +61284,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Search failed" });
       }
     });
-    router2.get("/batch-info", async (req, res) => {
+    router3.get("/batch-info", async (req, res) => {
       let db2;
       try {
         const medicine_id = req.query.medicine_id ? parseInt(req.query.medicine_id, 10) : null;
@@ -56713,7 +61327,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router2.get("/barcode/:id", async (req, res) => {
+    router3.get("/barcode/:id", async (req, res) => {
       let db2;
       try {
         const { id } = req.params;
@@ -56734,7 +61348,7 @@ var init_inventory = __esm({
           exp: item.expiry_date,
           mrp: item.mrp
         });
-        const qrImage = await import_qrcode2.default.toDataURL(qrData, { width: 150, margin: 1 });
+        const qrImage = await import_qrcode4.default.toDataURL(qrData, { width: 150, margin: 1 });
         res.json({
           success: true,
           qrCodeUrl: qrImage,
@@ -56750,7 +61364,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to generate QR Code" });
       }
     });
-    router2.get("/medicines/:id/enriched", async (req, res) => {
+    router3.get("/medicines/:id/enriched", async (req, res) => {
       let db2;
       const { id } = req.params;
       try {
@@ -56780,7 +61394,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to fetch enriched medicine details" });
       }
     });
-    router2.get("/medicines/:id/quick-edit", async (req, res) => {
+    router3.get("/medicines/:id/quick-edit", async (req, res) => {
       let db2;
       const { id } = req.params;
       try {
@@ -56810,7 +61424,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to fetch quick-edit details" });
       }
     });
-    router2.put("/medicines/:id/quick-edit", async (req, res) => {
+    router3.put("/medicines/:id/quick-edit", async (req, res) => {
       let db2;
       const { id } = req.params;
       const {
@@ -57016,7 +61630,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Internal server error during update" });
       }
     });
-    router2.post("/sync", async (req, res) => {
+    router3.post("/sync", async (req, res) => {
       const { updates = [] } = req.body;
       if (!Array.isArray(updates)) {
         return res.status(400).json({ error: "updates must be an array" });
@@ -57065,7 +61679,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: error.message || "Internal server error during stock sync" });
       }
     });
-    router2.get("/therapeutic-search", async (req, res) => {
+    router3.get("/therapeutic-search", async (req, res) => {
       const { query } = req.query;
       if (!query || typeof query !== "string") {
         return res.json([]);
@@ -57086,7 +61700,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to search by therapeutic class" });
       }
     });
-    router2.get("/low-stock", async (req, res) => {
+    router3.get("/low-stock", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const targetStoreId = req.tenant?.storeId || resolveStoreId(req) || 1;
@@ -57112,7 +61726,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to fetch low-stock list" });
       }
     });
-    router2.get("/precalculated-metrics", async (req, res) => {
+    router3.get("/precalculated-metrics", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { low_stock_only, heavy_sell_only, limit = "100" } = req.query;
@@ -57145,7 +61759,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: "Failed to fetch precalculated metrics: " + err.message });
       }
     });
-    router2.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
+    router3.patch("/medicines/:id/allow-loose-sale", async (req, res) => {
       try {
         const { id } = req.params;
         const { allow_loose_sale } = req.body;
@@ -57162,7 +61776,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: err.message || "Failed to toggle allow_loose_sale" });
       }
     });
-    router2.post("/toggle-online", async (req, res) => {
+    router3.post("/toggle-online", async (req, res) => {
       try {
         const { medicine_id, medicine_ids, is_online } = req.body;
         const onlineVal = is_online ? 1 : 0;
@@ -57190,7 +61804,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: err.message || "Failed to toggle online status" });
       }
     });
-    router2.post("/publish-all-in-stock", async (req, res) => {
+    router3.post("/publish-all-in-stock", async (req, res) => {
       try {
         const { is_online = true } = req.body;
         const onlineVal = is_online ? 1 : 0;
@@ -57212,7 +61826,7 @@ var init_inventory = __esm({
         res.status(500).json({ error: err.message || "Failed to publish in-stock medicines" });
       }
     });
-    inventory_default = router2;
+    inventory_default = router3;
   }
 });
 
@@ -57735,11 +62349,11 @@ async function logAction(db2, actionType, description, metadata) {
     [actionType, description, metadata ? JSON.stringify(metadata) : null]
   );
 }
-var import_express3, router3, TIMELINE_CACHE_TTL_MS, TIMELINE_CACHE_MAX_ENTRIES, timelineCache, nextDayString, rowTs, investigation_default;
+var import_express4, router4, TIMELINE_CACHE_TTL_MS, TIMELINE_CACHE_MAX_ENTRIES, timelineCache, nextDayString, rowTs, investigation_default;
 var init_investigation = __esm({
   "src/routes/investigation.ts"() {
     "use strict";
-    import_express3 = __toESM(require("express"), 1);
+    import_express4 = __toESM(require("express"), 1);
     init_connection();
     init_inventoryCache();
     init_summaryCacheService();
@@ -57749,7 +62363,7 @@ var init_investigation = __esm({
     init_inventoryActive();
     init_stockCalculatorWorker();
     init_expiryAlertService();
-    router3 = import_express3.default.Router();
+    router4 = import_express4.default.Router();
     TIMELINE_CACHE_TTL_MS = 6e4;
     TIMELINE_CACHE_MAX_ENTRIES = 40;
     timelineCache = /* @__PURE__ */ new Map();
@@ -57762,7 +62376,7 @@ var init_investigation = __esm({
       const t = Date.parse(String(value ?? ""));
       return Number.isNaN(t) ? 0 : t;
     };
-    router3.get("/timeline", async (req, res) => {
+    router4.get("/timeline", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const {
@@ -58299,7 +62913,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router3.get("/search", async (req, res) => {
+    router4.get("/search", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const {
@@ -58393,7 +63007,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router3.get("/details/:inventoryId", async (req, res) => {
+    router4.get("/details/:inventoryId", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { inventoryId } = req.params;
@@ -58459,7 +63073,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router3.put("/inventory/:inventoryId", async (req, res) => {
+    router4.put("/inventory/:inventoryId", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -58539,7 +63153,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: err.message || "Internal server error" });
       }
     });
-    router3.put("/sales/:invoiceId", async (req, res) => {
+    router4.put("/sales/:invoiceId", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -58619,7 +63233,7 @@ var init_investigation = __esm({
         res.status(error instanceof SaleEditError ? 400 : 500).json({ error: err.message || "Internal server error" });
       }
     });
-    router3.put("/purchases/:purchaseId", async (req, res) => {
+    router4.put("/purchases/:purchaseId", async (req, res) => {
       let db2;
       try {
         db2 = await dbManager.getConnection();
@@ -58738,7 +63352,7 @@ var init_investigation = __esm({
         res.status(error instanceof PurchaseEditError ? 400 : 500).json({ error: err.message || "Internal server error" });
       }
     });
-    router3.get("/audit-logs/:inventoryId", async (req, res) => {
+    router4.get("/audit-logs/:inventoryId", async (req, res) => {
       try {
         const db2 = await dbManager.getConnection();
         const { inventoryId } = req.params;
@@ -58765,7 +63379,7 @@ var init_investigation = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    investigation_default = router3;
+    investigation_default = router4;
   }
 });
 
@@ -58780,15 +63394,15 @@ __export(nonMovingReportService_exports, {
 function invalidateNonMovingReportCache() {
   nonMovingCache.clear();
 }
-var import_path28, import_fs29, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
+var import_path31, import_fs32, NON_MOVING_CACHE_TTL_MS, nonMovingCache, NonMovingReportService, nonMovingReportService, nonMovingReportService_default;
 var init_nonMovingReportService = __esm({
   "src/services/nonMovingReportService.ts"() {
     "use strict";
     init_inventoryActive();
     init_connection();
     init_telegramBot();
-    import_path28 = __toESM(require("path"), 1);
-    import_fs29 = __toESM(require("fs"), 1);
+    import_path31 = __toESM(require("path"), 1);
+    import_fs32 = __toESM(require("fs"), 1);
     NON_MOVING_CACHE_TTL_MS = 5 * 6e4;
     nonMovingCache = /* @__PURE__ */ new Map();
     NonMovingReportService = class {
@@ -58924,13 +63538,13 @@ var init_nonMovingReportService = __esm({
        */
       async saveReportToFile(report, filename) {
         try {
-          const reportDir = import_path28.default.join(process.cwd(), "data", "reports");
-          if (!import_fs29.default.existsSync(reportDir)) {
-            import_fs29.default.mkdirSync(reportDir, { recursive: true });
+          const reportDir = import_path31.default.join(process.cwd(), "data", "reports");
+          if (!import_fs32.default.existsSync(reportDir)) {
+            import_fs32.default.mkdirSync(reportDir, { recursive: true });
           }
           const fileName = filename || `non_moving_report_${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
-          const filePath = import_path28.default.join(reportDir, fileName);
-          await import_fs29.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
+          const filePath = import_path31.default.join(reportDir, fileName);
+          await import_fs32.default.promises.writeFile(filePath, JSON.stringify(report, null, 2));
           console.log(`Non-moving inventory report saved to: ${filePath}`);
           return filePath;
         } catch (error) {
@@ -58994,7 +63608,7 @@ For full report, check the data/reports directory.
 
 // src/utils/reportExporter.ts
 function exportToPdf(res, title, headers, keys, rows, alignMap, columnWidths, splitPerPage = false) {
-  const doc = new import_pdfkit.default({ margin: 50, bufferPages: true });
+  const doc = new import_pdfkit2.default({ margin: 50, bufferPages: true });
   doc.pipe(res);
   const tableWidth = 512;
   const startX = 50;
@@ -59116,11 +63730,11 @@ function exportToCsv(headers, keys, rows) {
   );
   return [headerLine, ...rowLines].join("\n");
 }
-var import_pdfkit, import_xlsx;
+var import_pdfkit2, import_xlsx;
 var init_reportExporter = __esm({
   "src/utils/reportExporter.ts"() {
     "use strict";
-    import_pdfkit = __toESM(require("pdfkit"), 1);
+    import_pdfkit2 = __toESM(require("pdfkit"), 1);
     import_xlsx = __toESM(require("xlsx"), 1);
   }
 });
@@ -59248,7 +63862,7 @@ __export(monthlyReportService_exports, {
   MonthlyReportService: () => MonthlyReportService,
   monthlyReportService: () => monthlyReportService
 });
-var import_fs30, import_path29, TEMP_DIR2, MonthlyReportService, monthlyReportService;
+var import_fs33, import_path32, TEMP_DIR2, MonthlyReportService, monthlyReportService;
 var init_monthlyReportService = __esm({
   "src/services/monthlyReportService.ts"() {
     "use strict";
@@ -59256,9 +63870,9 @@ var init_monthlyReportService = __esm({
     init_whatsappQueueWorker();
     init_whatsappClient();
     init_config();
-    import_fs30 = __toESM(require("fs"), 1);
-    import_path29 = __toESM(require("path"), 1);
-    TEMP_DIR2 = import_path29.default.resolve(getAppDataDir(), "uploads", "temp");
+    import_fs33 = __toESM(require("fs"), 1);
+    import_path32 = __toESM(require("path"), 1);
+    TEMP_DIR2 = import_path32.default.resolve(getAppDataDir(), "uploads", "temp");
     MonthlyReportService = class {
       /**
        * Helper to compute date range for monthly, midmonth, quarterly, yearly, or custom date ranges.
@@ -59536,14 +64150,14 @@ var init_monthlyReportService = __esm({
        * Generate a PDF report document using pdfkit with customizable template themes.
        */
       async generateReportPdf(data, chartStyle = "standard", templateTheme = "executive", outputPath) {
-        if (!import_fs30.default.existsSync(TEMP_DIR2)) {
-          import_fs30.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs33.default.existsSync(TEMP_DIR2)) {
+          import_fs33.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path29.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
+        const finalPath = outputPath || import_path32.default.join(TEMP_DIR2, `Report_${templateTheme}_${data.periodType}_${Date.now()}.pdf`);
         const PDFDocument6 = await import("pdfkit").then((m) => m.default ?? m);
         return new Promise((resolve, reject) => {
           const doc = new PDFDocument6({ margin: 40, size: "A4" });
-          const stream = import_fs30.default.createWriteStream(finalPath);
+          const stream = import_fs33.default.createWriteStream(finalPath);
           doc.pipe(stream);
           const fmt = (n) => `Rs. ${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
           let headerBg = "#0f172a";
@@ -59722,10 +64336,10 @@ Review this sample PDF report layout on your phone to choose your preferred desi
        * Generate an Excel spreadsheet report document.
        */
       async generateReportExcel(data, outputPath) {
-        if (!import_fs30.default.existsSync(TEMP_DIR2)) {
-          import_fs30.default.mkdirSync(TEMP_DIR2, { recursive: true });
+        if (!import_fs33.default.existsSync(TEMP_DIR2)) {
+          import_fs33.default.mkdirSync(TEMP_DIR2, { recursive: true });
         }
-        const finalPath = outputPath || import_path29.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
+        const finalPath = outputPath || import_path32.default.join(TEMP_DIR2, `Report_${data.periodType}_${Date.now()}.xlsx`);
         const wsData = [
           [`${data.pharmacyName} - ${data.periodLabel}`],
           [`Period: ${data.startDate} to ${data.endDate}`],
@@ -59941,21 +64555,21 @@ async function fetchReportRows(db2, config2, periodDays) {
   }
   return await db2.all(config2.query, config2.params);
 }
-var import_express4, router4, REPORTS_SUMMARY_TTL_MS, REPORTS_SUMMARY_CACHE_MAX, reportsSummaryCache, reports_default;
+var import_express5, router5, REPORTS_SUMMARY_TTL_MS, REPORTS_SUMMARY_CACHE_MAX, reportsSummaryCache, reports_default;
 var init_reports = __esm({
   "src/routes/reports.ts"() {
     "use strict";
-    import_express4 = __toESM(require("express"), 1);
+    import_express5 = __toESM(require("express"), 1);
     init_connection();
     init_reportExporter();
     init_nonMovingReportService();
     init_storeContextService();
     init_reportDateAggregator();
-    router4 = import_express4.default.Router();
+    router5 = import_express5.default.Router();
     REPORTS_SUMMARY_TTL_MS = 6e4;
     REPORTS_SUMMARY_CACHE_MAX = 60;
     reportsSummaryCache = /* @__PURE__ */ new Map();
-    router4.get("/", async (req, res) => {
+    router5.get("/", async (req, res) => {
       const { fromDate, toDate, type } = req.query;
       const reportType = type ? String(type) : "sales";
       const targetStoreId = req.tenant?.storeId || resolveStoreId(req) || 1;
@@ -60096,7 +64710,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router4.get("/data", async (req, res) => {
+    router5.get("/data", async (req, res) => {
       const { type, fromDate, toDate } = req.query;
       const targetStoreId = req.tenant?.storeId || resolveStoreId(req) || 1;
       const allStores = req.query.all_stores === "true";
@@ -60156,7 +64770,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router4.get("/export-pdf", async (req, res) => {
+    router5.get("/export-pdf", async (req, res) => {
       const { type, fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -60178,7 +64792,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to export PDF" });
       }
     });
-    router4.get("/export-excel", async (req, res) => {
+    router5.get("/export-excel", async (req, res) => {
       const { type, fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -60200,7 +64814,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to export Excel sheet" });
       }
     });
-    router4.get("/export-csv", async (req, res) => {
+    router5.get("/export-csv", async (req, res) => {
       const { type, fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -60222,7 +64836,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to export CSV file" });
       }
     });
-    router4.get("/non-moving", async (req, res) => {
+    router5.get("/non-moving", async (req, res) => {
       try {
         const { days } = req.query;
         const periodDays = days ? parseInt(days) : 200;
@@ -60244,7 +64858,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to generate non-moving report" });
       }
     });
-    router4.get("/non-moving/data", async (req, res) => {
+    router5.get("/non-moving/data", async (req, res) => {
       try {
         const { days } = req.query;
         const periodDays = days ? parseInt(days) : 200;
@@ -60260,7 +64874,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to get non-moving inventory data" });
       }
     });
-    router4.get("/product-trace", async (req, res) => {
+    router5.get("/product-trace", async (req, res) => {
       const query = (req.query.q || "").trim();
       if (!query || query.length < 2) {
         return res.json({ purchases: [], sales: [] });
@@ -60315,7 +64929,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Internal server error" });
       }
     });
-    router4.get("/monthly-scheduled-preview", async (req, res) => {
+    router5.get("/monthly-scheduled-preview", async (req, res) => {
       const periodType = req.query.type ? String(req.query.type) : "monthly";
       const chartStyle = req.query.style ? String(req.query.style) : "standard";
       const theme = req.query.theme ? String(req.query.theme) : "executive";
@@ -60345,7 +64959,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to generate report preview" });
       }
     });
-    router4.post("/send-all-template-samples", async (req, res) => {
+    router5.post("/send-all-template-samples", async (req, res) => {
       const customPhone = req.body.phone ? String(req.body.phone).trim() : void 0;
       try {
         const { monthlyReportService: monthlyReportService2 } = await Promise.resolve().then(() => (init_monthlyReportService(), monthlyReportService_exports));
@@ -60356,7 +64970,7 @@ var init_reports = __esm({
         res.status(500).json({ success: false, message: err.message || "Failed to send template samples" });
       }
     });
-    router4.post("/send-monthly-scheduled", async (req, res) => {
+    router5.post("/send-monthly-scheduled", async (req, res) => {
       const periodType = req.body.type ? String(req.body.type) : "monthly";
       const customPhone = req.body.phone ? String(req.body.phone).trim() : void 0;
       const deliveryFormat = req.body.deliveryFormat ? String(req.body.deliveryFormat).trim() : void 0;
@@ -60373,7 +64987,7 @@ var init_reports = __esm({
         res.status(500).json({ success: false, message: err.message || "Failed to send report" });
       }
     });
-    router4.get("/gstr-1", async (req, res) => {
+    router5.get("/gstr-1", async (req, res) => {
       const { fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -60427,7 +65041,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to generate GSTR-1 summary" });
       }
     });
-    router4.get("/hsn-summary", async (req, res) => {
+    router5.get("/hsn-summary", async (req, res) => {
       const { fromDate, toDate } = req.query;
       try {
         const db2 = await dbManager.getConnection();
@@ -60478,7 +65092,7 @@ var init_reports = __esm({
         res.status(500).json({ error: "Failed to generate HSN summary report" });
       }
     });
-    reports_default = router4;
+    reports_default = router5;
   }
 });
 
@@ -60489,7 +65103,7 @@ __export(connection_exports, {
   requestTxStorage: () => requestTxStorage,
   txPriorityStorage: () => txPriorityStorage
 });
-var import_sqlite, import_sqlite32, import_sqlite2, import_path30, import_fs31, import_zlib, import_promises, import_node_async_hooks, txPriorityStorage, requestTxStorage, DatabaseManager, dbManager;
+var import_sqlite, import_sqlite32, import_sqlite2, import_path33, import_fs34, import_zlib, import_promises, import_node_async_hooks, txPriorityStorage, requestTxStorage, DatabaseManager, dbManager;
 var init_connection = __esm({
   "src/database/connection.ts"() {
     "use strict";
@@ -60497,8 +65111,8 @@ var init_connection = __esm({
     import_sqlite = require("sqlite");
     import_sqlite32 = __toESM(require("sqlite3"), 1);
     import_sqlite2 = require("sqlite");
-    import_path30 = __toESM(require("path"), 1);
-    import_fs31 = __toESM(require("fs"), 1);
+    import_path33 = __toESM(require("path"), 1);
+    import_fs34 = __toESM(require("fs"), 1);
     import_zlib = __toESM(require("zlib"), 1);
     import_promises = require("stream/promises");
     import_node_async_hooks = require("node:async_hooks");
@@ -60714,16 +65328,16 @@ var init_connection = __esm({
           const busyTimeout = isTest ? 5e3 : 3e4;
           const maxAttempts = 10;
           let lastError = null;
-          if (import_path30.default.basename(dbPath) === "app.dev.db" && !import_fs31.default.existsSync(dbPath)) {
-            const prodPath = import_path30.default.join(import_path30.default.dirname(dbPath), "app.db");
-            if (import_fs31.default.existsSync(prodPath)) {
+          if (import_path33.default.basename(dbPath) === "app.dev.db" && !import_fs34.default.existsSync(dbPath)) {
+            const prodPath = import_path33.default.join(import_path33.default.dirname(dbPath), "app.db");
+            if (import_fs34.default.existsSync(prodPath)) {
               try {
-                import_fs31.default.mkdirSync(import_path30.default.dirname(dbPath), { recursive: true });
-                import_fs31.default.copyFileSync(prodPath, dbPath);
+                import_fs34.default.mkdirSync(import_path33.default.dirname(dbPath), { recursive: true });
+                import_fs34.default.copyFileSync(prodPath, dbPath);
                 const prodWal = prodPath + "-wal";
                 const prodShm = prodPath + "-shm";
-                if (import_fs31.default.existsSync(prodWal)) import_fs31.default.copyFileSync(prodWal, dbPath + "-wal");
-                if (import_fs31.default.existsSync(prodShm)) import_fs31.default.copyFileSync(prodShm, dbPath + "-shm");
+                if (import_fs34.default.existsSync(prodWal)) import_fs34.default.copyFileSync(prodWal, dbPath + "-wal");
+                if (import_fs34.default.existsSync(prodShm)) import_fs34.default.copyFileSync(prodShm, dbPath + "-shm");
                 console.log(`[Database] Auto-provisioned isolated dev sandbox: ${dbPath} (cloned from ${prodPath})`);
               } catch (cloneErr) {
                 console.warn("[Database] Could not clone production database for dev sandbox; starting fresh:", cloneErr);
@@ -60949,37 +65563,37 @@ var init_connection = __esm({
           }
         }
         console.error("[DB] Database load failed. Starting silent self-healing database restoration...");
-        const logPath = import_path30.default.join(import_path30.default.dirname(dbPath), "self_healing.log");
+        const logPath = import_path33.default.join(import_path33.default.dirname(dbPath), "self_healing.log");
         const appendLog = (msg) => {
           const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-          import_fs31.default.appendFileSync(logPath, `[${timestamp}] ${msg}
+          import_fs34.default.appendFileSync(logPath, `[${timestamp}] ${msg}
 `);
         };
         appendLog(`[ERROR] DB_CORRUPT: ${initialErrorMsg}`);
         const backups = [];
-        const dataDir = import_path30.default.dirname(dbPath);
-        if (import_fs31.default.existsSync(dataDir)) {
-          import_fs31.default.readdirSync(dataDir).forEach((file) => {
+        const dataDir = import_path33.default.dirname(dbPath);
+        if (import_fs34.default.existsSync(dataDir)) {
+          import_fs34.default.readdirSync(dataDir).forEach((file) => {
             if (file.startsWith("app.db.bak_")) {
-              const fp = import_path30.default.join(dataDir, file);
+              const fp = import_path33.default.join(dataDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs31.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs34.default.statSync(fp).mtime.getTime(),
                 type: "bak"
               });
             }
           });
         }
-        const snapshotsDir = import_path30.default.join(getAppDataDir(), "backup", "snapshots");
-        if (import_fs31.default.existsSync(snapshotsDir)) {
-          import_fs31.default.readdirSync(snapshotsDir).forEach((file) => {
+        const snapshotsDir = import_path33.default.join(getAppDataDir(), "backup", "snapshots");
+        if (import_fs34.default.existsSync(snapshotsDir)) {
+          import_fs34.default.readdirSync(snapshotsDir).forEach((file) => {
             if (file.startsWith("snapshot_") && file.endsWith(".db.gz")) {
-              const fp = import_path30.default.join(snapshotsDir, file);
+              const fp = import_path33.default.join(snapshotsDir, file);
               backups.push({
                 path: fp,
                 name: file,
-                mtime: import_fs31.default.statSync(fp).mtime.getTime(),
+                mtime: import_fs34.default.statSync(fp).mtime.getTime(),
                 type: "gz"
               });
             }
@@ -60993,14 +65607,14 @@ var init_connection = __esm({
         const targetBackup = backups[0];
         appendLog(`[ACTION] RENAME: ${dbPath} -> ${dbPath}.corrupt`);
         try {
-          if (import_fs31.default.existsSync(dbPath)) {
-            if (import_fs31.default.existsSync(dbPath + ".corrupt")) {
-              import_fs31.default.unlinkSync(dbPath + ".corrupt");
+          if (import_fs34.default.existsSync(dbPath)) {
+            if (import_fs34.default.existsSync(dbPath + ".corrupt")) {
+              import_fs34.default.unlinkSync(dbPath + ".corrupt");
             }
-            import_fs31.default.renameSync(dbPath, dbPath + ".corrupt");
+            import_fs34.default.renameSync(dbPath, dbPath + ".corrupt");
           }
-          if (import_fs31.default.existsSync(dbPath + "-wal")) import_fs31.default.unlinkSync(dbPath + "-wal");
-          if (import_fs31.default.existsSync(dbPath + "-shm")) import_fs31.default.unlinkSync(dbPath + "-shm");
+          if (import_fs34.default.existsSync(dbPath + "-wal")) import_fs34.default.unlinkSync(dbPath + "-wal");
+          if (import_fs34.default.existsSync(dbPath + "-shm")) import_fs34.default.unlinkSync(dbPath + "-shm");
         } catch (err) {
           appendLog(`[ERROR] Failed to rename corrupt database or clean logs: ${err.message}`);
           throw new Error("DB_INTEGRITY_FAILURE");
@@ -61009,11 +65623,11 @@ var init_connection = __esm({
         try {
           if (targetBackup.type === "gz") {
             const gunzip = import_zlib.default.createGunzip();
-            const source = import_fs31.default.createReadStream(targetBackup.path);
-            const destination = import_fs31.default.createWriteStream(dbPath);
+            const source = import_fs34.default.createReadStream(targetBackup.path);
+            const destination = import_fs34.default.createWriteStream(dbPath);
             await (0, import_promises.pipeline)(source, gunzip, destination);
           } else {
-            import_fs31.default.copyFileSync(targetBackup.path, dbPath);
+            import_fs34.default.copyFileSync(targetBackup.path, dbPath);
           }
         } catch (err) {
           appendLog(`[ERROR] Failed to restore backup file: ${err.message}`);
@@ -61161,7 +65775,7 @@ function parseExtractedText(text, onProgress, progressStart = 10, progressEnd = 
   return extracted;
 }
 async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
-  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path31.default.basename(filePath)}. Falling back to OCR.`);
+  console.log(`[Extractor] PDF text extraction returned poor results for ${import_path34.default.basename(filePath)}. Falling back to OCR.`);
   if (onProgress) onProgress(5);
   let getDocument;
   try {
@@ -61213,7 +65827,7 @@ async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
   return parseExtractedText(allText, onProgress, 80, 100);
 }
 async function extractFromPdf(filePath, onProgress) {
-  const data = await import_fs32.default.promises.readFile(filePath);
+  const data = await import_fs35.default.promises.readFile(filePath);
   const pdfData = await (0, import_pdf_parse.default)(data);
   const text = pdfData.text;
   const cleanedText = text.replace(/\s+/g, "").trim();
@@ -61223,7 +65837,7 @@ async function extractFromPdf(filePath, onProgress) {
   return parseExtractedText(text, onProgress);
 }
 async function extractFromCsv(filePath, onProgress) {
-  const content = await import_fs32.default.promises.readFile(filePath, "utf-8");
+  const content = await import_fs35.default.promises.readFile(filePath, "utf-8");
   const lines = content.split(/\r?\n/);
   let headerLineIndex = 0;
   for (let i = 0; i < Math.min(lines.length, 30); i++) {
@@ -61298,12 +65912,12 @@ async function extractFromCsv(filePath, onProgress) {
 async function mergeIntoSuggestions(_newNames) {
   return [];
 }
-var import_fs32, import_path31, import_pdf_parse, import_sync2, MIN_TEXT_CHARS_THRESHOLD;
+var import_fs35, import_path34, import_pdf_parse, import_sync2, MIN_TEXT_CHARS_THRESHOLD;
 var init_extractor = __esm({
   "src/extractor.ts"() {
     "use strict";
-    import_fs32 = __toESM(require("fs"), 1);
-    import_path31 = __toESM(require("path"), 1);
+    import_fs35 = __toESM(require("fs"), 1);
+    import_path34 = __toESM(require("path"), 1);
     import_pdf_parse = __toESM(require("pdf-parse"), 1);
     import_sync2 = require("csv-parse/sync");
     init_aiCameraService();
@@ -61382,7 +65996,7 @@ async function preScanCsv(filePath, onProgress) {
   return new Promise((resolve, reject) => {
     let nameCol = "";
     let processedRows = 0;
-    const readStream = import_fs33.default.createReadStream(filePath);
+    const readStream = import_fs36.default.createReadStream(filePath);
     const parserStream = readStream.pipe((0, import_csv_parser2.default)());
     parserStream.on("headers", (headers) => {
       nameCol = headers.find((c) => /name|brand/i.test(c)) || headers.find((c) => /product|item|inn|title/i.test(c)) || headers[0] || "";
@@ -61449,9 +66063,9 @@ function parseCsvLine(line) {
 async function readCsvRawRows(filePath, maxRows = 20) {
   return new Promise((resolve) => {
     const rawRows = [];
-    if (!import_fs33.default.existsSync(filePath)) return resolve(rawRows);
+    if (!import_fs36.default.existsSync(filePath)) return resolve(rawRows);
     const rl = import_readline.default.createInterface({
-      input: import_fs33.default.createReadStream(filePath),
+      input: import_fs36.default.createReadStream(filePath),
       crlfDelay: Infinity
     });
     rl.on("line", (line) => {
@@ -61472,8 +66086,8 @@ async function readCsvPreview(filePath, maxRows = 10, skipRows = 0) {
   return new Promise((resolve, reject) => {
     const rows = [];
     let headers = [];
-    if (!import_fs33.default.existsSync(filePath)) return resolve({ headers, rows });
-    const stream = import_fs33.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
+    if (!import_fs36.default.existsSync(filePath)) return resolve({ headers, rows });
+    const stream = import_fs36.default.createReadStream(filePath).pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
     stream.on("headers", (h) => {
       headers = h;
     });
@@ -61574,7 +66188,7 @@ async function runCatalogAnalysis(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path32.default.extname(job.file_path).toLowerCase();
+    const ext = import_path35.default.extname(job.file_path).toLowerCase();
     let headers = [];
     let previewData = [];
     let rawRows = [];
@@ -61866,7 +66480,7 @@ async function runCatalogImport(jobId) {
   }
   eventService.broadcast("catalog_job_update", { id: jobId, status: "processing", progress: 0 });
   try {
-    const ext = import_path32.default.extname(job.file_path).toLowerCase();
+    const ext = import_path35.default.extname(job.file_path).toLowerCase();
     const mapping = JSON.parse(job.mapping_config || "{}");
     const filters = JSON.parse(job.data_filters || "{}");
     const skipRows = Math.max(0, parseInt(filters.skipRows || "0", 10));
@@ -61951,7 +66565,7 @@ async function runCatalogImport(jobId) {
     if (ext === ".csv") {
       totalToProcess = await new Promise((resolve) => {
         let count = 0;
-        const countStream = import_fs33.default.createReadStream(job.file_path);
+        const countStream = import_fs36.default.createReadStream(job.file_path);
         countStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows })).on("data", () => {
           count++;
         }).on("end", () => {
@@ -62174,7 +66788,7 @@ async function runCatalogImport(jobId) {
     };
     let lastProgressTime = Date.now();
     if (ext === ".csv") {
-      const readStream = import_fs33.default.createReadStream(job.file_path);
+      const readStream = import_fs36.default.createReadStream(job.file_path);
       const csvStream = readStream.pipe((0, import_csv_parser2.default)({ skipLines: skipRows }));
       readStream.on("error", (err) => {
         csvStream.destroy(new Error(`Failed to read stream for import: ${err.message}`));
@@ -62351,12 +66965,12 @@ async function startWorker() {
   };
   jobPollTick();
 }
-var import_fs33, import_path32, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
+var import_fs36, import_path35, import_readline, import_csv_parser2, import_sqlite33, import_sqlite4, import_worker_threads, getDbPath2, catalogEmptyHistoryScans, catalogNudgeRequested, isWorking, isWorkerStarted;
 var init_catalogWorker = __esm({
   "src/worker/catalogWorker.ts"() {
     "use strict";
-    import_fs33 = __toESM(require("fs"), 1);
-    import_path32 = __toESM(require("path"), 1);
+    import_fs36 = __toESM(require("fs"), 1);
+    import_path35 = __toESM(require("path"), 1);
     import_readline = __toESM(require("readline"), 1);
     init_config();
     init_connection();
@@ -62508,7 +67122,7 @@ function createStaffToken(data) {
   const timestamp = Date.now();
   const perms = (data.permissions || ["*"]).join(",");
   const payload = `${data.userId}:${data.storeId}:${data.role}:${data.username}:${perms}:${timestamp}`;
-  const signature = import_crypto4.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+  const signature = import_crypto6.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
   return Buffer.from(`${payload}:${signature}`).toString("base64");
 }
 function verifyStaffToken(tokenStr) {
@@ -62524,8 +67138,8 @@ function verifyStaffToken(tokenStr) {
     if (isNaN(userId) || isNaN(storeId) || isNaN(timestamp)) return null;
     if (Date.now() - timestamp > TOKEN_TTL_MS) return null;
     const payload = `${userIdStr}:${storeIdStr}:${role}:${username}:${permsStr}:${timestampStr}`;
-    const expectedSignature = import_crypto4.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
-    if (import_crypto4.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+    const expectedSignature = import_crypto6.default.createHmac("sha256", AUTH_SECRET).update(payload).digest("hex");
+    if (import_crypto6.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
       return {
         userId,
         storeId,
@@ -62666,11 +67280,11 @@ async function tenantAuthMiddleware(req, res, next) {
     res.status(500).json({ error: "Internal tenant authorization error" });
   }
 }
-var import_crypto4, AUTH_SECRET, TOKEN_TTL_MS, cachedRemoteAuthMode, lastRemoteAuthModeCheck;
+var import_crypto6, AUTH_SECRET, TOKEN_TTL_MS, cachedRemoteAuthMode, lastRemoteAuthModeCheck;
 var init_tenantAuth = __esm({
   "src/middleware/tenantAuth.ts"() {
     "use strict";
-    import_crypto4 = __toESM(require("crypto"), 1);
+    import_crypto6 = __toESM(require("crypto"), 1);
     init_connection();
     init_storeContextService();
     AUTH_SECRET = process.env.STAFF_AUTH_SECRET || "ai_pharmacy_staff_auth_secret_2026";
@@ -62704,7 +67318,7 @@ function getMachineId() {
   }
   let winGuid = "";
   try {
-    const out = (0, import_child_process5.execSync)(
+    const out = (0, import_child_process6.execSync)(
       'reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography" /v MachineGuid',
       { encoding: "utf8", timeout: 3e3 }
     );
@@ -62712,7 +67326,7 @@ function getMachineId() {
     if (m) winGuid = m[1].trim();
   } catch {
   }
-  return import_crypto5.default.createHash("sha256").update(`${mac}|${winGuid}`).digest("hex").substring(0, 32);
+  return import_crypto7.default.createHash("sha256").update(`${mac}|${winGuid}`).digest("hex").substring(0, 32);
 }
 async function checkLicense() {
   const db2 = await dbManager.getConnection();
@@ -62860,7 +67474,7 @@ async function activateLicense(licenseId, licenseKey) {
   const machineId = getMachineId();
   const machineName = (() => {
     try {
-      return (0, import_child_process5.execSync)("hostname", { encoding: "utf8", timeout: 2e3 }).trim();
+      return (0, import_child_process6.execSync)("hostname", { encoding: "utf8", timeout: 2e3 }).trim();
     } catch {
       return "Unknown PC";
     }
@@ -62944,28 +67558,28 @@ async function reportCrashTelemetry(errorData) {
   } catch {
   }
 }
-var import_crypto5, import_fs34, import_path33, import_child_process5, import_os3, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
+var import_crypto7, import_fs37, import_path36, import_child_process6, import_os3, import_axios2, LICENSE_SERVER, defaultAppVersion, APP_VERSION, TESTING_FREE_PERIOD_MS;
 var init_licenseService = __esm({
   "src/services/licenseService.ts"() {
     "use strict";
-    import_crypto5 = __toESM(require("crypto"), 1);
-    import_fs34 = __toESM(require("fs"), 1);
-    import_path33 = __toESM(require("path"), 1);
-    import_child_process5 = require("child_process");
+    import_crypto7 = __toESM(require("crypto"), 1);
+    import_fs37 = __toESM(require("fs"), 1);
+    import_path36 = __toESM(require("path"), 1);
+    import_child_process6 = require("child_process");
     import_os3 = require("os");
     import_axios2 = __toESM(require("axios"), 1);
     init_connection();
     LICENSE_SERVER = process.env.LICENSE_SERVER_URL || "https://website-woad-seven-26.vercel.app";
     defaultAppVersion = "0.1.27";
     try {
-      const pkgJsonPath = import_path33.default.join(process.cwd(), "package.json");
-      if (import_fs34.default.existsSync(pkgJsonPath)) {
-        const pkgJson = JSON.parse(import_fs34.default.readFileSync(pkgJsonPath, "utf8"));
+      const pkgJsonPath = import_path36.default.join(process.cwd(), "package.json");
+      if (import_fs37.default.existsSync(pkgJsonPath)) {
+        const pkgJson = JSON.parse(import_fs37.default.readFileSync(pkgJsonPath, "utf8"));
         if (pkgJson?.version) defaultAppVersion = pkgJson.version;
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.156";
+    APP_VERSION = "0.1.157";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -63028,17 +67642,17 @@ var whatsappBusiness_exports = {};
 __export(whatsappBusiness_exports, {
   default: () => whatsappBusiness_default
 });
-var import_express5, router5, whatsappBusiness_default;
+var import_express6, router6, whatsappBusiness_default;
 var init_whatsappBusiness = __esm({
   "src/routes/whatsappBusiness.ts"() {
     "use strict";
-    import_express5 = __toESM(require("express"), 1);
+    import_express6 = __toESM(require("express"), 1);
     init_whatsappBusinessService();
     init_eventService();
     init_connection();
     init_whatsappIntentService();
-    router5 = import_express5.default.Router();
-    router5.get("/webhook", async (req, res) => {
+    router6 = import_express6.default.Router();
+    router6.get("/webhook", async (req, res) => {
       const mode = req.query["hub.mode"];
       const token = req.query["hub.verify_token"];
       const challenge = req.query["hub.challenge"];
@@ -63063,7 +67677,7 @@ var init_whatsappBusiness = __esm({
         return res.status(500).send("Internal error");
       }
     });
-    router5.post("/webhook", async (req, res) => {
+    router6.post("/webhook", async (req, res) => {
       res.sendStatus(200);
       try {
         const body = req.body;
@@ -63171,7 +67785,7 @@ var init_whatsappBusiness = __esm({
         console.error("[WA Business Webhook] Processing error:", err);
       }
     });
-    router5.post("/send", async (req, res) => {
+    router6.post("/send", async (req, res) => {
       const { number, message } = req.body;
       if (!number || !message) {
         return res.status(400).json({ error: "number and message are required" });
@@ -63188,7 +67802,7 @@ var init_whatsappBusiness = __esm({
         res.status(500).json({ error: "Failed to send message" });
       }
     });
-    router5.post("/send-template", async (req, res) => {
+    router6.post("/send-template", async (req, res) => {
       const { number, template_name, language, components } = req.body;
       if (!number || !template_name) {
         return res.status(400).json({ error: "number and template_name are required" });
@@ -63210,7 +67824,7 @@ var init_whatsappBusiness = __esm({
         res.status(500).json({ error: "Failed to send template message" });
       }
     });
-    router5.post("/test", async (_req, res) => {
+    router6.post("/test", async (_req, res) => {
       try {
         const result = await whatsappBusinessService.testConnection();
         res.json(result);
@@ -63219,7 +67833,7 @@ var init_whatsappBusiness = __esm({
         res.status(500).json({ success: false, error: "Failed to test connection" });
       }
     });
-    router5.get("/status", async (_req, res) => {
+    router6.get("/status", async (_req, res) => {
       try {
         const config2 = await whatsappBusinessService.getConfig();
         res.json({
@@ -63235,7 +67849,7 @@ var init_whatsappBusiness = __esm({
         res.status(500).json({ error: "Failed to fetch status" });
       }
     });
-    whatsappBusiness_default = router5;
+    whatsappBusiness_default = router6;
   }
 });
 
@@ -63378,4554 +67992,6 @@ function sanitizeDoctorName(rawName) {
 var init_doctorUtils = __esm({
   "src/utils/doctorUtils.ts"() {
     "use strict";
-  }
-});
-
-// src/services/returnWindowService.ts
-var DEFAULT_RETURN_WINDOW_DAYS, RETURN_WINDOW_MS, ReturnWindowService, returnWindowService;
-var init_returnWindowService = __esm({
-  "src/services/returnWindowService.ts"() {
-    "use strict";
-    init_connection();
-    init_eventService();
-    DEFAULT_RETURN_WINDOW_DAYS = 15;
-    RETURN_WINDOW_MS = 14 * 24 * 60 * 60 * 1e3;
-    ReturnWindowService = class {
-      /**
-       * Fetches the configured return window duration from app_settings (default 15 days).
-       */
-      async getConfiguredReturnWindowDays(storeIdOrDb, customDb) {
-        try {
-          let db2;
-          if (customDb) {
-            db2 = customDb;
-          } else if (storeIdOrDb && typeof storeIdOrDb.get === "function") {
-            db2 = storeIdOrDb;
-          } else {
-            db2 = await dbManager.getConnection();
-          }
-          const row = await db2.get("SELECT value FROM app_settings WHERE key = 'return_window_days'");
-          if (row && row.value) {
-            const val = parseInt(row.value, 10);
-            if (!isNaN(val) && val > 0) return val;
-          }
-        } catch (_) {
-        }
-        return DEFAULT_RETURN_WINDOW_DAYS;
-      }
-      /**
-       * Calculates the return window deadline given a delivered timestamp and optional days
-       */
-      calculateReturnWindowUntil(deliveredAt, windowDays) {
-        const deliveredDate = new Date(deliveredAt);
-        const days = windowDays !== void 0 && windowDays > 0 ? windowDays : DEFAULT_RETURN_WINDOW_DAYS;
-        const deadlineMs = deliveredDate.getTime() + days * 24 * 60 * 60 * 1e3;
-        return new Date(deadlineMs).toISOString();
-      }
-      /**
-       * Evaluates the return window status for an order
-       */
-      evaluateOrderReturnStatus(order) {
-        const orderId = order.id;
-        const deliveryStatus = order.delivery_status || (order.status === "Delivered" ? "delivered" : "pending");
-        const deliveredAt = order.delivered_at || null;
-        const overrideBy = order.return_override_by || null;
-        const overrideReason = order.return_override_reason || null;
-        const overrideAt = order.return_override_at || null;
-        if (overrideBy) {
-          return {
-            orderId,
-            deliveryStatus,
-            deliveredAt,
-            returnWindowUntil: order.return_window_until || null,
-            returnStatus: "override_approved",
-            daysRemaining: 0,
-            isEligible: true,
-            overrideReason,
-            overrideBy,
-            overrideAt
-          };
-        }
-        if (order.return_status === "returned") {
-          return {
-            orderId,
-            deliveryStatus,
-            deliveredAt,
-            returnWindowUntil: order.return_window_until || null,
-            returnStatus: "returned",
-            daysRemaining: 0,
-            isEligible: false
-          };
-        }
-        if (deliveryStatus !== "delivered" || !deliveredAt) {
-          return {
-            orderId,
-            deliveryStatus,
-            deliveredAt: null,
-            returnWindowUntil: null,
-            returnStatus: "none",
-            daysRemaining: 0,
-            isEligible: false
-          };
-        }
-        const windowUntil = order.return_window_until || this.calculateReturnWindowUntil(deliveredAt);
-        const deadline = new Date(windowUntil).getTime();
-        const now = Date.now();
-        const msRemaining = deadline - now;
-        const daysRemaining = Math.max(0, Math.ceil(msRemaining / (1e3 * 60 * 60 * 24)));
-        const isEligible = msRemaining > 0;
-        const returnStatus = isEligible ? "eligible" : "expired";
-        return {
-          orderId,
-          deliveryStatus: "delivered",
-          deliveredAt,
-          returnWindowUntil: windowUntil,
-          returnStatus,
-          daysRemaining,
-          isEligible
-        };
-      }
-      /**
-       * Marks an order as delivered, stamping delivered_at and calculating the 14-day return window
-       */
-      async markDelivered(orderId, deliveredAtDate, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const deliveredAt = (deliveredAtDate || /* @__PURE__ */ new Date()).toISOString();
-        const windowDays = await this.getConfiguredReturnWindowDays(db2);
-        const returnWindowUntil = this.calculateReturnWindowUntil(deliveredAt, windowDays);
-        await db2.run(
-          `UPDATE special_orders
-       SET delivery_status = 'delivered',
-           status = 'Delivered',
-           auto_remind = 0,
-           delivered_at = ?,
-           return_window_until = ?,
-           return_status = 'eligible',
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-          [deliveredAt, returnWindowUntil, orderId]
-        );
-        await db2.run(
-          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-       VALUES (?, 'delivered', ?, 'system', CURRENT_TIMESTAMP)`,
-          [orderId, `Order delivered. ${windowDays}-day return window open until ${returnWindowUntil}`]
-        );
-        try {
-          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "delivered" });
-        } catch (_) {
-        }
-        const updatedOrder = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        return this.evaluateOrderReturnStatus(updatedOrder);
-      }
-      /**
-       * Background scan: automatically closes expired 14-day return windows without deleting records
-       */
-      async checkAndCloseExpiredReturnWindows(dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-        const expiredOrders = await db2.all(
-          `SELECT id, delivered_at, return_window_until 
-       FROM special_orders
-       WHERE delivery_status = 'delivered'
-         AND return_status = 'eligible'
-         AND return_window_until IS NOT NULL
-         AND return_window_until <= ?
-         AND return_override_by IS NULL`,
-          [nowIso]
-        ).catch(() => []);
-        if (expiredOrders.length === 0) return 0;
-        for (const order of expiredOrders) {
-          await db2.run(
-            `UPDATE special_orders
-         SET return_status = 'expired',
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-            [order.id]
-          );
-          await db2.run(
-            `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-         VALUES (?, 'return_window_expired', '14-day return period ended. Return window closed automatically.', 'system', CURRENT_TIMESTAMP)`,
-            [order.id]
-          );
-        }
-        try {
-          eventService.broadcast("order_updated", { at: Date.now(), expiredCount: expiredOrders.length });
-        } catch (_) {
-        }
-        return expiredOrders.length;
-      }
-      /**
-       * Human exception override: Pharmacist/Manager approves return after expiration
-       */
-      async applyReturnOverride(orderId, opts, dbInstance) {
-        const db2 = dbInstance || await dbManager.getConnection();
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        if (!order) {
-          throw new Error(`Order #${orderId} not found`);
-        }
-        const overrideBy = (opts.overrideBy || "Admin").trim();
-        const reason = (opts.reason || "Management approval").trim();
-        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-        await db2.run(
-          `UPDATE special_orders
-       SET return_status = 'override_approved',
-           return_override_by = ?,
-           return_override_reason = ?,
-           return_override_at = ?,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
-          [overrideBy, reason, nowIso, orderId]
-        );
-        await db2.run(
-          `INSERT INTO action_logs (action_type, description, metadata, created_at)
-       VALUES ('return_override', ?, ?, CURRENT_TIMESTAMP)`,
-          [
-            `Return window manually overridden for Order #${orderId} by ${overrideBy}`,
-            JSON.stringify({ orderId, overrideBy, reason, previousStatus: order.return_status })
-          ]
-        );
-        await db2.run(
-          `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-       VALUES (?, 'return_override', ?, ?, CURRENT_TIMESTAMP)`,
-          [orderId, `Return window override granted by ${overrideBy}. Reason: ${reason}`, overrideBy]
-        );
-        try {
-          eventService.broadcast("order_updated", { at: Date.now(), orderId, action: "return_override" });
-        } catch (_) {
-        }
-        const updated = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        return this.evaluateOrderReturnStatus(updated);
-      }
-    };
-    returnWindowService = new ReturnWindowService();
-  }
-});
-
-// src/services/cloudflareTunnelService.ts
-var cloudflareTunnelService_exports = {};
-__export(cloudflareTunnelService_exports, {
-  cloudflareTunnelService: () => cloudflareTunnelService,
-  default: () => cloudflareTunnelService_default
-});
-var import_child_process6, import_http, import_fs35, import_path34, CloudflareTunnelService, cloudflareTunnelService, cloudflareTunnelService_default;
-var init_cloudflareTunnelService = __esm({
-  "src/services/cloudflareTunnelService.ts"() {
-    "use strict";
-    import_child_process6 = require("child_process");
-    import_http = __toESM(require("http"), 1);
-    import_fs35 = __toESM(require("fs"), 1);
-    import_path34 = __toESM(require("path"), 1);
-    init_connection();
-    init_eventService();
-    init_config();
-    CloudflareTunnelService = class _CloudflareTunnelService {
-      static instance;
-      childProcess = null;
-      isRunning = false;
-      publicUrl = null;
-      currentMode = "quick";
-      startedAt = null;
-      lastError = null;
-      isShuttingDown = false;
-      constructor() {
-      }
-      static getInstance() {
-        if (!_CloudflareTunnelService.instance) {
-          _CloudflareTunnelService.instance = new _CloudflareTunnelService();
-        }
-        return _CloudflareTunnelService.instance;
-      }
-      /**
-       * Reads settings from app_settings table
-       */
-      async getSettings() {
-        try {
-          const db2 = await dbManager.getConnection();
-          const rows = await db2.all(
-            `SELECT key, value FROM app_settings WHERE key IN ('cloudflare_tunnel_token', 'cloudflare_tunnel_custom_domain', 'cloudflare_tunnel_autostart')`
-          );
-          const map = {};
-          for (const r of rows) map[r.key] = r.value;
-          return {
-            token: (map["cloudflare_tunnel_token"] || "").trim(),
-            customDomain: (map["cloudflare_tunnel_custom_domain"] || "").trim(),
-            autostart: map["cloudflare_tunnel_autostart"] === "1"
-          };
-        } catch {
-          return { token: "", customDomain: "", autostart: false };
-        }
-      }
-      /**
-       * Check which local port is responsive (Vite 5173 or Backend 5174)
-       */
-      checkPort(port) {
-        return new Promise((resolve) => {
-          const req = import_http.default.get(`http://127.0.0.1:${port}/`, (res) => {
-            resolve(true);
-            res.resume();
-          });
-          req.on("error", () => resolve(false));
-          req.setTimeout(1e3, () => {
-            req.destroy();
-            resolve(false);
-          });
-        });
-      }
-      /**
-       * Resolves the best available cloudflared binary on the current OS
-       */
-      resolveBinary() {
-        const isWindows = process.platform === "win32";
-        if (isWindows) {
-          const candidates = [
-            import_path34.default.join(process.cwd(), "node_modules", ".bin", "cloudflared.exe"),
-            import_path34.default.join(process.cwd(), "cloudflared.exe")
-          ];
-          for (const p of candidates) {
-            if (import_fs35.default.existsSync(p)) return { binary: p, spawnArgsPrefix: [], useShell: false };
-          }
-          const localAppData = process.env.LOCALAPPDATA;
-          if (localAppData) {
-            const npxDir = import_path34.default.join(localAppData, "npm-cache", "_npx");
-            if (import_fs35.default.existsSync(npxDir)) {
-              try {
-                const dirs = import_fs35.default.readdirSync(npxDir);
-                for (const d of dirs) {
-                  const binPath = import_path34.default.join(npxDir, d, "node_modules", "cloudflared", "bin", "cloudflared.exe");
-                  if (import_fs35.default.existsSync(binPath)) {
-                    return { binary: binPath, spawnArgsPrefix: [], useShell: false };
-                  }
-                }
-              } catch (_) {
-              }
-            }
-          }
-          return { binary: "npx.cmd", spawnArgsPrefix: ["-y", "cloudflared"], useShell: true };
-        }
-        return { binary: "cloudflared", spawnArgsPrefix: [], useShell: false };
-      }
-      /**
-       * Initializes the service on server boot.
-       * Auto-starts the tunnel if cloudflare_tunnel_autostart === '1'
-       */
-      async init() {
-        try {
-          const settings = await this.getSettings();
-          if (settings.autostart) {
-            console.log("[CloudflareTunnel] Autostart is enabled. Launching online store tunnel in 5s...");
-            setTimeout(() => {
-              this.start().catch((err) => {
-                console.error("[CloudflareTunnel] Autostart failed:", err);
-              });
-            }, 5e3);
-          }
-        } catch (err) {
-          console.warn("[CloudflareTunnel] Init warning:", err);
-        }
-      }
-      /**
-       * Starts the Cloudflare Tunnel
-       */
-      async start() {
-        if (this.isRunning && this.childProcess) {
-          return this.getStatus();
-        }
-        this.isShuttingDown = false;
-        this.lastError = null;
-        const settings = await this.getSettings();
-        const hasToken = !!settings.token;
-        this.currentMode = hasToken ? "token" : "quick";
-        let args = [];
-        if (hasToken) {
-          args = ["tunnel", "run", "--token", settings.token];
-          if (settings.customDomain) {
-            this.publicUrl = settings.customDomain.startsWith("http") ? settings.customDomain : `https://${settings.customDomain}`;
-          }
-        } else {
-          let targetPort = config.port || parseInt(process.env.PORT || "5175", 10);
-          const isTargetActive = await this.checkPort(targetPort);
-          if (!isTargetActive) {
-            const is5175 = await this.checkPort(5175);
-            if (is5175) {
-              targetPort = 5175;
-            } else {
-              const is5174 = await this.checkPort(5174);
-              if (is5174) targetPort = 5174;
-            }
-          }
-          const localTarget = `http://127.0.0.1:${targetPort}`;
-          const hostHeader = `127.0.0.1:${targetPort}`;
-          args = [
-            "tunnel",
-            "--url",
-            localTarget,
-            "--http-host-header",
-            hostHeader
-          ];
-        }
-        const isWindows = process.platform === "win32";
-        if (isWindows) {
-          try {
-            (0, import_child_process6.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
-          } catch (_) {
-          }
-        }
-        const { binary, spawnArgsPrefix, useShell } = this.resolveBinary();
-        const spawnArgs = [...spawnArgsPrefix, ...args];
-        console.log(`[CloudflareTunnel] Spawning cloudflared (${binary}) in ${this.currentMode} mode...`);
-        try {
-          this.childProcess = (0, import_child_process6.spawn)(binary, spawnArgs, {
-            stdio: ["ignore", "pipe", "pipe"],
-            shell: useShell,
-            detached: false
-          });
-          this.isRunning = true;
-          this.startedAt = Date.now();
-          const parseOutput = (chunk) => {
-            const text = chunk.toString();
-            if (this.currentMode === "quick") {
-              const match = text.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
-              if (match) {
-                this.publicUrl = match[0];
-                console.log(`[CloudflareTunnel] Live quick tunnel established: ${this.publicUrl}`);
-                this.persistLastUrl(this.publicUrl);
-                this.broadcastStatus();
-              }
-            }
-            if (text.includes("ERR ") || text.includes("Error:")) {
-              const errLine = text.split("\n").find((l) => l.includes("ERR") || l.includes("Error:"));
-              if (errLine && !errLine.includes("context canceled")) {
-                this.lastError = errLine.trim();
-              }
-            }
-          };
-          this.childProcess.stdout?.on("data", parseOutput);
-          this.childProcess.stderr?.on("data", parseOutput);
-          this.childProcess.on("error", (err) => {
-            console.error("[CloudflareTunnel] Process error:", err.message);
-            this.lastError = err.message;
-            this.isRunning = false;
-            this.publicUrl = null;
-            this.broadcastStatus();
-          });
-          this.childProcess.on("exit", (code, signal) => {
-            console.log(`[CloudflareTunnel] Process exited (code: ${code}, signal: ${signal})`);
-            this.isRunning = false;
-            this.childProcess = null;
-            if (!this.isShuttingDown) {
-              this.publicUrl = null;
-            }
-            this.broadcastStatus();
-          });
-          this.broadcastStatus();
-          return this.getStatus();
-        } catch (err) {
-          console.error("[CloudflareTunnel] Failed to spawn cloudflared:", err);
-          this.isRunning = false;
-          this.lastError = err.message;
-          return this.getStatus();
-        }
-      }
-      /**
-       * Stops the active tunnel cleanly
-       */
-      async stop() {
-        this.isShuttingDown = true;
-        if (this.childProcess && !this.childProcess.killed) {
-          try {
-            if (process.platform === "win32") {
-              try {
-                (0, import_child_process6.execSync)("taskkill /F /IM cloudflared.exe", { stdio: "ignore" });
-              } catch (_) {
-              }
-            } else {
-              this.childProcess.kill("SIGINT");
-            }
-          } catch (e) {
-            console.warn("[CloudflareTunnel] Error terminating process:", e);
-          }
-        }
-        this.childProcess = null;
-        this.isRunning = false;
-        this.publicUrl = null;
-        this.startedAt = null;
-        this.broadcastStatus();
-        return this.getStatus();
-      }
-      /**
-       * Returns current tunnel status
-       */
-      async getStatus() {
-        const settings = await this.getSettings();
-        return {
-          isRunning: this.isRunning,
-          url: this.publicUrl,
-          mode: this.currentMode,
-          customDomain: settings.customDomain || null,
-          tokenConfigured: !!settings.token,
-          autostart: settings.autostart,
-          startedAt: this.startedAt,
-          error: this.lastError
-        };
-      }
-      /**
-       * Configures Cloudflare Tunnel settings in app_settings
-       */
-      async configure(data) {
-        const db2 = await dbManager.getConnection();
-        if (data.token !== void 0) {
-          await db2.run(
-            `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('cloudflare_tunnel_token', ?)`,
-            [data.token.trim()]
-          );
-        }
-        if (data.customDomain !== void 0) {
-          await db2.run(
-            `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('cloudflare_tunnel_custom_domain', ?)`,
-            [data.customDomain.trim()]
-          );
-        }
-        if (data.autostart !== void 0) {
-          await db2.run(
-            `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('cloudflare_tunnel_autostart', ?)`,
-            [data.autostart ? "1" : "0"]
-          );
-        }
-        return this.getStatus();
-      }
-      async persistLastUrl(url) {
-        try {
-          const db2 = await dbManager.getConnection();
-          await db2.run(
-            `INSERT OR REPLACE INTO app_settings (key, value) VALUES ('cloudflare_tunnel_last_url', ?)`,
-            [url]
-          );
-        } catch {
-        }
-      }
-      async broadcastStatus() {
-        try {
-          const status = await this.getStatus();
-          eventService.broadcast("tunnel_status_changed", status);
-        } catch {
-        }
-      }
-    };
-    cloudflareTunnelService = CloudflareTunnelService.getInstance();
-    cloudflareTunnelService_default = cloudflareTunnelService;
-  }
-});
-
-// src/services/barcodeService.ts
-async function generateInvoiceBarcodeData(invoiceNo, dateStr) {
-  const cleanInvoiceNo = invoiceNo.trim();
-  const cleanDate = dateStr ? dateStr.split("T")[0] : (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  const barcodeText = `${cleanInvoiceNo}|${cleanDate}`;
-  const qrBuffer = await import_qrcode3.default.toBuffer(barcodeText, { width: 160, margin: 1 });
-  const qrDataUrl = `data:image/png;base64,${qrBuffer.toString("base64")}`;
-  const canvas = (0, import_canvas2.createCanvas)(320, 90);
-  (0, import_jsbarcode.default)(canvas, cleanInvoiceNo, {
-    format: "CODE128",
-    width: 2,
-    height: 50,
-    displayValue: true,
-    fontSize: 14,
-    margin: 8,
-    background: "#ffffff",
-    lineColor: "#000000"
-  });
-  const code128Buffer = canvas.toBuffer("image/png");
-  const code128DataUrl = `data:image/png;base64,${code128Buffer.toString("base64")}`;
-  return {
-    barcodeText,
-    qrBuffer,
-    qrDataUrl,
-    code128Buffer,
-    code128DataUrl
-  };
-}
-async function generateProductBarcodeData(name, batch) {
-  const cleanName = (name || "Unknown").trim();
-  const cleanBatch = (batch || "N/A").trim();
-  const codeText = `${cleanName}|${cleanBatch}`;
-  const qrBuffer = await import_qrcode3.default.toBuffer(codeText, { width: 160, margin: 1 });
-  const canvas = (0, import_canvas2.createCanvas)(360, 70);
-  (0, import_jsbarcode.default)(canvas, codeText, {
-    format: "CODE128",
-    width: 1.6,
-    height: 46,
-    displayValue: false,
-    margin: 4,
-    background: "#ffffff",
-    lineColor: "#000000"
-  });
-  const code128Buffer = canvas.toBuffer("image/png");
-  return { qrText: codeText, code128Text: codeText, qrBuffer, code128Buffer };
-}
-var import_jsbarcode, import_canvas2, import_qrcode3;
-var init_barcodeService = __esm({
-  "src/services/barcodeService.ts"() {
-    "use strict";
-    import_jsbarcode = __toESM(require("jsbarcode"), 1);
-    import_canvas2 = require("canvas");
-    import_qrcode3 = __toESM(require("qrcode"), 1);
-  }
-});
-
-// src/services/pdfInvoiceService.ts
-var pdfInvoiceService_exports = {};
-__export(pdfInvoiceService_exports, {
-  PdfInvoiceService: () => PdfInvoiceService,
-  pdfInvoiceService: () => pdfInvoiceService
-});
-var import_pdfkit2, import_qrcode4, import_path35, import_fs36, PdfInvoiceService, pdfInvoiceService;
-var init_pdfInvoiceService = __esm({
-  "src/services/pdfInvoiceService.ts"() {
-    "use strict";
-    import_pdfkit2 = __toESM(require("pdfkit"), 1);
-    import_qrcode4 = __toESM(require("qrcode"), 1);
-    init_connection();
-    import_path35 = __toESM(require("path"), 1);
-    import_fs36 = __toESM(require("fs"), 1);
-    init_config();
-    init_barcodeService();
-    init_customerPortal();
-    PdfInvoiceService = class {
-      async generateInvoicePdf(invoiceId, outPath, includeStampAndSig = true) {
-        const db2 = await dbManager.getConnection();
-        await db2.run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
-        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
-        const settings = {};
-        settingsRows.forEach((r) => {
-          settings[r.key] = r.value;
-        });
-        const invoice = await db2.get(
-          `SELECT si.invoice_no, si.date, si.total_amount, si.tax_amount, si.payment_medium, si.payment_status, si.discount, si.subtotal,
-              c.name as customer_name, c.phone as customer_phone, c.address as customer_address,
-              d.name as doctor_name
-       FROM sales_invoices si
-       LEFT JOIN customers c ON si.customer_id = c.id
-       LEFT JOIN doctors d ON si.doctor_id = d.id
-       WHERE si.id = ?`,
-          [invoiceId]
-        );
-        if (!invoice) {
-          throw new Error(`Invoice ID ${invoiceId} not found`);
-        }
-        const items = await db2.all(
-          `SELECT si.quantity, si.unit_price, si.loose_qty, si.discount_per, m.name as medicine_name, COALESCE(m.pack_size, 1) as pack_size,
-              im.batch_no
-       FROM sale_items si
-       JOIN inventory_master im ON si.inventory_id = im.id
-       JOIN medicines m ON im.medicine_id = m.id
-       WHERE si.invoice_id = ?`,
-          [invoiceId]
-        );
-        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "PHARMACY INVOICE";
-        const shopAddress = settings.address || settings.shop_address || "";
-        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
-        const shopLicence = settings.drug_license || settings.shop_licence || settings.license_number || settings.dl_number || settings.drug_licence_no || "";
-        const shopGstin = settings.gstin || "";
-        const barcodeData = await generateInvoiceBarcodeData(invoice.invoice_no, invoice.date);
-        return new Promise(async (resolve, reject) => {
-          try {
-            const doc = new import_pdfkit2.default({ size: "A4", margin: 30 });
-            const stream = import_fs36.default.createWriteStream(outPath);
-            stream.on("error", reject);
-            stream.on("finish", resolve);
-            doc.pipe(stream);
-            doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
-            if (shopAddress) {
-              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
-            }
-            const contactParts = [];
-            if (shopPhone) contactParts.push(`Phone: ${shopPhone}`);
-            if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
-            if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
-            if (contactParts.length > 0) {
-              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
-            }
-            doc.moveDown(0.8);
-            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
-            doc.moveDown(0.6);
-            const infoTop = doc.y;
-            doc.fontSize(9).fillColor("#0f172a");
-            doc.font("Helvetica-Bold").text(`Invoice No: `, 30, infoTop, { continued: true }).font("Helvetica").text(invoice.invoice_no);
-            doc.font("Helvetica-Bold").text(`Date: `, 30, doc.y + 3, { continued: true }).font("Helvetica").text(new Date(invoice.date).toLocaleString("en-IN"));
-            doc.font("Helvetica-Bold").text(`Payment: `, 30, doc.y + 3, { continued: true }).font("Helvetica").text(`${invoice.payment_medium || "CASH"} (${invoice.payment_status || "PAID"})`);
-            const docNameRaw = (invoice.doctor_name || "").trim();
-            if (docNameRaw) {
-              const docDisplayName = docNameRaw.toLowerCase().startsWith("dr") ? docNameRaw : `Dr. ${docNameRaw}`;
-              doc.font("Helvetica-Bold").fillColor("#0284c7").text(`Prescribed By: `, 30, doc.y + 3, { continued: true }).font("Helvetica-Bold").text(docDisplayName);
-            }
-            const leftBottomY = doc.y;
-            doc.fillColor("#0f172a");
-            doc.font("Helvetica-Bold").text("Billed To:", 320, infoTop);
-            doc.font("Helvetica").text(`Name: ${invoice.customer_name || "Walk-in Customer"}`, 320, doc.y + 3);
-            if (invoice.customer_phone) {
-              doc.text(`Phone: ${invoice.customer_phone}`, 320, doc.y + 3);
-            }
-            if (invoice.customer_address) {
-              doc.text(`Address: ${invoice.customer_address}`, 320, doc.y + 3);
-            }
-            const rightBottomY = doc.y;
-            const drawTableHeader = (yPos) => {
-              doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
-              doc.text("Sr", 30, yPos, { width: 22 });
-              doc.text("Medicine / Product Name", 55, yPos, { width: 180 });
-              doc.text("Batch No.", 240, yPos, { width: 75 });
-              doc.text("Qty", 320, yPos, { width: 55, align: "right" });
-              doc.text("Unit Price", 380, yPos, { width: 85, align: "right" });
-              doc.text("Total", 470, yPos, { width: 95, align: "right" });
-              doc.moveTo(30, yPos + 12).lineTo(565, yPos + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            };
-            let currentBillPage = 1;
-            let tableTop = Math.max(leftBottomY, rightBottomY) + 15;
-            drawTableHeader(tableTop);
-            let currentItemY = tableTop + 18;
-            const PAGE_1_ITEM_LIMIT_Y = 440;
-            const CONT_PAGE_ITEM_LIMIT_Y = 560;
-            items.forEach((item, index) => {
-              const discPer = item.discount_per || 0;
-              const discountedPrice = item.unit_price * (1 - discPer / 100);
-              const packSize = item.pack_size || 1;
-              const looseQty = item.loose_qty || 0;
-              const itemTotal = discountedPrice * item.quantity + discountedPrice / packSize * looseQty;
-              const nameText = discPer > 0 ? `${item.medicine_name} (${discPer}% Off)` : item.medicine_name;
-              const rowHeight = Math.max(doc.heightOfString(nameText, { width: 180 }), 14);
-              const currentLimitY = currentBillPage === 1 ? PAGE_1_ITEM_LIMIT_Y : CONT_PAGE_ITEM_LIMIT_Y;
-              if (currentItemY + rowHeight > currentLimitY && index < items.length) {
-                doc.fontSize(7.5).font("Helvetica-Oblique").fillColor("#64748b").text(
-                  "(Continued on Next Page...)",
-                  30,
-                  currentItemY + 2,
-                  { align: "right", width: 535 }
-                );
-                doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
-                  `Invoice ${invoice.invoice_no} \u2022 Page ${currentBillPage} \u2022 Continued on next page`,
-                  30,
-                  785,
-                  { align: "center", width: doc.page.width - 60 }
-                );
-                doc.addPage({ size: "A4", margin: 30 });
-                currentBillPage++;
-                doc.font("Helvetica-Bold").fontSize(12).fillColor("#0284c7").text(shopName, 30, 30);
-                doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(
-                  `Tax Invoice No: ${invoice.invoice_no} \u2014 Date: ${new Date(invoice.date).toLocaleDateString("en-IN")} (Continued - Page ${currentBillPage})`,
-                  30,
-                  46
-                );
-                doc.moveTo(30, 58).lineTo(565, 58).strokeColor("#e2e8f0").lineWidth(1).stroke();
-                tableTop = 66;
-                drawTableHeader(tableTop);
-                currentItemY = tableTop + 18;
-              }
-              doc.fontSize(8.5).fillColor("#0f172a");
-              doc.font("Helvetica-Bold").text(String(index + 1), 30, currentItemY, { width: 22 });
-              doc.font("Helvetica").text(nameText, 55, currentItemY, { width: 180 });
-              doc.text(item.batch_no ? String(item.batch_no) : "-", 240, currentItemY, { width: 75 });
-              const qtyText = looseQty > 0 ? `${item.quantity} S + ${looseQty} L` : String(item.quantity);
-              doc.text(qtyText, 320, currentItemY, { width: 55, align: "right" });
-              doc.text(`Rs. ${discountedPrice.toFixed(2)}`, 380, currentItemY, { width: 85, align: "right" });
-              doc.text(`Rs. ${itemTotal.toFixed(2)}`, 470, currentItemY, { width: 95, align: "right" });
-              currentItemY += rowHeight + 4;
-            });
-            if (currentItemY > 580) {
-              doc.fontSize(7.5).font("Helvetica-Oblique").fillColor("#64748b").text(
-                "(Totals continued on Next Page...)",
-                30,
-                currentItemY + 2,
-                { align: "right", width: 535 }
-              );
-              doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
-                `Invoice ${invoice.invoice_no} \u2022 Page ${currentBillPage}`,
-                30,
-                785,
-                { align: "center", width: doc.page.width - 60 }
-              );
-              doc.addPage({ size: "A4", margin: 30 });
-              currentBillPage++;
-              doc.font("Helvetica-Bold").fontSize(12).fillColor("#0284c7").text(shopName, 30, 30);
-              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(
-                `Tax Invoice No: ${invoice.invoice_no} \u2014 Final Totals & Authorization (Page ${currentBillPage})`,
-                30,
-                46
-              );
-              doc.moveTo(30, 58).lineTo(565, 58).strokeColor("#e2e8f0").lineWidth(1).stroke();
-              currentItemY = 70;
-            }
-            doc.y = currentItemY;
-            doc.moveDown(0.5);
-            doc.moveTo(380, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(0.5).stroke();
-            doc.moveDown(0.4);
-            let discount = invoice.discount || 0;
-            let tax = invoice.tax_amount || 0;
-            let total = invoice.total_amount;
-            let subtotal = total - tax;
-            if (invoice.payment_medium === "CREDIT" && discount > 0) {
-              subtotal = invoice.subtotal || invoice.total_amount + discount - invoice.tax_amount;
-              tax = invoice.tax_amount || 0;
-              total = subtotal + tax;
-              discount = 0;
-            } else if (discount > 0) {
-              const subtotalInclusive = invoice.subtotal || invoice.total_amount + discount;
-              subtotal = subtotalInclusive / 1.05;
-              tax = invoice.tax_amount || 0;
-              total = invoice.total_amount;
-            }
-            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica");
-            doc.text("Subtotal:", 380, doc.y, { width: 85, align: "right" });
-            doc.fillColor("#0f172a").text(`Rs. ${subtotal.toFixed(2)}`, 470, doc.y - 9, { width: 95, align: "right" });
-            if (discount > 0 && invoice.payment_medium !== "CREDIT") {
-              const discountExclusive = discount / 1.05;
-              doc.moveDown(0.3);
-              doc.fillColor("#64748b").text("Discount:", 380, doc.y, { width: 85, align: "right" });
-              doc.fillColor("#e11d48").text(`-Rs. ${discountExclusive.toFixed(2)}`, 470, doc.y - 9, { width: 95, align: "right" });
-            }
-            doc.moveDown(0.3);
-            doc.fillColor("#64748b").text("Tax (5%):", 380, doc.y, { width: 85, align: "right" });
-            doc.fillColor("#0f172a").text(`Rs. ${tax.toFixed(2)}`, 470, doc.y - 9, { width: 95, align: "right" });
-            doc.moveDown(0.5);
-            const grandTotalY = doc.y;
-            doc.fontSize(11).fillColor("#0f172a").font("Helvetica-Bold");
-            doc.text("Grand Total:", 360, grandTotalY, { width: 105, align: "right" });
-            doc.text(`Rs. ${total.toFixed(2)}`, 470, grandTotalY, { width: 95, align: "right" });
-            const barcodeY = Math.min(Math.max(doc.y + 15, 660), 730);
-            try {
-              doc.image(barcodeData.qrBuffer, 30, barcodeY, { width: 48, height: 48 });
-              doc.image(barcodeData.code128Buffer, 88, barcodeY + 2, { width: 130, height: 40 });
-              doc.fontSize(6.5).font("Helvetica").fillColor("#64748b").text(`Scannable Bill Barcode: ${barcodeData.barcodeText}`, 30, barcodeY + 50);
-            } catch (bcErr) {
-              console.warn("[PdfInvoice] Failed to embed barcode image in PDF:", bcErr);
-            }
-            const uploadsDir = import_path35.default.resolve(getAppDataDir(), "uploads");
-            const customStampPath = import_path35.default.join(uploadsDir, "custom_stamp.png");
-            const customSigPath = import_path35.default.join(uploadsDir, "custom_signature.png");
-            if (includeStampAndSig) {
-              const defaultStampX = 280;
-              const defaultStampY = Math.min(Math.max(grandTotalY + 15, 520), 640);
-              const stampX = settings.stamp_pos_x ? Math.max(30, Math.min(500, parseFloat(settings.stamp_pos_x))) : defaultStampX;
-              const stampY = settings.stamp_pos_y ? Math.max(300, Math.min(680, parseFloat(settings.stamp_pos_y))) : defaultStampY;
-              const stampScale = settings.stamp_scale ? parseFloat(settings.stamp_scale) : 100;
-              const stampWidth = Math.round(80 * (stampScale / 100));
-              const stampRot = settings.stamp_rotation !== void 0 ? parseFloat(settings.stamp_rotation) : -12;
-              if (import_fs36.default.existsSync(customStampPath)) {
-                doc.save();
-                if (stampRot !== 0) {
-                  doc.rotate(stampRot, { origin: [stampX + stampWidth / 2, stampY + stampWidth / 2] });
-                }
-                doc.image(customStampPath, stampX, stampY, { width: stampWidth });
-                doc.restore();
-              } else {
-                doc.save();
-                doc.translate(stampX + stampWidth / 2, stampY + stampWidth / 2);
-                doc.rotate(stampRot);
-                const radiusOuter = Math.round(34 * (stampScale / 100));
-                const radiusInner = Math.round(30 * (stampScale / 100));
-                const stampColor = invoice.payment_status === "UNPAID" ? "#f59e0b" : "#10b981";
-                doc.strokeColor(stampColor).lineWidth(1.5);
-                doc.circle(0, 0, radiusOuter).stroke();
-                doc.circle(0, 0, radiusInner).stroke();
-                doc.fillColor(stampColor).fontSize(6 * (stampScale / 100)).font("Helvetica");
-                doc.text(shopName, -30 * (stampScale / 100), -16 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
-                doc.fontSize(7 * (stampScale / 100));
-                if (invoice.payment_status === "UNPAID") {
-                  doc.font("Helvetica-Bold").text("CREDIT ACCOUNT", -30 * (stampScale / 100), -3 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
-                  doc.font("Helvetica").fontSize(6 * (stampScale / 100)).text("PAYMENT PENDING", -30 * (stampScale / 100), 8 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
-                } else {
-                  doc.font("Helvetica-Bold").text("PAID & VERIFIED", -30 * (stampScale / 100), -3 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
-                  doc.font("Helvetica").fontSize(6 * (stampScale / 100)).text("THANK YOU", -30 * (stampScale / 100), 8 * (stampScale / 100), { width: 60 * (stampScale / 100), align: "center" });
-                }
-                doc.restore();
-              }
-              const defaultSigX = 425;
-              const defaultSigY = barcodeY - 5;
-              const sigX = settings.sig_pos_x ? Math.max(30, Math.min(500, parseFloat(settings.sig_pos_x))) : defaultSigX;
-              const sigY = settings.sig_pos_y ? Math.max(300, Math.min(720, parseFloat(settings.sig_pos_y))) : defaultSigY;
-              const sigScale = settings.sig_scale ? parseFloat(settings.sig_scale) : 100;
-              const sigWidth = Math.round(75 * (sigScale / 100));
-              if (import_fs36.default.existsSync(customSigPath)) {
-                doc.image(customSigPath, sigX, sigY, { width: sigWidth });
-              }
-              doc.moveTo(sigX - 10, sigY + 48).lineTo(sigX + sigWidth + 10, sigY + 48).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
-              doc.fontSize(7.5).font("Helvetica-Bold").fillColor("#475569").text("Authorized Signatory", sigX - 10, sigY + 51, { width: sigWidth + 20, align: "center" });
-            } else {
-              const sigX = 430;
-              const sigY = barcodeY + 25;
-              doc.moveTo(sigX, sigY).lineTo(sigX + 110, sigY).strokeColor("#cbd5e1").lineWidth(0.5).stroke();
-              doc.fontSize(7.5).font("Helvetica-Bold").fillColor("#475569").text("Authorized Signatory", sigX, sigY + 4, { width: 110, align: "center" });
-            }
-            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
-              includeStampAndSig ? "This is a computer generated document. Stamped digitally." : "This is an official document. Signed and stamped manually.",
-              30,
-              785,
-              { align: "center", width: doc.page.width - 60 }
-            );
-            if (settings.print_portal_guide_page !== "0" && settings.enable_portal_guide_page !== "0") {
-              await this.appendCustomerPortalGuidePage(doc, db2, settings, {
-                name: invoice.customer_name,
-                phone: invoice.customer_phone
-              });
-            }
-            doc.end();
-          } catch (err) {
-            reject(err);
-          }
-        });
-      }
-      /**
-       * Generate an itemized Customer Credit Ledger / Statement PDF
-       */
-      async generateCreditStatementPdf(customerId, outPath) {
-        const db2 = await dbManager.getConnection();
-        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
-        const settings = {};
-        settingsRows.forEach((r) => {
-          settings[r.key] = r.value;
-        });
-        const customer = await db2.get("SELECT * FROM customers WHERE id = ?", [customerId]);
-        if (!customer) {
-          throw new Error(`Customer ID ${customerId} not found`);
-        }
-        const pendingInvoices = await db2.all(
-          `SELECT si.invoice_no, si.date, si.total_amount, si.payment_status
-       FROM sales_invoices si
-       WHERE si.customer_id = ? AND (si.payment_medium = 'CREDIT' OR si.payment_status = 'UNPAID' OR si.payment_status = 'PENDING') AND si.payment_status != 'PAID'
-       ORDER BY si.date ASC, si.id ASC`,
-          [customerId]
-        );
-        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "PHARMACY CREDIT LEDGER";
-        const shopAddress = settings.address || settings.shop_address || "";
-        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
-        const shopLicence = settings.drug_license || settings.shop_licence || settings.license_number || settings.dl_number || settings.drug_licence_no || "";
-        const shopGstin = settings.gstin || "";
-        return new Promise(async (resolve, reject) => {
-          try {
-            const doc = new import_pdfkit2.default({ size: "A4", margin: 30 });
-            const stream = import_fs36.default.createWriteStream(outPath);
-            stream.on("error", reject);
-            stream.on("finish", resolve);
-            doc.pipe(stream);
-            doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
-            if (shopAddress) {
-              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
-            }
-            const contactParts = [];
-            if (shopPhone) contactParts.push(`Phone: ${shopPhone}`);
-            if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
-            if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
-            if (contactParts.length > 0) {
-              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
-            }
-            doc.moveDown(0.8);
-            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
-            doc.moveDown(0.8);
-            doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a").text("CUSTOMER CREDIT STATEMENT & LEDGER SUMMARY", { align: "center" });
-            doc.moveDown(0.8);
-            const infoTop = doc.y;
-            doc.fontSize(9).fillColor("#0f172a");
-            doc.font("Helvetica-Bold").text("Customer Details:", 30, infoTop);
-            doc.font("Helvetica").text(`Name: ${customer.name || "Customer"}`, 30, doc.y + 3);
-            if (customer.phone) doc.text(`Phone: ${customer.phone}`, 30, doc.y + 3);
-            if (customer.address) doc.text(`Address: ${customer.address}`, 30, doc.y + 3);
-            const dueDateStr = customer.credit_due_date ? new Date(customer.credit_due_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "As agreed";
-            doc.font("Helvetica-Bold").text("Account Summary:", 320, infoTop);
-            doc.font("Helvetica").text(`Statement Date: ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, 320, doc.y + 3);
-            doc.text(`Due Date: ${dueDateStr}`, 320, doc.y + 3);
-            const creditBal = Number(customer.credit_balance || 0);
-            doc.font("Helvetica-Bold").fillColor("#e11d48").text(`Outstanding Balance: Rs. ${creditBal.toFixed(2)}`, 320, doc.y + 3);
-            doc.moveDown(1.2);
-            const tableTop = doc.y;
-            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
-            doc.text("Bill / Invoice #", 30, tableTop, { width: 160 });
-            doc.text("Date", 200, tableTop, { width: 110 });
-            doc.text("Status", 320, tableTop, { width: 110 });
-            doc.text("Amount (Rs.)", 440, tableTop, { width: 125, align: "right" });
-            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            doc.moveDown(0.8);
-            let totalCalculated = 0;
-            if (pendingInvoices.length > 0) {
-              pendingInvoices.forEach((inv) => {
-                const itemY = doc.y;
-                doc.fontSize(8.5).fillColor("#0f172a").font("Helvetica");
-                const amt = Number(inv.total_amount || 0);
-                totalCalculated += amt;
-                const dFormatted = inv.date ? new Date(inv.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "-";
-                doc.text(inv.invoice_no, 30, itemY, { width: 160 });
-                doc.text(dFormatted, 200, itemY, { width: 110 });
-                doc.text(inv.payment_status || "UNPAID", 320, itemY, { width: 110 });
-                doc.text(`Rs. ${amt.toFixed(2)}`, 440, itemY, { width: 125, align: "right" });
-                doc.moveDown(0.9);
-              });
-            } else {
-              doc.fontSize(8.5).fillColor("#64748b").font("Helvetica").text("No pending credit bills recorded.", 30, doc.y, { align: "center" });
-              doc.moveDown(1.2);
-            }
-            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            doc.moveDown(0.8);
-            const finalTotal = creditBal > 0 ? creditBal : totalCalculated;
-            doc.fontSize(11).fillColor("#0f172a").font("Helvetica-Bold");
-            doc.text("Total Outstanding Payable:", 250, doc.y, { width: 180, align: "right" });
-            doc.fillColor("#e11d48").text(`Rs. ${finalTotal.toFixed(2)}`, 440, doc.y - 11, { width: 125, align: "right" });
-            const stampY = Math.min(Math.max(doc.y + 15, 650), 730);
-            doc.save();
-            doc.translate(480, stampY);
-            doc.rotate(-10);
-            doc.strokeColor("#f59e0b").lineWidth(1.8);
-            doc.circle(0, 0, 32).stroke();
-            doc.fillColor("#f59e0b").fontSize(6.5).font("Helvetica-Bold");
-            doc.text("CREDIT ACCOUNT", -28, -8, { width: 56, align: "center" });
-            doc.text("STATEMENT", -28, 2, { width: 56, align: "center" });
-            doc.restore();
-            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
-              "This is an official pharmacy credit ledger statement. Stamped digitally.",
-              30,
-              785,
-              { align: "center", width: doc.page.width - 60 }
-            );
-            if (settings.print_portal_guide_page !== "0" && settings.enable_portal_guide_page !== "0") {
-              await this.appendCustomerPortalGuidePage(doc, db2, settings, {
-                name: customer.name,
-                phone: customer.phone,
-                customerId: customer.id
-              });
-            }
-            doc.end();
-          } catch (err) {
-            reject(err);
-          }
-        });
-      }
-      /**
-       * Generate a Patient Refill Reminder / Advisory Slip PDF
-       */
-      async generateRefillSchedulePdf(refillId, outPath) {
-        const db2 = await dbManager.getConnection();
-        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
-        const settings = {};
-        settingsRows.forEach((r) => {
-          settings[r.key] = r.value;
-        });
-        const refill = await db2.get(
-          `SELECT pr.*, c.name as customer_name, c.phone as customer_phone, c.address as customer_address
-       FROM patient_refills pr
-       LEFT JOIN customers c ON pr.customer_id = c.id
-       WHERE pr.id = ?`,
-          [refillId]
-        );
-        if (!refill) {
-          throw new Error(`Refill record ID ${refillId} not found`);
-        }
-        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "AI PHARMACY CARE";
-        const shopAddress = settings.address || settings.shop_address || "";
-        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
-        const shopLicence = settings.drug_license || settings.shop_licence || settings.license_number || settings.dl_number || settings.drug_licence_no || "";
-        const shopGstin = settings.gstin || "";
-        return new Promise(async (resolve, reject) => {
-          try {
-            const doc = new import_pdfkit2.default({ size: "A4", margin: 30 });
-            const stream = import_fs36.default.createWriteStream(outPath);
-            stream.on("error", reject);
-            stream.on("finish", resolve);
-            doc.pipe(stream);
-            doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
-            if (shopAddress) {
-              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
-            }
-            const contactParts = [];
-            if (shopPhone) contactParts.push(`Helpline: ${shopPhone}`);
-            if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
-            if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
-            if (contactParts.length > 0) {
-              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
-            }
-            doc.moveDown(0.8);
-            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
-            doc.moveDown(0.8);
-            doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a").text("PRESCRIPTION REFILL ADVISORY & SCHEDULE", { align: "center" });
-            doc.moveDown(1);
-            const infoTop = doc.y;
-            doc.fontSize(9).fillColor("#0f172a");
-            doc.font("Helvetica-Bold").text("Patient Information:", 30, infoTop);
-            doc.font("Helvetica").text(`Name: ${refill.patient_name || refill.customer_name || "Patient"}`, 30, doc.y + 3);
-            doc.text(`Phone: ${refill.patient_phone || refill.customer_phone || "-"}`, 30, doc.y + 3);
-            const nextDateStr = refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Immediate";
-            doc.font("Helvetica-Bold").text("Refill Schedule Details:", 320, infoTop);
-            doc.font("Helvetica").text(`Refill Due Date: ${nextDateStr}`, 320, doc.y + 3);
-            doc.text(`Cycle Interval: ${refill.refill_days || 30} Days`, 320, doc.y + 3);
-            doc.moveDown(1.2);
-            const tableTop = doc.y;
-            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
-            doc.text("Prescribed Medicine", 30, tableTop, { width: 280 });
-            doc.text("Dosage / Frequency", 320, tableTop, { width: 130 });
-            doc.text("Quantity", 460, tableTop, { width: 105, align: "right" });
-            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            doc.moveDown(0.8);
-            const medY = doc.y;
-            doc.fontSize(9).fillColor("#0f172a").font("Helvetica");
-            doc.text(refill.medicine_name || "Prescribed Medicine", 30, medY, { width: 280 });
-            doc.text(refill.dosage || "As directed", 320, medY, { width: 130 });
-            doc.text(String(refill.quantity_needed || refill.quantity || 1), 460, medY, { width: 105, align: "right" });
-            doc.moveDown(1.5);
-            doc.fontSize(8.5).fillColor("#0284c7").font("Helvetica-Bold").text("Refill Advisory Note:");
-            doc.fontSize(8.5).fillColor("#334155").font("Helvetica").text(
-              "To ensure uninterrupted course continuity of your essential medications, please collect your scheduled refill at your earliest convenience or contact our pharmacy desk for prompt delivery.",
-              { width: 535, align: "justify" }
-            );
-            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
-              "This is a verified pharmacy refill advisory slip.",
-              30,
-              785,
-              { align: "center", width: doc.page.width - 60 }
-            );
-            if (settings.print_portal_guide_page !== "0" && settings.enable_portal_guide_page !== "0") {
-              await this.appendCustomerPortalGuidePage(doc, db2, settings, {
-                name: refill.patient_name || refill.customer_name,
-                phone: refill.patient_phone || refill.customer_phone,
-                customerId: refill.customer_id
-              });
-            }
-            doc.end();
-          } catch (err) {
-            reject(err);
-          }
-        });
-      }
-      /**
-       * Generate Special Order Arrival / Collection Slip PDF
-       */
-      async generateSpecialOrderSlipPdf(orderId, outPath) {
-        const db2 = await dbManager.getConnection();
-        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
-        const settings = {};
-        settingsRows.forEach((r) => {
-          settings[r.key] = r.value;
-        });
-        const order = await db2.get("SELECT * FROM special_orders WHERE id = ?", [orderId]);
-        if (!order) {
-          throw new Error(`Special Order ID ${orderId} not found`);
-        }
-        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "AI PHARMACY";
-        const shopAddress = settings.address || settings.shop_address || "";
-        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
-        const shopLicence = settings.drug_license || settings.shop_licence || settings.license_number || settings.dl_number || settings.drug_licence_no || "";
-        const shopGstin = settings.gstin || "";
-        return new Promise(async (resolve, reject) => {
-          try {
-            const doc = new import_pdfkit2.default({ size: "A4", margin: 30 });
-            const stream = import_fs36.default.createWriteStream(outPath);
-            stream.on("error", reject);
-            stream.on("finish", resolve);
-            doc.pipe(stream);
-            doc.font("Helvetica-Bold").fontSize(18).fillColor("#0284c7").text(shopName, { align: "center" });
-            if (shopAddress) {
-              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(shopAddress, { align: "center" });
-            }
-            const contactParts = [];
-            if (shopPhone) contactParts.push(`Phone: ${shopPhone}`);
-            if (shopLicence) contactParts.push(`D.L. No: ${shopLicence}`);
-            if (shopGstin) contactParts.push(`GSTIN: ${shopGstin}`);
-            if (contactParts.length > 0) {
-              doc.font("Helvetica").fontSize(8.5).fillColor("#64748b").text(contactParts.join(" | "), { align: "center" });
-            }
-            doc.moveDown(0.8);
-            doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#e2e8f0").lineWidth(1).stroke();
-            doc.moveDown(0.8);
-            doc.font("Helvetica-Bold").fontSize(13).fillColor("#0f172a").text("SPECIAL MEDICINE ORDER ARRIVAL & PICKUP SLIP", { align: "center" });
-            doc.moveDown(1);
-            const infoTop = doc.y;
-            doc.fontSize(9).fillColor("#0f172a");
-            doc.font("Helvetica-Bold").text("Customer Details:", 30, infoTop);
-            doc.font("Helvetica").text(`Name: ${order.requester || "Customer"}`, 30, doc.y + 3);
-            doc.text(`Phone: ${order.phone || "-"}`, 30, doc.y + 3);
-            doc.font("Helvetica-Bold").text("Order Details:", 320, infoTop);
-            doc.font("Helvetica").text(`Order Reference: #SO-${order.id}`, 320, doc.y + 3);
-            doc.text(`Arrival Date: ${(/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`, 320, doc.y + 3);
-            doc.font("Helvetica-Bold").fillColor("#10b981").text("Status: READY FOR PICKUP", 320, doc.y + 3);
-            doc.moveDown(1.2);
-            const tableTop = doc.y;
-            doc.fontSize(8.5).fillColor("#64748b").font("Helvetica-Bold");
-            doc.text("Requested Product / Medicine", 30, tableTop, { width: 370 });
-            doc.text("Quantity", 410, tableTop, { width: 155, align: "right" });
-            doc.moveTo(30, tableTop + 12).lineTo(565, tableTop + 12).strokeColor("#cbd5e1").lineWidth(1).stroke();
-            doc.moveDown(0.8);
-            const prodY = doc.y;
-            doc.fontSize(9.5).fillColor("#0f172a").font("Helvetica-Bold");
-            doc.text(order.product || "Special Requested Medicine", 30, prodY, { width: 370 });
-            doc.text(`${order.qty || 1} units`, 410, prodY, { width: 155, align: "right" });
-            doc.moveDown(1.5);
-            doc.fontSize(8.5).fillColor("#0284c7").font("Helvetica-Bold").text("Pickup Instructions:");
-            doc.fontSize(8.5).fillColor("#334155").font("Helvetica").text(
-              "Your specially requested medicine has arrived and is securely reserved at the pharmacy counter. Please present this slip or your phone number upon collection.",
-              { width: 535, align: "justify" }
-            );
-            doc.fontSize(7.5).fillColor("#94a3b8").font("Helvetica").text(
-              "This is an authentic pharmacy collection slip.",
-              30,
-              785,
-              { align: "center", width: doc.page.width - 60 }
-            );
-            if (settings.print_portal_guide_page !== "0" && settings.enable_portal_guide_page !== "0") {
-              await this.appendCustomerPortalGuidePage(doc, db2, settings, {
-                name: order.requester,
-                phone: order.phone,
-                customerId: order.customer_id
-              });
-            }
-            doc.end();
-          } catch (err) {
-            reject(err);
-          }
-        });
-      }
-      /**
-       * Append a 2nd page to customer-facing PDFs with full instructions on how to
-       * log in, reorder refills, reset PIN, and access the customer web portal.
-       * Uses Template 4: Senior & High-Contrast Quick-Scan Flyer with direct clickable login links.
-       */
-      async appendCustomerPortalGuidePage(doc, db2, settings, customerInfo) {
-        const rawPhone = customerInfo.phone || "";
-        const cleanPhone = normalizePhone(rawPhone);
-        const customerName = (customerInfo.name || "Valued Patient").trim();
-        let pinDisplay = "1234";
-        if (cleanPhone || customerInfo.customerId) {
-          try {
-            const acc = await db2.get(
-              "SELECT pin_display FROM customer_portal_accounts WHERE login_id = ? OR customer_id = ? LIMIT 1",
-              [cleanPhone, customerInfo.customerId || 0]
-            );
-            if (acc?.pin_display) {
-              pinDisplay = String(acc.pin_display).trim();
-            }
-          } catch (_) {
-          }
-        }
-        const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || "AI PHARMACY";
-        const shopAddress = settings.address || settings.shop_address || "";
-        const shopPhone = settings.phone || settings.shop_phone || settings.pharmacy_phone || "";
-        let liveUrl = "https://tanmaymedical.com/portal";
-        try {
-          liveUrl = await getLivePortalUrl(db2, cleanPhone || void 0);
-        } catch (_) {
-        }
-        let qrBuffer = null;
-        try {
-          qrBuffer = await import_qrcode4.default.toBuffer(liveUrl, {
-            width: 180,
-            margin: 1,
-            color: { dark: "#1e40af", light: "#ffffff" }
-          });
-        } catch (_) {
-        }
-        doc.addPage({ size: "A4", margin: 30 });
-        doc.font("Helvetica-Bold").fontSize(16).fillColor("#1e40af").text(shopName, { align: "center" });
-        doc.font("Helvetica-Bold").fontSize(11).fillColor("#0f172a").text("FAST MEDICINE REORDER SLIP \u2014 KEEP FOR FUTURE ORDERS", { align: "center" });
-        doc.font("Helvetica").fontSize(8.5).fillColor("#475569").text("No typing required! Scan with any phone camera or click the link to reorder medicines.", { align: "center" });
-        doc.moveDown(0.5);
-        doc.moveTo(30, doc.y).lineTo(565, doc.y).strokeColor("#1e40af").lineWidth(1.5).stroke();
-        doc.moveDown(0.6);
-        const mainTop = doc.y;
-        const mainH = 145;
-        doc.roundedRect(30, mainTop, 535, mainH, 10).fillColor("#eff6ff").strokeColor("#3b82f6").lineWidth(1.5).fillAndStroke();
-        doc.rect(45, mainTop + 12, 120, 120).fillColor("#ffffff").strokeColor("#bfdbfe").lineWidth(1).fillAndStroke();
-        if (qrBuffer) {
-          doc.image(qrBuffer, 52, mainTop + 16, { width: 106 });
-        }
-        doc.link(45, mainTop + 12, 120, 120, liveUrl);
-        doc.fontSize(6.5).font("Helvetica-Bold").fillColor("#1e40af").text("CLICK TO OPEN LINK", 45, mainTop + 124, { width: 120, align: "center" });
-        const rightX = 180;
-        doc.font("Helvetica-Bold").fontSize(11.5).fillColor("#1e40af").text("SCAN OR CLICK TO OPEN YOUR MEDICINE PORTAL", rightX, mainTop + 13);
-        doc.font("Helvetica").fontSize(8).fillColor("#1e293b").text("Scan with your phone camera or visit the link below from any phone or PC:", rightX, mainTop + 29);
-        doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a").text("Patient: ", rightX, mainTop + 46, { continued: true }).font("Helvetica").text(customerName);
-        doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a").text("Login Mobile: ", rightX, mainTop + 61, { continued: true }).font("Helvetica-Bold").fillColor("#1d4ed8").text(cleanPhone ? `+91 ${cleanPhone}` : "Your Registered Mobile");
-        doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a").text("Your 4-Digit PIN: ", rightX, mainTop + 78);
-        const pinBlockX = rightX + 85;
-        const pinDigits = (pinDisplay || "1234").slice(0, 4).padEnd(4, "0").split("");
-        pinDigits.forEach((d, i) => {
-          doc.rect(pinBlockX + i * 22, mainTop + 74, 18, 20).fillColor("#ffffff").strokeColor("#1e40af").lineWidth(1).fillAndStroke();
-          doc.font("Helvetica-Bold").fontSize(10).fillColor("#1e40af").text(d, pinBlockX + i * 22, mainTop + 79, { width: 18, align: "center" });
-        });
-        const displayUrl = liveUrl.replace(/^https?:\/\//i, "");
-        doc.font("Helvetica-Bold").fontSize(8.5).fillColor("#0f172a").text("Direct Login Link: ", rightX, mainTop + 101, { continued: true }).font("Helvetica-Bold").fillColor("#2563eb").text(displayUrl.length > 38 ? `${displayUrl.slice(0, 36)}...` : displayUrl, {
-          link: liveUrl,
-          underline: true
-        });
-        doc.fontSize(7.5).font("Helvetica-Bold").fillColor("#059669").text("\u2022 Forgot PIN? Login with 1-tap WhatsApp OTP anytime.", rightX, mainTop + 118);
-        const stepsTop = mainTop + mainH + 16;
-        doc.font("Helvetica-Bold").fontSize(11).fillColor("#0f172a").text("3 SIMPLE STEPS TO GET YOUR MEDICINES", 30, stepsTop);
-        const sW = 171;
-        const sH = 110;
-        const sY = stepsTop + 16;
-        doc.roundedRect(30, sY, sW, sH, 8).fillColor("#ffffff").strokeColor("#cbd5e1").lineWidth(1.2).fillAndStroke();
-        doc.rect(30, sY, sW, 26).fillColor("#1e40af").fill();
-        doc.font("Helvetica-Bold").fontSize(9).fillColor("#ffffff").text("STEP 1: SCAN OR OPEN", 30, sY + 8, { width: sW, align: "center" });
-        doc.font("Helvetica").fontSize(8).fillColor("#334155").text(
-          `Point your phone camera at the QR code above or visit ${displayUrl.split("/")[0]}.
-
-Enter your mobile number and your 4-digit PIN (${pinDisplay || "1234"}) or use WhatsApp OTP.`,
-          38,
-          sY + 34,
-          { width: sW - 16, lineGap: 2 }
-        );
-        doc.roundedRect(30 + sW + 11, sY, sW, sH, 8).fillColor("#ffffff").strokeColor("#cbd5e1").lineWidth(1.2).fillAndStroke();
-        doc.rect(30 + sW + 11, sY, sW, 26).fillColor("#059669").fill();
-        doc.font("Helvetica-Bold").fontSize(9).fillColor("#ffffff").text("STEP 2: 1-CLICK REORDER", 30 + sW + 11, sY + 8, { width: sW, align: "center" });
-        doc.font("Helvetica").fontSize(8).fillColor("#334155").text(
-          'Tap "Select All Refills" to order your regular medicines instantly.\n\nOr click "Upload Prescription" to send a photo of any new doctor prescription.',
-          38 + sW + 11,
-          sY + 34,
-          { width: sW - 16, lineGap: 2 }
-        );
-        doc.roundedRect(30 + (sW + 11) * 2, sY, sW, sH, 8).fillColor("#ffffff").strokeColor("#cbd5e1").lineWidth(1.2).fillAndStroke();
-        doc.rect(30 + (sW + 11) * 2, sY, sW, 26).fillColor("#c2410c").fill();
-        doc.font("Helvetica-Bold").fontSize(9).fillColor("#ffffff").text("STEP 3: PICKUP / DELIVERY", 30 + (sW + 11) * 2, sY + 8, { width: sW, align: "center" });
-        doc.font("Helvetica").fontSize(8).fillColor("#334155").text(
-          "Pick up at our pharmacy counter with zero wait time, or choose Doorstep Delivery.\n\nPay conveniently via UPI QR (GPay, PhonePe, Paytm) or Cash.",
-          38 + (sW + 11) * 2,
-          sY + 34,
-          { width: sW - 16, lineGap: 2 }
-        );
-        const faqTop = sY + sH + 14;
-        const faqH = 68;
-        doc.roundedRect(30, faqTop, 535, faqH, 8).fillColor("#f8fafc").strokeColor("#cbd5e1").lineWidth(1).fillAndStroke();
-        doc.font("Helvetica-Bold").fontSize(8.5).fillColor("#0f172a").text("NEED HELP ORDERING OR FORGOT YOUR PIN?", 42, faqTop + 10);
-        doc.fontSize(7.5).font("Helvetica").fillColor("#475569");
-        doc.text(
-          `\u2022 Forgot PIN: Click "Login via WhatsApp OTP" on the website to sign in instantly with a 6-digit WhatsApp code.
-\u2022 Set Your Own PIN: Once logged in, go to Settings -> "Change PIN" to choose your own memorable PIN.
-\u2022 Phone Support: Call our pharmacy counter at ${shopPhone || "8080888041"} and our pharmacist will assist you immediately.`,
-          42,
-          faqTop + 24,
-          { width: 510, lineGap: 2.5 }
-        );
-        const footerY = 770;
-        doc.moveTo(30, footerY).lineTo(565, footerY).strokeColor("#cbd5e1").lineWidth(0.8).stroke();
-        doc.fontSize(8).font("Helvetica-Bold").fillColor("#0f172a").text(
-          `${shopName} \u2022 Counter Pickup Hours: 8:00 AM - 10:30 PM Daily`,
-          30,
-          footerY + 8,
-          { align: "center" }
-        );
-        if (shopAddress || shopPhone) {
-          doc.fontSize(7).font("Helvetica").fillColor("#64748b").text(
-            `${shopAddress}${shopPhone ? ` | Phone: ${shopPhone}` : ""}`,
-            30,
-            footerY + 20,
-            { align: "center" }
-          );
-        }
-        doc.fontSize(6.5).font("Helvetica").fillColor("#94a3b8").text(
-          "AI Pharmacy Patient Care & Self-Service Portal \u2022 100% Genuine Medicines Guarantee",
-          30,
-          footerY + 31,
-          { align: "center" }
-        );
-      }
-      /**
-       * Generate a standalone 1-Page Customer Portal Guide & Login Slip PDF
-       */
-      async generateCustomerPortalGuidePdf(phone, outPath) {
-        const db2 = await dbManager.getConnection();
-        const settingsRows = await db2.all("SELECT key, value FROM app_settings");
-        const settings = {};
-        settingsRows.forEach((r) => {
-          settings[r.key] = r.value;
-        });
-        const cleanPhone = normalizePhone(phone);
-        const customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-        return new Promise(async (resolve, reject) => {
-          try {
-            const doc = new import_pdfkit2.default({ size: "A4", margin: 30 });
-            const stream = import_fs36.default.createWriteStream(outPath);
-            stream.on("error", reject);
-            stream.on("finish", resolve);
-            doc.pipe(stream);
-            await this.appendCustomerPortalGuidePage(doc, db2, settings, {
-              name: customer?.name || "Valued Patient",
-              phone: cleanPhone,
-              customerId: customer?.id
-            });
-            doc.end();
-          } catch (err) {
-            reject(err);
-          }
-        });
-      }
-    };
-    pdfInvoiceService = new PdfInvoiceService();
-  }
-});
-
-// src/utils/logger.ts
-var AppLogger, logger;
-var init_logger = __esm({
-  "src/utils/logger.ts"() {
-    "use strict";
-    AppLogger = class {
-      formatMessage(level, message, context) {
-        const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-        const mod = context?.module ? `[${context.module}]` : "";
-        const op = context?.operation ? `[${context.operation}]` : "";
-        const req = context?.requestId ? `[req:${context.requestId}]` : "";
-        const dur = context?.durationMs !== void 0 ? ` (${context.durationMs}ms)` : "";
-        return `${timestamp} ${level.padEnd(5)} ${mod}${op}${req} ${message}${dur}`;
-      }
-      debug(message, context) {
-        if (process.env.DEBUG || process.env.NODE_ENV !== "production") {
-          console.debug(this.formatMessage("DEBUG", message, context));
-        }
-      }
-      info(message, context) {
-        console.log(this.formatMessage("INFO", message, context));
-      }
-      warn(message, context) {
-        console.warn(this.formatMessage("WARN", message, context));
-      }
-      error(message, error, context) {
-        const formatted = this.formatMessage("ERROR", message, context);
-        if (error) {
-          console.error(formatted, error);
-        } else {
-          console.error(formatted);
-        }
-      }
-    };
-    logger = new AppLogger();
-  }
-});
-
-// src/services/auth/customerAuthService.ts
-var customerAuthService_exports = {};
-__export(customerAuthService_exports, {
-  customerAuthService: () => customerAuthService,
-  generateRandomOtp: () => generateRandomOtp,
-  generateRandomPin: () => generateRandomPin,
-  hashPin: () => hashPin,
-  normalizePhone: () => normalizePhone2
-});
-function normalizePhone2(raw) {
-  const digits = String(raw || "").replace(/\D/g, "");
-  if (digits.length === 12 && digits.startsWith("91")) {
-    return digits.slice(2);
-  }
-  if (digits.length === 11 && digits.startsWith("0")) {
-    return digits.slice(1);
-  }
-  if (digits.length > 10) {
-    return digits.slice(-10);
-  }
-  return digits;
-}
-function hashPin(pin) {
-  const salt = "pharmacy_portal_salt_2026";
-  return import_crypto6.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
-}
-function generateRandomPin() {
-  return Math.floor(1e3 + Math.random() * 9e3).toString();
-}
-function generateRandomOtp() {
-  return Math.floor(1e5 + Math.random() * 9e5).toString();
-}
-var import_crypto6, SESSION_SECRET, CustomerAuthService, customerAuthService;
-var init_customerAuthService = __esm({
-  "src/services/auth/customerAuthService.ts"() {
-    "use strict";
-    import_crypto6 = __toESM(require("crypto"), 1);
-    init_connection();
-    init_whatsappQueueWorker();
-    init_logger();
-    init_nameFormatter();
-    init_storeSettingsService();
-    SESSION_SECRET = process.env.CUSTOMER_PORTAL_SECRET || "pharmacy_portal_session_secret_2026";
-    CustomerAuthService = class {
-      /**
-       * Create an HMAC-signed token and store session in customer_sessions
-       */
-      async createSession(customerId, phone, channel = "portal", reqMetadata) {
-        const payload = `${customerId}:${phone}:${Date.now()}`;
-        const signature = import_crypto6.default.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
-        const token = Buffer.from(`${payload}:${signature}`).toString("base64");
-        try {
-          const db2 = await dbManager.getConnection();
-          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
-          await db2.run(
-            `INSERT INTO customer_sessions (
-           customer_id, phone, session_token, channel, device_info, ip_address,
-           logged_in_at, last_active_at, duration_seconds, is_active, expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
-            [
-              customerId,
-              phone,
-              token,
-              channel,
-              reqMetadata?.userAgent || null,
-              reqMetadata?.ip || null,
-              expiresAt
-            ]
-          );
-        } catch (err) {
-          logger.warn("Failed to record customer session in DB", { module: "CustomerAuthService", error: err });
-        }
-        return token;
-      }
-      /**
-       * Verify customer session token
-       */
-      async verifySession(tokenStr) {
-        try {
-          if (!tokenStr) return null;
-          const decoded = Buffer.from(tokenStr, "base64").toString("utf8");
-          const parts = decoded.split(":");
-          if (parts.length !== 4) return null;
-          const [customerIdStr, phone, timestampStr, signature] = parts;
-          const customerId = parseInt(customerIdStr, 10);
-          const timestamp = parseInt(timestampStr, 10);
-          if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
-          const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
-          const expectedSignature = import_crypto6.default.createHmac("sha256", SESSION_SECRET).update(expectedPayload).digest("hex");
-          if (import_crypto6.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-            return { customerId, phone };
-          }
-        } catch (_) {
-        }
-        return null;
-      }
-      /**
-       * Request OTP for customer mobile login - strictly for existing CRM patients
-       */
-      async requestOtp(phoneRaw) {
-        const phone = normalizePhone2(phoneRaw);
-        if (!phone || phone.length < 10) {
-          throw new Error("Valid 10-digit mobile number is required");
-        }
-        const db2 = await dbManager.getConnection();
-        let customer = await db2.get(
-          `SELECT id, name, phone FROM customers WHERE phone LIKE ? OR phone = ? LIMIT 1`,
-          [`%${phone}%`, phone]
-        );
-        if (!customer) {
-          const defaultName = `Customer ${phone.slice(-4)}`;
-          const insResult = await db2.run(
-            `INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`,
-            [defaultName, phone]
-          );
-          customer = { id: insResult.lastID, name: defaultName, phone };
-          logger.info(`Auto-registered customer for phone ${phone}`, { module: "CustomerAuthService", customerId: customer.id });
-        }
-        const loginId = phone;
-        let account = await db2.get(
-          `SELECT id, customer_id, login_id FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?`,
-          [customer.id, loginId]
-        );
-        if (!account) {
-          const pin = generateRandomPin();
-          const pHash = hashPin(pin);
-          await db2.run(
-            `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status)
-         VALUES (?, ?, ?, ?, 1, 'active')`,
-            [customer.id, loginId, pHash, pin]
-          );
-        }
-        await db2.run(
-          `UPDATE customer_portal_otps SET is_used = 1 WHERE login_id = ? AND is_used = 0`,
-          [loginId]
-        );
-        const otp = generateRandomOtp();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1e3).toISOString();
-        await db2.run(
-          `INSERT INTO customer_portal_otps (login_id, otp_code, expires_at, is_used)
-       VALUES (?, ?, ?, 0)`,
-          [loginId, otp, expiresAt]
-        );
-        try {
-          const storeName = await getStoreMedicalName(db2, 1) || "Your Pharmacy";
-          const msgText = `*${storeName} Portal Login*
-
-Your One-Time Password (OTP) is: *${otp}*
-
-Valid for 10 minutes. Do not share this OTP with anyone.`;
-          await whatsappQueueWorker.enqueue(
-            `91${phone}`,
-            msgText,
-            "portal_otp",
-            customer?.name || "Customer"
-          );
-          logger.info(`OTP queued for 91${phone}`, { module: "CustomerAuthService", operation: "requestOtp" });
-        } catch (msgErr) {
-          logger.warn("Failed to queue WhatsApp OTP, continuing", { module: "CustomerAuthService", error: msgErr });
-        }
-        return {
-          success: true,
-          message: "OTP sent to your WhatsApp number",
-          debugOtp: process.env.NODE_ENV !== "production" ? otp : void 0
-        };
-      }
-      /**
-       * Verify OTP and log customer in
-       */
-      async verifyOtp(phoneRaw, otpCode, reqMetadata) {
-        const phone = normalizePhone2(phoneRaw);
-        const otp = (otpCode || "").trim();
-        if (!phone || !otp) {
-          throw new Error("Phone and OTP code are required");
-        }
-        const db2 = await dbManager.getConnection();
-        const loginId = phone;
-        const now = (/* @__PURE__ */ new Date()).toISOString();
-        const otpRecord = await db2.get(
-          `SELECT * FROM customer_portal_otps 
-       WHERE login_id = ? AND otp_code = ? AND is_used = 0 AND expires_at > ?
-       ORDER BY created_at DESC LIMIT 1`,
-          [loginId, otp, now]
-        );
-        if (!otpRecord) {
-          throw new Error("Invalid or expired OTP");
-        }
-        await db2.run(`UPDATE customer_portal_otps SET is_used = 1 WHERE id = ?`, [otpRecord.id]);
-        const account = await db2.get(
-          `SELECT pa.*, c.name, c.phone, c.address, s.name as store_name
-       FROM customer_portal_accounts pa
-       JOIN customers c ON c.id = pa.customer_id
-       LEFT JOIN stores s ON s.id = pa.preferred_store_id
-       WHERE pa.login_id = ? OR c.phone LIKE ?`,
-          [loginId, `%${phone}%`]
-        );
-        if (!account) {
-          throw new Error("Customer account not found");
-        }
-        if (account.status === "blocked") {
-          throw new Error("Your account is inactive or blocked. Please contact pharmacy staff.");
-        }
-        await db2.run(
-          `UPDATE customer_portal_accounts 
-       SET last_login_at = CURRENT_TIMESTAMP,
-           total_login_count = COALESCE(total_login_count, 0) + 1 
-       WHERE id = ?`,
-          [account.id]
-        );
-        const token = await this.createSession(account.customer_id, phone, "portal", reqMetadata);
-        return {
-          token,
-          customer: {
-            id: account.customer_id,
-            name: formatCustomerName(account.name || "Customer"),
-            phone: account.phone || phone,
-            address: account.address || "",
-            loginId: account.login_id,
-            preferredStoreId: account.preferred_store_id || 1,
-            storeName: account.store_name || "Main Pharmacy"
-          },
-          features: {
-            bills: true,
-            refills: true,
-            orders: true,
-            catalog: true,
-            prescriptions: true
-          }
-        };
-      }
-      /**
-       * Login with Login ID + PIN
-       */
-      async loginWithPin(loginIdRaw, pinRaw, reqMetadata) {
-        const loginId = (loginIdRaw || "").trim();
-        const pin = (pinRaw || "").trim();
-        if (!loginId || !pin) {
-          throw new Error("Login ID and PIN are required");
-        }
-        const db2 = await dbManager.getConnection();
-        const cleanPhone = normalizePhone2(loginId);
-        const account = await db2.get(
-          `SELECT pa.*, c.name, c.phone, c.address, s.name as store_name
-       FROM customer_portal_accounts pa
-       JOIN customers c ON c.id = pa.customer_id
-       LEFT JOIN stores s ON s.id = pa.preferred_store_id
-       WHERE pa.login_id = ? OR c.phone = ? OR c.phone LIKE ?`,
-          [loginId, cleanPhone, `%${cleanPhone}%`]
-        );
-        if (!account) {
-          throw new Error("Invalid Login ID or PIN");
-        }
-        if (account.status === "blocked") {
-          throw new Error("Your account is inactive or blocked. Please contact pharmacy staff.");
-        }
-        const hashedInput = hashPin(pin);
-        if (hashedInput !== account.pin_hash && pin !== account.pin_display) {
-          throw new Error("Invalid Login ID or PIN");
-        }
-        await db2.run(
-          `UPDATE customer_portal_accounts 
-       SET last_login_at = CURRENT_TIMESTAMP,
-           total_login_count = COALESCE(total_login_count, 0) + 1 
-       WHERE id = ?`,
-          [account.id]
-        );
-        const phone = account.phone || cleanPhone;
-        const token = await this.createSession(account.customer_id, phone, "portal", reqMetadata);
-        return {
-          token,
-          customer: {
-            id: account.customer_id,
-            name: formatCustomerName(account.name || "Customer"),
-            phone,
-            address: account.address || "",
-            loginId: account.login_id,
-            preferredStoreId: account.preferred_store_id || 1,
-            storeName: account.store_name || "Main Pharmacy"
-          },
-          features: {
-            bills: true,
-            refills: true,
-            orders: true,
-            catalog: true,
-            prescriptions: true
-          }
-        };
-      }
-      /**
-       * Heartbeat to track active presence and calculate session duration
-       */
-      async recordHeartbeat(sessionToken) {
-        try {
-          const db2 = await dbManager.getConnection();
-          const session = await db2.get(
-            `SELECT id, customer_id, logged_in_at FROM customer_sessions 
-         WHERE session_token = ? AND is_active = 1 LIMIT 1`,
-            [sessionToken]
-          );
-          if (!session) return { success: false, durationSeconds: 0 };
-          const loggedInTime = new Date(session.logged_in_at).getTime();
-          const now = Date.now();
-          const durationSeconds = Math.max(0, Math.floor((now - loggedInTime) / 1e3));
-          await db2.run(
-            `UPDATE customer_sessions 
-         SET last_active_at = CURRENT_TIMESTAMP,
-             duration_seconds = ?
-         WHERE id = ?`,
-            [durationSeconds, session.id]
-          );
-          await db2.run(
-            `UPDATE customer_portal_accounts 
-         SET total_time_spent_seconds = COALESCE(total_time_spent_seconds, 0) + 30
-         WHERE customer_id = ?`,
-            [session.customer_id]
-          );
-          return { success: true, durationSeconds };
-        } catch (err) {
-          logger.warn("Heartbeat update failed", { module: "CustomerAuthService", error: err });
-          return { success: false, durationSeconds: 0 };
-        }
-      }
-      /**
-       * Terminate session on explicit customer logout and finalize duration
-       */
-      async logoutSession(sessionToken) {
-        try {
-          const db2 = await dbManager.getConnection();
-          const session = await db2.get(
-            `SELECT id, customer_id, logged_in_at FROM customer_sessions 
-         WHERE session_token = ? AND is_active = 1 LIMIT 1`,
-            [sessionToken]
-          );
-          if (!session) return { success: false, durationSeconds: 0 };
-          const loggedInTime = new Date(session.logged_in_at).getTime();
-          const now = Date.now();
-          const durationSeconds = Math.max(0, Math.floor((now - loggedInTime) / 1e3));
-          await db2.run(
-            `UPDATE customer_sessions 
-         SET is_active = 0,
-             logged_out_at = CURRENT_TIMESTAMP,
-             duration_seconds = ?,
-             last_active_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-            [durationSeconds, session.id]
-          );
-          await db2.run(
-            `UPDATE customer_portal_accounts 
-         SET last_logout_at = CURRENT_TIMESTAMP
-         WHERE customer_id = ?`,
-            [session.customer_id]
-          );
-          logger.info(`Session logged out (duration: ${durationSeconds}s)`, {
-            module: "CustomerAuthService",
-            operation: "logoutSession",
-            customerId: session.customer_id
-          });
-          return { success: true, durationSeconds };
-        } catch (err) {
-          logger.error("Logout session failed", err, { module: "CustomerAuthService" });
-          return { success: false, durationSeconds: 0 };
-        }
-      }
-      /**
-       * Get customer session history for CRM auditing
-       */
-      async getCustomerSessions(customerId) {
-        const db2 = await dbManager.getConnection();
-        const account = await db2.get(
-          `SELECT total_login_count, total_time_spent_seconds, last_login_at, last_logout_at
-       FROM customer_portal_accounts WHERE customer_id = ?`,
-          [customerId]
-        );
-        const sessions = await db2.all(
-          `SELECT id, channel, device_info, ip_address, logged_in_at, last_active_at, logged_out_at, duration_seconds, is_active
-       FROM customer_sessions
-       WHERE customer_id = ?
-       ORDER BY id DESC LIMIT 50`,
-          [customerId]
-        );
-        return {
-          stats: {
-            totalLogins: account?.total_login_count || sessions.length,
-            totalTimeSpentSeconds: account?.total_time_spent_seconds || 0,
-            lastLoginAt: account?.last_login_at || null,
-            lastLogoutAt: account?.last_logout_at || null,
-            activeSessionsCount: sessions.filter((s) => s.is_active === 1).length
-          },
-          sessions
-        };
-      }
-    };
-    customerAuthService = new CustomerAuthService();
-  }
-});
-
-// src/services/cloudCatalogSyncService.ts
-var cloudCatalogSyncService_exports = {};
-__export(cloudCatalogSyncService_exports, {
-  getAdminSecret: () => getAdminSecret2,
-  pullCloudOrdersToLocal: () => pullCloudOrdersToLocal,
-  pushLocalCatalogToCloud: () => pushLocalCatalogToCloud,
-  scheduleCloudAutoPush: () => scheduleCloudAutoPush,
-  startCloudOrderSyncPoller: () => startCloudOrderSyncPoller
-});
-async function getAdminSecret2() {
-  if (process.env.ADMIN_SECRET && process.env.ADMIN_SECRET.trim() !== "") {
-    return process.env.ADMIN_SECRET.trim();
-  }
-  try {
-    const db2 = await dbManager.getConnection();
-    const row = await db2.get(
-      "SELECT value FROM app_settings WHERE key = 'cloud_admin_secret' OR key = 'admin_secret'"
-    );
-    if (row?.value && row.value.trim() !== "") {
-      return row.value.trim();
-    }
-  } catch (_) {
-  }
-  return "";
-}
-async function pushLocalCatalogToCloud() {
-  const db2 = await dbManager.getConnection();
-  const rows = await db2.all(`
-    SELECT m.id, m.name, m.generic_name as composition, m.manufacturer, m.category,
-           m.mrp, m.sell_price, m.packaging as pack,
-           COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
-    FROM medicines m
-    LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
-    WHERE (pcv.is_portal_visible = 1 OR pcv.is_website_visible = 1 OR (SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id) > 0)
-    ORDER BY m.name ASC
-    LIMIT 1000
-  `);
-  if (!rows || rows.length === 0) {
-    return { success: false, message: "No medicines found to publish to cloud." };
-  }
-  const storeRows = await db2.all(`SELECT key, value FROM app_settings WHERE key LIKE 'pharmacy_%'`);
-  const storeMap = {};
-  storeRows.forEach((r) => {
-    storeMap[r.key] = r.value;
-  });
-  const storeName = await getStoreMedicalName(db2);
-  const storePhone = await getStorePhone(db2);
-  const storeAddress = await getStoreAddress(db2);
-  const storeMapUrl = await getStoreGoogleMapsUrl(db2);
-  const storeInfo = {
-    name: storeName,
-    tagline: storeMap["pharmacy_tagline"] || "",
-    phone: storePhone,
-    whatsapp: storePhone.replace(/\D/g, ""),
-    address: storeAddress,
-    googleMapsUrl: storeMapUrl,
-    hours: storeMap["pharmacy_hours"] || "",
-    deliveryAvailable: true
-  };
-  const medicines = rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    composition: r.composition || "",
-    category: r.category || "General",
-    manufacturer: r.manufacturer || "Pharmacy Stock",
-    pack: r.pack || "Standard Pack",
-    mrp: Number(r.mrp || 0),
-    sell_price: Number(r.sell_price || r.mrp || 0),
-    in_stock: Number(r.stock_qty || 0) > 0,
-    stock_qty: Number(r.stock_qty || 0)
-  }));
-  const customerBills = {};
-  try {
-    const recentSales = await db2.all(`
-      SELECT si.id, si.invoice_no, si.total_amount, si.date, c.phone as customer_phone
-      FROM sales_invoices si
-      JOIN customers c ON c.id = si.customer_id
-      WHERE c.phone IS NOT NULL AND (si.payment_status IS NULL OR si.payment_status != 'cancelled')
-      ORDER BY si.date DESC LIMIT 150
-    `);
-    for (const s of recentSales) {
-      const cleanPhone = String(s.customer_phone).replace(/\D/g, "");
-      if (cleanPhone.length >= 10) {
-        if (!customerBills[cleanPhone]) customerBills[cleanPhone] = [];
-        if (customerBills[cleanPhone].length < 5) {
-          const items = await db2.all(`
-            SELECT sit.quantity as qty, sit.unit_price as price, COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as name
-            FROM sale_items sit
-            LEFT JOIN inventory_master im ON im.id = sit.inventory_id
-            LEFT JOIN medicines m ON m.id = im.medicine_id
-            WHERE sit.invoice_id = ?
-          `, [s.id]).catch(() => []);
-          customerBills[cleanPhone].push({
-            invoiceNo: s.invoice_no,
-            date: s.date,
-            storeName: storeInfo.name,
-            totalAmount: s.total_amount,
-            items
-          });
-        }
-      }
-    }
-  } catch (_) {
-  }
-  const customerRefills = {};
-  try {
-    const refills = await db2.all(`
-      SELECT pr.id, pr.refill_interval_days, pr.quantity_needed, pr.next_refill_date,
-             m.name as medicineName, m.packaging as pack, m.sell_price as price,
-             c.phone as customer_phone
-      FROM patient_refills pr
-      JOIN medicines m ON m.id = pr.medicine_id
-      JOIN customers c ON c.id = pr.customer_id
-      WHERE pr.is_active = 1 AND c.phone IS NOT NULL
-    `);
-    for (const r of refills) {
-      const cleanPhone = String(r.customer_phone).replace(/\D/g, "");
-      if (cleanPhone.length >= 10) {
-        if (!customerRefills[cleanPhone]) customerRefills[cleanPhone] = [];
-        customerRefills[cleanPhone].push({
-          id: `RFL-${r.id}`,
-          medicineName: r.medicineName,
-          pack: r.pack || "Standard",
-          dosage: "Prescribed Daily Dosage",
-          daysInterval: r.refill_interval_days || 30,
-          nextDueDate: r.next_refill_date || "Monthly",
-          price: r.price
-        });
-      }
-    }
-  } catch (_) {
-  }
-  let ownerAuth = [];
-  try {
-    const ownerUsers = await db2.all(
-      "SELECT id, username, password_hash, salt FROM pharmacy_users WHERE role = 'owner' AND is_active = 1"
-    );
-    ownerAuth = (ownerUsers || []).map((u) => ({
-      id: u.id,
-      username: u.username,
-      password_hash: u.password_hash,
-      salt: u.salt
-    }));
-  } catch (_) {
-  }
-  const secret = await getAdminSecret2();
-  if (!secret) {
-    return {
-      success: false,
-      message: "Cloud sync not configured: ADMIN_SECRET is missing. Please configure ADMIN_SECRET in Settings or environment variables."
-    };
-  }
-  try {
-    const res = await fetch(`${CLOUD_SERVER_URL2}/api/catalog/sync`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-admin-secret": secret
-      },
-      body: JSON.stringify({ storeInfo, medicines, customerBills, customerRefills, ownerAuth })
-    });
-    const data = await res.json();
-    if (res.ok && data.success) {
-      return {
-        success: true,
-        message: `Successfully synchronized ${medicines.length} medicines to 24/7 Cloud Shop!`,
-        count: medicines.length
-      };
-    }
-    return { success: false, message: data.error || "Failed to sync to cloud" };
-  } catch (err) {
-    console.error("[CloudCatalogSync] push error:", err);
-    return { success: false, message: err.message };
-  }
-}
-async function pullCloudOrdersToLocal() {
-  const secret = await getAdminSecret2();
-  if (!secret) {
-    return { success: false, message: "Cloud sync not configured: ADMIN_SECRET is missing." };
-  }
-  const db2 = await dbManager.getConnection();
-  try {
-    const res = await fetch(`${CLOUD_SERVER_URL2}/api/catalog/orders`, {
-      headers: { "x-admin-secret": secret }
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      return { success: false, message: data.error || "Failed to fetch cloud orders" };
-    }
-    const orders = data.orders || [];
-    if (orders.length === 0) {
-      return { success: true, message: "Zero pending orders in cloud queue.", ordersImported: 0 };
-    }
-    const { normalizeLanguage: normalizeLanguage2 } = await Promise.resolve().then(() => (init_whatsappLocalizer(), whatsappLocalizer_exports));
-    const importedIds = [];
-    let newImportCount = 0;
-    for (const o of orders) {
-      const cleanPhone = String(o.phone || "").replace(/\D/g, "").slice(-10);
-      const rawLang = o.preferredLanguage || o.language;
-      if (rawLang && cleanPhone.length === 10) {
-        const normLang = normalizeLanguage2(rawLang);
-        await db2.run(
-          `UPDATE customers SET preferred_language = ? WHERE phone LIKE ?`,
-          [normLang, `%${cleanPhone}%`]
-        ).catch(() => {
-        });
-        await db2.run(
-          `UPDATE whatsapp_chats SET language = ? WHERE resolved_number LIKE ?`,
-          [normLang, `%${cleanPhone}%`]
-        ).catch(() => {
-        });
-      }
-      const exists = await db2.get(`SELECT id FROM special_orders WHERE sync_id = ?`, [o.orderId]);
-      if (!exists) {
-        newImportCount++;
-        const itemsSummary = (o.items || []).map((it) => `${it.name} (x${it.qty || 1})`).join(", ");
-        const addressNotes = o.address ? `Delivery Address: ${o.address}` : "Counter Store Pickup";
-        const fullNotes = o.notes ? `${addressNotes} | Notes: ${o.notes}` : addressNotes;
-        const isRefill = Boolean(o.isRefill || o.orderType === "REFILL" || o.action === "refill_request");
-        const isSpecialOrder = Boolean(o.isSpecialOrder || o.orderType === "SPECIAL_ORDER");
-        let matchedCustomerId = null;
-        let customerName = o.customerName || "Online Customer";
-        if (cleanPhone.length === 10) {
-          const cust = await db2.get(`SELECT id, name FROM customers WHERE phone LIKE ?`, [`%${cleanPhone}%`]);
-          if (cust) {
-            matchedCustomerId = cust.id;
-            if (!o.customerName) customerName = cust.name;
-          }
-        }
-        const paymentMethod = o.paymentMethod || (o.payment_declared ? "UPI" : o.isCredit ? "CREDIT" : "COUNTER_PICKUP");
-        const paymentStatus = o.payment_declared ? "PENDING_VERIFICATION" : paymentMethod === "CREDIT" ? "UNPAID" : o.payment_status || "PENDING";
-        const paymentNotes = o.payment_declared ? ` [Payment Declared: ${o.payment_declared.method || "UPI"}]` : paymentMethod === "CREDIT" ? " [Payment Method: CREDIT / PAY LATER]" : "";
-        const orderNotesWithPayment = `${fullNotes}${paymentNotes}`;
-        if (isRefill) {
-          if (matchedCustomerId) {
-            for (const it of o.items || []) {
-              const refill = await db2.get(
-                `SELECT pr.id FROM patient_refills pr 
-                 JOIN medicines m ON m.id = pr.medicine_id
-                 WHERE pr.customer_id = ? AND (LOWER(m.name) = LOWER(?) OR LOWER(m.name) LIKE LOWER(?)) LIMIT 1`,
-                [matchedCustomerId, it.name, `%${it.name}%`]
-              );
-              if (refill) {
-                await db2.run(
-                  `UPDATE patient_refills 
-                   SET next_refill_date = date('now'), source = 'website', cart_status = 'pending', updated_at = CURRENT_TIMESTAMP
-                   WHERE id = ?`,
-                  [refill.id]
-                ).catch(() => {
-                });
-              } else {
-                const med = await db2.get(
-                  `SELECT id FROM medicines WHERE LOWER(name) = LOWER(?) OR LOWER(name) LIKE LOWER(?) LIMIT 1`,
-                  [it.name, `%${it.name}%`]
-                );
-                if (med) {
-                  await db2.run(
-                    `INSERT INTO patient_refills (
-                      customer_id, patient_name, patient_phone, medicine_id, refill_interval_days, quantity_needed, next_refill_date, is_active, source, cart_status
-                    ) VALUES (?, ?, ?, ?, ?, ?, date('now'), 1, 'website', 'pending')`,
-                    [matchedCustomerId, customerName, cleanPhone, med.id, 30, it.qty || 1]
-                  ).catch(() => {
-                  });
-                }
-              }
-            }
-          }
-          await db2.run(
-            `INSERT INTO special_orders (
-              store_id, requester, phone, notes, product, medicine_name, qty,
-              status, priority, customer_order_source, order_type, total_amount, sync_id,
-              payment_method, payment_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              1,
-              customerName,
-              o.phone || "",
-              `[Website Refill Request #${o.orderId}] ${orderNotesWithPayment}`,
-              itemsSummary,
-              itemsSummary,
-              o.items?.reduce((sum, it) => sum + (it.qty || 1), 0) || 1,
-              "Pending",
-              "High",
-              "website_refill",
-              "REFILL",
-              o.totalAmount || 0,
-              o.orderId,
-              paymentMethod,
-              paymentStatus
-            ]
-          );
-        } else if (isSpecialOrder) {
-          await db2.run(
-            `INSERT INTO special_orders (
-              store_id, requester, phone, notes, product, medicine_name, qty,
-              status, priority, customer_order_source, order_type, total_amount, sync_id,
-              payment_method, payment_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              1,
-              customerName,
-              o.phone || "",
-              `[Special Shortage Request #${o.orderId}] ${orderNotesWithPayment}`,
-              itemsSummary,
-              itemsSummary,
-              o.items?.reduce((sum, it) => sum + (it.qty || 1), 0) || 1,
-              "Pending",
-              "High",
-              "website_special_order",
-              "SPECIAL_ORDER",
-              o.totalAmount || 0,
-              o.orderId,
-              paymentMethod,
-              paymentStatus
-            ]
-          );
-        } else {
-          await db2.run(
-            `INSERT INTO special_orders (
-              store_id, requester, phone, notes, product, medicine_name, qty,
-              status, priority, customer_order_source, order_type, total_amount, sync_id,
-              payment_method, payment_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              1,
-              customerName,
-              o.phone || "",
-              orderNotesWithPayment,
-              itemsSummary,
-              itemsSummary,
-              o.items?.reduce((sum, it) => sum + (it.qty || 1), 0) || 1,
-              "Pending",
-              "High",
-              "website_247",
-              o.orderType || "DELIVERY",
-              o.totalAmount || 0,
-              o.orderId,
-              paymentMethod,
-              paymentStatus
-            ]
-          );
-        }
-      }
-      importedIds.push(o.orderId);
-    }
-    if (importedIds.length > 0) {
-      await fetch(`${CLOUD_SERVER_URL2}/api/catalog/orders`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-admin-secret": secret
-        },
-        body: JSON.stringify({ orderIds: importedIds })
-      }).catch((err) => console.warn("[CloudCatalogSync] order ack failed:", err?.message || err));
-    }
-    if (newImportCount > 0) {
-      try {
-        const { eventService: eventService2 } = await Promise.resolve().then(() => (init_eventService(), eventService_exports));
-        eventService2.broadcast("order_created", { count: newImportCount, source: "cloud_sync" });
-        eventService2.broadcast("refill_updated", { source: "cloud_sync" });
-        eventService2.broadcast("toast_alert", {
-          type: "success",
-          message: `\u{1F4E5} ${newImportCount} new order(s)/refill(s) received from 24/7 Web Portal!`,
-          link: "/crm?tab=special_orders"
-        });
-      } catch (_) {
-      }
-      try {
-        const { startupSyncCoordinator: startupSyncCoordinator2 } = await Promise.resolve().then(() => (init_startupSyncCoordinator(), startupSyncCoordinator_exports));
-        void startupSyncCoordinator2.runRefillAutoCartCatchUp("cloud_pull");
-      } catch (err) {
-        console.warn("[CloudCatalogSync] runRefillAutoCartCatchUp error:", err);
-      }
-    }
-    try {
-      const { cartQueueSyncService: cartQueueSyncService2 } = await Promise.resolve().then(() => (init_cartQueueSyncService(), cartQueueSyncService_exports));
-      await cartQueueSyncService2.drainCartAddQueue();
-    } catch (qErr) {
-      console.warn("[CloudCatalogSync] cart queue drain error:", qErr.message);
-    }
-    return {
-      success: true,
-      message: `Successfully imported ${newImportCount} new online order(s) into counter queue!`,
-      ordersImported: newImportCount
-    };
-  } catch (err) {
-    console.error("[CloudCatalogSync] pull error:", err);
-    return { success: false, message: err.message };
-  }
-}
-function scheduleCloudAutoPush(trigger = "event") {
-  const now = Date.now();
-  if (autoPushPending) return;
-  const delay = Math.max(0, AUTO_PUSH_DEBOUNCE_MS - (now - lastAutoPushAt));
-  autoPushPending = true;
-  if (autoPushTimer) clearTimeout(autoPushTimer);
-  autoPushTimer = setTimeout(async () => {
-    autoPushPending = false;
-    lastAutoPushAt = Date.now();
-    try {
-      const db2 = await dbManager.getConnection();
-      const autoSetting = await db2.get("SELECT value FROM app_settings WHERE key = 'cloud_sync_auto'");
-      if (autoSetting && (autoSetting.value === "0" || autoSetting.value === "false")) {
-        return;
-      }
-      const secret = await getAdminSecret2();
-      if (!secret) return;
-      const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
-      if (activityTracker2.isIdle()) {
-        lastAutoPushAt = Date.now() - (AUTO_PUSH_DEBOUNCE_MS - 6e4);
-        return;
-      }
-      await pushLocalCatalogToCloud();
-    } catch (err) {
-      console.warn(`[CloudCatalogSync] Auto-push error (${trigger}):`, err?.message || err);
-    }
-  }, delay);
-}
-function startCloudOrderSyncPoller() {
-  if (pollerActive) return;
-  pollerActive = true;
-  setTimeout(async () => {
-    try {
-      await pullCloudOrdersToLocal();
-    } catch (_) {
-    }
-  }, 8e3);
-  Promise.resolve().then(() => (init_eventService(), eventService_exports)).then(({ eventService: eventService2 }) => {
-    eventService2.on("server_event", (event) => {
-      if (["refill_updated", "order_created", "sale_saved"].includes(event?.type)) {
-        scheduleCloudAutoPush(event.type);
-      }
-    });
-  }).catch(() => {
-  });
-  setInterval(async () => {
-    if (isPulling) return;
-    try {
-      const { activityTracker: activityTracker2 } = await Promise.resolve().then(() => (init_activityTracker(), activityTracker_exports));
-      if (activityTracker2.isIdle()) return;
-      isPulling = true;
-      await pullCloudOrdersToLocal();
-    } catch (_) {
-    } finally {
-      isPulling = false;
-    }
-  }, 6e4);
-}
-var CLOUD_SERVER_URL2, pollerActive, isPulling, lastAutoPushAt, autoPushPending, autoPushTimer, AUTO_PUSH_DEBOUNCE_MS;
-var init_cloudCatalogSyncService = __esm({
-  "src/services/cloudCatalogSyncService.ts"() {
-    "use strict";
-    init_connection();
-    init_storeSettingsService();
-    CLOUD_SERVER_URL2 = process.env.CLOUD_CATALOG_URL || "https://ai-pharmacy-os.vercel.app";
-    pollerActive = false;
-    isPulling = false;
-    lastAutoPushAt = 0;
-    autoPushPending = false;
-    autoPushTimer = null;
-    AUTO_PUSH_DEBOUNCE_MS = 5 * 60 * 1e3;
-  }
-});
-
-// src/routes/customerPortal.ts
-var customerPortal_exports = {};
-__export(customerPortal_exports, {
-  createCustomerToken: () => createCustomerToken,
-  default: () => customerPortal_default,
-  ensureCustomerPortalAccount: () => ensureCustomerPortalAccount,
-  generateRandomOtp: () => generateRandomOtp2,
-  generateRandomPin: () => generateRandomPin2,
-  getLivePortalUrl: () => getLivePortalUrl,
-  hashPin: () => hashPin2,
-  normalizePhone: () => normalizePhone,
-  syncAllCustomersToPortal: () => syncAllCustomersToPortal,
-  verifyCustomerToken: () => verifyCustomerToken
-});
-async function getLivePortalUrl(db2, phone) {
-  let base = null;
-  try {
-    const tunnelStatus = await cloudflareTunnelService.getStatus();
-    base = tunnelStatus.url;
-  } catch (_) {
-  }
-  if (!base) {
-    const row = await db2.get("SELECT value FROM app_settings WHERE key = 'cloudflare_tunnel_last_url'");
-    base = row?.value || "";
-  }
-  const cleanBase = base ? base.replace(/\/+$/, "") : "";
-  const query = phone ? `?phone=${phone}` : "";
-  return cleanBase ? `${cleanBase}/portal${query}` : `/portal${query}`;
-}
-function normalizePhone(raw) {
-  const digits = String(raw || "").replace(/\D/g, "");
-  if (digits.length === 12 && digits.startsWith("91")) {
-    return digits.slice(2);
-  }
-  if (digits.length === 11 && digits.startsWith("0")) {
-    return digits.slice(1);
-  }
-  if (digits.length > 10) {
-    return digits.slice(-10);
-  }
-  return digits;
-}
-function hashPin2(pin) {
-  const salt = "pharmacy_portal_salt_2026";
-  return import_crypto7.default.pbkdf2Sync(pin, salt, 1e3, 32, "sha256").toString("hex");
-}
-function generateRandomPin2() {
-  return Math.floor(1e3 + Math.random() * 9e3).toString();
-}
-function generateRandomOtp2() {
-  return Math.floor(1e5 + Math.random() * 9e5).toString();
-}
-async function ensureCustomerPortalAccount(db2, customerId, phone, name, preferredStoreId = 1) {
-  const cleanPhone = normalizePhone(phone);
-  if (!cleanPhone || cleanPhone.length !== 10) return null;
-  try {
-    let targetCustomerId = customerId ? parseInt(String(customerId), 10) : null;
-    const cleanName = formatCustomerName(name || "Customer");
-    if (!targetCustomerId) {
-      const existingCust = await db2.get("SELECT id FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-      if (existingCust) {
-        targetCustomerId = existingCust.id;
-      } else {
-        const custRes = await db2.run(
-          "INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-          [cleanName, cleanPhone]
-        );
-        targetCustomerId = custRes.lastID ? Number(custRes.lastID) : null;
-      }
-    }
-    const existingAccount = await db2.get(
-      "SELECT id, pin_display FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ? LIMIT 1",
-      [targetCustomerId, cleanPhone]
-    );
-    if (existingAccount) {
-      if (targetCustomerId) {
-        await db2.run(
-          "UPDATE customer_portal_accounts SET customer_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-          [targetCustomerId, existingAccount.id]
-        );
-      }
-      return { accountId: existingAccount.id, pin: existingAccount.pin_display || "1234", isNew: false };
-    }
-    const pin = generateRandomPin2();
-    const pinHashed = hashPin2(pin);
-    const storeId = parseInt(String(preferredStoreId), 10) || 1;
-    const accRes = await db2.run(
-      `INSERT INTO customer_portal_accounts 
-       (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [targetCustomerId, cleanPhone, pinHashed, pin, storeId]
-    );
-    return { accountId: Number(accRes.lastID), pin, isNew: true };
-  } catch (err) {
-    console.warn("[CustomerPortal] ensureCustomerPortalAccount error:", err);
-    return null;
-  }
-}
-function createCustomerToken(customerId, phone) {
-  const payload = `${customerId}:${phone}:${Date.now()}`;
-  const signature = import_crypto7.default.createHmac("sha256", SESSION_SECRET2).update(payload).digest("hex");
-  return Buffer.from(`${payload}:${signature}`).toString("base64");
-}
-function verifyCustomerToken(tokenStr) {
-  try {
-    if (!tokenStr) return null;
-    const decoded = Buffer.from(tokenStr, "base64").toString("utf8");
-    const parts = decoded.split(":");
-    if (parts.length !== 4) return null;
-    const [customerIdStr, phone, timestampStr, signature] = parts;
-    const customerId = parseInt(customerIdStr, 10);
-    const timestamp = parseInt(timestampStr, 10);
-    if (!customerId || isNaN(customerId) || isNaN(timestamp)) return null;
-    const expectedPayload = `${customerIdStr}:${phone}:${timestampStr}`;
-    const expectedSignature = import_crypto7.default.createHmac("sha256", SESSION_SECRET2).update(expectedPayload).digest("hex");
-    if (import_crypto7.default.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-      return { customerId, phone };
-    }
-  } catch (_) {
-  }
-  return null;
-}
-async function syncAllCustomersToPortal(db2) {
-  const customers = await db2.all(
-    `SELECT id, name, phone FROM customers WHERE phone IS NOT NULL AND TRIM(phone) != ''`
-  );
-  const existingAccounts = await db2.all(`SELECT customer_id, login_id FROM customer_portal_accounts`);
-  const existingCustIds = new Set(existingAccounts.map((a) => a.customer_id).filter(Boolean));
-  const existingLogins = new Set(existingAccounts.map((a) => a.login_id).filter(Boolean));
-  let syncedCount = 0;
-  for (const cust of customers) {
-    const cleanPhone = normalizePhone(cust.phone);
-    if (!cleanPhone || cleanPhone.length !== 10) continue;
-    if (existingCustIds.has(cust.id) || existingLogins.has(cleanPhone)) continue;
-    const pin = generateRandomPin2();
-    const pHash = hashPin2(pin);
-    await db2.run(
-      `INSERT INTO customer_portal_accounts 
-       (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status, total_login_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 1, 'active', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [cust.id, cleanPhone, pHash, pin]
-    );
-    existingCustIds.add(cust.id);
-    existingLogins.add(cleanPhone);
-    syncedCount++;
-  }
-  const totalRow = await db2.get('SELECT COUNT(*) as total FROM customer_portal_accounts WHERE status = "active"');
-  return {
-    syncedCount,
-    totalAccounts: totalRow?.total || 0
-  };
-}
-function loadCatalogAndImages() {
-  const now = Date.now();
-  if (catalogCache && imageStateCache && now - lastCacheLoad < 6e4) {
-    return { catalog: catalogCache, images: imageStateCache };
-  }
-  try {
-    const csvPath = import_path36.default.resolve(process.cwd(), "CATALOG/monthly_refill_master_list.csv");
-    if (import_fs37.default.existsSync(csvPath)) {
-      const content = import_fs37.default.readFileSync(csvPath, "utf-8");
-      const lines = content.split(/\r?\n/);
-      const items = [];
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        let inQuotes = false;
-        let cur = "";
-        const parts = [];
-        for (let c = 0; c < line.length; c++) {
-          const ch = line[c];
-          if (ch === '"') inQuotes = !inQuotes;
-          else if (ch === "," && !inQuotes) {
-            parts.push(cur.trim());
-            cur = "";
-          } else {
-            cur += ch;
-          }
-        }
-        parts.push(cur.trim());
-        items.push({
-          category: parts[0]?.replace(/^"|"$/g, ""),
-          name: parts[1]?.replace(/^"|"$/g, ""),
-          pack: parts[2]?.replace(/^"|"$/g, ""),
-          schedule: parts[3]?.replace(/^"|"$/g, ""),
-          composition: parts[4]?.replace(/^"|"$/g, ""),
-          manufacturer: parts[5]?.replace(/^"|"$/g, ""),
-          mrp: parseFloat(parts[6]) || 0,
-          sell_price: parseFloat(parts[7]) || parseFloat(parts[6]) || 0
-        });
-      }
-      try {
-        const clinicalCsvPath = import_path36.default.resolve(process.cwd(), "CATALOG/clinical_categories_list.csv");
-        if (import_fs37.default.existsSync(clinicalCsvPath)) {
-          const clinContent = import_fs37.default.readFileSync(clinicalCsvPath, "utf-8");
-          const clinLines = clinContent.split(/\r?\n/);
-          for (let j = 1; j < clinLines.length; j++) {
-            const clinLine = clinLines[j].trim();
-            if (!clinLine) continue;
-            if (clinLine.startsWith("TB,") || clinLine.startsWith('"TB",')) {
-              const p = clinLine.match(/(".*?"|[^",]+)(?=\s*,|\s*$)/g) || [];
-              const name = (p[1] || "").replace(/^"|"$/g, "").trim();
-              if (name && !items.some((it) => it.name === name)) {
-                items.push({
-                  category: "Tuberculosis (TB) Care",
-                  name,
-                  pack: (p[2] || "").replace(/^"|"$/g, "").trim(),
-                  schedule: (p[3] || "").replace(/^"|"$/g, "").trim(),
-                  composition: (p[4] || "").replace(/^"|"$/g, "").trim(),
-                  manufacturer: (p[5] || "").replace(/^"|"$/g, "").trim(),
-                  mrp: 0,
-                  sell_price: 0
-                });
-              }
-            }
-          }
-        }
-      } catch (_) {
-      }
-      catalogCache = items;
-    }
-  } catch (e) {
-    catalogCache = [];
-  }
-  try {
-    const statePath = import_path36.default.resolve(process.cwd(), "data/image_download_state.json");
-    if (import_fs37.default.existsSync(statePath)) {
-      const stateData = JSON.parse(import_fs37.default.readFileSync(statePath, "utf-8"));
-      imageStateCache = stateData.products || {};
-    }
-  } catch (e) {
-    imageStateCache = {};
-  }
-  lastCacheLoad = now;
-  return { catalog: catalogCache || [], images: imageStateCache || {} };
-}
-var import_express6, import_crypto7, import_fs37, import_path36, router6, SESSION_SECRET2, catalogCache, imageStateCache, lastCacheLoad, customerPortal_default;
-var init_customerPortal = __esm({
-  "src/routes/customerPortal.ts"() {
-    "use strict";
-    import_express6 = __toESM(require("express"), 1);
-    import_crypto7 = __toESM(require("crypto"), 1);
-    import_fs37 = __toESM(require("fs"), 1);
-    import_path36 = __toESM(require("path"), 1);
-    init_connection();
-    init_whatsappQueueWorker();
-    init_eventService();
-    init_nameFormatter();
-    init_storeSettingsService();
-    init_storeContextService();
-    init_catalogImageService();
-    init_paymentQrService();
-    init_orderScheduleService();
-    init_returnWindowService();
-    init_cloudflareTunnelService();
-    init_phoneValidation();
-    init_config();
-    init_pdfInvoiceService();
-    router6 = import_express6.default.Router();
-    SESSION_SECRET2 = process.env.CUSTOMER_PORTAL_SECRET || "pharmacy_portal_session_secret_2026";
-    router6.get("/accounts", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const query = (req.query.search || "").trim();
-        const storeFilter = req.query.store_id ? parseInt(req.query.store_id, 10) : null;
-        let sql = `
-      SELECT 
-        pa.id,
-        pa.customer_id,
-        pa.login_id,
-        pa.pin_display,
-        pa.preferred_store_id,
-        pa.status,
-        pa.last_login_at,
-        COALESCE(pa.total_login_count, 0) as total_login_count,
-        COALESCE(pa.total_time_spent_seconds, 0) as total_time_spent_seconds,
-        pa.last_logout_at,
-        pa.created_at,
-        c.name as customer_name,
-        c.address as customer_address,
-        s.name as preferred_store_name,
-        (SELECT COUNT(*) FROM patient_refills pr WHERE pr.customer_id = pa.customer_id AND pr.is_active = 1) as active_refills_count,
-        (SELECT COUNT(*) FROM sales_invoices sl WHERE sl.customer_id = pa.customer_id) as total_bills_count
-      FROM customer_portal_accounts pa
-      JOIN customers c ON c.id = pa.customer_id
-      LEFT JOIN stores s ON s.id = pa.preferred_store_id
-      WHERE 1=1
-    `;
-        const params = [];
-        if (query) {
-          sql += ` AND (c.name LIKE ? OR pa.login_id LIKE ?)`;
-          params.push(`%${query}%`, `%${query}%`);
-        }
-        if (storeFilter && !isNaN(storeFilter)) {
-          sql += ` AND pa.preferred_store_id = ?`;
-          params.push(storeFilter);
-        }
-        sql += ` ORDER BY pa.created_at DESC LIMIT 100`;
-        const accounts = await db2.all(sql, params);
-        res.json({ success: true, count: accounts.length, accounts });
-      } catch (err) {
-        console.error("[CustomerPortal] List accounts error:", err);
-        res.status(500).json({ error: "Failed to fetch portal accounts" });
-      }
-    });
-    router6.get("/live-url", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const phone = req.query.phone ? String(req.query.phone) : void 0;
-        const portalUrl = await getLivePortalUrl(db2, phone);
-        const loginUrl = portalUrl.replace(/\/portal(\?|$)/, "/customer-login$1");
-        res.json({
-          success: true,
-          portal_url: portalUrl,
-          login_url: loginUrl,
-          phone: phone || null
-        });
-      } catch (err) {
-        res.status(500).json({ error: err.message });
-      }
-    });
-    router6.get("/accounts/:id/sessions", async (req, res) => {
-      try {
-        const accountId = parseInt(String(req.params.id), 10);
-        const db2 = await dbManager.getConnection();
-        const account = await db2.get(`SELECT customer_id FROM customer_portal_accounts WHERE id = ?`, [accountId]);
-        if (!account) {
-          return res.status(404).json({ error: "Portal account not found" });
-        }
-        const { customerAuthService: customerAuthService2 } = await Promise.resolve().then(() => (init_customerAuthService(), customerAuthService_exports));
-        const sessionData = await customerAuthService2.getCustomerSessions(account.customer_id);
-        res.json({ success: true, ...sessionData });
-      } catch (err) {
-        console.error("[CustomerPortal] Fetch sessions error:", err);
-        res.status(500).json({ error: "Failed to fetch customer sessions" });
-      }
-    });
-    router6.post("/accounts/sync-all", async (req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const result = await syncAllCustomersToPortal(db2);
-        res.json({
-          success: true,
-          synced_count: result.syncedCount,
-          total_accounts: result.totalAccounts,
-          message: `Successfully synced ${result.syncedCount} patient(s) with unique web login PINs!`
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Sync all error:", err);
-        res.status(500).json({ error: "Failed to sync customer portal accounts" });
-      }
-    });
-    router6.post("/accounts/generate", async (req, res) => {
-      const {
-        customer_id,
-        phone,
-        name,
-        preferred_store_id = 1,
-        custom_pin,
-        send_whatsapp = true
-      } = req.body;
-      const phoneCheck = validate10DigitPhone(phone, { allowBlank: false, requireMobilePrefix: true });
-      if (!phoneCheck.isValid) {
-        return res.status(400).json({ error: phoneCheck.reason });
-      }
-      const cleanPhone = phoneCheck.cleanPhone;
-      try {
-        const db2 = await dbManager.getConnection();
-        let targetCustomerId = customer_id ? parseInt(String(customer_id), 10) : null;
-        const cleanName = formatCustomerName(name || "Customer");
-        if (!targetCustomerId) {
-          const existingCust = await db2.get("SELECT id, name FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-          if (existingCust) {
-            targetCustomerId = existingCust.id;
-            if (cleanName && cleanName !== "Customer" && existingCust.name !== cleanName) {
-              await db2.run("UPDATE customers SET name = ? WHERE id = ?", [cleanName, targetCustomerId]);
-            }
-          } else {
-            const custRes = await db2.run(
-              "INSERT INTO customers (name, phone, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
-              [cleanName, cleanPhone]
-            );
-            targetCustomerId = custRes.lastID ? Number(custRes.lastID) : null;
-          }
-        } else {
-          const existingCust = await db2.get("SELECT id, name FROM customers WHERE id = ?", [targetCustomerId]);
-          if (existingCust && cleanName && cleanName !== "Customer" && existingCust.name !== cleanName) {
-            await db2.run("UPDATE customers SET name = ? WHERE id = ?", [cleanName, targetCustomerId]);
-          }
-        }
-        const pin = custom_pin && String(custom_pin).length === 4 ? String(custom_pin) : generateRandomPin2();
-        const pinHashed = hashPin2(pin);
-        const storeId = parseInt(String(preferred_store_id), 10) || 1;
-        const existingAccount = await db2.get("SELECT id FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?", [
-          targetCustomerId,
-          cleanPhone
-        ]);
-        let accountId;
-        if (existingAccount) {
-          await db2.run(
-            `UPDATE customer_portal_accounts 
-         SET customer_id = ?, login_id = ?, pin_hash = ?, pin_display = ?, preferred_store_id = ?, status = 'active', updated_at = CURRENT_TIMESTAMP 
-         WHERE id = ?`,
-            [targetCustomerId, cleanPhone, pinHashed, pin, storeId, existingAccount.id]
-          );
-          accountId = existingAccount.id;
-        } else {
-          const accRes = await db2.run(
-            `INSERT INTO customer_portal_accounts 
-         (customer_id, login_id, pin_hash, pin_display, preferred_store_id, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-            [targetCustomerId, cleanPhone, pinHashed, pin, storeId]
-          );
-          accountId = Number(accRes.lastID);
-        }
-        let whatsappQueued = false;
-        if (send_whatsapp) {
-          try {
-            const storeInfo = await storeContextService.getStoreById(storeId);
-            const storeName = storeInfo?.name || await getStoreMedicalNameAndPhone(db2);
-            const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-            const portalUrl = await getLivePortalUrl(db2, cleanPhone);
-            const msg = `*Welcome to ${storeName} Online Portal!*
-
-Hello ${cleanName}, your direct refill account is ready:
-
-\u{1F4F1} *Login ID:* ${cleanPhone}
-\u{1F511} *4-Digit PIN:* ${pin}
-\u{1F4CD} *Collection Branch:* ${storeName}
-
-*Direct Login Link:* ${portalUrl}
-
-Login to view your past store bills, choose medicines, and reorder for quick counter pickup!`;
-            await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_credentials", cleanName);
-            whatsappQueued = true;
-          } catch (waErr) {
-            console.warn("[CustomerPortal] WhatsApp send warning:", waErr);
-          }
-        }
-        res.status(201).json({
-          success: true,
-          account_id: accountId,
-          customer_id: targetCustomerId,
-          login_id: cleanPhone,
-          pin,
-          preferred_store_id: storeId,
-          whatsapp_queued: whatsappQueued
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Generate account error:", err);
-        res.status(500).json({ error: "Failed to generate portal credentials: " + (err.message || "Unknown error") });
-      }
-    });
-    router6.post("/accounts/:id/send-credentials", async (req, res) => {
-      const accountId = parseInt(req.params.id, 10);
-      if (isNaN(accountId)) return res.status(400).json({ error: "Invalid account ID" });
-      try {
-        const db2 = await dbManager.getConnection();
-        const account = await db2.get(
-          `SELECT pa.*, c.name as customer_name, s.name as store_name
-       FROM customer_portal_accounts pa
-       JOIN customers c ON c.id = pa.customer_id
-       LEFT JOIN stores s ON s.id = pa.preferred_store_id
-       WHERE pa.id = ?`,
-          [accountId]
-        );
-        if (!account) return res.status(404).json({ error: "Portal account not found" });
-        let pin = account.pin_display;
-        if (!pin) {
-          pin = generateRandomPin2();
-          const pinHashed = hashPin2(pin);
-          await db2.run(
-            "UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            [pinHashed, pin, accountId]
-          );
-        }
-        const cleanPhone = account.login_id;
-        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-        const storeName = account.store_name || await getStoreMedicalNameAndPhone(db2);
-        const customerName = formatCustomerName(account.customer_name);
-        const portalUrl = await getLivePortalUrl(db2, cleanPhone);
-        const msg = `*Your ${storeName} Login Credentials*
-
-Hello ${customerName},
-Here are your online refill portal details:
-
-\u{1F4F1} *Login ID:* ${cleanPhone}
-\u{1F511} *PIN:* ${pin}
-\u{1F4CD} *Branch:* ${storeName}
-
-*Direct Login Link:* ${portalUrl}
-
-Tap the link to login, select medicines from your previous bills, and place your pickup order.`;
-        const queueId = await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_credentials_resend", customerName);
-        res.json({
-          success: true,
-          message: "Credentials sent to WhatsApp",
-          queue_id: queueId,
-          login_id: cleanPhone,
-          pin
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Resend credentials error:", err);
-        res.status(500).json({ error: "Failed to send credentials" });
-      }
-    });
-    router6.get("/accounts/:id/guide-pdf", async (req, res) => {
-      const accountId = parseInt(req.params.id, 10);
-      if (isNaN(accountId)) return res.status(400).json({ error: "Invalid account ID" });
-      try {
-        const db2 = await dbManager.getConnection();
-        const account = await db2.get(
-          "SELECT login_id FROM customer_portal_accounts WHERE id = ?",
-          [accountId]
-        );
-        if (!account || !account.login_id) {
-          return res.status(404).json({ error: "Portal account not found" });
-        }
-        const tempDir = getAppDataDir();
-        const outPath = import_path36.default.join(tempDir, `portal_guide_${account.login_id}_${Date.now()}.pdf`);
-        await pdfInvoiceService.generateCustomerPortalGuidePdf(account.login_id, outPath);
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", `inline; filename="Portal_Guide_${account.login_id}.pdf"`);
-        const stream = import_fs37.default.createReadStream(outPath);
-        stream.pipe(res);
-        stream.on("end", () => {
-          import_fs37.default.unlink(outPath, () => {
-          });
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Guide PDF error:", err);
-        res.status(500).json({ error: "Failed to generate guide PDF" });
-      }
-    });
-    router6.get("/guide-pdf", async (req, res) => {
-      const phone = req.query.phone || "";
-      const cleanPhone = normalizePhone(phone);
-      if (!cleanPhone || cleanPhone.length !== 10) {
-        return res.status(400).json({ error: "Valid 10-digit phone number required" });
-      }
-      try {
-        const tempDir = getAppDataDir();
-        const outPath = import_path36.default.join(tempDir, `portal_guide_${cleanPhone}_${Date.now()}.pdf`);
-        await pdfInvoiceService.generateCustomerPortalGuidePdf(cleanPhone, outPath);
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", `inline; filename="Portal_Guide_${cleanPhone}.pdf"`);
-        const stream = import_fs37.default.createReadStream(outPath);
-        stream.pipe(res);
-        stream.on("end", () => {
-          import_fs37.default.unlink(outPath, () => {
-          });
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Guide PDF by phone error:", err);
-        res.status(500).json({ error: "Failed to generate guide PDF" });
-      }
-    });
-    router6.put("/accounts/:id", async (req, res) => {
-      const accountId = parseInt(req.params.id, 10);
-      const { status, preferred_store_id, custom_pin, override_pin, send_whatsapp = true } = req.body;
-      try {
-        const db2 = await dbManager.getConnection();
-        const updates = [];
-        const params = [];
-        if (status && ["active", "disabled", "suspended"].includes(status)) {
-          updates.push("status = ?");
-          params.push(status);
-        }
-        if (preferred_store_id) {
-          updates.push("preferred_store_id = ?");
-          params.push(parseInt(String(preferred_store_id), 10) || 1);
-        }
-        let updatedPin = null;
-        const pinToSet = String(custom_pin || override_pin || "").trim();
-        if (pinToSet && pinToSet.length >= 4) {
-          const hashed = hashPin2(pinToSet);
-          updates.push("pin_hash = ?", "pin_display = ?");
-          params.push(hashed, pinToSet);
-          updatedPin = pinToSet;
-        }
-        if (updates.length === 0) return res.status(400).json({ error: "No valid fields to update" });
-        updates.push("updated_at = CURRENT_TIMESTAMP");
-        params.push(accountId);
-        await db2.run(`UPDATE customer_portal_accounts SET ${updates.join(", ")} WHERE id = ?`, params);
-        if (updatedPin && send_whatsapp) {
-          try {
-            const account = await db2.get(
-              `SELECT pa.*, c.name as customer_name, s.name as store_name
-           FROM customer_portal_accounts pa
-           JOIN customers c ON c.id = pa.customer_id
-           LEFT JOIN stores s ON s.id = pa.preferred_store_id
-           WHERE pa.id = ?`,
-              [accountId]
-            );
-            if (account) {
-              const cleanPhone = account.login_id;
-              const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-              const storeName = account.store_name || await getStoreMedicalNameAndPhone(db2);
-              const customerName = formatCustomerName(account.customer_name);
-              const portalUrl = await getLivePortalUrl(db2, cleanPhone);
-              const msg = `*Your ${storeName} PIN Has Been Reset*
-
-Hello ${customerName},
-Your online refill portal PIN has been reset by the pharmacy.
-
-\u{1F4F1} *Login ID:* ${cleanPhone}
-\u{1F511} *New PIN:* ${updatedPin}
-\u{1F4CD} *Branch:* ${storeName}
-
-*Website:* ${portalUrl}`;
-              await whatsappQueueWorker.enqueue(formattedPhone, msg, "portal_pin_override", customerName);
-            }
-          } catch (_) {
-          }
-        }
-        res.json({ success: true, message: "Portal account updated successfully", pin: updatedPin });
-      } catch (err) {
-        console.error("[CustomerPortal] Update account error:", err);
-        res.status(500).json({ error: "Failed to update account" });
-      }
-    });
-    router6.post("/auth/change-pin", async (req, res) => {
-      const { customer_id, phone, current_pin, new_pin } = req.body;
-      const cleanPhone = normalizePhone(phone);
-      const cleanCurrentPin = String(current_pin || "").trim();
-      const cleanNewPin = String(new_pin || "").trim();
-      if (!cleanNewPin || cleanNewPin.length < 4) {
-        return res.status(400).json({ error: "New PIN must be at least 4 digits" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        let account = null;
-        if (customer_id) {
-          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE customer_id = ?", [customer_id]);
-        } else if (cleanPhone) {
-          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE login_id = ?", [cleanPhone]);
-        }
-        if (!account) return res.status(404).json({ error: "Account not found" });
-        if (cleanCurrentPin) {
-          const currentHashed = hashPin2(cleanCurrentPin);
-          if (account.pin_hash !== currentHashed && account.pin_display !== cleanCurrentPin) {
-            return res.status(401).json({ error: "Current PIN is incorrect" });
-          }
-        }
-        const newHashed = hashPin2(cleanNewPin);
-        await db2.run(
-          "UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-          [newHashed, cleanNewPin, account.id]
-        );
-        try {
-          const cust = await db2.get("SELECT name FROM customers WHERE id = ?", [account.customer_id]);
-          const custName = formatCustomerName(cust?.name || "Customer");
-          const formattedPhone = account.login_id.length === 10 ? `91${account.login_id}` : account.login_id;
-          const storeName = await getStoreMedicalNameAndPhone(db2);
-          const msg = `*Security Update \u2014 ${storeName}*
-
-Hello ${custName},
-Your online refill portal PIN has been successfully changed.
-
-\u{1F511} *New PIN:* ${cleanNewPin}
-
-If you did not make this change, please contact your pharmacy immediately.`;
-          await whatsappQueueWorker.enqueue(formattedPhone, msg, "pin_changed_alert", custName);
-        } catch (_) {
-        }
-        res.json({ success: true, message: "PIN updated successfully", pin: cleanNewPin });
-      } catch (err) {
-        console.error("[CustomerPortal] Change PIN error:", err);
-        res.status(500).json({ error: "Failed to update PIN" });
-      }
-    });
-    router6.post("/auth/login", async (req, res) => {
-      const { login_id, loginId, phone, pin } = req.body;
-      const rawId = login_id || loginId || phone;
-      const cleanPhone = normalizePhone(rawId);
-      const cleanPin = String(pin || "").trim();
-      if (!cleanPhone || cleanPhone.length < 10 || !cleanPin) {
-        return res.status(400).json({ error: "Phone number and 4-digit PIN are required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        const hashed = hashPin2(cleanPin);
-        const account = await db2.get(
-          `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
-       FROM customer_portal_accounts pa
-       JOIN customers c ON c.id = pa.customer_id
-       WHERE (pa.login_id = ? OR c.phone = ? OR c.phone LIKE ?) AND pa.status = 'active'`,
-          [cleanPhone, cleanPhone, `%${cleanPhone}%`]
-        );
-        if (!account) {
-          return res.status(401).json({ error: "Invalid phone number or PIN. Please try again or request OTP." });
-        }
-        if (account.pin_hash !== hashed && account.pin_display !== cleanPin) {
-          return res.status(401).json({ error: "Invalid phone number or PIN. Please try again or request OTP." });
-        }
-        await db2.run(
-          `UPDATE customer_portal_accounts 
-       SET last_login_at = CURRENT_TIMESTAMP,
-           total_login_count = COALESCE(total_login_count, 0) + 1 
-       WHERE id = ?`,
-          [account.id]
-        );
-        const token = createCustomerToken(account.cust_id, cleanPhone);
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
-        await db2.run(
-          `INSERT INTO customer_sessions (
-         customer_id, phone, session_token, channel, device_info, ip_address,
-         logged_in_at, last_active_at, duration_seconds, is_active, expires_at
-       ) VALUES (?, ?, ?, 'portal', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
-          [
-            account.cust_id,
-            cleanPhone,
-            token,
-            req.headers["user-agent"] || null,
-            req.ip || null,
-            expiresAt
-          ]
-        ).catch((e) => console.warn("[CustomerPortal] Record session warning:", e));
-        const stores = await storeContextService.listStores(void 0, false);
-        res.json({
-          success: true,
-          token,
-          customer: {
-            id: account.cust_id,
-            user_id: account.cust_id,
-            name: account.customer_name,
-            phone: account.login_id || cleanPhone,
-            address: account.customer_address || "",
-            preferred_store_id: account.preferred_store_id || 1
-          },
-          stores: stores.map((s) => ({
-            id: s.id,
-            name: s.name,
-            address: s.address || "",
-            phone: s.phone || ""
-          }))
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Login error:", err);
-        res.status(500).json({ error: "Login failed" });
-      }
-    });
-    router6.post("/auth/register", async (req, res) => {
-      const { name, phone, address, pin } = req.body;
-      const phoneCheck = validate10DigitPhone(phone, { allowBlank: false, requireMobilePrefix: true });
-      if (!phoneCheck.isValid) {
-        return res.status(400).json({ error: phoneCheck.reason });
-      }
-      const cleanPhone = phoneCheck.cleanPhone;
-      const cleanPin = String(pin || "").trim();
-      const cleanName = formatCustomerName(name || "Customer");
-      const cleanAddress = String(address || "").trim();
-      if (!cleanPin || cleanPin.length < 4) {
-        return res.status(400).json({ error: "Please choose a 4-digit PIN for your account" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        const hashed = hashPin2(cleanPin);
-        let customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-        let customerId;
-        if (!customer) {
-          const insRes = await db2.run(
-            "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-            [cleanName, cleanPhone, cleanAddress]
-          );
-          customerId = insRes.lastID;
-          customer = await db2.get("SELECT * FROM customers WHERE id = ?", [customerId]);
-        } else {
-          customerId = customer.id;
-          if (cleanAddress || cleanName && cleanName !== "Customer") {
-            await db2.run(
-              'UPDATE customers SET name = COALESCE(NULLIF(?, "Customer"), name), address = COALESCE(NULLIF(?, ""), address) WHERE id = ?',
-              [cleanName, cleanAddress, customerId]
-            );
-          }
-        }
-        let account = await db2.get(
-          "SELECT * FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?",
-          [customerId, cleanPhone]
-        );
-        if (account) {
-          await db2.run(
-            'UPDATE customer_portal_accounts SET pin_hash = ?, pin_display = ?, status = "active", last_login_at = CURRENT_TIMESTAMP WHERE id = ?',
-            [hashed, cleanPin, account.id]
-          );
-        } else {
-          const accRes = await db2.run(
-            `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id, last_login_at)
-         VALUES (?, ?, ?, ?, 'active', 1, CURRENT_TIMESTAMP)`,
-            [customerId, cleanPhone, hashed, cleanPin]
-          );
-          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE id = ?", [accRes.lastID]);
-        }
-        const token = createCustomerToken(customerId, cleanPhone);
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
-        await db2.run(
-          `INSERT INTO customer_sessions (
-         customer_id, phone, session_token, channel, device_info, ip_address,
-         logged_in_at, last_active_at, duration_seconds, is_active, expires_at
-       ) VALUES (?, ?, ?, 'portal', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
-          [
-            customerId,
-            cleanPhone,
-            token,
-            req.headers["user-agent"] || null,
-            req.ip || null,
-            expiresAt
-          ]
-        ).catch((e) => console.warn("[CustomerPortal] Record session warning:", e));
-        const stores = await storeContextService.listStores(void 0, false);
-        try {
-          const medicalName = await getStoreMedicalNameAndPhone(db2);
-          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-          const welcomeMsg = `\u{1F389} *Welcome to ${medicalName}!* 
-
-Hello ${cleanName}, your online patient account is now active.
-
-\u{1F4F1} *Login Mobile:* ${cleanPhone}
-\u{1F511} *Your PIN:* ${cleanPin}
-
-You can now browse medicines, reorder refills, and view your medical bills anytime.`;
-          await whatsappQueueWorker.enqueue(formattedPhone, welcomeMsg, "portal_welcome", cleanName);
-        } catch (_) {
-        }
-        res.json({
-          success: true,
-          token,
-          message: "Account registered successfully!",
-          customer: {
-            id: customerId,
-            user_id: customerId,
-            name: cleanName,
-            phone: cleanPhone,
-            address: cleanAddress || customer.address || "",
-            preferred_store_id: account?.preferred_store_id || 1
-          },
-          stores: stores.map((s) => ({
-            id: s.id,
-            name: s.name,
-            address: s.address || "",
-            phone: s.phone || ""
-          }))
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Register error:", err);
-        res.status(500).json({ error: "Failed to register account" });
-      }
-    });
-    router6.post("/auth/request-otp", async (req, res) => {
-      const { login_id, phone, loginId, name } = req.body;
-      const cleanPhone = normalizePhone(login_id || phone || loginId);
-      if (!cleanPhone || cleanPhone.length < 10) {
-        return res.status(400).json({ error: "Valid 10-digit mobile number required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        let customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-        if (!customer) {
-          const defaultName = formatCustomerName(name || "Customer");
-          const insResult = await db2.run(
-            "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-            [defaultName, cleanPhone, ""]
-          );
-          const newCustId = insResult.lastID;
-          customer = await db2.get("SELECT * FROM customers WHERE id = ?", [newCustId]);
-        }
-        let account = await db2.get(
-          "SELECT * FROM customer_portal_accounts WHERE customer_id = ? OR login_id = ?",
-          [customer.id, cleanPhone]
-        );
-        if (!account) {
-          const initialPin = generateRandomPin2();
-          const pHash = hashPin2(initialPin);
-          const accRes = await db2.run(
-            `INSERT INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id)
-         VALUES (?, ?, ?, ?, 'active', 1)`,
-            [customer.id, cleanPhone, pHash, initialPin]
-          );
-          account = await db2.get("SELECT * FROM customer_portal_accounts WHERE id = ?", [accRes.lastID]);
-        } else if (account.status !== "active") {
-          return res.status(403).json({ error: "Portal account disabled. Please contact your pharmacy branch." });
-        }
-        const otpCode = generateRandomOtp2();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1e3).toISOString().replace("T", " ").slice(0, 19);
-        await db2.run(
-          "INSERT INTO customer_portal_otps (login_id, otp_code, expires_at, is_used) VALUES (?, ?, ?, 0)",
-          [cleanPhone, otpCode, expiresAt]
-        );
-        const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-        const custName = formatCustomerName(customer.name || "Customer");
-        const medicalName = await getStoreMedicalNameAndPhone(db2);
-        const otpMsg = `\u{1F510} *Your ${medicalName} Login OTP is: ${otpCode}*
-
-Valid for 10 minutes. Please do not share this code with anyone.`;
-        await whatsappQueueWorker.enqueue(formattedPhone, otpMsg, "portal_otp", custName);
-        res.json({
-          success: true,
-          message: "OTP sent to your registered WhatsApp number",
-          login_id: cleanPhone
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Request OTP error:", err);
-        res.status(500).json({ error: "Failed to send OTP" });
-      }
-    });
-    router6.post("/auth/verify-otp", async (req, res) => {
-      const { login_id, phone, loginId, otp_code, otp } = req.body;
-      const cleanPhone = normalizePhone(login_id || phone || loginId);
-      const cleanOtp = String(otp_code || otp || "").trim();
-      if (!cleanPhone || !cleanOtp) {
-        return res.status(400).json({ error: "Phone number and OTP are required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        const otpRow = await db2.get(
-          `SELECT * FROM customer_portal_otps 
-       WHERE login_id = ? AND otp_code = ? AND is_used = 0 AND expires_at > datetime('now')
-       ORDER BY id DESC LIMIT 1`,
-          [cleanPhone, cleanOtp]
-        );
-        if (!otpRow) {
-          return res.status(401).json({ error: "Invalid or expired OTP" });
-        }
-        await db2.run("UPDATE customer_portal_otps SET is_used = 1 WHERE id = ?", [otpRow.id]);
-        let account = await db2.get(
-          `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
-       FROM customer_portal_accounts pa
-       JOIN customers c ON c.id = pa.customer_id
-       WHERE (pa.login_id = ? OR c.phone = ?) AND pa.status = 'active'`,
-          [cleanPhone, cleanPhone]
-        );
-        if (!account) {
-          let customer = await db2.get("SELECT * FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-          if (!customer) {
-            const insResult = await db2.run(
-              "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-              ["Customer", cleanPhone, ""]
-            );
-            customer = await db2.get("SELECT * FROM customers WHERE id = ?", [insResult.lastID]);
-          }
-          const initialPin = generateRandomPin2();
-          const pHash = hashPin2(initialPin);
-          await db2.run(
-            `INSERT OR REPLACE INTO customer_portal_accounts (customer_id, login_id, pin_hash, pin_display, status, preferred_store_id)
-         VALUES (?, ?, ?, ?, 'active', 1)`,
-            [customer.id, cleanPhone, pHash, initialPin]
-          );
-          account = await db2.get(
-            `SELECT pa.*, c.name as customer_name, c.address as customer_address, c.id as cust_id
-         FROM customer_portal_accounts pa
-         JOIN customers c ON c.id = pa.customer_id
-         WHERE pa.login_id = ?`,
-            [cleanPhone]
-          );
-        }
-        await db2.run(
-          `UPDATE customer_portal_accounts 
-       SET last_login_at = CURRENT_TIMESTAMP,
-           total_login_count = COALESCE(total_login_count, 0) + 1 
-       WHERE id = ?`,
-          [account.id]
-        );
-        const token = createCustomerToken(account.cust_id, cleanPhone);
-        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
-        await db2.run(
-          `INSERT INTO customer_sessions (
-         customer_id, phone, session_token, channel, device_info, ip_address,
-         logged_in_at, last_active_at, duration_seconds, is_active, expires_at
-       ) VALUES (?, ?, ?, 'portal', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 1, ?)`,
-          [
-            account.cust_id,
-            cleanPhone,
-            token,
-            req.headers["user-agent"] || null,
-            req.ip || null,
-            expiresAt
-          ]
-        ).catch((e) => console.warn("[CustomerPortal] Record session warning:", e));
-        const stores = await storeContextService.listStores(void 0, false);
-        res.json({
-          success: true,
-          token,
-          customer: {
-            id: account.cust_id,
-            user_id: account.cust_id,
-            // permanent immutable internal identity (Rule 2)
-            name: account.customer_name,
-            phone: cleanPhone,
-            address: account.customer_address || "",
-            preferred_store_id: account.preferred_store_id || 1
-          },
-          stores: stores.map((s) => ({
-            id: s.id,
-            name: s.name,
-            address: s.address || "",
-            phone: s.phone || ""
-          }))
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Verify OTP error:", err);
-        res.status(500).json({ error: "OTP verification failed" });
-      }
-    });
-    router6.get("/customer/bills", async (req, res) => {
-      const customerId = parseInt(req.query.customer_id, 10);
-      const phone = normalizePhone(req.query.phone);
-      const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 200);
-      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-      const verified = verifyCustomerToken(authHeader || req.query.token);
-      if (verified && customerId && verified.customerId !== customerId) {
-        return res.status(403).json({ error: "Access denied: Cannot access another customer's invoices" });
-      }
-      let custId = customerId || verified?.customerId || 0;
-      try {
-        const db2 = await dbManager.getConnection();
-        if (!custId && phone) {
-          const digits10 = phone.slice(-10);
-          const cust = await db2.get(
-            `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
-            [phone, `%${digits10}`]
-          );
-          if (cust) custId = cust.id;
-        }
-        if (!custId) {
-          return res.status(400).json({ error: "customer_id or phone required" });
-        }
-        const sales = await db2.all(
-          `SELECT si.id, si.invoice_no, si.invoice_no as invoice_number, si.store_id,
-              si.total_amount, si.total_amount as net_amount, si.date, si.date as created_at,
-              COALESCE(si.pharmacy_name_snapshot, st.name, 'Pharmacy') as store_name
-       FROM sales_invoices si
-       LEFT JOIN stores st ON st.id = si.store_id
-       WHERE si.customer_id = ? AND (si.payment_status IS NULL OR si.payment_status != 'cancelled')
-       ORDER BY si.date DESC LIMIT ?`,
-          [custId, limit]
-        ).catch(() => []);
-        const enrichedBills = [];
-        for (const sale of sales) {
-          const items = await db2.all(
-            `SELECT sit.id,
-                sit.quantity,
-                sit.unit_price,
-                COALESCE(sit.mrp_snapshot, sit.mrp, 0) as mrp,
-                sit.discount_per,
-                (sit.quantity * sit.unit_price) as total_price,
-                COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as medicine_name,
-                COALESCE(m.generic_name, '') as generic_name,
-                im.medicine_id
-         FROM sale_items sit
-         LEFT JOIN inventory_master im ON im.id = sit.inventory_id
-         LEFT JOIN medicines m ON m.id = im.medicine_id
-         WHERE sit.invoice_id = ?
-         ORDER BY sit.id ASC`,
-            [sale.id]
-          ).catch(() => []);
-          enrichedBills.push({
-            ...sale,
-            items
-          });
-        }
-        res.json({ success: true, count: enrichedBills.length, bills: enrichedBills });
-      } catch (err) {
-        console.error("[CustomerPortal] Fetch customer bills error:", err);
-        res.status(500).json({ error: "Failed to fetch customer bills" });
-      }
-    });
-    router6.get("/customer/refills", async (req, res) => {
-      const customerId = parseInt(req.query.customer_id, 10);
-      const phone = normalizePhone(req.query.phone);
-      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-      const verified = verifyCustomerToken(authHeader || req.query.token);
-      if (verified && customerId && verified.customerId !== customerId) {
-        return res.status(403).json({ error: "Access denied: Cannot access another customer's refills" });
-      }
-      let custId = customerId || verified?.customerId || 0;
-      if (!custId && !phone) {
-        return res.status(400).json({ error: "customer_id or phone required" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        let sql = `
-      SELECT 
-        pr.id,
-        pr.medicine_id,
-        m.name as medicine_name,
-        m.generic_name,
-        m.strength,
-        m.mrp,
-        m.sell_price,
-        pr.refill_interval_days,
-        pr.quantity_needed,
-        pr.last_refill_date,
-        pr.next_refill_date,
-        pr.status,
-        pr.paused_at,
-        pr.pause_reason,
-        pr.resume_at,
-        pr.store_id,
-        s.name as store_name
-      FROM patient_refills pr
-      JOIN medicines m ON m.id = pr.medicine_id
-      LEFT JOIN stores s ON s.id = pr.store_id
-      WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
-      ORDER BY pr.next_refill_date ASC
-    `;
-        const refills = await db2.all(sql, [custId || -1, `%${phone}%`]).catch(() => []);
-        res.json({ success: true, count: refills.length, refills });
-      } catch (err) {
-        console.error("[CustomerPortal] Fetch customer refills error:", err);
-        res.status(500).json({ error: "Failed to fetch refills" });
-      }
-    });
-    router6.get("/customer/past-medicines", async (req, res) => {
-      const customerId = req.query.customer_id ? parseInt(req.query.customer_id, 10) : null;
-      const rawPhone = req.query.phone || "";
-      const phone = normalizePhone(rawPhone);
-      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-      const verified = verifyCustomerToken(authHeader || req.query.token);
-      if (verified && customerId && verified.customerId !== customerId) {
-        return res.status(403).json({ error: "Access denied" });
-      }
-      let custId = customerId || verified?.customerId || 0;
-      const targetPhone = phone || verified?.phone || "";
-      const last102 = targetPhone.slice(-10);
-      try {
-        const db2 = await dbManager.getConnection();
-        if (!custId && last102) {
-          const cust = await db2.get(
-            `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
-            [targetPhone, `%${last102}`]
-          );
-          if (cust) custId = cust.id;
-        }
-        if (!custId && !last102) {
-          return res.status(400).json({ error: "customer_id or phone is required" });
-        }
-        const itemsMap = /* @__PURE__ */ new Map();
-        try {
-          const refills = await db2.all(
-            `SELECT pr.id as refill_id, m.id as medicine_id, m.name as medicine_name,
-                pr.quantity_needed as qty, pr.refill_interval_days, pr.last_refill_date,
-                pr.next_refill_date, m.mrp, m.sell_price, s.name as store_name,
-                'refill' as item_type
-         FROM patient_refills pr
-         JOIN medicines m ON m.id = pr.medicine_id
-         LEFT JOIN stores s ON s.id = pr.store_id
-         WHERE pr.is_active = 1 AND (pr.customer_id = ? OR pr.patient_phone LIKE ?)
-         ORDER BY pr.id DESC LIMIT 20`,
-            [custId || -1, `%${last102}%`]
-          );
-          for (const r of refills) {
-            const key = (r.medicine_name || "").toLowerCase().trim();
-            if (key && !itemsMap.has(key)) {
-              itemsMap.set(key, r);
-            }
-          }
-        } catch (_) {
-        }
-        try {
-          const specialOrders = await db2.all(
-            `SELECT so.id as special_order_id, so.product as medicine_name,
-                so.qty, so.pharmarack_mrp as mrp, so.pharmarack_rate as sell_price,
-                so.pharmarack_distributor as store_name, so.status,
-                COALESCE(so.date, so.created_at) as last_refill_date,
-                'special_order' as item_type
-         FROM special_orders so
-         WHERE (so.customer_id = ? OR so.phone LIKE ?) AND so.product IS NOT NULL AND TRIM(so.product) != ''
-         ORDER BY so.id DESC LIMIT 20`,
-            [custId || -1, `%${last102}%`]
-          );
-          for (const s of specialOrders) {
-            const key = (s.medicine_name || "").toLowerCase().trim();
-            if (key && !itemsMap.has(key)) {
-              itemsMap.set(key, s);
-            }
-          }
-        } catch (_) {
-        }
-        try {
-          const sales = await db2.all(
-            `SELECT m.id as medicine_id, m.name as medicine_name,
-                s.quantity as qty, im.mrp, s.unit_price as sell_price,
-                si.date as last_refill_date, 'counter_sale' as item_type
-         FROM sales_invoices si
-         JOIN sale_items s ON s.invoice_id = si.id
-         JOIN inventory_master im ON im.id = s.inventory_id
-         JOIN medicines m ON m.id = im.medicine_id
-         WHERE (si.customer_id = ? OR si.customer_phone_snapshot LIKE ?)
-         ORDER BY si.id DESC LIMIT 20`,
-            [custId || -1, `%${last102}%`]
-          );
-          for (const sl of sales) {
-            const key = (sl.medicine_name || "").toLowerCase().trim();
-            if (key && !itemsMap.has(key)) {
-              itemsMap.set(key, sl);
-            }
-          }
-        } catch (_) {
-        }
-        const pastMedicines = Array.from(itemsMap.values());
-        res.json({ success: true, count: pastMedicines.length, medicines: pastMedicines });
-      } catch (err) {
-        console.error("[CustomerPortal] Fetch past medicines error:", err);
-        res.status(500).json({ error: "Failed to fetch past medicines" });
-      }
-    });
-    router6.put("/customer/phone", async (req, res) => {
-      const { customer_id, new_phone } = req.body;
-      const cleanPhone = normalizePhone(new_phone);
-      if (!cleanPhone || cleanPhone.length < 10) {
-        return res.status(400).json({ error: "Valid 10-digit mobile number required" });
-      }
-      const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-      const verified = verifyCustomerToken(authHeader || req.body.token);
-      const custId = parseInt(customer_id, 10) || verified?.customerId;
-      if (!custId) {
-        return res.status(400).json({ error: "customer_id is required" });
-      }
-      if (verified && verified.customerId !== custId) {
-        return res.status(403).json({ error: "Access denied" });
-      }
-      try {
-        const db2 = await dbManager.getConnection();
-        const conflict = await db2.get("SELECT id FROM customers WHERE phone = ? AND id != ?", [cleanPhone, custId]);
-        if (conflict) {
-          return res.status(409).json({ error: "Phone number already in use by another customer" });
-        }
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          await db2.run("UPDATE customers SET phone = ? WHERE id = ?", [cleanPhone, custId]);
-          await db2.run(
-            "UPDATE customer_portal_accounts SET login_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?",
-            [cleanPhone, custId]
-          );
-          await db2.run("COMMIT");
-          const newToken = createCustomerToken(custId, cleanPhone);
-          res.json({
-            success: true,
-            message: "Phone number updated successfully",
-            customer_id: custId,
-            new_phone: cleanPhone,
-            token: newToken
-          });
-        } catch (txErr) {
-          await db2.run("ROLLBACK");
-          throw txErr;
-        }
-      } catch (err) {
-        console.error("[CustomerPortal] Update phone error:", err);
-        res.status(500).json({ error: "Failed to update phone number" });
-      }
-    });
-    router6.post("/customer/refill-order", async (req, res) => {
-      const {
-        customer_id,
-        customer_name,
-        customer_phone,
-        store_id = 1,
-        items,
-        payment_method = "COUNTER_PICKUP",
-        delivery_mode = "pickup",
-        delivery_address = "",
-        notes = ""
-      } = req.body;
-      if (!customer_name || !items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "Customer name and at least one medicine required" });
-      }
-      const cleanPhone = normalizePhone(customer_phone);
-      const cleanName = formatCustomerName(customer_name);
-      const targetStoreId = parseInt(String(store_id), 10) || 1;
-      const todayStr2 = (/* @__PURE__ */ new Date()).toISOString();
-      const cleanAddress = String(delivery_address || "").trim();
-      const isDelivery = delivery_mode === "delivery";
-      try {
-        const db2 = await dbManager.getConnection();
-        let custId = customer_id ? parseInt(String(customer_id), 10) : null;
-        let registeredCustomer = null;
-        if (custId) {
-          registeredCustomer = await db2.get("SELECT id, name, address FROM customers WHERE id = ?", [custId]);
-        } else if (cleanPhone) {
-          registeredCustomer = await db2.get("SELECT id, name, address FROM customers WHERE phone = ? LIMIT 1", [cleanPhone]);
-          if (registeredCustomer) custId = registeredCustomer.id;
-        }
-        if (!registeredCustomer || !custId) {
-          if (cleanName && cleanPhone) {
-            const insRes = await db2.run(
-              "INSERT INTO customers (name, phone, address, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-              [cleanName, cleanPhone, cleanAddress || "Website Customer"]
-            );
-            custId = Number(insRes.lastID);
-            registeredCustomer = { id: custId, name: cleanName, address: cleanAddress };
-          } else {
-            return res.status(400).json({
-              error: "Please provide valid customer name and mobile number to place order."
-            });
-          }
-        } else if (cleanAddress && !registeredCustomer.address) {
-          await db2.run("UPDATE customers SET address = ? WHERE id = ?", [cleanAddress, custId]).catch(() => {
-          });
-        }
-        const idempotencyKey = req.headers["idempotency-key"] || req.body.idempotency_key;
-        if (idempotencyKey) {
-          const recentOrder = await db2.get(
-            `SELECT id, product, qty FROM special_orders 
-         WHERE customer_id = ? AND notes LIKE ? AND created_at > datetime('now', '-2 minutes')
-         ORDER BY id DESC LIMIT 1`,
-            [custId, `%[Idempotency: ${idempotencyKey}]%`]
-          );
-          if (recentOrder) {
-            return res.json({
-              success: true,
-              message: "Order already received (idempotent)",
-              order_id: recentOrder.id,
-              customer_id: custId
-            });
-          }
-        }
-        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
-        const returnWindowDays = await returnWindowService.getConfiguredReturnWindowDays(targetStoreId);
-        const createdOrders = [];
-        const modeLabel = isDelivery ? "Home Delivery" : "In-Store Pickup";
-        const orderType = isDelivery ? "DELIVERY" : "PICKUP";
-        const deliveryStatus = isDelivery ? "pending_dispatch" : "counter_pickup";
-        const notePrefix = `[Website Order - ${modeLabel} - ${payment_method}]`;
-        const idempotencyTag = idempotencyKey ? ` [Idempotency: ${idempotencyKey}]` : "";
-        const fullNotes = `${notePrefix}${cleanAddress ? ` Delivery Address: ${cleanAddress}.` : ""}${notes ? ` Notes: ${notes}` : ""}${idempotencyTag}`;
-        const totalAmount = items.reduce(
-          (sum, it) => sum + (Number(it.qty || it.quantity_needed) || 1) * (Number(it.price || it.sell_price || it.mrp) || 0),
-          0
-        );
-        let allocatedQr = null;
-        if (payment_method === "UPI") {
-          allocatedQr = await paymentQrService.allocateNextQr();
-        }
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          for (const item of items) {
-            const prodName = (item.product || item.medicine_name || item.name || "").trim();
-            if (!prodName) continue;
-            const qty = Number(item.qty || item.quantity_needed) || 1;
-            const price = Number(item.price || item.sell_price || item.mrp || 0);
-            const rawSource = String(req.body.customer_order_source || req.body.source || "website");
-            const orderSource = ["website", "manual_phone_order", "pharmacy_assisted"].includes(rawSource) ? rawSource : "website";
-            const result = await db2.run(
-              `INSERT INTO special_orders (
-            store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
-            advance_payment, notes, customer_order_source, delivery_status, return_status,
-            payment_status, pharmacy_verification_status, payment_qr_id, order_type, total_amount,
-            scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
-            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
-            schedule_calculated_at, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 0, ?, ?, ?, 'none', 'UNPAID', 'PENDING', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-              [
-                targetStoreId,
-                custId,
-                prodName,
-                cleanName,
-                cleanPhone,
-                qty,
-                todayStr2,
-                fullNotes,
-                orderSource,
-                deliveryStatus,
-                allocatedQr?.id || null,
-                orderType,
-                totalAmount,
-                calculatedSchedule.scheduledProcessingAt,
-                calculatedSchedule.estimatedDeliveryStart,
-                calculatedSchedule.estimatedDeliveryEnd,
-                calculatedSchedule.cutoffAt,
-                calculatedSchedule.timezone,
-                calculatedSchedule.scheduleStatus,
-                calculatedSchedule.scheduleReason,
-                calculatedSchedule.scheduleVersion,
-                calculatedSchedule.calculatedAt
-              ]
-            );
-            const orderId = Number(result.lastID);
-            createdOrders.push({ id: orderId, product: prodName, qty, price, payment_qr_id: allocatedQr?.id || null, itemType: item.itemType || "refill" });
-            await db2.run(
-              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-           VALUES (?, 'website_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-              [orderId, `Website order placed for ${modeLabel} (${orderType}) at Store #${targetStoreId}. Item: ${prodName} (Qty: ${qty}) - Payment: ${payment_method} (ETA: ${calculatedSchedule.estimatedDeliveryWindowFormatted})`]
-            );
-          }
-          await db2.run("COMMIT");
-        } catch (txErr) {
-          await db2.run("ROLLBACK");
-          throw txErr;
-        }
-        let liveCartAddedCount = 0;
-        let offlineQueuedCount = 0;
-        try {
-          const { addItemsToPharmarackCart: addItemsToPharmarackCart2 } = await Promise.resolve().then(() => (init_pharmarack(), pharmarack_exports));
-          for (const ord of createdOrders) {
-            let isRefill = ord.itemType === "refill";
-            if (!isRefill && custId) {
-              const refillRow = await db2.get(
-                `SELECT id FROM patient_refills WHERE customer_id = ? AND LOWER(TRIM(medicine_name)) = LOWER(TRIM(?)) LIMIT 1`,
-                [custId, ord.product]
-              ).catch(() => null);
-              if (refillRow) isRefill = true;
-            }
-            if (isRefill) {
-              let resolvedStoreId = 0;
-              let resolvedStoreName = "";
-              let resolvedProdId = 0;
-              let resolvedProdCode = "";
-              let resolvedRate = 0;
-              let resolvedMrp = 0;
-              const linkRow = await db2.get(
-                `SELECT store_id, distributor_name, product_id, product_code, rate, mrp 
-             FROM medicine_distributor_links 
-             WHERE LOWER(TRIM(medicine_name)) = LOWER(TRIM(?)) 
-             ORDER BY is_preferred DESC LIMIT 1`,
-                [ord.product]
-              ).catch(() => null);
-              if (linkRow && linkRow.store_id) {
-                resolvedStoreId = Number(linkRow.store_id);
-                resolvedStoreName = linkRow.distributor_name || "";
-                resolvedProdId = Number(linkRow.product_id) || 0;
-                resolvedProdCode = String(linkRow.product_code || "");
-                resolvedRate = Number(linkRow.rate) || 0;
-                resolvedMrp = Number(linkRow.mrp) || 0;
-              } else {
-                const catRow = await db2.get(
-                  `SELECT store_id, store_name, product_id, product_code, rate, mrp 
-               FROM distributor_catalog 
-               WHERE (LOWER(TRIM(product_name)) = LOWER(TRIM(?)) OR LOWER(product_name) LIKE LOWER(?)) 
-                 AND store_id > 0
-               ORDER BY rate ASC LIMIT 1`,
-                  [ord.product, `%${ord.product}%`]
-                ).catch(() => null);
-                if (catRow && catRow.store_id) {
-                  resolvedStoreId = Number(catRow.store_id);
-                  resolvedStoreName = catRow.store_name || "";
-                  resolvedProdId = Number(catRow.product_id) || 0;
-                  resolvedProdCode = String(catRow.product_code || "");
-                  resolvedRate = Number(catRow.rate) || 0;
-                  resolvedMrp = Number(catRow.mrp) || 0;
-                }
-              }
-              const cartResult = await addItemsToPharmarackCart2([{
-                productName: ord.product,
-                product: ord.product,
-                productId: resolvedProdId,
-                productCode: resolvedProdCode,
-                storeId: resolvedStoreId,
-                storeName: resolvedStoreName || "Standard Distributor",
-                qty: ord.qty > 0 ? ord.qty : 1,
-                rate: resolvedRate,
-                mrp: resolvedMrp,
-                packaging: "1 strip",
-                mapped: resolvedStoreId > 0
-              }]).catch((err) => ({ success: false, error: err?.message || String(err), offline: false }));
-              if (cartResult.success && !cartResult.offline) {
-                liveCartAddedCount++;
-                await db2.run(
-                  `UPDATE special_orders 
-               SET needs_live_cart_sync = 0,
-                   status = 'In Live Cart',
-                   delivery_status = 'in_live_cart',
-                   pharmacy_verification_status = 'IN_LIVE_CART',
-                   pharmarack_distributor = ?,
-                   pharmarack_store_id = ?,
-                   pharmarack_product_id = ?,
-                   pharmarack_product_code = ?,
-                   pharmarack_rate = ?,
-                   pharmarack_mrp = ?,
-                   updated_at = CURRENT_TIMESTAMP
-               WHERE id = ?`,
-                  [resolvedStoreName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, ord.id]
-                ).catch(() => {
-                });
-                await db2.run(
-                  `INSERT OR REPLACE INTO online_order_items (
-                 order_id, product_name, product_name_snapshot, requested_qty, confirmed_qty, mrp, final_price, subtotal, item_status
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')`,
-                  [ord.id, ord.product, ord.product, ord.qty, ord.qty, resolvedMrp, resolvedRate, ord.qty * resolvedRate]
-                ).catch(() => {
-                });
-                await db2.run(
-                  `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-               VALUES (?, 'added_to_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
-                  [ord.id, `Refill medicine "${ord.product}" (Qty: ${ord.qty}) auto-added to Pharmarack Live Cart (${resolvedStoreName || "Distributor"}).`]
-                ).catch(() => {
-                });
-              } else {
-                offlineQueuedCount++;
-                await db2.run(
-                  `UPDATE special_orders 
-               SET needs_live_cart_sync = 1,
-                   delivery_status = 'offline_queued',
-                   pharmacy_verification_status = 'OFFLINE_QUEUED',
-                   pharmarack_distributor = ?,
-                   pharmarack_store_id = ?,
-                   pharmarack_product_id = ?,
-                   pharmarack_product_code = ?,
-                   pharmarack_rate = ?,
-                   pharmarack_mrp = ?,
-                   cart_add_error = ?,
-                   updated_at = CURRENT_TIMESTAMP
-               WHERE id = ?`,
-                  [resolvedStoreName, resolvedStoreId, resolvedProdId, resolvedProdCode, resolvedRate, resolvedMrp, cartResult.error || (cartResult.offline ? "Offline mode" : "Pending login"), ord.id]
-                ).catch(() => {
-                });
-                await db2.run(
-                  `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-               VALUES (?, 'offline_queued_for_live_cart', ?, 'system', CURRENT_TIMESTAMP)`,
-                  [ord.id, `Refill medicine "${ord.product}" queued for Live Cart auto-sync upon connection.`]
-                ).catch(() => {
-                });
-              }
-            }
-          }
-        } catch (cartErr) {
-          console.warn("[CustomerPortal] Auto-add to live cart warning:", cartErr);
-        }
-        if (custId) {
-          await db2.run(
-            `UPDATE customer_portal_accounts SET preferred_store_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?`,
-            [targetStoreId, custId]
-          ).catch(() => {
-          });
-        }
-        const storeInfo = await storeContextService.getStoreById(targetStoreId);
-        const storeName = storeInfo?.name || await getStoreMedicalNameAndPhone(db2);
-        const storeAddress = storeInfo?.address ? `
-\u{1F4CD} *Store Address:* ${storeInfo.address}` : "";
-        const storePhone = storeInfo?.phone ? `
-\u{1F4DE} *Contact:* ${storeInfo.phone}` : "";
-        if (cleanPhone && cleanPhone.length >= 10) {
-          const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-          const orderIdsStr = createdOrders.map((o) => `#${o.id}`).join(", ");
-          const itemsSummary = createdOrders.map((o, idx) => `${idx + 1}. ${o.product} (x${o.qty})`).join("\n");
-          const deliveryTimingBlock = isDelivery ? `
-\u{1F552} *Estimated Delivery Window:* ${calculatedSchedule.estimatedDeliveryWindowFormatted}` : `
-\u{1F552} *Estimated Ready Time:* ${calculatedSchedule.estimatedDeliveryWindowFormatted}`;
-          const scheduleReasonBlock = calculatedSchedule.scheduleReason ? `
-\u2139\uFE0F *Delivery Note:* ${calculatedSchedule.scheduleReason}` : "";
-          const returnNoteBlock = `
-\u{1F504} *Return Policy:* ${returnWindowDays}-day return window available on eligible delivered medicines.`;
-          let confirmMsg = isDelivery ? `*Online Order Received (${orderIdsStr})*
-
-Hello ${cleanName},
-Thank you for ordering at *${storeName}*.
-
-*Ordered Medicines:*
-${itemsSummary}
-
-\u{1F4B5} *Total:* \u20B9${totalAmount.toFixed(2)} (${payment_method})
-\u{1F69A} *Mode:* Home Delivery${deliveryTimingBlock}${scheduleReasonBlock}
-\u{1F4CD} *Address:* ${cleanAddress || "As per records"}${storePhone}${returnNoteBlock}
-
-*Our team is packaging your order and will alert you upon dispatch!*` : `*Refill Order Received (${orderIdsStr})*
-
-Hello ${cleanName},
-Thank you for placing your refill order at *${storeName}*.
-
-*Selected Medicines:*
-${itemsSummary}
-
-\u{1F4B5} *Total:* \u20B9${totalAmount.toFixed(2)} (${payment_method})
-\u{1F4CD} *Pickup Branch:* ${storeName}${storeAddress}${deliveryTimingBlock}${scheduleReasonBlock}${storePhone}${returnNoteBlock}
-
-*Our pharmacist is packing your order. We will notify you once it is ready at the counter!*`;
-          if (liveCartAddedCount > 0) {
-            confirmMsg += `
-
-\u{1F6D2} *Distributor Live Cart:* ${liveCartAddedCount} regular prescription item(s) automatically added to distributor Live Cart for procurement.`;
-          } else if (offlineQueuedCount > 0) {
-            confirmMsg += `
-
-\u{1F6D2} *Procurement Status:* Regular items securely queued; will sync to distributor Live Cart automatically as connection establishes.`;
-          }
-          if (allocatedQr) {
-            const upiUri = paymentQrService.buildUpiUri(allocatedQr.upi_id, allocatedQr.payee_name, totalAmount, createdOrders[0]?.id || 1);
-            confirmMsg += `
-
-\u{1F4B3} *Payment Instructions (${allocatedQr.label}):*
-UPI ID: ${allocatedQr.upi_id}
-Payee: ${allocatedQr.payee_name}
-UPI Pay Link:
-${upiUri}
-
-*Important:* After transferring via UPI, click "I HAVE PAID" on the website to submit your payment for pharmacy verification.`;
-          }
-          try {
-            await whatsappQueueWorker.enqueue(formattedPhone, confirmMsg, "website_order_confirmation", cleanName);
-          } catch (waErr) {
-            console.warn("[CustomerPortal] WhatsApp confirmation warning:", waErr);
-          }
-        }
-        try {
-          eventService.broadcast("order_updated", { at: Date.now(), source: "website", store_id: targetStoreId });
-          eventService.broadcast("refill_updated", { at: Date.now(), source: "website", store_id: targetStoreId });
-          eventService.broadcast("website_order_created", { at: Date.now(), store_id: targetStoreId, customer: cleanName });
-        } catch (_) {
-        }
-        const primaryOrderId = createdOrders[0]?.id;
-        const paymentQrResponse = allocatedQr ? {
-          qr_id: allocatedQr.id,
-          label: allocatedQr.label,
-          payee_name: allocatedQr.payee_name,
-          upi_id: allocatedQr.upi_id,
-          qr_image_url: allocatedQr.qr_image_url || "",
-          amount: totalAmount,
-          upi_uri: paymentQrService.buildUpiUri(
-            allocatedQr.upi_id,
-            allocatedQr.payee_name,
-            totalAmount,
-            primaryOrderId || 1
-          )
-        } : null;
-        res.status(201).json({
-          success: true,
-          message: `${modeLabel} order placed successfully`,
-          store_id: targetStoreId,
-          store_name: storeName,
-          delivery_mode: modeLabel,
-          order_type: orderType,
-          orders: createdOrders,
-          order_id: primaryOrderId,
-          total_amount: totalAmount,
-          payment_method,
-          payment_qr: paymentQrResponse,
-          customer: { name: cleanName, phone: cleanPhone },
-          timing: calculatedSchedule,
-          returnPolicy: {
-            windowDays: returnWindowDays,
-            message: `${returnWindowDays}-day return window on eligible items upon delivery`
-          }
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Refill order error:", err);
-        res.status(500).json({ error: "Failed to place order: " + (err.message || "Unknown error") });
-      }
-    });
-    router6.put("/customer/preferred-store", async (req, res) => {
-      try {
-        const { customer_id, phone, preferred_store_id } = req.body;
-        const authHeader = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-        const verified = verifyCustomerToken(authHeader || req.query.token);
-        const custId = customer_id || verified?.customerId;
-        const cleanPhone = normalizePhone(phone || verified?.phone);
-        const storeId = parseInt(String(preferred_store_id), 10);
-        if (!storeId || isNaN(storeId)) {
-          return res.status(400).json({ error: "Valid preferred_store_id is required" });
-        }
-        const db2 = await dbManager.getConnection();
-        if (custId) {
-          await db2.run(
-            `UPDATE customer_portal_accounts SET preferred_store_id = ?, updated_at = CURRENT_TIMESTAMP WHERE customer_id = ?`,
-            [storeId, custId]
-          );
-        } else if (cleanPhone) {
-          await db2.run(
-            `UPDATE customer_portal_accounts SET preferred_store_id = ?, updated_at = CURRENT_TIMESTAMP WHERE login_id = ?`,
-            [storeId, cleanPhone]
-          );
-        }
-        res.json({ success: true, preferred_store_id: storeId, message: "Default store preference updated" });
-      } catch (err) {
-        console.error("[CustomerPortal] Update preferred store error:", err);
-        res.status(500).json({ error: "Failed to update preferred store: " + err.message });
-      }
-    });
-    catalogCache = null;
-    imageStateCache = null;
-    lastCacheLoad = 0;
-    router6.get("/public-catalog", async (req, res) => {
-      try {
-        const category = String(req.query.category || "all").toLowerCase();
-        const search = String(req.query.search || "").trim();
-        const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
-        const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || "40"), 10)));
-        const offset = (page - 1) * limit;
-        const storeId = req.query.store_id ? parseInt(String(req.query.store_id), 10) : null;
-        const { images } = loadCatalogAndImages();
-        const db2 = await dbManager.getConnection();
-        const conditions = ["pcv.is_portal_visible = 1"];
-        const params = [];
-        if (search) {
-          conditions.push(`(m.name LIKE ? OR m.generic_name LIKE ? OR m.manufacturer LIKE ?)`);
-          const s = `%${search}%`;
-          params.push(s, s, s);
-        }
-        if (category && category !== "all") {
-          conditions.push(`LOWER(m.category) LIKE ?`);
-          params.push(`%${category}%`);
-        }
-        const where = conditions.join(" AND ");
-        const totalRow = await db2.get(
-          `SELECT COUNT(*) as n FROM medicines m
-       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
-       WHERE ${where}`,
-          params
-        ).catch(() => ({ n: 0 }));
-        const rows = await db2.all(
-          `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price,
-              m.packaging, m.strength, m.pack_size,
-              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id AND (? IS NULL OR im.store_id = ?)), 0) as stock_qty,
-              COALESCE(pcv.featured_rank, 0) as featured_rank,
-              mci.salt_composition, mci.sub_category, mci.medicine_desc, mci.side_effects
-       FROM medicines m
-       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
-       LEFT JOIN medicine_clinical_info mci ON mci.medicine_id = m.id
-       WHERE ${where}
-       ORDER BY pcv.featured_rank DESC, m.name ASC
-       LIMIT ? OFFSET ?`,
-          [storeId, storeId, ...params, limit, offset]
-        ).catch(() => []);
-        const enriched = [];
-        for (const med of rows) {
-          let imageUrl = null;
-          let allImages = {};
-          let gallery = [];
-          const resolved = await catalogImageService.resolveProductImages(med.id);
-          if (resolved && resolved.primaryUrl) {
-            imageUrl = resolved.primaryUrl;
-            allImages = resolved.images;
-            gallery = resolved.gallery;
-          }
-          const imgData = images[med.name];
-          if (imgData && imgData.images && gallery.length < 2) {
-            const stateGallery = catalogImageService.extractGalleryFromState(imgData);
-            if (stateGallery.length > 0 && gallery.length === 0) {
-              gallery = stateGallery;
-              const primary = stateGallery.find((g) => g.is_primary) || stateGallery[0];
-              imageUrl = primary?.url || null;
-              stateGallery.forEach((g) => {
-                allImages[g.type] = g;
-              });
-            }
-          }
-          enriched.push({
-            id: med.id,
-            name: med.name,
-            category: med.sub_category || med.category || "General",
-            pack: med.packaging || med.pack_size || "",
-            composition: med.salt_composition || med.generic_name || "",
-            manufacturer: med.manufacturer || "",
-            description: med.medicine_desc || "",
-            side_effects: med.side_effects || "",
-            mrp: Number(med.mrp || 0),
-            sell_price: Number(med.sell_price || med.mrp || 0),
-            stock_qty: Number(med.stock_qty || 0),
-            in_stock: Number(med.stock_qty || 0) > 0,
-            featured_rank: med.featured_rank || 0,
-            image_url: imageUrl,
-            images: allImages,
-            gallery
-          });
-        }
-        res.json({
-          success: true,
-          category,
-          search,
-          page,
-          limit,
-          total_count: totalRow?.n || 0,
-          total_pages: Math.ceil((totalRow?.n || 0) / limit),
-          medicines: enriched
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Public catalog error:", err);
-        res.status(500).json({ error: "Failed to fetch catalog: " + err.message });
-      }
-    });
-    router6.get("/categories-summary", async (_req, res) => {
-      try {
-        const db2 = await dbManager.getConnection();
-        const rows = await db2.all(
-          `SELECT m.category, COUNT(*) as n
-       FROM medicines m
-       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
-       WHERE pcv.is_portal_visible = 1
-       GROUP BY m.category
-       ORDER BY n DESC`
-        ).catch(() => []);
-        const totalEnabled = rows.reduce((s, r) => s + (r.n || 0), 0);
-        res.json({ success: true, total: totalEnabled, by_category: rows });
-      } catch (err) {
-        console.error("[CustomerPortal] categories-summary error:", err);
-        res.status(500).json({ error: "Failed to load category summary" });
-      }
-    });
-    router6.get("/standalone-catalog", (_req, res) => {
-      const filePath = import_path36.default.resolve(process.cwd(), "exports/Live_Pharmacy_Catalog_Website.html");
-      if (import_fs37.default.existsSync(filePath)) {
-        return res.sendFile(filePath);
-      }
-      res.status(404).send("Live catalog website file not found");
-    });
-    router6.get("/customer/orders", async (req, res) => {
-      try {
-        const customerId = parseInt(req.query.customer_id || "0", 10);
-        const phone = req.query.phone || "";
-        const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 100);
-        const db2 = await dbManager.getConnection();
-        let resolvedCustomerId = customerId;
-        const cleanPhone = phone.replace(/\D/g, "");
-        const digits10 = cleanPhone.slice(-10);
-        if (!resolvedCustomerId && digits10) {
-          const cust = await db2.get(
-            `SELECT id FROM customers WHERE phone = ? OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+', '') LIKE ? LIMIT 1`,
-            [phone, `%${digits10}`]
-          );
-          if (cust) resolvedCustomerId = cust.id;
-        }
-        if (!resolvedCustomerId && !digits10) {
-          return res.json({ success: true, count: 0, orders: [] });
-        }
-        const orders = await db2.all(
-          `SELECT
-         so.id,
-         so.store_id,
-         so.customer_id,
-         so.product,
-         so.qty,
-         so.status,
-         so.payment_status,
-         so.pharmacy_verification_status,
-         so.delivery_status,
-         so.order_type,
-         so.total_amount,
-         so.payment_qr_id,
-         so.scheduled_processing_at,
-         so.estimated_delivery_start,
-         so.estimated_delivery_end,
-         so.cutoff_at,
-         so.date,
-         so.created_at,
-         so.notes,
-         so.payment_screenshot_path,
-         so.screenshot_amount,
-         COALESCE(st.name, 'Main Branch') as store_name
-       FROM special_orders so
-       LEFT JOIN stores st ON st.id = so.store_id
-       WHERE (so.customer_id = ? OR (so.phone IS NOT NULL AND REPLACE(REPLACE(REPLACE(so.phone, ' ', ''), '-', ''), '+', '') LIKE ?))
-       ORDER BY so.id DESC
-       LIMIT ?`,
-          [resolvedCustomerId || 0, `%${digits10}`, limit]
-        ).catch(() => []);
-        const enriched = await Promise.all(orders.map(async (ord) => {
-          const items = await db2.all(
-            `SELECT id, medicine_id, product_name, requested_qty, confirmed_qty, mrp, confirmed_price, item_status
-         FROM online_order_items
-         WHERE order_id = ?
-         ORDER BY id ASC`,
-            [ord.id]
-          ).catch(() => []);
-          return {
-            ...ord,
-            items: items.length > 0 ? items : [{ product_name: ord.product, requested_qty: ord.qty, mrp: ord.total_amount }]
-          };
-        }));
-        res.json({ success: true, count: enriched.length, orders: enriched });
-      } catch (err) {
-        console.error("[CustomerPortal] customer/orders error:", err);
-        res.status(500).json({ error: "Failed to fetch customer orders" });
-      }
-    });
-    router6.get("/history", async (req, res) => {
-      try {
-        const customerId = parseInt(req.query.customer_id || "0", 10);
-        const loginId = req.query.login_id || "";
-        const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 200);
-        const offset = parseInt(req.query.offset || "0", 10) || 0;
-        if (!customerId && !loginId) {
-          return res.status(400).json({ error: "customer_id or login_id is required" });
-        }
-        const db2 = await dbManager.getConnection();
-        let resolvedCustomerId = customerId;
-        if (!resolvedCustomerId && loginId) {
-          const account = await db2.get(
-            "SELECT customer_id FROM customer_portal_accounts WHERE login_id = ? AND status = ?",
-            [loginId, "active"]
-          );
-          if (!account) return res.status(404).json({ error: "Customer account not found" });
-          resolvedCustomerId = account.customer_id;
-        }
-        const sales = await db2.all(
-          `SELECT
-         si.id as invoice_id,
-         si.invoice_no,
-         si.date,
-         si.business_date,
-         si.total_amount as grand_total,
-         si.online_order_id,
-         si.payment_medium,
-         si.payment_status as status,
-         COALESCE(si.pharmacy_name_snapshot, st.name, 'Pharmacy') as store_name
-       FROM sales_invoices si
-       LEFT JOIN stores st ON st.id = si.store_id
-       WHERE si.customer_id = ?
-         AND (si.payment_status IS NULL OR si.payment_status != 'cancelled')
-       ORDER BY si.date DESC
-       LIMIT ? OFFSET ?`,
-          [resolvedCustomerId, limit, offset]
-        ).catch(() => []);
-        const enriched = await Promise.all(sales.map(async (sale) => {
-          const items = await db2.all(
-            `SELECT
-           sit.id,
-           COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as medicine_name,
-           COALESCE(m.generic_name, '') as generic_name,
-           COALESCE(m.strength, '') as strength,
-           COALESCE(m.packaging, '') as packaging,
-           sit.quantity,
-           COALESCE(sit.mrp_snapshot, sit.mrp, 0) as mrp,
-           sit.unit_price as sell_price,
-           COALESCE(sit.discount_per, 0) as discount,
-           COALESCE(im.medicine_id, 0) as medicine_id
-         FROM sale_items sit
-         LEFT JOIN inventory_master im ON im.id = sit.inventory_id
-         LEFT JOIN medicines m ON m.id = im.medicine_id
-         WHERE sit.invoice_id = ?
-         ORDER BY sit.id ASC`,
-            [sale.invoice_id]
-          ).catch(() => []);
-          return { ...sale, items };
-        }));
-        const countRow = await db2.get(
-          "SELECT COUNT(*) as total FROM sales_invoices WHERE customer_id = ? AND (payment_status IS NULL OR payment_status != ?)",
-          [resolvedCustomerId, "cancelled"]
-        ).catch(() => ({ total: 0 }));
-        res.json({
-          customer_id: resolvedCustomerId,
-          total: countRow?.total || 0,
-          limit,
-          offset,
-          purchases: enriched
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] History error:", err);
-        res.status(500).json({ error: "Failed to load purchase history" });
-      }
-    });
-    router6.post("/history/:invoiceId/refill", async (req, res) => {
-      try {
-        const invoiceId = parseInt(req.params.invoiceId, 10);
-        if (isNaN(invoiceId)) return res.status(400).json({ error: "Invalid invoice ID" });
-        const { customer_id, login_id, store_id = 1 } = req.body;
-        if (!customer_id && !login_id) {
-          return res.status(400).json({ error: "customer_id or login_id is required" });
-        }
-        const db2 = await dbManager.getConnection();
-        const targetStoreId = parseInt(String(store_id), 10) || 1;
-        let resolvedCustomerId = customer_id ? parseInt(String(customer_id), 10) : 0;
-        if (!resolvedCustomerId && login_id) {
-          const account = await db2.get(
-            "SELECT customer_id FROM customer_portal_accounts WHERE login_id = ? AND status = ?",
-            [login_id, "active"]
-          );
-          if (!account) return res.status(404).json({ error: "Customer account not found" });
-          resolvedCustomerId = account.customer_id;
-        }
-        const invoice = await db2.get(
-          "SELECT * FROM sales_invoices WHERE id = ? AND customer_id = ?",
-          [invoiceId, resolvedCustomerId]
-        );
-        if (!invoice) return res.status(404).json({ error: "Invoice not found for this customer" });
-        const origItems = await db2.all(
-          `SELECT COALESCE(im.medicine_id, 0) as medicine_id, sit.quantity, COALESCE(sit.medicine_name_snapshot, m.name, 'Medicine') as medicine_name
-       FROM sale_items sit
-       LEFT JOIN inventory_master im ON im.id = sit.inventory_id
-       LEFT JOIN medicines m ON m.id = im.medicine_id
-       WHERE sit.invoice_id = ?`,
-          [invoiceId]
-        );
-        if (!origItems || origItems.length === 0) {
-          return res.status(400).json({ error: "No items found in original invoice" });
-        }
-        const customer = await db2.get("SELECT * FROM customers WHERE id = ?", [resolvedCustomerId]);
-        if (!customer) return res.status(404).json({ error: "Customer record not found" });
-        const refillItems = [];
-        const unavailableItems = [];
-        for (const orig of origItems) {
-          if (!orig.medicine_id) continue;
-          const currentBatch = await db2.get(
-            `SELECT MAX(mrp) as current_mrp, MAX(sell_price) as current_sell, SUM(quantity) as total_qty
-         FROM inventory_master
-         WHERE medicine_id = ? AND store_id = ? AND is_active = 1
-           AND quantity > 0
-           AND (expiry_date IS NULL OR date(expiry_date) > date('now'))`,
-            [orig.medicine_id, targetStoreId]
-          ).catch(() => null);
-          if (!currentBatch || (currentBatch.total_qty || 0) <= 0) {
-            unavailableItems.push({ medicine_id: orig.medicine_id, name: orig.medicine_name });
-            continue;
-          }
-          refillItems.push({
-            medicine_id: orig.medicine_id,
-            product_name: orig.medicine_name,
-            qty: orig.quantity,
-            mrp: currentBatch.current_mrp || 0,
-            price: currentBatch.current_sell || currentBatch.current_mrp || 0
-          });
-        }
-        if (refillItems.length === 0) {
-          return res.status(409).json({
-            error: "None of the original items are currently available",
-            unavailable_items: unavailableItems
-          });
-        }
-        const calculatedSchedule = await orderScheduleService.calculateOrderSchedule(/* @__PURE__ */ new Date(), targetStoreId);
-        const returnWindowDays = await returnWindowService.getConfiguredReturnWindowDays(targetStoreId);
-        const cleanPhone = customer.phone ? String(customer.phone).replace(/\D/g, "") : "";
-        const cleanName = formatCustomerName(customer.name);
-        const createdOrders = [];
-        await db2.run("BEGIN TRANSACTION");
-        try {
-          for (const item of refillItems) {
-            const itemTotal = item.qty * (item.price || item.mrp || 0);
-            const result = await db2.run(
-              `INSERT INTO special_orders (
-            store_id, customer_id, product, requester, phone, qty, priority, status, date,
-            notified, advance_payment, notes, customer_order_source,
-            payment_status, pharmacy_verification_status, delivery_status, return_status,
-            total_amount, scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
-            cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
-            schedule_calculated_at, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', CURRENT_TIMESTAMP, 0, 0,
-            ?, 'website', 'UNPAID', 'PENDING', 'pending', 'none',
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-              [
-                targetStoreId,
-                resolvedCustomerId,
-                item.product_name,
-                cleanName,
-                cleanPhone,
-                item.qty,
-                `[Refill from Invoice #${invoiceId}]`,
-                itemTotal,
-                calculatedSchedule.scheduledProcessingAt,
-                calculatedSchedule.estimatedDeliveryStart,
-                calculatedSchedule.estimatedDeliveryEnd,
-                calculatedSchedule.cutoffAt,
-                calculatedSchedule.timezone,
-                calculatedSchedule.scheduleStatus,
-                calculatedSchedule.scheduleReason,
-                calculatedSchedule.scheduleVersion,
-                calculatedSchedule.calculatedAt
-              ]
-            );
-            const orderId = Number(result.lastID);
-            createdOrders.push({ id: orderId, product: item.product_name, qty: item.qty });
-            await db2.run(
-              `INSERT INTO online_order_items (order_id, medicine_id, product_name, requested_qty, mrp, item_status)
-           VALUES (?, ?, ?, ?, ?, 'PENDING')`,
-              [orderId, item.medicine_id, item.product_name, item.qty, item.mrp]
-            );
-            await db2.run(
-              `INSERT INTO order_tracking_events (order_id, event_type, event_detail, performed_by, performed_at)
-           VALUES (?, 'refill_order_created', ?, 'customer', CURRENT_TIMESTAMP)`,
-              [orderId, `Refill order created from Invoice #${invoiceId}. Current MRP: \u20B9${item.mrp}. Estimated Delivery: ${calculatedSchedule.estimatedDeliveryWindowFormatted}`]
-            );
-          }
-          await db2.run("COMMIT");
-        } catch (txErr) {
-          await db2.run("ROLLBACK");
-          throw txErr;
-        }
-        eventService.broadcast("order_updated", { at: Date.now(), source: "refill" });
-        res.status(201).json({
-          success: true,
-          message: `Refill order created for ${createdOrders.length} item(s)`,
-          source_invoice_id: invoiceId,
-          orders: createdOrders,
-          unavailable_items: unavailableItems,
-          timing: calculatedSchedule,
-          returnPolicy: {
-            return_window_days: returnWindowDays,
-            policy_summary: `Medicines eligible for return up to ${returnWindowDays} days after delivery/sale`
-          }
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] Refill error:", err);
-        res.status(500).json({ error: "Failed to create refill order" });
-      }
-    });
-    router6.get("/admin/catalog-visibility", async (req, res) => {
-      try {
-        const search = String(req.query.search || "").trim();
-        const filter = String(req.query.filter || "all").toLowerCase();
-        const category = String(req.query.category || "").trim();
-        const page = Math.max(1, parseInt(String(req.query.page || "1"), 10));
-        const limit = Math.min(100, Math.max(10, parseInt(String(req.query.limit || "50"), 10)));
-        const offset = (page - 1) * limit;
-        const db2 = await dbManager.getConnection();
-        const conditions = [];
-        const params = [];
-        if (search) {
-          conditions.push(`(m.name LIKE ? OR m.generic_name LIKE ? OR m.manufacturer LIKE ?)`);
-          const s = `%${search}%`;
-          params.push(s, s, s);
-        }
-        if (category) {
-          conditions.push(`LOWER(m.category) LIKE ?`);
-          params.push(`%${category.toLowerCase()}%`);
-        }
-        if (filter === "enabled" || filter === "online") {
-          conditions.push(`pcv.is_portal_visible = 1`);
-        } else if (filter === "disabled" || filter === "offline") {
-          conditions.push(`(pcv.is_portal_visible IS NULL OR pcv.is_portal_visible = 0)`);
-        } else if (filter === "with_image") {
-          conditions.push(`EXISTS (SELECT 1 FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1)`);
-        } else if (filter === "in_stock") {
-          conditions.push(`EXISTS (SELECT 1 FROM inventory_master im WHERE im.medicine_id = m.id AND (im.quantity > 0 OR im.loose_quantity > 0))`);
-        }
-        const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-        const totalRow = await db2.get(
-          `SELECT COUNT(*) as n
-       FROM medicines m
-       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
-       ${where}`,
-          params
-        ).catch(() => ({ n: 0 }));
-        const rows = await db2.all(
-          `SELECT m.id, m.name, m.generic_name, m.manufacturer, m.category, m.mrp, m.sell_price, m.packaging,
-              COALESCE(pcv.is_portal_visible, 0) as is_portal_visible,
-              COALESCE(pcv.is_website_visible, 0) as is_website_visible,
-              COALESCE(pcv.featured_rank, 0) as featured_rank,
-              pcv.updated_at as visibility_updated_at,
-              (SELECT ci.image_path FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1 AND ci.is_primary = 1 LIMIT 1) as primary_image,
-              COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
-       FROM medicines m
-       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
-       ${where}
-       ORDER BY pcv.featured_rank DESC, is_portal_visible DESC, stock_qty DESC, m.name ASC
-       LIMIT ? OFFSET ?`,
-          [...params, limit, offset]
-        ).catch(() => []);
-        const countsRow = await db2.get(
-          `SELECT
-         COUNT(*) as total,
-         SUM(CASE WHEN pcv.is_portal_visible = 1 THEN 1 ELSE 0 END) as enabled_count,
-         SUM(CASE WHEN EXISTS (SELECT 1 FROM catalog_images ci WHERE ci.medicine_id = m.id AND ci.is_active = 1) THEN 1 ELSE 0 END) as with_image_count,
-         SUM(CASE WHEN EXISTS (SELECT 1 FROM inventory_master im WHERE im.medicine_id = m.id AND (im.quantity > 0 OR im.loose_quantity > 0)) THEN 1 ELSE 0 END) as in_stock_count
-       FROM medicines m
-       LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id`
-        ).catch(() => ({ total: 0, enabled_count: 0, with_image_count: 0, in_stock_count: 0 }));
-        res.json({
-          success: true,
-          page,
-          limit,
-          total_count: totalRow?.n || 0,
-          total_pages: Math.ceil((totalRow?.n || 0) / limit),
-          stats: {
-            total_medicines: countsRow?.total || 0,
-            portal_enabled: countsRow?.enabled_count || 0,
-            with_image: countsRow?.with_image_count || 0,
-            in_stock: countsRow?.in_stock_count || 0
-          },
-          medicines: rows
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] admin/catalog-visibility error:", err);
-        res.status(500).json({ error: "Failed to load catalog visibility" });
-      }
-    });
-    router6.put("/admin/catalog-visibility/:medicineId", async (req, res) => {
-      try {
-        const medicineId = parseInt(req.params.medicineId, 10);
-        if (isNaN(medicineId)) return res.status(400).json({ error: "Invalid medicine ID" });
-        const { is_portal_visible, is_website_visible, featured_rank } = req.body;
-        const db2 = await dbManager.getConnection();
-        const portalVal = is_portal_visible != null ? is_portal_visible ? 1 : 0 : null;
-        const websiteVal = is_website_visible != null ? is_website_visible ? 1 : 0 : portalVal;
-        await db2.run(
-          `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, featured_rank, updated_at)
-       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(medicine_id) DO UPDATE SET
-         is_portal_visible = COALESCE(excluded.is_portal_visible, is_portal_visible),
-         is_website_visible = COALESCE(excluded.is_website_visible, is_website_visible),
-         featured_rank = COALESCE(excluded.featured_rank, featured_rank),
-         updated_at = CURRENT_TIMESTAMP`,
-          [
-            medicineId,
-            portalVal,
-            websiteVal,
-            featured_rank != null ? parseInt(String(featured_rank), 10) : null
-          ]
-        );
-        const updated = await db2.get(
-          `SELECT m.id, m.name, pcv.is_portal_visible, pcv.is_website_visible, pcv.featured_rank
-       FROM medicines m
-       JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
-       WHERE m.id = ?`,
-          [medicineId]
-        );
-        res.json({ success: true, medicine: updated });
-      } catch (err) {
-        console.error("[CustomerPortal] admin/catalog-visibility PUT error:", err);
-        res.status(500).json({ error: "Failed to update visibility" });
-      }
-    });
-    router6.post("/admin/catalog-visibility/bulk", async (req, res) => {
-      try {
-        const { medicine_ids, is_portal_visible, is_website_visible } = req.body;
-        if (!Array.isArray(medicine_ids) || medicine_ids.length === 0) {
-          return res.status(400).json({ error: "medicine_ids array is required" });
-        }
-        if (medicine_ids.length > 500) {
-          return res.status(400).json({ error: "Max 500 medicines per bulk operation" });
-        }
-        const db2 = await dbManager.getConnection();
-        const portalVal = is_portal_visible ? 1 : 0;
-        const websiteVal = is_website_visible != null ? is_website_visible ? 1 : 0 : portalVal;
-        const placeholders = medicine_ids.map(() => "(?, ?, ?, CURRENT_TIMESTAMP)").join(", ");
-        const values = [];
-        medicine_ids.forEach((id) => values.push(id, portalVal, websiteVal));
-        await db2.run(
-          `INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
-       VALUES ${placeholders}
-       ON CONFLICT(medicine_id) DO UPDATE SET
-         is_portal_visible = excluded.is_portal_visible,
-         is_website_visible = excluded.is_website_visible,
-         updated_at = CURRENT_TIMESTAMP`,
-          values
-        );
-        res.json({
-          success: true,
-          updated_count: medicine_ids.length,
-          is_portal_visible: portalVal === 1
-        });
-      } catch (err) {
-        console.error("[CustomerPortal] admin/catalog-visibility bulk error:", err);
-        res.status(500).json({ error: "Failed to bulk update visibility" });
-      }
-    });
-    router6.post("/admin/catalog-visibility/publish-in-stock", async (req, res) => {
-      try {
-        const { is_online = true } = req.body;
-        const onlineVal = is_online ? 1 : 0;
-        const db2 = await dbManager.getConnection();
-        await db2.run(`
-      INSERT INTO product_channel_visibility (medicine_id, is_portal_visible, is_website_visible, updated_at)
-      SELECT DISTINCT im.medicine_id, ?, ?, CURRENT_TIMESTAMP
-      FROM inventory_master im
-      WHERE (im.quantity > 0 OR im.loose_quantity > 0) AND im.medicine_id IS NOT NULL
-      ON CONFLICT(medicine_id) DO UPDATE SET
-        is_portal_visible = excluded.is_portal_visible,
-        is_website_visible = excluded.is_website_visible,
-        updated_at = CURRENT_TIMESTAMP
-    `, [onlineVal, onlineVal]);
-        res.json({ success: true, is_online: onlineVal === 1 });
-      } catch (err) {
-        console.error("[CustomerPortal] admin/catalog-visibility publish-in-stock error:", err);
-        res.status(500).json({ error: "Failed to publish in-stock medicines" });
-      }
-    });
-    router6.post("/cloud/sync-catalog", async (_req, res) => {
-      try {
-        const { pushLocalCatalogToCloud: pushLocalCatalogToCloud2 } = await Promise.resolve().then(() => (init_cloudCatalogSyncService(), cloudCatalogSyncService_exports));
-        const result = await pushLocalCatalogToCloud2();
-        res.json(result);
-      } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-      }
-    });
-    router6.post("/cloud/pull-orders", async (_req, res) => {
-      try {
-        const { pullCloudOrdersToLocal: pullCloudOrdersToLocal2 } = await Promise.resolve().then(() => (init_cloudCatalogSyncService(), cloudCatalogSyncService_exports));
-        const result = await pullCloudOrdersToLocal2();
-        res.json(result);
-      } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
-      }
-    });
-    customerPortal_default = router6;
   }
 });
 
@@ -88226,10 +88292,14 @@ function buildRefillReminderMessage(patientName, items, pharmacyName, lang = "en
       timingSection += `
 \u26A0\uFE0F \u0938\u0942\u091A\u0928\u093E: \u0939\u092E\u093E\u0930\u0940 \u0926\u0941\u0915\u093E\u0928 ${weeklyOff} \u0915\u094B \u092C\u0902\u0926 \u0930\u0939\u0947\u0917\u0940\u0964 \u0915\u0943\u092A\u092F\u093E \u0938\u092E\u092F \u0938\u0947 \u092A\u0939\u0932\u0947 \u0926\u0935\u093E\u0908 \u0932\u0947 \u0932\u0947\u0902!`;
     }
-    const cta = `
+    let cta = `
 
 \u2753 \u0915\u094D\u092F\u093E \u0906\u092A \u0926\u0935\u093E\u0908 \u0924\u0948\u092F\u093E\u0930 \u0915\u0930\u0935\u093E\u0928\u093E \u091A\u093E\u0939\u0924\u0947 \u0939\u0948\u0902?
 \u{1F449} *\u092A\u0941\u0937\u094D\u091F\u093F \u0915\u0947 \u0932\u093F\u090F "1" \u092F\u093E "REFILL" \u0932\u093F\u0916\u0915\u0930 \u0909\u0924\u094D\u0924\u0930 \u0926\u0947\u0902\u0964*`;
+    if (opts?.portalUrl) {
+      cta += `
+\u{1F310} *24/7 \u0911\u0928\u0932\u093E\u0907\u0928 \u0930\u093F\u092B\u093C\u093F\u0932 \u0932\u093F\u0902\u0915:* ${opts.portalUrl}`;
+    }
     message = `\u{1F514} *\u0926\u0935\u093E\u0908 \u0930\u093F\u092B\u093C\u093F\u0932 \u0930\u093F\u092E\u093E\u0907\u0902\u0921\u0930 \u2014 ${pharmacyName}*
 
 \u0928\u092E\u0938\u094D\u0924\u0947 ${pName},
@@ -88247,10 +88317,14 @@ ${medList}${dueSuffix}${timingSection}${cta}`;
       timingSection += `
 \u26A0\uFE0F \u0938\u0942\u091A\u0928\u093E: \u0906\u092E\u091A\u0947 \u0926\u0941\u0915\u093E\u0928 ${weeklyOff} \u0932\u093E \u092C\u0902\u0926 \u0930\u093E\u0939\u0940\u0932. \u0915\u0943\u092A\u092F\u093E \u0906\u0927\u0940\u091A \u0914\u0937\u0927 \u0918\u0947\u090A\u0928 \u091C\u093E!`;
     }
-    const cta = `
+    let cta = `
 
 \u2753 \u0924\u0941\u092E\u094D\u0939\u093E\u0932\u093E \u0939\u0940 \u0914\u0937\u0927\u0947 \u0924\u092F\u093E\u0930 \u0939\u0935\u0940 \u0906\u0939\u0947\u0924 \u0915\u093E?
 \u{1F449} *\u0928\u093F\u0936\u094D\u091A\u093F\u0924\u0940\u0938\u093E\u0920\u0940 "1" \u0915\u093F\u0902\u0935\u093E "REFILL" \u0932\u093F\u0939\u0942\u0928 \u0909\u0924\u094D\u0924\u0930 \u0926\u094D\u092F\u093E\u0964*`;
+    if (opts?.portalUrl) {
+      cta += `
+\u{1F310} *24/7 \u0911\u0928\u0932\u093E\u0907\u0928 \u0930\u093F\u092B\u093F\u0932 \u0932\u093F\u0902\u0915:* ${opts.portalUrl}`;
+    }
     message = `\u{1F514} *\u0914\u0937\u0927 \u0930\u093F\u092B\u093F\u0932 \u0938\u094D\u092E\u0930\u0923\u092A\u0924\u094D\u0930 \u2014 ${pharmacyName}*
 
 \u0928\u092E\u0938\u094D\u0915\u093E\u0930 ${pName},
@@ -88268,11 +88342,15 @@ Due Date: ${dueDateStr}` : "";
       timingSection += `
 \u26A0\uFE0F Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
     }
-    const cta = `
+    let cta = `
 
 \u2753 Would you like us to prepare your regular medicines?
 \u{1F449} *Reply "1" or "REFILL" to confirm.*
 *(Store open ${openT} \u2013 ${closeT})*`;
+    if (opts?.portalUrl) {
+      cta += `
+\u{1F310} *24/7 1-Click Refill Link:* ${opts.portalUrl}`;
+    }
     message = `\u{1F514} *MEDICINE REFILL REMINDER \u2014 ${pharmacyName}*
 
 Dear ${pName},
@@ -90144,6 +90222,7 @@ var init_refills = __esm({
           medicine_name: r.medicine_name || "Prescribed Medicine",
           quantity_needed: r.quantity_needed || 1
         }));
+        const portalUrl = await getLivePortalUrl(db2, cleanDigits);
         const msg = anyReady ? buildRefillCollectionMessage(
           patientName,
           items,
@@ -90158,7 +90237,7 @@ var init_refills = __esm({
           lang,
           void 0,
           refillSchedOpts,
-          { includeLanguageBanner: includeLangBanner }
+          { includeLanguageBanner: includeLangBanner, portalUrl }
         );
         let pdfPath = void 0;
         try {
@@ -90287,6 +90366,7 @@ var init_refills = __esm({
         const anyReady = unsentRows.some((r) => r.is_ready === 1 || r.quick_bill_id);
         const notifType = anyReady ? "refill_collection" : "refill_reminder";
         const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
+        const portalUrl = await getLivePortalUrl(db2, cleanPhone);
         const msg = anyReady ? buildRefillCollectionMessage(
           patientName,
           unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
@@ -90301,7 +90381,7 @@ var init_refills = __esm({
           lang,
           void 0,
           refillSchedOpts,
-          { includeLanguageBanner: includeLangBanner }
+          { includeLanguageBanner: includeLangBanner, portalUrl }
         );
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,
@@ -90397,6 +90477,7 @@ var init_refills = __esm({
         tomorrowDate.setDate(tomorrowDate.getDate() + 1);
         const refillSchedOpts = await getRefillScheduleOpts(db2, sched, tomorrowDate);
         const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
+        const portalUrl = await getLivePortalUrl(db2, cleanPhone);
         const msg = buildRefillReminderMessage(
           patientName,
           unsent.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
@@ -90404,7 +90485,7 @@ var init_refills = __esm({
           lang,
           tomorrowDateStr,
           refillSchedOpts,
-          { includeLanguageBanner: includeLangBanner }
+          { includeLanguageBanner: includeLangBanner, portalUrl }
         );
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,
@@ -90488,6 +90569,7 @@ var init_refills = __esm({
         const anyReady = unsentRows.some((r) => r.is_ready === 1 || r.quick_bill_id);
         const notifType = anyReady ? "refill_collection" : "refill_reminder";
         const includeLangBanner = await isFirstContactOrUnconfirmed(db2, cleanPhone);
+        const portalUrl = await getLivePortalUrl(db2, cleanPhone);
         const msg = anyReady ? buildRefillCollectionMessage(
           patientName,
           unsentRows.map((r) => ({ medicine_name: r.medicine_name, quantity_needed: r.quantity_needed })),
@@ -90502,7 +90584,7 @@ var init_refills = __esm({
           lang,
           refillDate,
           refillSchedOpts,
-          { includeLanguageBanner: includeLangBanner }
+          { includeLanguageBanner: includeLangBanner, portalUrl }
         );
         const queueId = await whatsappQueueWorker.enqueue(
           cleanPhone,

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, lazy, Suspense, useMemo, useCallback, useD
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { createPortal } from 'react-dom';
-import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft, RotateCcw, Repeat2 } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft, RotateCcw, Repeat2, Eye, EyeOff } from 'lucide-react';
 const AICamera = lazy(() => import('../../components/AICamera'));
 import { CompositionIntelligenceModal } from '../../components/CompositionIntelligenceModal';
 import { api, apiClient, getCompactInventoryCache, isCompactInventoryCacheReady, ensureCompactInventoryReady,
@@ -3798,6 +3798,23 @@ const POS = () => {
   const profitOrLoss = grandTotal - totalCost;
   const isLoss = hasValidItems && profitOrLoss < -0.001; // Loss greater than 0.1 paise
 
+  const [showMargin, setShowMargin] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pos_show_margin') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleShowMargin = useCallback(() => {
+    setShowMargin(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('pos_show_margin', String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
 
   const [showPhonePromptModal, setShowPhonePromptModal] = useState(false);
   const [promptPhoneValue, setPromptPhoneValue] = useState('');
@@ -5598,6 +5615,19 @@ const POS = () => {
                     Load Special Orders
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={toggleShowMargin}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer select-none ${
+                    showMargin
+                      ? 'bg-primary/15 border-primary/40 text-primary hover:bg-primary/25'
+                      : 'bg-bg border-border text-muted hover:text-text hover:bg-bg2'
+                  }`}
+                  title="Toggle Margin Column ON/OFF (Hide when customers are viewing the screen)"
+                >
+                  {showMargin ? <Eye size={13} className="text-primary" /> : <EyeOff size={13} className="text-muted" />}
+                  <span>Margin</span>
+                </button>
                 <button 
                   onClick={clearCart}
                   className="premium-btn bg-red/10 border border-red/20 text-red text-sm py-1.5 px-3 hover:bg-red/20 transition-all flex items-center gap-1.5 rounded-xl"
@@ -5620,6 +5650,9 @@ const POS = () => {
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-center">Live Stock</th>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-center">Disc %</th>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-right">MRP</th>
+                    {showMargin && (
+                      <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-right">Margin</th>
+                    )}
                     <th className="py-2.5 px-3 text-sm font-bold text-muted uppercase tracking-wider border-b-2 border-border text-right">Total</th>
                     <th className="py-2.5 px-3 text-sm font-bold text-muted tracking-wider border-b-2 border-border"></th>
                   </tr>
@@ -5630,6 +5663,17 @@ const POS = () => {
                     const unitRate = (item.packSize || 0) > 0 ? stripPrice / (item.packSize || 1) : stripPrice;
                     const itemTotal = ((stripPrice * (item.qty || 0)) + (unitRate * (item.looseQty || 0))) * (1 - (item.discount || 0) / 100);
                     
+                    // Row-level cost and margin calculation
+                    const itemCost = item.costPrice != null ? Number(item.costPrice) : 0;
+                    const unitCostRate = (item.packSize || 0) > 0 ? itemCost / (item.packSize || 1) : itemCost;
+                    const itemTotalCost = (itemCost * (item.qty || 0)) + (unitCostRate * (item.looseQty || 0));
+
+                    // Effective item selling total considering overall bill-level discount
+                    const effectiveItemTotal = itemTotal * (1 - (discount || 0) / 100);
+                    const isRowLoss = !item.isEmptyRow && itemTotalCost > 0 && ((item.qty || 0) > 0 || (item.looseQty || 0) > 0) && (effectiveItemTotal < itemTotalCost - 0.001);
+                    const rowProfit = effectiveItemTotal - itemTotalCost;
+                    const rowMarginPercent = effectiveItemTotal > 0 ? (rowProfit / effectiveItemTotal) * 100 : 0;
+
                     // Near expiry highlight
                     const expWarn = item.isEmptyRow ? null : expiryWarning(item.expiry);
                     const expBadgeClass = expWarn ? EXPIRY_WARNING_CLASS[expWarn] : "bg-bg3 border border-border text-text";
@@ -5638,10 +5682,20 @@ const POS = () => {
                     // Color 1 (Theme Normal): Registered in Local Inventory with active stock & batch
                     // Color 2 (Amber Tint): Exists in Master Catalog, but NOT in active local inventory (0 stock)
                     const rowSchedule = item.isEmptyRow ? null : getMedicineSchedule(item.medicine_id);
-                    const rowStatusClass = rowSchedule
-                      ? `border-b border-border/30 border-l-4 ${rowSchedule === 'H' ? 'border-l-amber bg-amber-bg' : 'border-l-red bg-red-bg'}`
-                      : "border-b border-border/30 hover:bg-bg2/40";
-                    const statusBadge = rowSchedule ? (
+                    const rowStatusClass = isRowLoss
+                      ? "border-b border-rose-500/30 border-l-4 border-l-rose-500 bg-rose-500/10 hover:bg-rose-500/15"
+                      : (rowSchedule
+                        ? `border-b border-border/30 border-l-4 ${rowSchedule === 'H' ? 'border-l-amber bg-amber-bg' : 'border-l-red bg-red-bg'}`
+                        : "border-b border-border/30 hover:bg-bg2/40");
+                    const statusBadge = isRowLoss ? (
+                      <span
+                        key={`loss-${item.id}`}
+                        title={`Net loss on this item: Selling at ₹${Math.round(effectiveItemTotal)} vs Cost ₹${Math.round(itemTotalCost)}`}
+                        className="shrink-0 mr-2 px-1.5 py-0.5 rounded-md border text-[10px] font-extrabold tracking-wide border-rose-500/50 bg-rose-500/20 text-rose-400 animate-pulse"
+                      >
+                        ⚠️ LOSS
+                      </span>
+                    ) : (rowSchedule ? (
                       <span
                         key={`sch-${item.id}`}
                         title={`${SCHEDULE_LABEL[rowSchedule]} drug — prescription required`}
@@ -5649,7 +5703,7 @@ const POS = () => {
                       >
                         ℞ {rowSchedule}
                       </span>
-                    ) : null;
+                    ) : null);
 
                     return (
                       <tr key={item.id} data-medicine-id={item.medicine_id} className={`transition-all h-[44px] ${rowStatusClass} ${!item.isEmptyRow ? 'motion-row-pop' : ''} ${(activeRowSearchIndex === cart.indexOf(item) || activeBatchRowId === String(item.id)) ? 'relative z-dropdown' : ''}`}>
@@ -6484,9 +6538,30 @@ const POS = () => {
                           />
                         </td>
 
+                        {/* Margin */}
+                        {showMargin && (
+                          <td className="py-1 px-2.5 text-right font-mono text-xs select-none">
+                            {item.isEmptyRow ? (
+                              <span className="text-muted">-</span>
+                            ) : itemTotalCost <= 0 ? (
+                              <span className="text-muted" title="Cost price not recorded">N/A</span>
+                            ) : isRowLoss ? (
+                              <div className="flex flex-col items-end leading-tight" title={`Loss: Selling ₹${Math.round(effectiveItemTotal)} vs Cost ₹${Math.round(itemTotalCost)}`}>
+                                <span className="font-bold text-rose-500">-₹{Math.round(Math.abs(rowProfit))}</span>
+                                <span className="text-[10px] text-rose-400 font-semibold">{rowMarginPercent.toFixed(0)}%</span>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-end leading-tight" title={`Profit: Selling ₹${Math.round(effectiveItemTotal)} vs Cost ₹${Math.round(itemTotalCost)}`}>
+                                <span className="font-bold text-green">+₹{Math.round(rowProfit)}</span>
+                                <span className="text-[10px] text-muted font-semibold">{rowMarginPercent.toFixed(0)}%</span>
+                              </div>
+                            )}
+                          </td>
+                        )}
+
                         {/* Total */}
                         <td className="py-1 px-2.5 text-right">
-                          <div className="font-mono text-sm font-bold text-green pr-1">
+                          <div className={`font-mono text-sm font-bold pr-1 ${isRowLoss ? 'text-rose-500' : 'text-green'}`}>
                             {item.isEmptyRow ? '-' : `₹${Math.round(itemTotal)}`}
                           </div>
                         </td>

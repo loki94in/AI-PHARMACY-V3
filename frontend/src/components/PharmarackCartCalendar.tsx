@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Clock, ShoppingCart, Send, Store, Calendar, Truck, Package } from 'lucide-react';
+import { Clock, ShoppingCart, Send, Store, Calendar, Truck, Package, Globe } from 'lucide-react';
 import { api, apiClient } from '../services/api';
 import { toastEvent, whatsappQueueEvent } from '../services/events';
 import { useStore } from '../context/StoreContext';
@@ -64,6 +64,7 @@ interface PharmarackCartCalendarProps {
   hasUnreadSentHistory?: boolean;
   activeCount?: number;
   reorderCount?: number;
+  onlineOrdersCount?: number;
 }
 
 export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
@@ -72,6 +73,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
   hasUnreadSentHistory = false,
   activeCount = 0,
   reorderCount = 0,
+  onlineOrdersCount = 0,
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const todayCardRef = useRef<HTMLButtonElement>(null);
@@ -453,7 +455,29 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             )}
           </button>
 
-          {/* Tab 2: Supplier PO Grouping */}
+          {/* Tab 2: Online Orders */}
+          <button
+            type="button"
+            onClick={() => onTabChange('online-orders')}
+            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              currentTab === 'online-orders'
+                ? 'bg-primary/20 text-primary font-black shadow-xs border border-primary/40'
+                : onlineOrdersCount > 0
+                  ? 'text-sky-400 hover:bg-sky-500/10'
+                  : 'text-muted hover:text-text hover:bg-bg3'
+            }`}
+            title="Website and WhatsApp online customer orders & refill requests"
+          >
+            <Globe size={13} className={currentTab === 'online-orders' ? 'text-primary' : 'text-muted'} />
+            <span>Online Orders</span>
+            {onlineOrdersCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-primary/15 text-primary border border-primary/20 font-mono font-bold">
+                {onlineOrdersCount}
+              </span>
+            )}
+          </button>
+
+          {/* Tab 3: Supplier PO Grouping */}
           <button
             type="button"
             onClick={() => onTabChange('cart')}
