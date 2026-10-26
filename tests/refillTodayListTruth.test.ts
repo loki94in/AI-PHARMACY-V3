@@ -49,7 +49,7 @@ describe('Refill Today List Truth & Queue Resilience (P2-111, P2-112, P2-113)', 
       await db.run(`INSERT INTO medicines (id, name) VALUES (1, 'METFORMIN 500MG'), (2, 'TELMA 40MG'), (3, 'ATORVA 10MG')`);
 
       // 2. Active Customer
-      await db.run(`INSERT INTO customers (id, name, phone) VALUES (10, 'Ramesh Gupta', '9876500001'), (20, 'Suresh Verma', '9876500002'), (30, 'Anita Roy', '9876500003')`);
+      await db.run(`INSERT INTO customers (id, name, phone) VALUES (10, 'Ramesh Gupta', '9876500001'), (20, 'Suresh Verma', '9876500002'), (30, 'Anita Roy', '9876500003'), (40, 'Vikram Singh', '9876500004')`);
 
       // 3. Refill due today (ACTIVE) -> SHOULD appear
       await db.run(`
@@ -57,7 +57,7 @@ describe('Refill Today List Truth & Queue Resilience (P2-111, P2-112, P2-113)', 
         VALUES (101, 10, 1, 'Ramesh Gupta', '9876500001', DATE('now', 'localtime'), 1, 'pending', 30)
       `);
 
-      // 4. Refill due in 3 days (FUTURE) -> MUST NOT appear
+      // 4. Refill due in 3 days (WITHIN 7 DAYS) -> SHOULD appear
       await db.run(`
         INSERT INTO patient_refills (id, customer_id, medicine_id, patient_name, patient_phone, next_refill_date, is_active, status, quantity_needed)
         VALUES (102, 20, 2, 'Suresh Verma', '9876500002', DATE('now', '+3 days'), 1, 'pending', 30)
@@ -69,14 +69,20 @@ describe('Refill Today List Truth & Queue Resilience (P2-111, P2-112, P2-113)', 
         VALUES (103, 30, 3, 'Anita Roy', '9876500003', DATE('now', 'localtime'), 1, 'completed', 30)
       `);
 
+      // 6. Refill due in 15 days (> 7 DAYS) -> MUST NOT appear
+      await db.run(`
+        INSERT INTO patient_refills (id, customer_id, medicine_id, patient_name, patient_phone, next_refill_date, is_active, status, quantity_needed)
+        VALUES (104, 40, 2, 'Vikram Singh', '9876500004', DATE('now', '+15 days'), 1, 'pending', 30)
+      `);
 
       const briefing = await buildDailyOperationalBriefing(db, 'detailed');
       expect(briefing.messageText).toContain('Ramesh Gupta');
       expect(briefing.messageText).toContain('METFORMIN 500MG');
-      expect(briefing.messageText).not.toContain('Suresh Verma');
-      expect(briefing.messageText).not.toContain('TELMA 40MG');
+      expect(briefing.messageText).toContain('Suresh Verma');
+      expect(briefing.messageText).toContain('TELMA 40MG');
       expect(briefing.messageText).not.toContain('Anita Roy');
       expect(briefing.messageText).not.toContain('ATORVA 10MG');
+      expect(briefing.messageText).not.toContain('Vikram Singh');
     });
 
     it('rejects processRefillCartItem for completed or cancelled refills', async () => {

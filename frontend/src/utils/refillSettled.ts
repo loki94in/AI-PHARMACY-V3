@@ -6,6 +6,7 @@ type RefillLike = {
   cart_store_name?: string | null;
   reminder_status?: string | null;
   last_refill_date?: string | null;
+  is_ready?: number | boolean | null;
 };
 
 // Returns true if this refill medicine was fulfilled today in shop local time
@@ -19,6 +20,8 @@ export const isRefillFulfilledToday = (m: { last_refill_date?: string | null } |
 
 export const isRefillOrdered = (m: RefillLike) => m.status === 'ordered' || !!m.cart_store_name;
 export const isRefillReminded = (m: RefillLike) => m.reminder_status === 'SENT' || m.status === 'notified';
+export const isRefillReady = (m: RefillLike) =>
+  m.is_ready === 1 || m.is_ready === true || m.status === 'ready' || isRefillReminded(m);
 export const isRefillSettled = (m: RefillLike) =>
   m.status === 'completed' || m.status === 'fulfilled' || m.status === 'canceled' || isRefillFulfilledToday(m);
 
@@ -26,17 +29,17 @@ export const isRefillSettled = (m: RefillLike) =>
 export const isPatientRefillsSettled = (meds: RefillLike[] | undefined | null) =>
   !!meds && meds.length > 0 && meds.every(isRefillSettled);
 
-// Simplified 3-button refill workflow (Quick Assist + CRM, owner rule 2026-10):
-// Stage A 'upcoming' — no medicine ordered yet → [Add to Cart] [Already Added] [Edit]
-// Stage B 'ordered' — ordered but not yet marked ready → [Mark Ready] [POS] [Edit]
-// Stage C 'ready' / 'reminded' — marked ready (awaiting collection) → [Re-Send Reminder] [POS]
+// Simplified refill workflow (Quick Assist + CRM, owner rule 2026-10):
+// Stage A 'upcoming' — not yet marked ready or ordered → [Mark Ready] [Add to Cart] [Already Added] [POS] [Edit]
+// Stage B 'ordered' — ordered but not yet marked ready → [Mark Ready] [Complete] [POS] [Edit]
+// Stage C 'ready' / 'reminded' — marked ready (awaiting collection) → [Re-Send Reminder] [Complete] [POS]
 export type RefillStage = 'upcoming' | 'ordered' | 'reminded';
 export const getRefillStage = (meds: RefillLike[] | undefined | null): RefillStage => {
   if (!meds || meds.length === 0) return 'upcoming';
+  if (meds.some(isRefillReady)) return 'reminded';
   const orderedCount = meds.filter(isRefillOrdered).length;
-  if (orderedCount === 0) return 'upcoming';
-  if (meds.some(m => isRefillReminded(m) || (m as any).is_ready === 1)) return 'reminded';
-  return 'ordered';
+  if (orderedCount > 0) return 'ordered';
+  return 'upcoming';
 };
 
 // Special orders and online orders: settled once completed, fulfilled, or cancelled

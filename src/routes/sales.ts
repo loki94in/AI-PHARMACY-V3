@@ -993,8 +993,10 @@ router.post('/', async (req, res) => {
       const callConditions: string[] = [];
       const callParams: any[] = [];
       if (fulfilledRefillIds.length > 0) {
-        callConditions.push(`reference_id IN (${fulfilledRefillIds.map(() => '?').join(',')})`);
-        callParams.push(...fulfilledRefillIds.map(String));
+        for (const fId of fulfilledRefillIds) {
+          callConditions.push(`(reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ? OR reference_id LIKE ?)`);
+          callParams.push(String(fId), `${fId},%`, `%,${fId},%`, `%,${fId}`);
+        }
       }
       if (cleanPhoneDigits.length >= 7) {
         callConditions.push(`patient_phone LIKE ?`);
@@ -1007,6 +1009,9 @@ router.post('/', async (req, res) => {
            WHERE status IN ('pending', 'rescheduled') AND (${callConditions.join(' OR ')})`,
           callParams
         ).catch(() => {});
+        try {
+          eventService.broadcast('call_tasks_updated', { status: 'completed', at: Date.now() });
+        } catch (_) {}
       }
 
       try {

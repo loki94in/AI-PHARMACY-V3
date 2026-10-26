@@ -1920,8 +1920,10 @@ export async function executeCloseRefillCycles(
     const callTaskConditions: string[] = [];
     const callTaskParams: any[] = [];
     if (fulfilledIds.length > 0) {
-      callTaskConditions.push(`reference_id IN (${fulfilledIds.map(() => '?').join(',')})`);
-      callTaskParams.push(...fulfilledIds.map(String));
+      for (const fId of fulfilledIds) {
+        callTaskConditions.push(`(reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ? OR reference_id LIKE ?)`);
+        callTaskParams.push(String(fId), `${fId},%`, `%,${fId},%`, `%,${fId}`);
+      }
     }
     for (const phone of phonesToPurge) {
       const cleanDigits = phone.replace(/\D/g, '').slice(-10);
@@ -1937,6 +1939,9 @@ export async function executeCloseRefillCycles(
          WHERE status IN ('pending', 'rescheduled') AND (${callTaskConditions.join(' OR ')})`,
         callTaskParams
       ).catch(() => {});
+      try {
+        eventService.broadcast('call_tasks_updated', { status: 'completed', at: Date.now() });
+      } catch (_) {}
     }
 
     // Cancel any staged notifications for these fulfilled refills

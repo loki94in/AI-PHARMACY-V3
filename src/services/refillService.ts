@@ -779,8 +779,7 @@ export async function buildDailyOperationalBriefing(
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
-      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
-      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
+
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id

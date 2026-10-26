@@ -1573,6 +1573,25 @@ export const QuickAssistSidebar = memo(({
                             <span>{group.medicines.length}</span>
                           </span>
                           {timingBadge}
+                          {(() => {
+                            const st = getRefillStage(group.medicines);
+                            if (st === 'reminded') {
+                              return (
+                                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-300 text-[8px] font-bold shrink-0 border border-sky-500/25" title="Medicines ready for pickup">
+                                  <BellRing size={8} className="shrink-0" />
+                                  <span>Ready</span>
+                                </span>
+                              );
+                            }
+                            if (st === 'ordered') {
+                              return (
+                                <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 text-[8px] font-bold shrink-0 border border-emerald-500/25" title="Ordered via cart / distributor">
+                                  <span>Ordered</span>
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
                           {group.isPatientConfirmed ? (
                             <span
                               className="p-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0"
@@ -1783,6 +1802,19 @@ export const QuickAssistSidebar = memo(({
                                 </button>
                                 <button
                                   type="button"
+                                  disabled={isMarkingReady}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleMarkRefillGroupReady(group);
+                                  }}
+                                  className="h-6.5 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[9.5px] font-bold transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer shrink-0"
+                                  title={`Mark refills ready and send pickup reminder to ${group.patient_name}`}
+                                >
+                                  {isMarkingReady ? <Loader2 size={10} className="animate-spin shrink-0" /> : <BellRing size={11} className="shrink-0" />}
+                                  <span>Mark Ready</span>
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleOrderRefillGroupToCart(group);
@@ -1800,7 +1832,7 @@ export const QuickAssistSidebar = memo(({
                                     e.stopPropagation();
                                     handleMarkRefillGroupOrdered(group);
                                   }}
-                                  className="flex-1 h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs truncate"
+                                  className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs truncate"
                                   title="Already added / ordered outside Pharmarack"
                                 >
                                   {isMarkingGroup ? <Loader2 size={11} className="animate-spin shrink-0" /> : <CheckCheck size={11} className="shrink-0" />}

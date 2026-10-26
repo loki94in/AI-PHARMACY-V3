@@ -100,6 +100,10 @@ describe('Daily Operational Briefing Clean Formatting & Fallbacks', () => {
       INSERT INTO patient_refills (id, patient_name, patient_phone, medicine_id, refill_interval_days, last_refill_date, next_refill_date, status, is_active)
       VALUES (801, 'Mr. FULFILLED TODAY', '9999999801', 901, 30, datetime('now', 'localtime'), date('now', 'localtime', '+1 day'), 'pending', 1)
     `);
+    await db.run(`
+      INSERT INTO refill_fulfillments (refill_id, patient_name, patient_phone, medicine_id, quantity_fulfilled, fulfilled_at, cycle_due_date, next_due_date, fulfilled_via)
+      VALUES (801, 'Mr. FULFILLED TODAY', '9999999801', 901, 3, datetime('now', 'localtime'), date('now', 'localtime'), date('now', 'localtime', '+1 day'), 'crm_complete')
+    `);
 
     // 2. Refill truly pending (not fulfilled): last_refill_date = 20 days ago, next_refill_date = today
     await db.run(`

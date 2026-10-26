@@ -1805,7 +1805,8 @@ export const RefillsSection: React.FC = () => {
                     const meds = (selectedPatient.medicines || []).map(m => ({
                       status: m.status,
                       cart_store_name: (m as { cart_store_name?: string | null }).cart_store_name ?? null,
-                      reminder_status: m.reminder_status ?? selectedPatient.reminder_status ?? null
+                      reminder_status: m.reminder_status ?? selectedPatient.reminder_status ?? null,
+                      is_ready: (m as any).is_ready ?? 0
                     }));
                     const stage = getRefillStage(meds);
                     const unaddedCount = (selectedPatient.medicines || []).filter(
@@ -1854,12 +1855,35 @@ export const RefillsSection: React.FC = () => {
                         <span>{confirmingPatient ? 'Adding to Cart…' : 'Confirm & Cart'}</span>
                       </button>
                     ) : null;
+                    const markReadyBtn = (
+                      <button
+                        onClick={() => handleMarkReadyPatient(selectedPatient)}
+                        disabled={markingReady}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
+                        title="Mark refills ready and send pickup reminder via WhatsApp"
+                      >
+                        <Send size={12} className={markingReady ? 'animate-pulse' : ''} />
+                        <span>{markingReady ? 'Sending…' : 'Mark Ready'}</span>
+                      </button>
+                    );
+                    const completeBtn = (
+                      <button
+                        onClick={() => handleFulfillAllForPatient(selectedPatient)}
+                        disabled={fulfillingAll}
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-xs transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                        title="Complete refill cycle and schedule for next month"
+                      >
+                        <Check size={13} className={fulfillingAll ? 'animate-spin' : ''} />
+                        <span>{fulfillingAll ? 'Advancing…' : 'Complete'}</span>
+                      </button>
+                    );
                     if (stage === 'upcoming') {
                       return (
                         <>
                           {confirmBtn}
-                          {addToCartBtn}
                           {posBtn}
+                          {markReadyBtn}
+                          {addToCartBtn}
                           <button
                             onClick={() => handleMarkAllOrdered(selectedPatient)}
                             disabled={markingOrdered}
@@ -1877,24 +1901,17 @@ export const RefillsSection: React.FC = () => {
                       return (
                         <>
                           {confirmBtn}
-                          {addToCartBtn}
-                          <button
-                            onClick={() => handleMarkReadyPatient(selectedPatient)}
-                            disabled={markingReady}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
-                            title="Mark refills ready and send collection reminder"
-                          >
-                            <Send size={12} className={markingReady ? 'animate-pulse' : ''} />
-                            <span>{markingReady ? 'Sending…' : 'Mark Ready'}</span>
-                          </button>
                           {posBtn}
+                          {markReadyBtn}
+                          {completeBtn}
+                          {addToCartBtn}
                         </>
                       );
                     }
                     return (
                       <>
                         {confirmBtn}
-                        {addToCartBtn}
+                        {posBtn}
                         <button
                           onClick={() => handleMarkReadyPatient(selectedPatient)}
                           disabled={markingReady}
@@ -1904,7 +1921,8 @@ export const RefillsSection: React.FC = () => {
                           <RotateCcw size={12} className={markingReady ? 'animate-spin' : ''} />
                           <span>{markingReady ? 'Sending…' : 'Re-Send Reminder'}</span>
                         </button>
-                        {posBtn}
+                        {completeBtn}
+                        {addToCartBtn}
                       </>
                     );
                   })()}
