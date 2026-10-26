@@ -113,6 +113,10 @@ function downloadFile(url: string, dest: string, onProgress?: (downloaded: numbe
           res.pipe(fileStream);
           fileStream.on('finish', () => {
             fileStream.close(() => {
+              if (totalBytes > 0 && downloadedBytes < totalBytes) {
+                try { if (fs.existsSync(tempDest)) fs.unlinkSync(tempDest); } catch (_) {}
+                return reject(new Error(`DOWNLOAD_INCOMPLETE: Received ${downloadedBytes} of ${totalBytes} bytes`));
+              }
               try {
                 if (fs.existsSync(dest)) fs.unlinkSync(dest);
                 fs.renameSync(tempDest, dest);
@@ -123,6 +127,7 @@ function downloadFile(url: string, dest: string, onProgress?: (downloaded: numbe
             });
           });
           fileStream.on('error', (err) => {
+            try { fileStream.destroy(); } catch (_) {}
             try { if (fs.existsSync(tempDest)) fs.unlinkSync(tempDest); } catch (_) {}
             reject(err);
           });
@@ -672,12 +677,19 @@ class AutoUpdateService {
       console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
       console.log(`[AutoUpdate]   SHA-256  : ${sha256 || '(not provided)'}`);
 
-      // Spawn Updater.bat detached in a dedicated visible console progress window
+      // Write a dedicated launcher script to avoid cmd.exe quote-escaping bugs on paths with spaces
       const targetVersion = this.lastResult.latestVersion;
-      const windowTitle = `"AI Pharmacy OS — Updating to v${targetVersion}"`;
-      const fullCommand = `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`;
+      const launcherBat = path.join(stagingDir, 'launch-update.bat');
+      const launcherContent = [
+        '@echo off',
+        `title AI Pharmacy OS — Updating to v${targetVersion}`,
+        `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`,
+        'exit /b %ERRORLEVEL%',
+      ].join('\r\n');
+      fs.writeFileSync(launcherBat, launcherContent, 'utf8');
 
-      const child = spawn('cmd.exe', ['/c', 'start', windowTitle, 'cmd.exe', '/c', fullCommand], {
+      // Spawn Updater.bat detached in a dedicated visible console progress window
+      const child = spawn('cmd.exe', ['/c', 'start', `AI Pharmacy OS — Updating to v${targetVersion}`, 'cmd.exe', '/c', launcherBat], {
         detached: true,
         stdio: 'ignore',
         windowsHide: false,
@@ -692,10 +704,28 @@ class AutoUpdateService {
       console.log(`[AutoUpdate]   EXE      : ${exePath}`);
       console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
 
-      const child = spawn(exePath, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'], {
+      const targetVersion = this.lastResult.latestVersion;
+      const installDir = path.dirname(process.execPath);
+      const launcherBat = path.join(stagingDir, 'launch-setup.bat');
+      const launcherContent = [
+        '@echo off',
+        `title AI Pharmacy OS — Installing Setup v${targetVersion}`,
+        'echo Waiting for running application processes to exit...',
+        'taskkill /F /T /IM PharmacyOS.exe >nul 2>&1',
+        'taskkill /F /T /IM PharmacyBackend.exe >nul 2>&1',
+        'ping 127.0.0.1 -n 3 >nul',
+        `start "" /wait "${exePath}" /SILENT /SUPPRESSMSGBOXES`,
+        'echo Setup completed. Starting AI Pharmacy OS...',
+        'ping 127.0.0.1 -n 2 >nul',
+        `start "" "${path.join(installDir, 'PharmacyOS.exe')}"`,
+        'exit',
+      ].join('\r\n');
+      fs.writeFileSync(launcherBat, launcherContent, 'utf8');
+
+      const child = spawn('cmd.exe', ['/c', 'start', `AI Pharmacy OS — Setup v${targetVersion}`, 'cmd.exe', '/c', launcherBat], {
         detached: true,
         stdio: 'ignore',
-        windowsHide: true,
+        windowsHide: false,
       });
       child.unref();
 

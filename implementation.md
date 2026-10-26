@@ -1,78 +1,63 @@
-# Implementation Plan — Include Upcoming 7-Day Refills with Day-of-Week (e.g. Sat, 01 Nov) in Morning Briefing
+# Implementation Plan — Fix Auto-Update Download, Process Handoff, and Installation Failure
 
-## Objective
-Update the Store Owner Daily Operational WhatsApp Briefing (`buildDailyOperationalBriefing` in `src/services/refillService.ts`) to:
-1. Include refills due across the **upcoming 7 days** (matching Quick Assist's 7-day lookahead window).
-2. Format all due dates with the **Day of the Week** (e.g. `Sun, 01 Nov`, `Mon, 02 Nov`, `Tue, 27 Oct`) so store owners can immediately align with distributor delivery cutoffs and market closures.
-3. Add timing badges (`🚨 Overdue`, `📅 Today`, `⏳ Tomorrow`, `⏳ Upcoming`) and itemize staged patient reminder tasks.
+## Problem Summary & Symptoms
+When a developer publishes a new release (e.g. v0.1.164):
+1. **Download Stall / Error**: The app failed to download or reported an error banner (`Update check or download failed`) because redirect streams on GitHub assets and network timeouts weren't gracefully handled and surfaced errors without auto-retry recovery.
+2. **Premature App Termination**: The app closed prematurely because `gracefulShutdown('APPLY_UPDATE')` in `src/server.ts` ran `taskkill /F /T /IM PharmacyOS.exe` after 600ms, while the updater process was either still starting or waiting for file locks to release.
+3. **Command Line Escaping Failure in Windows `spawn`**: In `autoUpdateService.ts`, `spawn('cmd.exe', ['/c', 'start', windowTitle, 'cmd.exe', '/c', fullCommand])` passed nested quotes containing spaces (`"G:\AI Pharmacy OS\Updater.bat"`). Node's Win32 spawn escaped quotes with backslashes (`\"`), which Windows `cmd.exe` cannot parse, causing `cmd.exe` to fail immediately with `'G:\AI' is not recognized as an internal or external command` or `The system cannot find the path specified`.
+4. **`ERROR: Input redirection is not supported` in `Updater.bat`**: `packaging/Updater.bat` used `timeout /t 3 /nobreak >nul` across multiple steps. In detached/background execution, Windows `timeout` command crashes immediately because standard input is redirected.
+5. **Windows File Lock Collisions on Executables**: Windows takes 1–3 seconds to release file handle locks after process exit. `Updater.bat` immediately attempted `copy /Y PharmacyOS.exe` for backup and extraction, failing with `The process cannot access the file because it is being used by another process`, which triggered a failed rollback and left files incomplete or corrupted.
+6. **Inno Setup Silent Fallback Failure**: When falling back to Setup EXE (`AI-Pharmacy-OS-Portable-Setup-*.exe`), `autoUpdateService.ts` launched it `/VERYSILENT` while `PharmacyOS.exe` was still running, causing Setup to fail to overwrite locked binaries.
 
 ---
 
-## Required Changes
+## Root Cause Analysis
+- **Root Cause 1 (`src/services/autoUpdateService.ts`)**: The spawn command used raw `cmd.exe /c start` with an array of nested quoted strings. Under Windows, `spawn` turns arguments with quotes into backslash-escaped strings (`\"`), which breaks `cmd.exe`'s command parsing on paths with spaces (`G:\AI Pharmacy OS`).
+- **Root Cause 2 (`packaging/Updater.bat`)**:
+  - `timeout /t ... >nul` fails under non-interactive shells (`ERROR: Input redirection is not supported`).
+  - Broken PID expansion (`%~$PID:0%`).
+  - Lack of a retry-sleep loop when replacing `PharmacyOS.exe` and `PharmacyBackend.exe` while Windows releases process locks.
+  - Verification check at step 6 fails if `PharmacyOS.exe` was omitted from differential update ZIPs (manifest `includedInZip: false`).
+- **Root Cause 3 (`src/server.ts`)**: Hard-killing `PharmacyOS.exe` after 600ms via `gracefulShutdown('APPLY_UPDATE')` before confirming the external updater process has acquired the update lock and taken over the installation lifecycle.
+- **Root Cause 4 (`autoUpdateService.ts` download resilience)**: `downloadFile` needs proper HTTP 302/307 redirect chaining with Azure Blob / GitHub asset streaming, verifying `content-length` and connection timeouts, and reporting clear progress so the UI never appears frozen or stuck in an error loop.
 
-### 1. `src/services/refillService.ts` — SQL Query Window (7-Day Lookahead)
-- In `buildDailyOperationalBriefing`:
-  - Change line 749 (`refillRows`) and line 781 (`refillDetailRows`) from:
-    ```sql
-    AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+---
+
+## Action Plan
+
+### 1. `packaging/Updater.bat`
+- Replace all `timeout /t N >nul` with `ping 127.0.0.1 -n (N+1) >nul` (standard non-blocking delay in batch, impervious to input redirection).
+- Fix line 78 invalid lock writing (`%~$PID:0%`).
+- Add an exclusive file lock check loop before backup and extraction for `PharmacyOS.exe` and `PharmacyBackend.exe`.
+- Ensure differential update compatibility (if `PharmacyOS.exe` was unchanged and not in ZIP, preserve existing binary).
+- Sync updated `packaging/Updater.bat` to `G:\AI Pharmacy OS\Updater.bat`.
+
+### 2. `src/services/autoUpdateService.ts`
+- Fix the updater launch mechanism in `applyUpdate()`:
+  - Generate a dedicated `launch-update.bat` in the staging directory with explicit, unescaped batch commands:
+    ```bat
+    @echo off
+    call "<updaterPath>" "<zipPath>" "<installDir>" "<targetVersion>" "<sha256>" "<logPath>"
     ```
-    to:
-    ```sql
-    AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
-    ```
-  - Captures all active refills due today, overdue, and upcoming through the next 7 calendar days.
+  - Launch `launch-update.bat` directly via `cmd.exe /c start "" "<launcherBat>"`.
+  - Fix Setup EXE fallback to kill running instances and wait before running installer so binaries are not locked.
+- Improve `downloadFile` error handling and auto-retry on stalled socket / network interruption.
 
-### 2. `src/services/refillService.ts` — Date & Day-of-Week Formatter
-- Replace the date formatter with a calendar-aware formatter that includes the 3-letter weekday:
-  ```ts
-  const dueDayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const dueMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const formatDateWithDay = (ymd: string) => {
-    if (!ymd) return 'Due soon';
-    const d = new Date(ymd.includes('T') ? ymd : `${ymd.slice(0, 10)}T00:00:00`);
-    if (isNaN(d.getTime())) return ymd;
-    const day = dueDayNames[d.getDay()];
-    const dateNum = String(d.getDate()).padStart(2, '0');
-    const month = dueMonthNames[d.getMonth()];
-    return `${day}, ${dateNum} ${month}`;
-  };
-  ```
-- Output examples:
-  - `Sun, 01 Nov`
-  - `Mon, 02 Nov`
-  - `Tue, 27 Oct`
+### 3. `src/server.ts`
+- Extend shutdown grace period in `/api/system/apply-update` to 1200ms to allow launcher to fully detach before backend closes.
 
-### 3. Timing Badges & Section Header
-- Header:
-  `📋 *REFILL PRESCRIPTIONS (Today & Upcoming 7 Days)*:`
-- Timing labels per patient:
-  - If `diffDays < 0`: `🚨 Overdue (Due Sat, 24 Oct)`
-  - If `diffDays === 0`: `📅 Today (Mon, 26 Oct)`
-  - If `diffDays === 1`: `⏳ Tomorrow (Tue, 27 Oct)`
-  - If `diffDays >= 2`: `⏳ Due Sun, 01 Nov`
-- Retain stock indicators: `(✅ Stock)` or `(⏳ Hold for Stock)`.
-
-### 4. Itemized Staged Reminders & Templates
-- Itemize staged customer reminder targets from `automation_notifications` (up to top 8 + overflow count).
-- Ensure consistent rendering across `detailed`, `compact`, `checklist`, and `executive` templates.
+### 4. Verification & Guardrails
+- Test `launch-update.bat` generation and batch execution with spaces in path.
+- Test `Updater.bat` with `<nul` input redirection to verify 0 errors.
+- Run `npm run guardrails` and verify exit code 0.
+- Update `SMALL_BUG_FIX_PLAN.md` and knowledge graph (`node scripts/quick-update.mjs`).
 
 ---
 
-## Verification Plan
-1. Test briefing generation on live database: verify patients due in next 7 days appear with day-of-week formatting (e.g. `Sun, 01 Nov`).
-2. Run `npm run guardrails` and `npx tsc --noEmit` to ensure exit 0.
-3. Update `SMALL_BUG_FIX_PLAN.md` and auto-knowledge graph.
-
----
-
-## Tasks & Progress Tracking
-- [x] Task 1: Expand SQL query in `src/services/refillService.ts` to `+7 days`.
-  - *Completed*: Updated `refillRows` (line 749) and `refillDetailRows` (line 781) to `DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')` using local SQLite date resolution.
-- [x] Task 2: Implement `formatDateWithDay` to format dates as `Day, DD Mon` (e.g. `Sun, 01 Nov`, `Mon, 02 Nov`) with timing labels.
-  - *Completed*: Created `formatDateWithDay` and `getDueBadge` cleanly constructing local dates with 3-letter weekdays (`Sun`, `Mon`, `Tue`, etc.) and prepending `🚨 Overdue: ` or `Today: ` based on comparison with `todayStr`.
-- [x] Task 3: Itemize staged customer reminders in the briefing output.
-  - *Completed*: Selected recipient names and phones from `automation_notifications` and itemized up to 5 patient names in `dailyTasks` with an overflow summary.
-- [x] Task 4: Run test generation script and verify against live database.
-  - *Completed*: Verified output against active database and store production database `G:\AI Pharmacy OS\data\app.db`. For the store's data, `Mr. BHANUAS RAGUNATH JADHAV (Sun, 01 Nov)` and all active special orders rendered with 100% precision.
-- [x] Task 5: Verify `npm run guardrails` passes and update knowledge graph.
-  - *Completed*: Passed `npx tsc --noEmit` clean; passed `npm run guardrails` (exit code 0); recorded `[Fixed] P2-122` in `SMALL_BUG_FIX_PLAN.md`.
+## Completed Tasks Log
+- [x] Task 1: Update `packaging/Updater.bat` to eliminate `timeout` crashes, fix lock syntax, and add file lock release wait loops.
+- [x] Task 2: Sync updated `packaging/Updater.bat` to `G:\AI Pharmacy OS\Updater.bat`.
+- [x] Task 3: Update `src/services/autoUpdateService.ts` with dedicated launcher script generation and robust download error recovery.
+- [x] Task 4: Adjust `src/server.ts` apply-update shutdown timing (1200ms grace period).
+- [x] Task 5: Test non-interactive updater execution (`call packaging\Updater.bat <nul` exit code 1 clean, zero redirection crashes) and verify `npm run guardrails` (PASS, 0 violations) and test suite `tests/autoUpdateVersionGate.test.ts` (8/8 pass).
+- [x] Task 6: Record P2-123 in `SMALL_BUG_FIX_PLAN.md` and refresh knowledge graph.

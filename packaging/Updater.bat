@@ -8,10 +8,10 @@
 ::
 :: Flow:
 ::   1. Write update.lock
-::   2. Wait for PharmacyOS.exe to exit (graceful → taskkill fallback)
+::   2. Wait for PharmacyOS.exe and PharmacyBackend.exe to exit (graceful → taskkill fallback)
 ::   3. Verify SHA-256 of downloaded zip
 ::   4. Backup install dir → backup\preupdate-YYYYMMDDHHMMSS\
-::   5. Extract zip over install dir
+::   5. Extract zip over install dir (with file lock retry loop)
 ::   6. Verify PharmacyOS.exe exists after extraction
 ::   7. Write success.json or failure.json
 ::   8. Delete update.lock
@@ -28,8 +28,8 @@ set "EXPECTED_SHA256=%~4"
 set "LOG_PATH=%~5"
 
 :: ── Defaults ───────────────────────────────────────────────
-if "%ZIP_PATH%"==""         ( echo [Updater] ERROR: No zip path provided. & timeout /t 3 /nobreak >nul & exit /b 1 )
-if "%INSTALL_DIR%"==""      ( echo [Updater] ERROR: No install dir provided. & timeout /t 3 /nobreak >nul & exit /b 1 )
+if "%ZIP_PATH%"==""         ( echo [Updater] ERROR: No zip path provided. & ping 127.0.0.1 -n 4 >nul & exit /b 1 )
+if "%INSTALL_DIR%"==""      ( echo [Updater] ERROR: No install dir provided. & ping 127.0.0.1 -n 4 >nul & exit /b 1 )
 if "%TARGET_VERSION%"==""   set "TARGET_VERSION=unknown"
 if "%LOG_PATH%"==""         set "LOG_PATH=%INSTALL_DIR%\logs\updater.log"
 
@@ -56,26 +56,25 @@ call :LOG "=============================="
 :: ── 1. Write update.lock ───────────────────────────────────
 set "LOCK_PATH=%INSTALL_DIR%\updates\update.lock"
 set "STAGING_DIR=%INSTALL_DIR%\updates\staging"
-if not exist "%INSTALL_DIR%\updates" mkdir "%INSTALL_DIR%\updates"
-if not exist "%STAGING_DIR%" mkdir "%STAGING_DIR%"
+if not exist "%INSTALL_DIR%\updates" mkdir "%INSTALL_DIR%\updates" 2>nul
+if not exist "%STAGING_DIR%" mkdir "%STAGING_DIR%" 2>nul
 
 :: Check for a stale lock (older than 30 minutes = another updater may have crashed)
 if exist "%LOCK_PATH%" (
     call :LOG "WARNING: Existing update.lock found. Checking if stale..."
-    set "LOCK_AGE_STALE=1"
     powershell -NoProfile -Command "$f='%LOCK_PATH%'; $age=(Get-Date)-(Get-Item $f).LastWriteTime; if($age.TotalMinutes -lt 30){exit 1}else{exit 0}" >nul 2>&1
     if !ERRORLEVEL!==1 (
         echo [ERROR] Active update.lock found. Another update may be running.
         call :LOG "ERROR: Active update.lock found (< 30 min old). Another update may be running. Aborting."
-        timeout /t 3 /nobreak >nul
+        ping 127.0.0.1 -n 4 >nul
         exit /b 1
     )
     call :LOG "Stale lock detected (> 30 min). Removing and continuing."
     del /f /q "%LOCK_PATH%" >nul 2>&1
 )
 
-:: Write lock
-echo {"pid":"%~$PID:0%","ts":"%DATE% %TIME%","targetVersion":"%TARGET_VERSION%","operation":"update"} > "%LOCK_PATH%"
+:: Write lock (valid JSON, no invalid PID tokens)
+echo {"ts":"%DATE% %TIME%","targetVersion":"%TARGET_VERSION%","operation":"update"} > "%LOCK_PATH%"
 call :LOG "update.lock written."
 
 :: ── 2. Wait for application processes to exit ──────────────
@@ -95,23 +94,67 @@ set /a WAIT_COUNT=0
             call :LOG "Force terminating application processes for update..."
             taskkill /F /T /IM PharmacyOS.exe >nul 2>&1
             taskkill /F /T /IM PharmacyBackend.exe >nul 2>&1
-            timeout /t 1 /nobreak >nul
+            ping 127.0.0.1 -n 2 >nul
             goto :WAIT_DONE
         )
-        timeout /t 1 /nobreak >nul
+        ping 127.0.0.1 -n 2 >nul
         goto :WAIT_LOOP
     )
 :WAIT_DONE
 call :LOG "Application processes are no longer running."
+
+:: ── 2b. Wait for OS kernel file handles to release ──────────
+call :LOG "Waiting for executable file handles to release..."
+set /a HANDLE_WAIT=0
+:HANDLE_WAIT_LOOP
+powershell -NoProfile -Command ^
+    "$busy = $false; " ^
+    "foreach ($f in @('%INSTALL_DIR%\PharmacyOS.exe', '%INSTALL_DIR%\PharmacyBackend.exe')) { " ^
+    "  if (Test-Path $f) { " ^
+    "    try { $s = [System.IO.File]::Open($f, 'Open', 'ReadWrite', 'None'); $s.Close() } catch { $busy = $true; break } " ^
+    "  } " ^
+    "} " ^
+    "if ($busy) { exit 1 } else { exit 0 }" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 (
+    set /a HANDLE_WAIT+=1
+    if !HANDLE_WAIT! LEQ 8 (
+        ping 127.0.0.1 -n 2 >nul
+        goto :HANDLE_WAIT_LOOP
+    )
+    call :LOG "WARNING: File handles took longer than 8s to release. Proceeding with update..."
+) else (
+    call :LOG "All executable file handles verified free."
+)
 echo [1/4] Application closed successfully. [OK]
 
 :: ── 3. Verify SHA-256 ──────────────────────────────────────
 echo [2/4] Verifying update package integrity...
 if not "%EXPECTED_SHA256%"=="" (
     call :LOG "Verifying SHA-256 of update package..."
+    if not exist "%ZIP_PATH%" (
+        echo [ERROR] Update zip file not found at: %ZIP_PATH%
+        call :LOG "ERROR: Update zip file missing: %ZIP_PATH%"
+        call :WRITE_FAILURE "ZIP_FILE_MISSING"
+        call :CLEANUP_LOCK
+        start "" "%INSTALL_DIR%\PharmacyOS.exe"
+        ping 127.0.0.1 -n 4 >nul
+        exit /b 1
+    )
+
     for /f "usebackq delims=" %%H in (
-        `powershell -NoProfile -Command "(Get-FileHash '%ZIP_PATH%' -Algorithm SHA256).Hash.ToLower()"`
+        `powershell -NoProfile -Command "try { (Get-FileHash '%ZIP_PATH%' -Algorithm SHA256).Hash.ToLower() } catch { '' }"`
     ) do set "ACTUAL_SHA256=%%H"
+
+    if "!ACTUAL_SHA256!"=="" (
+        echo [ERROR] Could not compute SHA-256 of update package!
+        call :LOG "ERROR: SHA-256 computation failed."
+        call :WRITE_FAILURE "CHECKSUM_COMPUTE_FAILED"
+        del /f /q "%ZIP_PATH%" >nul 2>&1
+        call :CLEANUP_LOCK
+        start "" "%INSTALL_DIR%\PharmacyOS.exe"
+        ping 127.0.0.1 -n 4 >nul
+        exit /b 1
+    )
 
     if /i not "!ACTUAL_SHA256!"=="%EXPECTED_SHA256%" (
         echo [ERROR] SHA-256 integrity verification failed!
@@ -122,7 +165,7 @@ if not "%EXPECTED_SHA256%"=="" (
         del /f /q "%ZIP_PATH%" >nul 2>&1
         call :CLEANUP_LOCK
         start "" "%INSTALL_DIR%\PharmacyOS.exe"
-        timeout /t 3 /nobreak >nul
+        ping 127.0.0.1 -n 4 >nul
         exit /b 1
     )
     call :LOG "SHA-256 verified OK."
@@ -141,7 +184,18 @@ set "BACKUP_DIR=%INSTALL_DIR%\backup\preupdate-!TIMESTAMP!"
 call :LOG "Creating pre-update backup at: !BACKUP_DIR!"
 
 mkdir "!BACKUP_DIR!" 2>nul
-if exist "%INSTALL_DIR%\PharmacyOS.exe"      copy /Y "%INSTALL_DIR%\PharmacyOS.exe"      "!BACKUP_DIR!\PharmacyOS.exe"      >nul 2>&1
+if exist "%INSTALL_DIR%\PharmacyOS.exe" (
+    set /a BKP_TRIES=0
+    :BKP_OS_LOOP
+    copy /Y "%INSTALL_DIR%\PharmacyOS.exe" "!BACKUP_DIR!\PharmacyOS.exe" >nul 2>&1
+    if not exist "!BACKUP_DIR!\PharmacyOS.exe" (
+        set /a BKP_TRIES+=1
+        if !BKP_TRIES! LEQ 5 (
+            ping 127.0.0.1 -n 2 >nul
+            goto :BKP_OS_LOOP
+        )
+    )
+)
 if exist "%INSTALL_DIR%\PharmacyBackend.exe" copy /Y "%INSTALL_DIR%\PharmacyBackend.exe" "!BACKUP_DIR!\PharmacyBackend.exe" >nul 2>&1
 if exist "%INSTALL_DIR%\dist-pkg" (
     mkdir "!BACKUP_DIR!\dist-pkg" 2>nul
@@ -160,7 +214,7 @@ if not exist "!BACKUP_DIR!\PharmacyOS.exe" (
     call :WRITE_FAILURE "EXECUTABLE_BACKUP_FAILED"
     call :CLEANUP_LOCK
     start "" "%INSTALL_DIR%\PharmacyOS.exe"
-    timeout /t 3 /nobreak >nul
+    ping 127.0.0.1 -n 4 >nul
     exit /b 1
 )
 call :LOG "Backup created successfully."
@@ -190,7 +244,17 @@ powershell -NoProfile -Command ^
     "    if (!(Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null } " ^
     "  } else { " ^
     "    $parent = Split-Path $dest; if (!(Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }; " ^
-    "    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true); " ^
+    "    $success = $false; " ^
+    "    for ($attempt = 1; $attempt -le 5; $attempt++) { " ^
+    "      try { " ^
+    "        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true); " ^
+    "        $success = $true; " ^
+    "        break; " ^
+    "      } catch { " ^
+    "        Start-Sleep -Milliseconds 400; " ^
+    "      } " ^
+    "    } " ^
+    "    if (-not $success) { throw ('Failed to extract file: ' + $dest) } " ^
     "  } " ^
     "  if ($curr %% 15 -eq 0 -or $curr -eq $total) { " ^
     "    $pct = [math]::Round(($curr / $total) * 100); " ^
@@ -200,20 +264,27 @@ powershell -NoProfile -Command ^
     "$zip.Dispose(); Write-Host ' [OK]';"
 
 if !ERRORLEVEL! NEQ 0 (
+    echo.
     echo [ERROR] Extraction failed! Rolling back...
     call :LOG "ERROR: ZIP extraction failed (code !ERRORLEVEL!)."
     call :ROLLBACK "!BACKUP_DIR!" "FILE_REPLACEMENT_FAILED"
-    timeout /t 3 /nobreak >nul
+    ping 127.0.0.1 -n 4 >nul
     exit /b 1
 )
 call :LOG "Extraction complete."
 
-:: ── 6. Verify new PharmacyOS.exe ──────────────────────────
+:: ── 6. Verify PharmacyOS.exe ──────────────────────────────
+if not exist "%INSTALL_DIR%\PharmacyOS.exe" (
+    if exist "!BACKUP_DIR!\PharmacyOS.exe" (
+        call :LOG "PharmacyOS.exe omitted from differential update — restoring from backup..."
+        copy /Y "!BACKUP_DIR!\PharmacyOS.exe" "%INSTALL_DIR%\PharmacyOS.exe" >nul 2>&1
+    )
+)
 if not exist "%INSTALL_DIR%\PharmacyOS.exe" (
     echo [ERROR] PharmacyOS.exe missing after extraction! Rolling back...
     call :LOG "ERROR: PharmacyOS.exe missing after extraction."
     call :ROLLBACK "!BACKUP_DIR!" "FILE_REPLACEMENT_FAILED"
-    timeout /t 3 /nobreak >nul
+    ping 127.0.0.1 -n 4 >nul
     exit /b 1
 )
 call :LOG "PharmacyOS.exe verified after extraction."
@@ -236,7 +307,7 @@ echo ==============================================================
 echo  Update v%TARGET_VERSION% installed successfully! Restarting app...
 echo ==============================================================
 call :LOG "Starting new PharmacyOS.exe..."
-timeout /t 2 /nobreak >nul
+ping 127.0.0.1 -n 3 >nul
 if exist "%INSTALL_DIR%\RUN-PharmacyOS-Silent.vbs" (
     start "" wscript.exe "%INSTALL_DIR%\RUN-PharmacyOS-Silent.vbs"
 ) else (
@@ -290,6 +361,10 @@ call :WRITE_FAILURE "!RBACK_REASON!"
 echo {"version":"%TARGET_VERSION%","error":"!RBACK_REASON!","ts":"%DATE% %TIME%","rollback":"attempted"} > "%STAGING_DIR%\rollback.json"
 call :CLEANUP_LOCK
 call :LOG "Rollback complete. Starting old PharmacyOS.exe..."
-timeout /t 2 /nobreak >nul
-start "" "%INSTALL_DIR%\PharmacyOS.exe"
+ping 127.0.0.1 -n 3 >nul
+if exist "%INSTALL_DIR%\RUN-PharmacyOS-Silent.vbs" (
+    start "" wscript.exe "%INSTALL_DIR%\RUN-PharmacyOS-Silent.vbs"
+) else (
+    start "" "%INSTALL_DIR%\PharmacyOS.exe"
+)
 exit /b 0

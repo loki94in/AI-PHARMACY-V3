@@ -389,7 +389,7 @@ app.post('/api/system/apply-update', async (_req, res) => {
     res.json(result);
     setTimeout(() => {
       void gracefulShutdown('APPLY_UPDATE');
-    }, 600);
+    }, 1200);
   } catch (err: any) {
     console.error('[System] Failed to apply update:', err.message);
     res.status(400).json({ success: false, error: err.message });
