@@ -85,7 +85,8 @@ Ensure that every morning:
   - Added `'ordered'` status to both `refillRows` and `refillDetailRows` alongside `pending`, `notified`, and `staged`.
   - Retained strict **Today & Overdue** filtering (`DATE(pr.next_refill_date) <= DATE('now', 'localtime')`).
 
-- [x] **Task 4: Verification & Automated Guardrails**
+- [x] **Task 4: Verification, Automated Guardrails & Production Release**
   - Verified end-to-end execution: 15 customer reminder notifications staged, and store owner daily briefing renders Today & Overdue items with task count.
   - Passed `npm run guardrails` with 0 violations (`tsc --noEmit` clean).
-  - Synchronizing auto-knowledge graph via `node scripts/quick-update.mjs`.
+  - Synchronized auto-knowledge graph via `node scripts/quick-update.mjs`.
+  - Executed production release: version bumped to `0.1.164`, built portable setup, update zip, and mobile APK, published to GitHub Releases (`v0.1.164`), promoted to `rolloutMode: "ALL"` on Vercel update server, committed and pushed to `main`.
