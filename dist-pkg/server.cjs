@@ -35625,8 +35625,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
-      AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
-      AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
+
       AND NOT EXISTS (
         SELECT 1 FROM refill_fulfillments rf
         WHERE rf.refill_id = pr.id
@@ -67998,7 +67997,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.165";
+    APP_VERSION = "0.1.166";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -89056,8 +89055,10 @@ async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
     const callTaskConditions = [];
     const callTaskParams = [];
     if (fulfilledIds.length > 0) {
-      callTaskConditions.push(`reference_id IN (${fulfilledIds.map(() => "?").join(",")})`);
-      callTaskParams.push(...fulfilledIds.map(String));
+      for (const fId of fulfilledIds) {
+        callTaskConditions.push(`(reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ? OR reference_id LIKE ?)`);
+        callTaskParams.push(String(fId), `${fId},%`, `%,${fId},%`, `%,${fId}`);
+      }
     }
     for (const phone of phonesToPurge) {
       const cleanDigits = phone.replace(/\D/g, "").slice(-10);
@@ -89074,6 +89075,10 @@ async function executeCloseRefillCycles(db2, refills, fulfilledVia) {
         callTaskParams
       ).catch(() => {
       });
+      try {
+        eventService.broadcast("call_tasks_updated", { status: "completed", at: Date.now() });
+      } catch (_) {
+      }
     }
     if (fulfilledIds.length > 0) {
       await db2.run(
@@ -99820,8 +99825,10 @@ var init_sales = __esm({
           const callConditions = [];
           const callParams = [];
           if (fulfilledRefillIds.length > 0) {
-            callConditions.push(`reference_id IN (${fulfilledRefillIds.map(() => "?").join(",")})`);
-            callParams.push(...fulfilledRefillIds.map(String));
+            for (const fId of fulfilledRefillIds) {
+              callConditions.push(`(reference_id = ? OR reference_id LIKE ? OR reference_id LIKE ? OR reference_id LIKE ?)`);
+              callParams.push(String(fId), `${fId},%`, `%,${fId},%`, `%,${fId}`);
+            }
           }
           if (cleanPhoneDigits.length >= 7) {
             callConditions.push(`patient_phone LIKE ?`);
@@ -99835,6 +99842,10 @@ var init_sales = __esm({
               callParams
             ).catch(() => {
             });
+            try {
+              eventService.broadcast("call_tasks_updated", { status: "completed", at: Date.now() });
+            } catch (_) {
+            }
           }
           try {
             eventService.broadcast("refill_updated", {
