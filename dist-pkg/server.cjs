@@ -25366,6 +25366,11 @@ async function ensureSchema(dbPath) {
   dbManager.isBooting = true;
   try {
     const db2 = await dbManager.getConnection();
+    try {
+      await db2.run("PRAGMA wal_autocheckpoint = 1000;");
+      await db2.run("PRAGMA wal_checkpoint(TRUNCATE);");
+    } catch (_) {
+    }
     await db2.run("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)");
     await db2.run("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
     await db2.run("INSERT INTO app_settings (key, value) VALUES ('whatsapp_idle_sleep_min', '0') ON CONFLICT(key) DO UPDATE SET value='0'");
@@ -34835,6 +34840,36 @@ async function checkAllRefills(db2) {
       console.error("Failed to send daily out-of-stock refills report to Telegram:", err);
     }
   }
+  try {
+    const duePatientRows = await db2.all(
+      `SELECT DISTINCT pr.patient_name, pr.patient_phone
+       FROM patient_refills pr
+       WHERE pr.is_active = 1
+         AND pr.status NOT IN ('completed', 'canceled', 'notified', 'ordered')
+         AND COALESCE(pr.patient_confirmed, 0) = 0
+         AND pr.cart_store_name IS NULL
+         AND (pr.next_refill_date IS NULL OR DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days'))
+         AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+         AND NOT EXISTS (
+           SELECT 1 FROM refill_fulfillments rf
+           WHERE rf.refill_id = pr.id
+             AND (
+               DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
+               OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
+               OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+               OR (DATE(rf.next_due_date) > DATE('now', 'localtime'))
+             )
+         )`,
+      [noticeDays]
+    ).catch(() => []);
+    for (const p of duePatientRows) {
+      if (p.patient_name || p.patient_phone) {
+        await syncStagedRefillNotificationForPatient(db2, p.patient_name, p.patient_phone);
+      }
+    }
+  } catch (syncNotifErr) {
+    console.warn("[RefillService] Error staging due refill notifications during daily check:", syncNotifErr);
+  }
 }
 async function createQuickBillForRefill(db2, refill) {
   const invoice_no = `H-REF-${Date.now()}`;
@@ -34878,9 +34913,10 @@ async function syncStagedRefillNotificationForPatient(db2, patientName, patientP
   const storePhone = await getStorePhone(db2);
   const storeLabel = storePhone ? `${configuredName} (Ph: ${storePhone})` : configuredName;
   const readyRefills = await db2.all(
-    `SELECT pr.id, pr.quantity_needed, pr.is_ready, pr.quick_bill_id, m.name as medicine_name 
+    `SELECT pr.id, pr.quantity_needed, pr.is_ready, pr.quick_bill_id,
+            COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Medicine') as medicine_name 
      FROM patient_refills pr
-     JOIN medicines m ON pr.medicine_id = m.id
+     LEFT JOIN medicines m ON pr.medicine_id = m.id
      WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
        AND pr.is_active = 1
        AND pr.status NOT IN ('completed', 'canceled', 'notified', 'ordered')
@@ -34992,11 +35028,12 @@ You may collect from ${storeLabel}.${timingInfo}
     msg += firstContactLanguageBanner();
   }
   const referenceIdStr = refillIds.join(",");
+  const notifType = anyReady ? "refill_collection" : "refill_reminder";
   let existing = null;
   try {
     existing = await db2.get(
-      `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+      `SELECT id, status, type, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+       WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
        ORDER BY id DESC LIMIT 1`,
       [patientPhone, patientName]
     );
@@ -35005,14 +35042,14 @@ You may collect from ${storeLabel}.${timingInfo}
       await db2.run("ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL").catch(() => {
       });
       existing = await db2.get(
-        `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
-         WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+        `SELECT id, status, type, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+         WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
          ORDER BY id DESC LIMIT 1`,
         [patientPhone, patientName]
       ).catch(async () => {
         return await db2.get(
-          `SELECT id, status FROM automation_notifications 
-           WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+          `SELECT id, status, type FROM automation_notifications 
+           WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
            ORDER BY id DESC LIMIT 1`,
           [patientPhone, patientName]
         );
@@ -35029,18 +35066,18 @@ You may collect from ${storeLabel}.${timingInfo}
       }
       await db2.run(
         `UPDATE automation_notifications 
-         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
+         SET type = ?, message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
          WHERE id = ?`,
-        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+        [notifType, msg, referenceIdStr, patientName, patientPhone, existing.id]
       ).catch(async (updErr) => {
         if (updErr?.message?.includes("snoozed_until")) {
           await db2.run("ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL").catch(() => {
           });
           await db2.run(
             `UPDATE automation_notifications 
-             SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL
+             SET type = ?, message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL
              WHERE id = ?`,
-            [msg, referenceIdStr, patientName, patientPhone, existing.id]
+            [notifType, msg, referenceIdStr, patientName, patientPhone, existing.id]
           );
         } else {
           throw updErr;
@@ -35049,21 +35086,21 @@ You may collect from ${storeLabel}.${timingInfo}
     } else {
       await db2.run(
         `UPDATE automation_notifications 
-         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
+         SET type = ?, message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
          WHERE id = ?`,
-        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+        [notifType, msg, referenceIdStr, patientName, patientPhone, existing.id]
       );
     }
     await db2.run(
       `DELETE FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?) AND id != ?`,
+       WHERE type IN ('refill_collection', 'refill_reminder') AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?) AND id != ?`,
       [patientPhone, patientName, existing.id]
     );
   } else {
     await db2.run(
       `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ["refill_collection", patientName, patientPhone, msg, "staged", 1, referenceIdStr]
+      [notifType, patientName, patientPhone, msg, "staged", 1, referenceIdStr]
     );
   }
 }
@@ -35286,7 +35323,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
       GROUP BY medicine_id
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
-      AND pr.status IN ('pending', 'notified', 'staged')
+      AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
@@ -35305,18 +35342,18 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     LIMIT 15
   `).catch(() => []);
   const refillDetailRows = await db2.all(`
-    SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed,
+    SELECT pr.patient_name, COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name, pr.quantity_needed,
            DATE(pr.next_refill_date) as due_date,
            CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END as in_stock
     FROM patient_refills pr
-    JOIN medicines m ON pr.medicine_id = m.id
+    LEFT JOIN medicines m ON pr.medicine_id = m.id
     LEFT JOIN (
       SELECT medicine_id, SUM(quantity) + COALESCE(SUM(loose_quantity), 0) as total_qty
       FROM inventory_master
       GROUP BY medicine_id
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
-      AND pr.status IN ('pending', 'notified', 'staged')
+      AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
@@ -55836,7 +55873,10 @@ function launchClientInstance(forceQr) {
         reject(new Error("WhatsApp QR expired 5 times without being scanned. Reconnect from Settings to try again."));
       }
     });
+    let hasAuthenticatedFired = false;
     client.on("authenticated", async () => {
+      if (hasAuthenticatedFired) return;
+      hasAuthenticatedFired = true;
       console.log("[WhatsApp] QR scanned & authenticated! Persisting credential status immediately...");
       currentQr = null;
       if (qrTimeout) clearTimeout(qrTimeout);
@@ -55857,7 +55897,10 @@ function launchClientInstance(forceQr) {
         console.warn("[WhatsApp] Failed to write authenticated status on authenticated event:", err);
       }
     });
+    let hasReadyFired = false;
     client.on("ready", async () => {
+      if (hasReadyFired) return;
+      hasReadyFired = true;
       console.log("WhatsApp Client is ready!");
       lastInitFailureAt = 0;
       consecutiveInitFailures = 0;
@@ -65424,6 +65467,11 @@ var init_connection = __esm({
               await db2.run(`PRAGMA busy_timeout = ${busyTimeout};`);
               await db2.run("PRAGMA journal_mode = WAL;");
               await db2.run("PRAGMA synchronous = NORMAL;");
+              await db2.run("PRAGMA wal_autocheckpoint = 1000;");
+              try {
+                await db2.run("PRAGMA wal_checkpoint(TRUNCATE);");
+              } catch (_) {
+              }
               await db2.run("PRAGMA cache_size = -64000;");
               await db2.run("PRAGMA temp_store = MEMORY;");
               await db2.run("PRAGMA mmap_size = 268435456;");
@@ -67649,7 +67697,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.163";
+    APP_VERSION = "0.1.164";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -81392,7 +81440,7 @@ var init_triggerSchedulerService = __esm({
             const task = import_node_cron3.default.schedule(cronExpr, () => {
               void runHeavyJob("daily_check", async () => {
                 try {
-                  const mode = await getBackendFetchMode("bg.dailyScans", "off");
+                  const mode = await getBackendFetchMode("bg.dailyScans", "auto");
                   if (mode === "off" || mode === "manual" && activityTracker.isIdle()) return;
                   console.log(`[Trigger: Daily Check] Running daily check scheduled at ${timeStr}...`);
                   const { checkAllRefills: checkAllRefills2, dispatchDueRefillReminders: dispatchDueRefillReminders2 } = await Promise.resolve().then(() => (init_refillService(), refillService_exports));
@@ -81753,12 +81801,13 @@ var init_triggerSchedulerService = __esm({
             await createBackup2("Manual Run Now");
             return { success: true, message: "Database backup executed successfully." };
           } else if (triggerId === "daily_check") {
-            const { checkAllRefills: checkAllRefills2, dispatchDueRefillReminders: dispatchDueRefillReminders2 } = await Promise.resolve().then(() => (init_refillService(), refillService_exports));
+            const { checkAllRefills: checkAllRefills2, dispatchDueRefillReminders: dispatchDueRefillReminders2, sendMorningScheduleBriefingToAdmin: sendMorningScheduleBriefingToAdmin2 } = await Promise.resolve().then(() => (init_refillService(), refillService_exports));
             const { checkOverdueCreditNotes: checkOverdueCreditNotes2 } = await Promise.resolve().then(() => (init_creditNoteService(), creditNoteService_exports));
             await checkAllRefills2(database);
             await dispatchDueRefillReminders2(database);
             await checkOverdueCreditNotes2(database);
-            return { success: true, message: "Daily operational scan executed successfully." };
+            await sendMorningScheduleBriefingToAdmin2(database);
+            return { success: true, message: "Daily operational scan and briefing executed successfully." };
           } else if (triggerId === "expiry_scan") {
             const { runExpiryScanAndAlert: runExpiryScanAndAlert2 } = await Promise.resolve().then(() => (init_expiryAlertService(), expiryAlertService_exports));
             await runExpiryScanAndAlert2(90);
@@ -115034,13 +115083,13 @@ var init_server = __esm({
         setTimeout(() => {
           Promise.resolve().then(() => (init_tokenRefreshScheduler(), tokenRefreshScheduler_exports)).then((m) => m.tokenRefreshScheduler.start()).catch((err) => console.warn("[Boot:Phase2] Pharmarack session heartbeat start failed:", err));
         }, 600);
-        const waBootDelay = !isPackagedApp() && process.env.NODE_ENV !== "production" ? 2e4 : 12e3;
+        const waBootDelay = 45e3;
         setTimeout(async () => {
           if (process.env.DISABLE_BACKGROUND_WORKERS === "true") return;
           try {
             const { isWhatsAppAutoConnectAllowed: isWhatsAppAutoConnectAllowed2, initClient: initClient2 } = await Promise.resolve().then(() => (init_whatsappClient(), whatsappClient_exports));
             if (await isWhatsAppAutoConnectAllowed2()) {
-              console.log("[Boot:Phase2] Saved WhatsApp session found \u2014 performing 1-time boot session restore...");
+              console.log("[Boot:Phase2] Saved WhatsApp session found \u2014 performing 1-time deferred boot session restore (T+45s)...");
               (async () => {
                 const { runHeavyRestore: runHeavyRestore2 } = await Promise.resolve().then(() => (init_heavyRestoreLane(), heavyRestoreLane_exports));
                 await runHeavyRestore2("whatsapp_boot_restore", async () => {
