@@ -31472,6 +31472,224 @@ function extractTotalsFromText(text) {
   }
   return { subtotal, cgst, sgst, igst, total_amount, global_cd_per, total_discount, round_off, cn_amount, cn_number };
 }
+function parseDevAgencyInvoice(content, globalCdPer = 0) {
+  const lines = content.split("\n").map((l) => l.trim()).filter(Boolean);
+  const items = [];
+  let invoice_no = "";
+  let invoice_date = "";
+  let total_amount = 0;
+  const distributor_name = "DEV AGENCY";
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.includes("Inv.No") || l.includes("Inv. No") || l.startsWith("Inv.No.")) {
+      const inlineMatch = l.match(/Inv\.?\s*No\.?\s*[:\-]?\s*([A-Za-z0-9\-]+)/i);
+      if (inlineMatch && inlineMatch[1] && !/^\s*$/.test(inlineMatch[1])) {
+        invoice_no = inlineMatch[1];
+      } else {
+        for (let offset = -5; offset <= 5; offset++) {
+          const candidate = lines[i + offset];
+          if (candidate && /^\d{4,8}$/.test(candidate) && !candidate.includes("-")) {
+            invoice_no = candidate;
+            break;
+          }
+        }
+      }
+    }
+    if (l.includes("Inv Dt") || l.includes("Inv. Date") || l.startsWith("Inv Dt")) {
+      const inlineDate = l.match(/Inv\.?\s*D(?:ate|t)\.?\s*[:\-]?\s*(\d{2}[\/\-]\d{2}[\/\-]\d{2,4})/i);
+      if (inlineDate && inlineDate[1]) {
+        const parts = inlineDate[1].split(/[\/\-]/);
+        const year = parts[2].length === 2 ? "20" + parts[2] : parts[2];
+        invoice_date = `${year}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+      } else {
+        for (let offset = -5; offset <= 5; offset++) {
+          const candidate = lines[i + offset];
+          if (candidate && /^\d{2}\/\d{2}\/\d{2,4}$/.test(candidate)) {
+            const parts = candidate.split("/");
+            const year = parts[2].length === 2 ? "20" + parts[2] : parts[2];
+            invoice_date = `${year}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
+            break;
+          }
+        }
+      }
+    }
+    if (l.includes("TotalAmt :") || l.includes("TO PAY :") || l.includes("TotalAmt") || l.includes("TOPAY")) {
+      const inlineAmt = l.match(/(?:TotalAmt|TO\s*PAY)\s*[:\-]?\s*(\d+(?:\.\d{2})?)/i);
+      if (inlineAmt) {
+        total_amount = parseFloat(inlineAmt[1]);
+      } else {
+        const next = lines[i + 1];
+        if (next && /^\d+(?:\.\d{2})?$/.test(next)) {
+          total_amount = parseFloat(next);
+        }
+      }
+    }
+  }
+  for (const line of lines) {
+    if (line.includes("BANK:") || line.includes("SHOP NO") || line.includes("PRODUCT NAME") || line.length < 15) continue;
+    const expMatch = line.match(/\b([A-Za-z0-9\-\/]{3,15})\s+(\d{2}[\/\-]\d{2,4})\b/);
+    if (!expMatch) continue;
+    const batch = expMatch[1];
+    const expiry = expMatch[2];
+    const expIdx = line.indexOf(expMatch[0]);
+    const beforeExp = line.substring(0, expIdx).trim();
+    const afterExp = line.substring(expIdx + expMatch[0].length).trim();
+    const beforeTokens = beforeExp.split(/\s+/);
+    if (beforeTokens.length < 4) continue;
+    let rate = 0;
+    let mrp = 0;
+    let qty = 0;
+    let hsn = "";
+    let name = "";
+    for (let k = 0; k < beforeTokens.length - 2; k++) {
+      if (/^\d+$/.test(beforeTokens[k]) && /^\d+\.\d{2}$/.test(beforeTokens[k + 1]) && /^\d+\.\d{2}$/.test(beforeTokens[k + 2])) {
+        qty = parseInt(beforeTokens[k], 10);
+        rate = parseFloat(beforeTokens[k + 1]);
+        mrp = parseFloat(beforeTokens[k + 2]);
+        name = beforeTokens.slice(0, k).join(" ");
+        break;
+      }
+    }
+    if (!name || !qty || !rate) continue;
+    const hsnToken = beforeTokens.find((t) => /^\d{6,8}$/.test(t));
+    if (hsnToken) hsn = hsnToken;
+    let mfg = "";
+    let pack = "";
+    const packMatch = afterExp.match(/\b(\d+\s*(?:GM|ML|TAB|CAP)s?|\d+)\s*$/i);
+    if (packMatch) {
+      pack = packMatch[1].trim();
+    }
+    const mfgMatch = afterExp.match(/\b([A-Za-z]{2,15})\b/);
+    if (mfgMatch && mfgMatch[1].toUpperCase() !== "GM" && mfgMatch[1].toUpperCase() !== "ML" && mfgMatch[1].toUpperCase() !== "TAB") {
+      mfg = mfgMatch[1].trim();
+    }
+    let fullName = name;
+    if (pack && !fullName.toLowerCase().includes(pack.toLowerCase())) {
+      fullName = `${fullName} ${pack}`.trim();
+    }
+    const formattedExp = formatExpiryDate(expiry);
+    items.push({
+      name: fullName,
+      quantity: qty,
+      rate,
+      mrp,
+      batch_no: batch,
+      expiry_date: formattedExp,
+      manufacturer: mfg,
+      hsn_code: hsn,
+      cgst_per: 2.5,
+      sgst_per: 2.5,
+      cd_per: globalCdPer,
+      cd_rs: 0,
+      free_qty: 0,
+      _extracted_data: {
+        name: fullName,
+        manufacturer: mfg,
+        hsn_code: hsn,
+        rate,
+        mrp,
+        qty,
+        free_qty: 0,
+        batch_no: batch,
+        expiry_date: formattedExp,
+        cgst_per: 2.5,
+        sgst_per: 2.5,
+        cd_per: globalCdPer,
+        cd_rs: 0
+      }
+    });
+  }
+  if (items.length === 0) {
+    for (let i = 0; i < lines.length - 6; i++) {
+      const line = lines[i];
+      if (line.includes("BANK:") || line.includes("SHOP NO") || line.includes("DEV AGENCY") || line.includes("GST") || line.includes("INVOICE") || line.includes("TOTAL") || line.includes("PACK") || line.includes("WARRANTY") || line.includes("Remark") || line.length < 3) continue;
+      const qtyStr = lines[i + 1];
+      const pricesStr = lines[i + 2];
+      const snGstStr = lines[i + 3];
+      const hsnAmtStr = lines[i + 4];
+      if (!/^\d+$/.test(qtyStr)) continue;
+      const priceTokens = pricesStr.split(/\s+/);
+      if (priceTokens.length < 2 || !priceTokens.every((p) => /^\d+\.\d{2}$/.test(p))) continue;
+      if (!/^\d+\s+\d+(?:\.\d+)?$/.test(snGstStr)) continue;
+      if (!/^\d{6,8}\s+\d+\.\d{2}$/.test(hsnAmtStr)) continue;
+      let batch = "";
+      let expiry = "";
+      let mfg = "";
+      let pack = "";
+      let batchExpLineIdx = -1;
+      for (let j = i + 5; j <= Math.min(i + 8, lines.length - 1); j++) {
+        const expMatch = lines[j].match(/^([A-Za-z0-9\-\/]+?)(\d{2}[\/\-]\d{2,4})$/);
+        if (expMatch) {
+          batch = expMatch[1];
+          expiry = expMatch[2];
+          batchExpLineIdx = j;
+          let metaIdx = j + 1;
+          while (metaIdx < lines.length && /^\d+(?:\.\d+)?$/.test(lines[metaIdx])) {
+            metaIdx++;
+          }
+          if (lines[metaIdx] && /^[A-Za-z\s.]{2,20}$/.test(lines[metaIdx])) {
+            mfg = lines[metaIdx].trim();
+            metaIdx++;
+          }
+          if (lines[metaIdx] && /^(\d+\s*(?:GM|ML|TAB|CAP)?|\d+)$/i.test(lines[metaIdx])) {
+            pack = lines[metaIdx].trim();
+          }
+          break;
+        }
+      }
+      if (batchExpLineIdx === -1) continue;
+      const qty = parseInt(qtyStr, 10);
+      const rate = parseFloat(priceTokens[0]);
+      const mrp = parseFloat(priceTokens[1]);
+      const gstTokens = snGstStr.split(/\s+/);
+      const totalGst = parseFloat(gstTokens[1]) || 0;
+      const hsnTokens = hsnAmtStr.split(/\s+/);
+      const hsn = hsnTokens[0];
+      let fullName = line;
+      if (pack && !fullName.toLowerCase().includes(pack.toLowerCase())) {
+        fullName = `${fullName} ${pack}`;
+      }
+      const formattedExp = formatExpiryDate(expiry);
+      items.push({
+        name: fullName,
+        quantity: qty,
+        rate,
+        mrp,
+        batch_no: batch,
+        expiry_date: formattedExp,
+        manufacturer: mfg,
+        hsn_code: hsn,
+        cgst_per: totalGst / 2,
+        sgst_per: totalGst / 2,
+        cd_per: globalCdPer,
+        cd_rs: 0,
+        free_qty: 0,
+        _extracted_data: {
+          name: fullName,
+          manufacturer: mfg,
+          hsn_code: hsn,
+          rate,
+          mrp,
+          qty,
+          free_qty: 0,
+          batch_no: batch,
+          expiry_date: formattedExp,
+          cgst_per: totalGst / 2,
+          sgst_per: totalGst / 2,
+          cd_per: globalCdPer,
+          cd_rs: 0
+        }
+      });
+    }
+  }
+  return {
+    distributor_name,
+    invoice_no,
+    invoice_date,
+    total_amount,
+    items
+  };
+}
 var import_path21, NET_BILL_AMOUNT_PATTERN, BILL_AMOUNT_PATTERN;
 var init_emailInvoiceParsers = __esm({
   "src/services/emailInvoiceParsers.ts"() {
@@ -32908,10 +33126,48 @@ AI Pharmacy Team`
             const isPdf = nameLower.endsWith(".pdf");
             const isImage = /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(nameLower);
             if (isPdf) {
-              const { default: pdfParse2 } = await import("pdf-parse");
-              const fileBuffer = import_fs21.default.readFileSync(filePath);
-              const pdfData = await pdfParse2(fileBuffer);
-              content = pdfData.text || "";
+              try {
+                const { default: pdfParse2 } = await import("pdf-parse");
+                const fileBuffer = import_fs21.default.readFileSync(filePath);
+                const pdfData = await pdfParse2(fileBuffer);
+                content = pdfData.text || "";
+              } catch (pdfErr) {
+                console.warn("[emailService] pdf-parse extraction failed, falling back to pdfjs-dist:", pdfErr?.message || pdfErr);
+                content = "";
+              }
+              if (!content || content.replace(/\s+/g, "").trim().length < 50) {
+                try {
+                  const fileBuffer = import_fs21.default.readFileSync(filePath);
+                  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+                  const pdfDoc = await pdfjsLib.getDocument({
+                    data: new Uint8Array(fileBuffer),
+                    verbosity: 0,
+                    stopAtErrors: false
+                  }).promise;
+                  let pdfjsText = "";
+                  for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+                    const page = await pdfDoc.getPage(pageNum);
+                    const textContent = await page.getTextContent();
+                    let lastY = null;
+                    for (const item of textContent.items) {
+                      const y = item.transform ? Math.round(item.transform[5]) : null;
+                      if (lastY !== null && y !== null && Math.abs(y - lastY) > 4) {
+                        pdfjsText += "\n";
+                      } else if (pdfjsText && !pdfjsText.endsWith("\n") && !pdfjsText.endsWith(" ")) {
+                        pdfjsText += " ";
+                      }
+                      pdfjsText += item.str || "";
+                      lastY = y;
+                    }
+                    pdfjsText += "\n";
+                  }
+                  if (pdfjsText.trim().length >= 50) {
+                    content = pdfjsText;
+                  }
+                } catch (pdfjsErr) {
+                  console.warn("[emailService] pdfjs-dist digital text extraction failed:", pdfjsErr?.message || pdfjsErr);
+                }
+              }
             } else if (isImage) {
               const fileBuffer = import_fs21.default.readFileSync(filePath);
               const ocrResult = await (await loadAiCamera()).processImage(fileBuffer, true);
@@ -32948,9 +33204,13 @@ AI Pharmacy Team`
                 }
                 const canvasFactory = new NodeCanvasFactory();
                 const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+                const standardFontsPath = import_path22.default.resolve(process.cwd(), "node_modules/pdfjs-dist/standard_fonts/");
                 const pdfDoc = await pdfjsLib.getDocument({
                   data: new Uint8Array(fileBuffer),
-                  CanvasFactory: NodeCanvasFactory
+                  canvasFactory,
+                  standardFontDataUrl: import_fs21.default.existsSync(standardFontsPath) ? standardFontsPath + "/" : void 0,
+                  verbosity: 0,
+                  stopAtErrors: false
                 }).promise;
                 const numPages = pdfDoc.numPages;
                 let ocrText = "";
@@ -33098,6 +33358,16 @@ AI Pharmacy Team`
                 }
                 if (items.length === 0 && (detectedLayout === "concatenated" || content.includes("NITIN AGENCY") || content.includes("NA/"))) {
                   const customRes = parseNitinInvoice(content, global_cd_per);
+                  if (customRes.items && customRes.items.length > 0) {
+                    items = customRes.items;
+                    if (customRes.invoice_no) invoice_no = customRes.invoice_no;
+                    if (customRes.invoice_date) invoice_date = customRes.invoice_date;
+                    if (customRes.total_amount) total_amount = customRes.total_amount;
+                    if (customRes.distributor_name) distributor_name = customRes.distributor_name;
+                  }
+                }
+                if (items.length === 0 && (content.includes("DEV AGENCY") || content.includes("Dava Infotech") || content.includes("COM PACK SCHBACHEXP.") && content.includes("GST TAX INVOICE"))) {
+                  const customRes = parseDevAgencyInvoice(content, global_cd_per);
                   if (customRes.items && customRes.items.length > 0) {
                     items = customRes.items;
                     if (customRes.invoice_no) invoice_no = customRes.invoice_no;
@@ -35324,7 +35594,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND NOT EXISTS (
@@ -35354,7 +35624,7 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND NOT EXISTS (
@@ -35418,7 +35688,8 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
      ORDER BY date ASC LIMIT 10`
   ).catch(() => []);
   const stagedRows = await db2.all(`
-    SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
+    SELECT an.id, an.recipient_name, an.recipient_phone, an.message,
+           COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
     FROM automation_notifications an
     LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
     LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
@@ -35426,14 +35697,35 @@ async function buildDailyOperationalBriefing(db2, requestedTemplate, options) {
       AND (pr.id IS NULL OR (pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')))`).catch(() => []);
   const autoStagedCount = stagedRows.filter((r) => r.reminder_mode === "auto").length;
   const manualStagedCount = stagedRows.filter((r) => r.reminder_mode !== "auto").length;
+  const dueDayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const dueMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const formatDate = (ymd) => {
+  const formatDateWithDay = (ymd) => {
     if (!ymd) return "Due soon";
-    const parts = ymd.split("-");
+    const cleanYmd = ymd.slice(0, 10);
+    const parts = cleanYmd.split("-");
     if (parts.length === 3) {
-      return `${parts[2]} ${dueMonthNames[parseInt(parts[1], 10) - 1] || parts[1]}`;
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const dateObj = new Date(year, month, day);
+      const dayName = dueDayNames[dateObj.getDay()] || "";
+      const dateNum = String(day).padStart(2, "0");
+      const monthName = dueMonthNames[month] || parts[1];
+      return `${dayName}, ${dateNum} ${monthName}`;
     }
     return ymd;
+  };
+  const getDueBadge = (ymd) => {
+    if (!ymd) return "Due soon";
+    const cleanYmd = ymd.slice(0, 10);
+    const formatted = formatDateWithDay(cleanYmd);
+    if (cleanYmd < todayStr2) {
+      return `\u{1F6A8} Overdue: ${formatted}`;
+    } else if (cleanYmd === todayStr2) {
+      return `Today: ${formatted}`;
+    } else {
+      return formatted;
+    }
   };
   let ordersBlock = "\u2022 No pending orders";
   if (groupedCustomerOrders.length > 0) {
@@ -35502,7 +35794,9 @@ ${pausedDetails}${extraPaused}`);
     dailyTasks.push(`\u{1F4DE} *Patient Follow-up Calls*: ${callCount} pending call(s) on CRM Call Board`);
   }
   if (stagedRows.length > 0) {
-    dailyTasks.push(`\u{1F514} *Staged Customer Reminders*: ${stagedRows.length} reminder(s) pending in CRM (${autoStagedCount} Auto, ${manualStagedCount} Manual)`);
+    const stagedPatients = Array.from(new Set(stagedRows.map((r) => (r.recipient_name || r.recipient_phone || "Patient").trim()))).slice(0, 5);
+    const extraStaged = stagedRows.length > 5 ? ` (+${stagedRows.length - 5} more)` : "";
+    dailyTasks.push(`\u{1F514} *Staged Customer Reminders*: ${stagedRows.length} pending in Quick Assist / CRM \u2014 ${stagedPatients.join(", ")}${extraStaged}`);
   }
   let dailyTasksBlock = "";
   if (dailyTasks.length > 0) {
@@ -35559,14 +35853,14 @@ ${pausedDetails}${extraPaused}`);
       list.push(row);
       patientGroups.set(row.patient_name, list);
     }
-    let t4Details = "\u2022 No refills due today";
+    let t4Details = "\u2022 No refills due in next 7 days";
     if (patientGroups.size > 0) {
       let pIdx = 1;
       const pBlocks = [];
       for (const [pName, meds] of patientGroups.entries()) {
-        const dueStr = meds[0]?.due_date ? formatDate(meds[0].due_date) : "";
+        const dueBadge = meds[0]?.due_date ? getDueBadge(meds[0].due_date) : "Due soon";
         const medLines = meds.map((m) => `   - ${m.medicine_name} \xD7 ${m.quantity_needed || 1} (${m.in_stock ? "\u2705 Stock" : "\u23F3 Hold"})`).join("\n");
-        pBlocks.push(`${pIdx++}. *${pName}* (Due ${dueStr}):
+        pBlocks.push(`${pIdx++}. *${pName}* (${dueBadge}):
 ${medLines}`);
       }
       t4Details = pBlocks.join("\n");
@@ -35577,18 +35871,19 @@ ${medLines}`);
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
 \u{1F3EA} *Store Status*: ${statusLine}
 
-\u{1F4CB} *REFILL PRESCRIPTIONS (Today & Overdue)*:
+\u{1F4CB} *REFILL PRESCRIPTIONS (7 Days)*:
 ${t4Details}
 
 \u{1F4E6} *TODAY'S SPECIAL & ONLINE ORDERS*:
 ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
   } else if (templateKey === "compact") {
-    let t1Refills = "\u2022 No refills due today";
+    let t1Refills = "\u2022 No refills due in next 7 days";
     if (refillRows.length > 0) {
       t1Refills = refillRows.map((r, i) => {
         const stockStatus = r.out_of_stock_count === 0 ? "\u2705 In Stock" : r.in_stock_count === 0 ? "\u23F3 Hold for Stock" : "\u26A0\uFE0F Partial Stock";
         const medUnit = Number(r.med_count) === 1 ? "1 med" : `${r.med_count} meds`;
-        return `${i + 1}. *${r.patient_name}* (Due ${formatDate(r.earliest_due)}) \u2014 ${medUnit} (${stockStatus})`;
+        const dueBadge = r.earliest_due ? getDueBadge(r.earliest_due) : "Due soon";
+        return `${i + 1}. *${r.patient_name}* (${dueBadge}) \u2014 ${medUnit} (${stockStatus})`;
       }).join("\n");
     }
     let t1Orders = "\u2022 No pending orders";
@@ -35606,7 +35901,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName})
 \u{1F3EA} *Store Status*: ${statusLine}
 
-\u{1F4CB} *1. REFILLS WORKLIST (Today & Overdue)*:
+\u{1F4CB} *1. REFILLS WORKLIST (7 Days)*:
 ${t1Refills}
 
 \u{1F4E6} *2. SPECIAL & ONLINE ORDERS*:
@@ -35628,7 +35923,7 @@ ${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
     }
     const inStockRefills = refillRows.filter((r) => r.out_of_stock_count === 0);
     if (inStockRefills.length > 0) {
-      t2Items.push(`[ ] *PACK REFILLS*: ${inStockRefills.map((r) => `${r.patient_name} (${formatDate(r.earliest_due)})`).join(", ")}`);
+      t2Items.push(`[ ] *PACK REFILLS (7 Days)*: ${inStockRefills.map((r) => `${r.patient_name} (${formatDateWithDay(r.earliest_due)})`).join(", ")}`);
     }
     if (groupedCustomerOrders.length > 0) {
       const totalOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
@@ -35667,7 +35962,7 @@ ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join("\n\n")}`;
 \u{1F4C5} *Date*: ${todayStr2} (${todayDayName}) | ${statusLine}
 
 \u{1F4CA} *Morning KPI Dashboard*:
-\u2022 \u{1F4CB} Refills Due Today: *${totalRefillsDue} meds* (${refillRows.length} patient(s))
+\u2022 \u{1F4CB} Refills Due (7 Days): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
 \u2022 \u{1F4E6} Active Orders: *${totalSpecialOrderItems} items* (${groupedCustomerOrders.length} customer(s))
 \u2022 \u23F1\uFE0F 24h SLA Overdue: *${incomplete24hAudit.stats.totalOverdueCount}* (${incomplete24hAudit.stats.totalOverdueMedicines} meds)
 \u2022 \u23F8\uFE0F Market-Paused Held: *${incomplete24hAudit.stats.totalPausedCount}*
@@ -65946,8 +66241,14 @@ async function extractFromPdfViaOcr(filePath, pdfBuffer, onProgress) {
 }
 async function extractFromPdf(filePath, onProgress) {
   const data = await import_fs35.default.promises.readFile(filePath);
-  const pdfData = await (0, import_pdf_parse.default)(data);
-  const text = pdfData.text;
+  let text = "";
+  try {
+    const pdfData = await (0, import_pdf_parse.default)(data);
+    text = pdfData.text || "";
+  } catch (pdfErr) {
+    console.warn("[Extractor] pdf-parse failed (corrupted XRef or format error), falling back to OCR:", pdfErr?.message || pdfErr);
+    return await extractFromPdfViaOcr(filePath, data, onProgress);
+  }
   const cleanedText = text.replace(/\s+/g, "").trim();
   if (cleanedText.length < MIN_TEXT_CHARS_THRESHOLD) {
     return await extractFromPdfViaOcr(filePath, data, onProgress);
@@ -67697,7 +67998,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.164";
+    APP_VERSION = "0.1.165";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
@@ -79991,10 +80292,15 @@ var init_email = __esm({
           const text = await import_fs48.default.promises.readFile(filePath, "utf-8");
           res.json({ success: true, type: "text", content: text.substring(0, 5e4) });
         } else if (ext === ".pdf") {
-          const { default: pdfParse2 } = await import("pdf-parse");
-          const dataBuffer = await import_fs48.default.promises.readFile(filePath);
-          const data = await pdfParse2(dataBuffer);
-          res.json({ success: true, type: "text", content: data.text });
+          try {
+            const { default: pdfParse2 } = await import("pdf-parse");
+            const dataBuffer = await import_fs48.default.promises.readFile(filePath);
+            const data = await pdfParse2(dataBuffer);
+            res.json({ success: true, type: "text", content: data.text });
+          } catch (pdfErr) {
+            console.warn("[routes/email] Preview pdfParse failed:", pdfErr?.message || pdfErr);
+            res.status(500).json({ error: "Failed to extract text from PDF attachment", details: pdfErr?.message });
+          }
         } else if (ext === ".xlsx" || ext === ".xls") {
           const { default: XLSX4 } = await import("xlsx");
           const dataBuffer = await import_fs48.default.promises.readFile(filePath);
@@ -93249,6 +93555,13 @@ function downloadFile(url, dest, onProgress) {
           res.pipe(fileStream);
           fileStream.on("finish", () => {
             fileStream.close(() => {
+              if (totalBytes > 0 && downloadedBytes < totalBytes) {
+                try {
+                  if (import_fs57.default.existsSync(tempDest)) import_fs57.default.unlinkSync(tempDest);
+                } catch (_) {
+                }
+                return reject(new Error(`DOWNLOAD_INCOMPLETE: Received ${downloadedBytes} of ${totalBytes} bytes`));
+              }
               try {
                 if (import_fs57.default.existsSync(dest)) import_fs57.default.unlinkSync(dest);
                 import_fs57.default.renameSync(tempDest, dest);
@@ -93259,6 +93572,10 @@ function downloadFile(url, dest, onProgress) {
             });
           });
           fileStream.on("error", (err) => {
+            try {
+              fileStream.destroy();
+            } catch (_) {
+            }
             try {
               if (import_fs57.default.existsSync(tempDest)) import_fs57.default.unlinkSync(tempDest);
             } catch (_) {
@@ -93752,9 +94069,15 @@ var init_autoUpdateService = __esm({
           console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
           console.log(`[AutoUpdate]   SHA-256  : ${sha256 || "(not provided)"}`);
           const targetVersion = this.lastResult.latestVersion;
-          const windowTitle = `"AI Pharmacy OS \u2014 Updating to v${targetVersion}"`;
-          const fullCommand = `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`;
-          const child = (0, import_child_process8.spawn)("cmd.exe", ["/c", "start", windowTitle, "cmd.exe", "/c", fullCommand], {
+          const launcherBat = import_path52.default.join(stagingDir, "launch-update.bat");
+          const launcherContent = [
+            "@echo off",
+            `title AI Pharmacy OS \u2014 Updating to v${targetVersion}`,
+            `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`,
+            "exit /b %ERRORLEVEL%"
+          ].join("\r\n");
+          import_fs57.default.writeFileSync(launcherBat, launcherContent, "utf8");
+          const child = (0, import_child_process8.spawn)("cmd.exe", ["/c", "start", `AI Pharmacy OS \u2014 Updating to v${targetVersion}`, "cmd.exe", "/c", launcherBat], {
             detached: true,
             stdio: "ignore",
             windowsHide: false
@@ -93766,10 +94089,27 @@ var init_autoUpdateService = __esm({
           console.log("[AutoUpdate] Spawning Setup installer (fallback path)...");
           console.log(`[AutoUpdate]   EXE      : ${exePath}`);
           console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
-          const child = (0, import_child_process8.spawn)(exePath, ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"], {
+          const targetVersion = this.lastResult.latestVersion;
+          const installDir = import_path52.default.dirname(process.execPath);
+          const launcherBat = import_path52.default.join(stagingDir, "launch-setup.bat");
+          const launcherContent = [
+            "@echo off",
+            `title AI Pharmacy OS \u2014 Installing Setup v${targetVersion}`,
+            "echo Waiting for running application processes to exit...",
+            "taskkill /F /T /IM PharmacyOS.exe >nul 2>&1",
+            "taskkill /F /T /IM PharmacyBackend.exe >nul 2>&1",
+            "ping 127.0.0.1 -n 3 >nul",
+            `start "" /wait "${exePath}" /SILENT /SUPPRESSMSGBOXES`,
+            "echo Setup completed. Starting AI Pharmacy OS...",
+            "ping 127.0.0.1 -n 2 >nul",
+            `start "" "${import_path52.default.join(installDir, "PharmacyOS.exe")}"`,
+            "exit"
+          ].join("\r\n");
+          import_fs57.default.writeFileSync(launcherBat, launcherContent, "utf8");
+          const child = (0, import_child_process8.spawn)("cmd.exe", ["/c", "start", `AI Pharmacy OS \u2014 Setup v${targetVersion}`, "cmd.exe", "/c", launcherBat], {
             detached: true,
             stdio: "ignore",
-            windowsHide: true
+            windowsHide: false
           });
           child.unref();
           return { success: true, message: "Installing update package via Setup and restarting..." };
@@ -114845,7 +115185,7 @@ var init_server = __esm({
         res.json(result);
         setTimeout(() => {
           void gracefulShutdown("APPLY_UPDATE");
-        }, 600);
+        }, 1200);
       } catch (err) {
         console.error("[System] Failed to apply update:", err.message);
         res.status(400).json({ success: false, error: err.message });
