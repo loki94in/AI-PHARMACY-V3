@@ -290,6 +290,10 @@ class DatabaseManager {
           await db.run(`PRAGMA busy_timeout = ${busyTimeout};`);
           await db.run('PRAGMA journal_mode = WAL;');
           await db.run('PRAGMA synchronous = NORMAL;');
+          await db.run('PRAGMA wal_autocheckpoint = 1000;');
+          try {
+            await db.run('PRAGMA wal_checkpoint(TRUNCATE);');
+          } catch (_) {}
           await db.run('PRAGMA cache_size = -64000;');
           await db.run('PRAGMA temp_store = MEMORY;');
           await db.run('PRAGMA mmap_size = 268435456;');

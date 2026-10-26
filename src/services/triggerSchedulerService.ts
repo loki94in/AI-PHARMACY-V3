@@ -167,7 +167,7 @@ class TriggerSchedulerService {
         const task = cron.schedule(cronExpr, () => {
           void runHeavyJob('daily_check', async () => {
             try {
-              const mode = await getBackendFetchMode('bg.dailyScans', 'off');
+              const mode = await getBackendFetchMode('bg.dailyScans', 'auto');
               if (mode === 'off' || (mode === 'manual' && activityTracker.isIdle())) return;
 
               console.log(`[Trigger: Daily Check] Running daily check scheduled at ${timeStr}...`);
@@ -623,12 +623,13 @@ class TriggerSchedulerService {
         await createBackup('Manual Run Now');
         return { success: true, message: 'Database backup executed successfully.' };
       } else if (triggerId === 'daily_check') {
-        const { checkAllRefills, dispatchDueRefillReminders } = await import('./refillService.js');
+        const { checkAllRefills, dispatchDueRefillReminders, sendMorningScheduleBriefingToAdmin } = await import('./refillService.js');
         const { checkOverdueCreditNotes } = await import('./creditNoteService.js');
         await checkAllRefills(database);
         await dispatchDueRefillReminders(database);
         await checkOverdueCreditNotes(database);
-        return { success: true, message: 'Daily operational scan executed successfully.' };
+        await sendMorningScheduleBriefingToAdmin(database);
+        return { success: true, message: 'Daily operational scan and briefing executed successfully.' };
       } else if (triggerId === 'expiry_scan') {
         const { runExpiryScanAndAlert } = await import('./expiryAlertService.js');
         await runExpiryScanAndAlert(90);

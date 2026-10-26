@@ -191,6 +191,39 @@ export async function checkAllRefills(db: Database): Promise<void> {
       console.error('Failed to send daily out-of-stock refills report to Telegram:', err);
     }
   }
+
+  // Proactively sync and stage customer refill WhatsApp reminder notifications for all active patients due within notice window
+  try {
+    const duePatientRows = await db.all(
+      `SELECT DISTINCT pr.patient_name, pr.patient_phone
+       FROM patient_refills pr
+       WHERE pr.is_active = 1
+         AND pr.status NOT IN ('completed', 'canceled', 'notified', 'ordered')
+         AND COALESCE(pr.patient_confirmed, 0) = 0
+         AND pr.cart_store_name IS NULL
+         AND (pr.next_refill_date IS NULL OR DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days'))
+         AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
+         AND NOT EXISTS (
+           SELECT 1 FROM refill_fulfillments rf
+           WHERE rf.refill_id = pr.id
+             AND (
+               DATE(rf.fulfilled_at) >= DATE('now', 'localtime')
+               OR (DATE(rf.cycle_due_date) = DATE(pr.next_refill_date) AND DATE(rf.cycle_due_date) <= DATE('now', 'localtime'))
+               OR (rf.fulfilled_at >= datetime('now', 'localtime', '-24 hours'))
+               OR (DATE(rf.next_due_date) > DATE('now', 'localtime'))
+             )
+         )`,
+      [noticeDays]
+    ).catch(() => []);
+
+    for (const p of duePatientRows) {
+      if (p.patient_name || p.patient_phone) {
+        await syncStagedRefillNotificationForPatient(db, p.patient_name, p.patient_phone);
+      }
+    }
+  } catch (syncNotifErr) {
+    console.warn('[RefillService] Error staging due refill notifications during daily check:', syncNotifErr);
+  }
 }
 
 export async function createQuickBillForRefill(db: any, refill: any): Promise<number> {
@@ -245,9 +278,10 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
 
   // Find all active patient refills for this patient that have not been notified/completed/ordered and due within upcoming 7 calendar days
   const readyRefills = await db.all(
-    `SELECT pr.id, pr.quantity_needed, pr.is_ready, pr.quick_bill_id, m.name as medicine_name 
+    `SELECT pr.id, pr.quantity_needed, pr.is_ready, pr.quick_bill_id,
+            COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Medicine') as medicine_name 
      FROM patient_refills pr
-     JOIN medicines m ON pr.medicine_id = m.id
+     LEFT JOIN medicines m ON pr.medicine_id = m.id
      WHERE (pr.patient_phone = ? OR pr.patient_name = ?)
        AND pr.is_active = 1
        AND pr.status NOT IN ('completed', 'canceled', 'notified', 'ordered')
@@ -336,13 +370,14 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
   }
 
   const referenceIdStr = refillIds.join(',');
+  const notifType = anyReady ? 'refill_collection' : 'refill_reminder';
 
   // Check if a staged or active snoozed notification already exists for this patient
   let existing: any = null;
   try {
     existing = await db.get(
-      `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+      `SELECT id, status, type, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+       WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
        ORDER BY id DESC LIMIT 1`,
       [patientPhone, patientName]
     );
@@ -350,14 +385,14 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
     if (queryErr?.message?.includes('snoozed_until')) {
       await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL').catch(() => {});
       existing = await db.get(
-        `SELECT id, status, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
-         WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+        `SELECT id, status, type, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
+         WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
          ORDER BY id DESC LIMIT 1`,
         [patientPhone, patientName]
       ).catch(async () => {
         return await db.get(
-          `SELECT id, status FROM automation_notifications 
-           WHERE type = 'refill_collection' AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+          `SELECT id, status, type FROM automation_notifications 
+           WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
            ORDER BY id DESC LIMIT 1`,
           [patientPhone, patientName]
         );
@@ -378,17 +413,17 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
       // If snooze duration expired, transition back to staged
       await db.run(
         `UPDATE automation_notifications 
-         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
+         SET type = ?, message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
          WHERE id = ?`,
-        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+        [notifType, msg, referenceIdStr, patientName, patientPhone, existing.id]
       ).catch(async (updErr: any) => {
         if (updErr?.message?.includes('snoozed_until')) {
           await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL').catch(() => {});
           await db.run(
             `UPDATE automation_notifications 
-             SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL
+             SET type = ?, message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL
              WHERE id = ?`,
-            [msg, referenceIdStr, patientName, patientPhone, existing.id]
+            [notifType, msg, referenceIdStr, patientName, patientPhone, existing.id]
           );
         } else {
           throw updErr;
@@ -397,22 +432,22 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
     } else {
       await db.run(
         `UPDATE automation_notifications 
-         SET message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
+         SET type = ?, message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, needs_confirmation = 1
          WHERE id = ?`,
-        [msg, referenceIdStr, patientName, patientPhone, existing.id]
+        [notifType, msg, referenceIdStr, patientName, patientPhone, existing.id]
       );
     }
     // Remove any duplicate staged rows for this patient
     await db.run(
       `DELETE FROM automation_notifications 
-       WHERE type = 'refill_collection' AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?) AND id != ?`,
+       WHERE type IN ('refill_collection', 'refill_reminder') AND status = 'staged' AND (recipient_phone = ? OR recipient_name = ?) AND id != ?`,
       [patientPhone, patientName, existing.id]
     );
   } else {
     await db.run(
       `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, needs_confirmation, reference_id)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      ['refill_collection', patientName, patientPhone, msg, 'staged', 1, referenceIdStr]
+      [notifType, patientName, patientPhone, msg, 'staged', 1, referenceIdStr]
     );
   }
 }
@@ -710,7 +745,7 @@ export async function buildDailyOperationalBriefing(
       GROUP BY medicine_id
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
-      AND pr.status IN ('pending', 'notified', 'staged')
+      AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
@@ -731,18 +766,18 @@ export async function buildDailyOperationalBriefing(
 
   // Detailed refill items (with medicine names & quantities) — no aggregate collapse so all medicines appear
   const refillDetailRows = await db.all(`
-    SELECT pr.patient_name, m.name as medicine_name, pr.quantity_needed,
+    SELECT pr.patient_name, COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name, pr.quantity_needed,
            DATE(pr.next_refill_date) as due_date,
            CASE WHEN (pr.is_ready = 1 OR COALESCE(inv.total_qty, 0) >= COALESCE(pr.quantity_needed, 1)) THEN 1 ELSE 0 END as in_stock
     FROM patient_refills pr
-    JOIN medicines m ON pr.medicine_id = m.id
+    LEFT JOIN medicines m ON pr.medicine_id = m.id
     LEFT JOIN (
       SELECT medicine_id, SUM(quantity) + COALESCE(SUM(loose_quantity), 0) as total_qty
       FROM inventory_master
       GROUP BY medicine_id
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
-      AND pr.status IN ('pending', 'notified', 'staged')
+      AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))

@@ -764,15 +764,14 @@ server.on('error', (err: any) => {
       }, 600);
 
       // WhatsApp client: Boot session check (deferred to protect UI paint and initial hydration)
-      // Checks if an authenticated WhatsApp session exists on disk. If not configured or disconnected,
-      // it auto-stops immediately without launching Chrome or spamming checks.
-      const waBootDelay = (!isPackagedApp() && process.env.NODE_ENV !== 'production') ? 20_000 : 12_000;
+      // Option B (P2-119): Deferred 45 seconds so boot UI is 100% smooth without CPU/RAM contention
+      const waBootDelay = 45_000;
       setTimeout(async () => {
         if (process.env.DISABLE_BACKGROUND_WORKERS === 'true') return;
         try {
           const { isWhatsAppAutoConnectAllowed, initClient } = await import('./whatsappClient.js');
           if (await isWhatsAppAutoConnectAllowed()) {
-            console.log('[Boot:Phase2] Saved WhatsApp session found — performing 1-time boot session restore...');
+            console.log('[Boot:Phase2] Saved WhatsApp session found — performing 1-time deferred boot session restore (T+45s)...');
             (async () => {
               const { runHeavyRestore } = await import('./utils/heavyRestoreLane.js');
               await runHeavyRestore('whatsapp_boot_restore', async () => {

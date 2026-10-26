@@ -1,52 +1,91 @@
-# Implementation Plan: Pure Quantity Reorder Modal in Reorder Hub
+# Implementation Plan — Morning Briefing & Refill WhatsApp Notifications Integration
 
-## Context & User Feedback
-The user provided clear instruction for the Reorder Hub:
-> *"when user select the medicine for the reorder in the reorder hub in the app, when user click on the order we only need the qty of the product - this is the only thing that need to change! No touch any part distributor no nothing. The distributor will auto save when user add that medicine in the live cart under the same distributor."*
+## Objective
+Ensure that every morning:
+1. The **Store Owner Daily Briefing WhatsApp message** reliably triggers (including Today & Overdue refill prescriptions with full medicine names and stock statuses).
+2. **Patient WhatsApp Refill Reminder Notifications** are automatically synced and staged in `automation_notifications` (for 1-click review/dispatch in CRM/Quick Assist or auto-dispatch if enabled).
 
-### Key Analysis
-1. The modal currently contains a distributor selection `<select>` dropdown ("Target Supplier / Distributor") allowing switching and fallback options.
-2. The user does not want distributor selection in this popup. The Reorder card already knows its original distributor from the bill, purchase history, or refill.
-3. The modal should ONLY ask for the quantity to order (clean, ultra-fast, focused prompt).
-4. Distributor remains fixed to the medicine's original distributor (`card.storeId` / `card.storeName`), displayed as read-only context.
-5. On confirm, it adds to the live cart under that distributor and automatically saves/updates the link in `medicine_distributor_links`.
+---
+
+## User-Confirmed Requirements
+1. **Refill Scope in Owner Briefing**: Strictly **Today & Overdue** refills only (`DATE(pr.next_refill_date) <= DATE('now', 'localtime')`).
+2. **Dual Morning Execution**:
+   - Generate and enqueue the Store Owner Morning Briefing message (`admin_morning_briefing`).
+   - Automatically stage customer refill reminder notifications (`refill_collection` / `refill_reminder`) for all active due patients during the morning check.
+
+---
+
+## Root Causes
+1. **Scheduler Gate Suppressing Daily Check**:
+   In `src/services/triggerSchedulerService.ts:170`, `const mode = await getBackendFetchMode('bg.dailyScans', 'off')` defaulted to `'off'` because `bg.dailyScans` was missing from `app_settings`. This caused the scheduled 09:00 AM cron to return immediately without running `checkAllRefills` or `sendMorningScheduleBriefingToAdmin`.
+2. **Missing Notification Staging Loop in `checkAllRefills`**:
+   `syncStagedRefillNotificationForPatient` was only invoked if `!refill.quick_bill_id` (on initial bill creation). Once a bill was held or if stock was missing, `syncStagedRefillNotificationForPatient` was never called, leaving `automation_notifications` completely empty for active due refills.
+3. **Inner Join Fragility in Refill Details Query**:
+   `buildDailyOperationalBriefing` used `JOIN medicines m ON pr.medicine_id = m.id` (INNER JOIN). If any refill had an unlinked or null `medicine_id`, it was completely omitted from the detailed morning briefing.
+4. **Status Coverage**:
+   Refills with status `'ordered'` were excluded from the briefing query (`status IN ('pending', 'notified', 'staged')`).
 
 ---
 
 ## Proposed Changes
 
-### 1. `frontend/src/pages/PharmarackCart/index.tsx`
-- **Remove Distributor Selector Dropdown**:
-  - Remove `<select value={reorderModalSupplierId}>` from the modal body.
-  - Display the distributor as a simple, read-only label/badge (e.g. `Supplier: Mahaveer Pharma`).
-- **Focus Exclusively on Quantity**:
-  - Large, prominent, auto-focused quantity input (`ref={reorderQtyInputRef}`, `autoFocus`).
-  - Fast step buttons (`-` and `+`).
-  - Total estimated amount calculation (`qty * price`).
-  - Pressing `Enter` instantly submits the order (<10ms modal close).
-- **Simplify `handleConfirmReorderSame`**:
-  - Directly use `card.storeId` and `card.storeName` (no `reorderModalSupplierId` state).
-  - Cleanly resolve `productCode` and `productId` for `card.storeId`.
-  - Add to live cart under `card.storeId`.
+### 1. `src/services/triggerSchedulerService.ts`
+- Change default mode of `bg.dailyScans` from `'off'` to `'auto'` (or remove the artificial `'off'` default so daily checks always run unless explicitly configured to off).
+- Ensure scheduled daily checks at 09:00 AM execute `checkAllRefills`, stage customer notifications, and send the morning operational briefing to the store owner.
+
+### 2. `src/services/refillService.ts`
+- In `checkAllRefills`:
+  - Collect all distinct patients with active refills due today or within the notice window (`<= date('now', '+' || noticeDays || ' days')`).
+  - Proactively call `syncStagedRefillNotificationForPatient(db, p.patient_name, p.patient_phone)` so customer notifications (`refill_collection` if ready, `refill_reminder` if waiting) are staged in `automation_notifications`.
+- In `buildDailyOperationalBriefing`:
+  - Change `JOIN medicines m ON pr.medicine_id = m.id` to `LEFT JOIN medicines m ON pr.medicine_id = m.id`.
+  - Use `COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name`.
+  - Include status `'ordered'` alongside `pending`, `notified`, and `staged`.
+  - Maintain the user-selected date filter: `DATE(pr.next_refill_date) <= DATE('now', 'localtime')` (Today & Overdue).
+
+### 3. Verification & Performance Guardrails
+- Run `PASS tests/` (verify refill truth tests).
+- Run `npm run guardrails` (TypeScript `tsc --noEmit`, clean code standards).
+- Run `node scripts/quick-update.mjs` (keep auto-knowledge graph synchronized).
 
 ---
 
-## Verification Plan
-1. **TypeScript & Guardrails Check**:
-   - Run `npm run guardrails` (`tsc --noEmit`).
-2. **Build Verification**:
-   - Run `npm run build:client`.
-3. **Behavioral Verification**:
-   - Clicking "Reorder" opens a minimal popup with ONLY the quantity input focused.
-   - Shows the original distributor as read-only text.
-   - Enter key or Confirm button immediately adds to live cart under that original distributor.
+## Detailed Tasks
+
+### Task 1: Fix Daily Check Scheduler Gate in `triggerSchedulerService.ts`
+- **File**: `src/services/triggerSchedulerService.ts`
+- **Action**: Ensure `bg.dailyScans` defaults to `'auto'` instead of `'off'`, allowing the daily check cron to run automatically at 09:00 AM.
+
+### Task 2: Proactively Stage Customer Refill Notifications in `checkAllRefills`
+- **File**: `src/services/refillService.ts`
+- **Action**: Add a patient staging pass at the conclusion of `checkAllRefills` that invokes `syncStagedRefillNotificationForPatient` for all due patients with active refills.
+
+### Task 3: Robust Refill Query in `buildDailyOperationalBriefing`
+- **File**: `src/services/refillService.ts`
+- **Action**: Use `LEFT JOIN` on `medicines` with fallback to `pr.medicine_name`, expand status filter to include `'ordered'`, keeping strictly Today & Overdue refills.
+
+### Task 4: Verification & Automated Guardrails
+- Verify using diagnostic script that `checkAllRefills` stages customer reminders and `sendMorningScheduleBriefingToAdmin` enqueues the owner briefing.
+- Run `npm run guardrails` and `node scripts/quick-update.mjs`.
 
 ---
 
-## Task Progress & Completion Status
-- [x] Task 1: Remove distributor selector dropdown and streamline Reorder modal to Quantity-only
-  - *Completed*: Removed `<select value={reorderModalSupplierId}>` from the modal body. Replaced with an informative read-only badge (`Distributor: Mahaveer Pharma`). Focused the UI purely on the quantity input with `-` and `+` steppers, dynamic price calculation, and `Enter` key submission.
-- [x] Task 2: Simplify `handleConfirmReorderSame` to use the card's native distributor directly
-  - *Completed*: Removed `reorderModalSupplierId` state and references. Directly uses `card.storeId` and `card.storeName` without modifying or switching distributors. If verified IDs or distributor are missing, it smoothly triggers Live Cart Search with the medicine query prefilled.
-- [x] Task 3: Verification with `npm run guardrails`, `npm run build:client`, and knowledge graph update
-  - *Completed*: `npm run guardrails` passed with 0 violations (`tsc --noEmit` clean). Full frontend bundle built in 42.00s via `npm run build:client`. Knowledge graph updated with `node scripts/quick-update.mjs`.
+## Task Completion Log
+- [x] **Task 1: Fix Daily Check Scheduler Gate in `triggerSchedulerService.ts`**
+  - Updated `getBackendFetchMode('bg.dailyScans', 'auto')` fallback from `'off'` to `'auto'`, unblocking the 09:00 AM daily check and morning briefing cron.
+  - Added `sendMorningScheduleBriefingToAdmin` into `runTriggerNow('daily_check')` so manual execution also dispatches the briefing to the store owner.
+
+- [x] **Task 2: Proactively Stage Customer Refill Notifications in `checkAllRefills`**
+  - Added proactive patient staging loop at the end of `checkAllRefills` across all distinct patients with active refills due within the notice window.
+  - Updated `syncStagedRefillNotificationForPatient` with `LEFT JOIN medicines m` and supported both `refill_collection` (in-stock) and `refill_reminder` (hold/ordered) types.
+  - Verified that 15 customer reminder notifications were staged in `automation_notifications`.
+
+- [x] **Task 3: Robust Refill Query in `buildDailyOperationalBriefing`**
+  - Switched `refillDetailRows` query to `LEFT JOIN medicines m` with `COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine')` so unlinked items are never dropped.
+  - Added `'ordered'` status to both `refillRows` and `refillDetailRows` alongside `pending`, `notified`, and `staged`.
+  - Retained strict **Today & Overdue** filtering (`DATE(pr.next_refill_date) <= DATE('now', 'localtime')`).
+
+- [x] **Task 4: Verification & Automated Guardrails**
+  - Verified end-to-end execution: 15 customer reminder notifications staged, and store owner daily briefing renders Today & Overdue items with task count.
+  - Passed `npm run guardrails` with 0 violations (`tsc --noEmit` clean).
+  - Synchronizing auto-knowledge graph via `node scripts/quick-update.mjs`.

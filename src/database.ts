@@ -960,6 +960,12 @@ export async function ensureSchema(dbPath: string) {
   try {
     const db = await dbManager.getConnection();
 
+    // Truncate WAL on boot so leftover un-checkpointed pages from prior runs never cause lock lag (P2-119)
+    try {
+      await db.run('PRAGMA wal_autocheckpoint = 1000;');
+      await db.run('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch (_) {}
+
     // Ensure app_settings and schema_migrations tables exist for schema version tracking
     await db.run('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)');
     await db.run('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, migrated_at DATETIME DEFAULT CURRENT_TIMESTAMP)');

@@ -1282,7 +1282,10 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       }
     });
 
+    let hasAuthenticatedFired = false;
     client.on('authenticated', async () => {
+      if (hasAuthenticatedFired) return;
+      hasAuthenticatedFired = true;
       console.log('[WhatsApp] QR scanned & authenticated! Persisting credential status immediately...');
       currentQr = null;
       if (qrTimeout) clearTimeout(qrTimeout);
@@ -1304,7 +1307,10 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
       }
     });
 
+    let hasReadyFired = false;
     client.on('ready', async () => {
+      if (hasReadyFired) return;
+      hasReadyFired = true;
       console.log('WhatsApp Client is ready!');
       lastInitFailureAt = 0;
       consecutiveInitFailures = 0;

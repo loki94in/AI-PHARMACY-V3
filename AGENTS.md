@@ -369,9 +369,10 @@ To prevent orphan headless Chromium processes from exhausting RAM and thrashing 
 2. **Chromium Census & Fingerprinting**: Win32 CIM/PowerShell queries inspect `chrome.exe` command lines, categorizing processes into WhatsApp, Pharmarack, Dev/Extensions, SwiftShader, and Unknown/Zombie. Live WhatsApp browser PIDs (`getWhatsAppBrowserPid()`) and active headless instances (`getActiveHeadlessPids()`) are strictly protected from termination.
 3. **Memory Pressure Ladder**: Sustained pressure (3 consecutive ticks with < 800 MB free RAM and > 400 MB zombie Chromium) triggers automated zombie sweeping (`reapSystemProfileOrphans()`) and a deduped warning toast (at most once every 30 minutes).
 4. **Sequential Heavy Restore Lane**: `src/utils/heavyRestoreLane.ts` (`runHeavyRestore`) enforces that WhatsApp session restore and Pharmarack session/token restores queue sequentially in a FIFO pipeline rather than launching concurrent headless browser spikes during boot.
-5. **Priority Diet**:
-   - In `electron/main.ts`, both Electron main and backend child start in `ABOVE_NORMAL_PRIORITY_CLASS` for boot snappiness, but automatically demote to `NORMAL_PRIORITY_CLASS` after a T+90s settling window.
+5. **Priority Diet (updated 2026-10-26, bug P2-119)**:
+   - In `electron/main.ts`, both Electron main and backend child remain strictly at `NORMAL_PRIORITY_CLASS` at all times (Option A). They never elevate to `ABOVE_NORMAL_PRIORITY_CLASS`, ensuring Windows Explorer, DWM, and hardware input queues are never preempted or frozen during boot.
    - All background headless Chromium instances spawned via `trackHeadless()` in `src/utils/chromeBrowser.ts` are automatically assigned `BELOW_NORMAL_PRIORITY_CLASS` (0x00004000) so they never starve SwiftShader CPU rendering or desktop responsiveness.
+   - WhatsApp session restore on boot is deferred to T+45s (Option B) to prevent initial launch CPU/RAM contention.
 6. **Frontend Transparency**: Settings Data & Backups tab provides a truthful "System Health & Memory Protection" dashboard card with RAM meter bar, event loop drift, process breakdown, and manual zombie sweep action with zero frontend polling timers.
 
 ---
