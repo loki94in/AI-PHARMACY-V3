@@ -79,8 +79,8 @@ router.post('/', async (req, res) => {
     if (!task_type || !patient_name || !patient_phone) {
       return res.status(400).json({ success: false, error: 'task_type, patient_name, and patient_phone are required' });
     }
-    if (!['refill', 'credit'].includes(task_type)) {
-      return res.status(400).json({ success: false, error: 'task_type must be refill or credit' });
+    if (!['refill', 'credit', 'special_order', 'online_order', 'general'].includes(task_type)) {
+      return res.status(400).json({ success: false, error: 'task_type must be refill, credit, special_order, online_order, or general' });
     }
 
     const result = await db.run(

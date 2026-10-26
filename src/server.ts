@@ -329,6 +329,7 @@ app.use('/api/prescriptions', lazyRoute(() => import('./routes/prescriptions.js'
 app.use('/api/enquiries', lazyRoute(() => import('./routes/enquiries.js')));
 app.use('/api/system', lazyRoute(() => import('./routes/serviceStatus.js')));
 app.use('/api/call-tasks', lazyRoute(() => import('./routes/callTasks.js')));
+app.use('/api/morning-briefing', lazyRoute(() => import('./routes/morningBriefing.js'), 'hot'));
 app.use('/api/network', lazyRoute(() => import('./routes/network.js'), 'hot'));
 
 // Pending shutdown timer for tab-close grace period (allows F5 reload / navigation without killing server)

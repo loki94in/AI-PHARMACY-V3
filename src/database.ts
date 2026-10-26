@@ -3,7 +3,7 @@ import { dbManager } from './database/connection.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 81;
+const CURRENT_SCHEMA_VERSION = 83;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -537,8 +537,43 @@ async function ensureRefillCartLinkSchema(db: any) {
     cart_product_name: 'TEXT DEFAULT NULL',
     cart_qty: 'INTEGER DEFAULT NULL',
     source: "TEXT DEFAULT 'counter'",
-    cart_status: "TEXT DEFAULT 'pending'"
+    cart_status: "TEXT DEFAULT 'pending'",
+    batch_id: "TEXT DEFAULT NULL",
+    source_id: "TEXT DEFAULT NULL",
+    approval_status: "TEXT DEFAULT 'none'",
+    approval_reason: "TEXT DEFAULT NULL"
   });
+  await db.run(`
+    CREATE TABLE IF NOT EXISTS refill_batches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id TEXT UNIQUE NOT NULL,
+      source TEXT NOT NULL CHECK(source IN ('website', 'crm')),
+      source_id TEXT,
+      customer_id INTEGER,
+      patient_name TEXT NOT NULL,
+      patient_phone TEXT NOT NULL,
+      store_id INTEGER DEFAULT 1,
+      status TEXT DEFAULT 'pending',
+      approval_status TEXT DEFAULT 'none',
+      approval_reason TEXT,
+      approved_by TEXT,
+      approved_at DATETIME,
+      total_items INTEGER DEFAULT 0,
+      eligible_items INTEGER DEFAULT 0,
+      added_items INTEGER DEFAULT 0,
+      failed_items INTEGER DEFAULT 0,
+      items_json TEXT,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await db.run('CREATE INDEX IF NOT EXISTS idx_refill_batches_batch_id ON refill_batches(batch_id)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_refill_batches_phone ON refill_batches(patient_phone)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_refill_batches_source ON refill_batches(source)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_refill_batches_status ON refill_batches(status)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_refill_batches_approval ON refill_batches(approval_status)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_refill_batches_created ON refill_batches(created_at DESC)');
   await db.run(`
     CREATE TABLE IF NOT EXISTS pharmarack_distributor_products (
       store_id INTEGER NOT NULL,
@@ -696,28 +731,64 @@ async function ensureOrderTimingSchema(db: any) {
     await db.run('INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)', [k, v]);
   }
 
-  // Schema v69: patient_call_tasks table (non-WhatsApp fallback call board)
+  // Schema v69 & v83: patient_call_tasks table (non-WhatsApp fallback & morning briefing call board)
   try {
-    await db.run(`
-      CREATE TABLE IF NOT EXISTS patient_call_tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_type TEXT NOT NULL CHECK (task_type IN ('refill', 'credit')),
-        patient_name TEXT NOT NULL,
-        patient_phone TEXT NOT NULL,
-        reference_id TEXT,
-        details_json TEXT,
-        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'rescheduled', 'dismissed')),
-        call_outcome TEXT,
-        reschedule_date TEXT,
-        notes TEXT,
-        owner_wa_sent INTEGER DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
+    const tableSql = await db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='patient_call_tasks'");
+    if (tableSql?.sql && /CHECK\s*\(\s*task_type\s+IN\s*\(\s*'refill'\s*,\s*'credit'\s*\)\s*\)/i.test(tableSql.sql)) {
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS patient_call_tasks_v83 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_type TEXT NOT NULL,
+          patient_name TEXT NOT NULL,
+          patient_phone TEXT NOT NULL,
+          reference_id TEXT,
+          details_json TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          call_outcome TEXT,
+          reschedule_date TEXT,
+          notes TEXT,
+          priority TEXT DEFAULT 'normal',
+          call_attempts INTEGER DEFAULT 0,
+          last_called_at DATETIME DEFAULT NULL,
+          owner_wa_sent INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO patient_call_tasks_v83 (id, task_type, patient_name, patient_phone, reference_id, details_json, status, call_outcome, reschedule_date, notes, owner_wa_sent, created_at, updated_at)
+        SELECT id, task_type, patient_name, patient_phone, reference_id, details_json, status, call_outcome, reschedule_date, notes, owner_wa_sent, created_at, updated_at FROM patient_call_tasks;
+        DROP TABLE patient_call_tasks;
+        ALTER TABLE patient_call_tasks_v83 RENAME TO patient_call_tasks;
+      `);
+    } else {
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS patient_call_tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_type TEXT NOT NULL,
+          patient_name TEXT NOT NULL,
+          patient_phone TEXT NOT NULL,
+          reference_id TEXT,
+          details_json TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          call_outcome TEXT,
+          reschedule_date TEXT,
+          notes TEXT,
+          priority TEXT DEFAULT 'normal',
+          call_attempts INTEGER DEFAULT 0,
+          last_called_at DATETIME DEFAULT NULL,
+          owner_wa_sent INTEGER DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+    }
     await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_status_date ON patient_call_tasks(status, created_at DESC)');
     await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_phone ON patient_call_tasks(patient_phone)');
     await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_reschedule ON patient_call_tasks(reschedule_date)');
+    await ensureColumns(db, 'patient_call_tasks', {
+      priority: "TEXT DEFAULT 'normal'",
+      call_attempts: "INTEGER DEFAULT 0",
+      last_called_at: "DATETIME DEFAULT NULL"
+    });
   } catch (_) { }
 
   // Schema v70: reminder_mode on patient_refills and customers
@@ -1048,20 +1119,23 @@ export async function ensureSchema(dbPath: string) {
           CREATE INDEX IF NOT EXISTS idx_sale_items_med_snap ON sale_items(medicine_name_snapshot);
         `);
 
-        // Ensure patient_call_tasks table exists on fast-boot (v69)
+        // Ensure patient_call_tasks table exists on fast-boot (v69 & v83)
         try {
           await db.run(`
             CREATE TABLE IF NOT EXISTS patient_call_tasks (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
-              task_type TEXT NOT NULL CHECK (task_type IN ('refill', 'credit')),
+              task_type TEXT NOT NULL,
               patient_name TEXT NOT NULL,
               patient_phone TEXT NOT NULL,
               reference_id TEXT,
               details_json TEXT,
-              status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'rescheduled', 'dismissed')),
+              status TEXT NOT NULL DEFAULT 'pending',
               call_outcome TEXT,
               reschedule_date TEXT,
               notes TEXT,
+              priority TEXT DEFAULT 'normal',
+              call_attempts INTEGER DEFAULT 0,
+              last_called_at DATETIME DEFAULT NULL,
               owner_wa_sent INTEGER DEFAULT 0,
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -1070,6 +1144,11 @@ export async function ensureSchema(dbPath: string) {
           await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_status_date ON patient_call_tasks(status, created_at DESC)');
           await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_phone ON patient_call_tasks(patient_phone)');
           await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_reschedule ON patient_call_tasks(reschedule_date)');
+          await ensureColumns(db, 'patient_call_tasks', {
+            priority: "TEXT DEFAULT 'normal'",
+            call_attempts: "INTEGER DEFAULT 0",
+            last_called_at: "DATETIME DEFAULT NULL"
+          });
         } catch (_) { }
 
         // Ensure cloud_exec_ledger exists on fast-boot (v81)
@@ -2796,6 +2875,10 @@ export async function ensureSchema(dbPath: string) {
       ['refill_fulfillments', 'next_due_date', 'ALTER TABLE refill_fulfillments ADD COLUMN next_due_date TEXT'],
       ['refill_fulfillments', 'fulfilled_via', 'ALTER TABLE refill_fulfillments ADD COLUMN fulfilled_via TEXT'],
       ['refill_fulfillments', 'notes', 'ALTER TABLE refill_fulfillments ADD COLUMN notes TEXT'],
+      ['patient_refills', 'batch_id', 'ALTER TABLE patient_refills ADD COLUMN batch_id TEXT DEFAULT NULL'],
+      ['patient_refills', 'source_id', 'ALTER TABLE patient_refills ADD COLUMN source_id TEXT DEFAULT NULL'],
+      ['patient_refills', 'approval_status', "ALTER TABLE patient_refills ADD COLUMN approval_status TEXT DEFAULT 'none'"],
+      ['patient_refills', 'approval_reason', 'ALTER TABLE patient_refills ADD COLUMN approval_reason TEXT DEFAULT NULL'],
       // catalog_jobs: the base CREATE (id/file_path/status/created_at) predates the whole
       // OCR pipeline — worker + routes read/write these 11 columns on EVERY upload/review,
       // so fresh installs AND long-lived DBs crashed with "no such column" (bug found via
@@ -3319,6 +3402,36 @@ export async function ensureSchema(dbPath: string) {
     );
     CREATE INDEX IF NOT EXISTS idx_refill_fulfillments_refill_id ON refill_fulfillments(refill_id);
     CREATE INDEX IF NOT EXISTS idx_refill_fulfillments_customer_id ON refill_fulfillments(customer_id);
+
+    CREATE TABLE IF NOT EXISTS refill_batches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      batch_id TEXT UNIQUE NOT NULL,
+      source TEXT NOT NULL CHECK(source IN ('website', 'crm')),
+      source_id TEXT,
+      customer_id INTEGER,
+      patient_name TEXT NOT NULL,
+      patient_phone TEXT NOT NULL,
+      store_id INTEGER DEFAULT 1,
+      status TEXT DEFAULT 'pending',
+      approval_status TEXT DEFAULT 'none',
+      approval_reason TEXT,
+      approved_by TEXT,
+      approved_at DATETIME,
+      total_items INTEGER DEFAULT 0,
+      eligible_items INTEGER DEFAULT 0,
+      added_items INTEGER DEFAULT 0,
+      failed_items INTEGER DEFAULT 0,
+      items_json TEXT,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_refill_batches_batch_id ON refill_batches(batch_id);
+    CREATE INDEX IF NOT EXISTS idx_refill_batches_phone ON refill_batches(patient_phone);
+    CREATE INDEX IF NOT EXISTS idx_refill_batches_source ON refill_batches(source);
+    CREATE INDEX IF NOT EXISTS idx_refill_batches_status ON refill_batches(status);
+    CREATE INDEX IF NOT EXISTS idx_refill_batches_approval ON refill_batches(approval_status);
+    CREATE INDEX IF NOT EXISTS idx_refill_batches_created ON refill_batches(created_at DESC);
 
     -- Composite Performance Indexes for High-Traffic Query Endpoints
     CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium);

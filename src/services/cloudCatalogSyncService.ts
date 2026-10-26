@@ -334,35 +334,21 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
             hasUnregisteredItems = true;
           }
 
-          const reviewNote = hasUnregisteredItems ? ' [⚠️ Requires Prescription Verification by Pharmacist]' : '';
-          const finalRefillNotes = `[Website Refill Request #${o.orderId}] ${orderNotesWithPayment}${reviewNote}`;
-          const verificationStatus = hasUnregisteredItems ? 'REQUIRES_REVIEW' : 'PENDING';
-
-          await db.run(
-            `INSERT INTO special_orders (
-              store_id, requester, phone, notes, product, medicine_name, qty,
-              status, priority, customer_order_source, order_type, total_amount, sync_id,
-              payment_method, payment_status, pharmacy_verification_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              1,
-              customerName,
-              o.phone || '',
-              finalRefillNotes,
-              itemsSummary,
-              itemsSummary,
-              o.items?.reduce((sum: number, it: any) => sum + (it.qty || 1), 0) || 1,
-              'Pending',
-              'High',
-              'website_refill',
-              'REFILL',
-              o.totalAmount || 0,
-              o.orderId,
-              paymentMethod,
-              paymentStatus,
-              verificationStatus
-            ]
-          );
+          const { createRefillBatch } = await import('./refillBatchService.js');
+          await createRefillBatch({
+            source: 'website',
+            source_id: o.orderId,
+            customer_id: matchedCustomerId,
+            patient_name: customerName,
+            patient_phone: o.phone || '',
+            store_id: 1,
+            items: (o.items || []).map((it: any) => ({
+              medicine_name: it.product || it.name || it.medicine_name || 'Medicine',
+              quantity: Number(it.qty) || 1,
+              mrp: Number(it.price || it.mrp) || 0
+            })),
+            notes: `[Website Refill Request #${o.orderId}] ${orderNotesWithPayment}`
+          });
         } else if (isSpecialOrder) {
           await db.run(
             `INSERT INTO special_orders (

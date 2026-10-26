@@ -952,6 +952,11 @@ router.get('/panel', async (req, res) => {
           last_refill_date: row.last_refill_date || null,
           reminder_status: 'NOT_SENT',
           reminder_sent_at: null,
+          batch_id: row.batch_id || null,
+          source: row.source || 'counter',
+          source_id: row.source_id || null,
+          approval_status: row.approval_status || 'none',
+          approval_reason: row.approval_reason || null,
           medicines: []
         };
       }
@@ -1029,7 +1034,12 @@ router.get('/panel', async (req, res) => {
           cart_store_name: finalCartStoreName,
           cart_qty: finalCartQty,
           in_live_cart: inLiveCart,
-          linked_distributors: linksByMedicine.get(Number(row.medicine_id)) || []
+          linked_distributors: linksByMedicine.get(Number(row.medicine_id)) || [],
+          batch_id: row.batch_id || null,
+          source: row.source || 'counter',
+          source_id: row.source_id || null,
+          approval_status: row.approval_status || 'none',
+          approval_reason: row.approval_reason || null
         });
       }
     }
@@ -1051,6 +1061,22 @@ router.get('/panel', async (req, res) => {
         } else {
           group.reminder_status = 'NOT_SENT';
         }
+      }
+
+      // Aggregate group-level batch info & approval status for QA Refill Panel
+      const batchMeds = group.medicines.filter((m: any) => m.batch_id);
+      if (batchMeds.length > 0) {
+        group.batch_id = batchMeds[0].batch_id;
+        group.source = batchMeds[0].source || 'crm';
+      }
+      if (group.medicines.some((m: any) => m.approval_status === 'required')) {
+        group.approval_status = 'required';
+        const reqMeds = group.medicines.filter((m: any) => m.approval_status === 'required');
+        group.approval_reason = reqMeds.map((m: any) => `${m.medicine_name}: ${m.approval_reason || 'Exceeds 2-month limit'}`).join('; ');
+      } else if (group.medicines.some((m: any) => m.approval_status === 'approved')) {
+        group.approval_status = 'approved';
+      } else if (group.medicines.some((m: any) => m.approval_status === 'rejected')) {
+        group.approval_status = 'rejected';
       }
     }
 
@@ -3354,6 +3380,107 @@ router.post('/:id/mark-ready', async (req, res) => {
   } catch (err: any) {
     console.error(`Failed to mark refill #${id} as ready:`, err);
     res.status(500).json({ error: 'Internal server error: ' + err.message });
+  }
+});
+
+// ──────────────────────────────────────────────
+// Refill Batch API Endpoints (Shared Refill Pipeline)
+// ──────────────────────────────────────────────
+
+// POST /api/refills/batch — Create a manual CRM Refill Batch
+router.post('/batch', async (req, res) => {
+  try {
+    const { createRefillBatch } = await import('../services/refillBatchService.js');
+    const { patient_name, patient_phone, customer_id, store_id, items, notes } = req.body;
+
+    if (!patient_name || !patient_phone || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'patient_name, patient_phone, and at least one item are required' });
+    }
+
+    const batch = await createRefillBatch({
+      source: 'crm',
+      source_id: req.body.source_id || `CRM-${Date.now()}`,
+      customer_id: customer_id ? Number(customer_id) : undefined,
+      patient_name,
+      patient_phone,
+      store_id: store_id ? Number(store_id) : resolveStoreId(req) || 1,
+      items: items.map((it: any) => ({
+        medicine_id: it.medicine_id || it.id,
+        medicine_name: it.medicine_name || it.name || it.product,
+        quantity: Number(it.quantity || it.quantity_needed || it.qty) || 1,
+        refill_id: it.refill_id || it.id,
+        mrp: it.mrp,
+        sell_price: it.sell_price
+      })),
+      notes: notes || 'Manual CRM Refill Booking',
+      auto_dispatch: req.body.auto_dispatch !== false
+    });
+
+    res.status(201).json({ success: true, batch });
+  } catch (err: any) {
+    console.error('Failed to create refill batch:', err);
+    res.status(400).json({ error: err.message || 'Failed to create refill batch' });
+  }
+});
+
+// POST /api/refills/batch/:batchId/approve — Pharmacist approve action for held batch
+router.post('/batch/:batchId/approve', async (req, res) => {
+  const { batchId } = req.params;
+  try {
+    const { approveRefillBatch } = await import('../services/refillBatchService.js');
+    const approved = await approveRefillBatch(batchId, {
+      approvedBy: req.body.approved_by || 'Pharmacist',
+      rejectedItemIds: req.body.rejected_item_ids
+    });
+    res.json({ success: true, batch: approved, message: `Refill batch ${batchId} approved and eligible items released to live cart.` });
+  } catch (err: any) {
+    console.error(`Failed to approve refill batch ${batchId}:`, err);
+    res.status(400).json({ error: err.message || 'Failed to approve refill batch' });
+  }
+});
+
+// POST /api/refills/batch/:batchId/reject — Pharmacist reject action for held batch
+router.post('/batch/:batchId/reject', async (req, res) => {
+  const { batchId } = req.params;
+  try {
+    const { rejectRefillBatch } = await import('../services/refillBatchService.js');
+    const rejected = await rejectRefillBatch(batchId, {
+      reason: req.body.reason || 'Rejected by pharmacist',
+      rejectedBy: req.body.rejected_by || 'Pharmacist'
+    });
+    res.json({ success: true, batch: rejected, message: `Refill batch ${batchId} marked rejected/on-hold.` });
+  } catch (err: any) {
+    console.error(`Failed to reject refill batch ${batchId}:`, err);
+    res.status(400).json({ error: err.message || 'Failed to reject refill batch' });
+  }
+});
+
+// GET /api/refills/batches — List active refill batches
+router.get('/batches', async (req, res) => {
+  try {
+    const { listRefillBatches } = await import('../services/refillBatchService.js');
+    const batches = await listRefillBatches({
+      status: req.query.status as string,
+      limit: req.query.limit ? Number(req.query.limit) : 50
+    });
+    res.json({ success: true, batches });
+  } catch (err: any) {
+    console.error('Failed to list refill batches:', err);
+    res.status(500).json({ error: err.message || 'Failed to list refill batches' });
+  }
+});
+
+// GET /api/refills/batch/:batchId — Get single refill batch
+router.get('/batch/:batchId', async (req, res) => {
+  const { batchId } = req.params;
+  try {
+    const { getRefillBatch } = await import('../services/refillBatchService.js');
+    const batch = await getRefillBatch(batchId);
+    if (!batch) return res.status(404).json({ error: `Refill batch ${batchId} not found` });
+    res.json({ success: true, batch });
+  } catch (err: any) {
+    console.error(`Failed to get refill batch ${batchId}:`, err);
+    res.status(500).json({ error: err.message || 'Failed to get refill batch' });
   }
 });
 

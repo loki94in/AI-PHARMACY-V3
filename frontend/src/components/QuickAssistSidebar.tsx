@@ -8,7 +8,7 @@ import {
   Zap, Globe, ChevronLeft as ChevronLeftIcon, ChevronRight as ChevronRightIcon,
   Activity as ActivityIcon, ShieldCheck as ShieldCheckIcon, Clock as ClockIcon,
   MessageSquare as MessageSquareIcon, Send as SendIcon, Calendar, RotateCw,
-  CheckCheck, Receipt, Phone, Pill, AlertTriangle, CheckCircle2
+  CheckCheck, Receipt, Phone, Pill, AlertTriangle, CheckCircle2, Building2
 } from 'lucide-react';
 import { toastEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, quickOrderEvent, automationHubEvent } from '../services/events';
 import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, startRefillCartJob } from '../services/refillCartJobs';
@@ -81,6 +81,8 @@ export const QuickAssistSidebar = memo(({
   const [processingOrderIds, setProcessingOrderIds] = useState<Set<number>>(new Set());
   const [optimisticHiddenOrderIds, setOptimisticHiddenOrderIds] = useState<Set<number>>(new Set());
   const [optimisticHiddenRefillKeys, setOptimisticHiddenRefillKeys] = useState<Set<string>>(new Set());
+  const [approvingBatchIds, setApprovingBatchIds] = useState<Set<string>>(new Set());
+  const [rejectingBatchIds, setRejectingBatchIds] = useState<Set<string>>(new Set());
 
   // Reactive subscription to refill refresh events so Quick Assist stays synchronized
   useEffect(() => {
@@ -451,6 +453,52 @@ export const QuickAssistSidebar = memo(({
     }
   };
 
+  const handleApproveBatch = async (batchId: string, patientName: string) => {
+    if (!batchId) return;
+    try {
+      setApprovingBatchIds(prev => new Set(prev).add(batchId));
+      const res = await api.approveRefillBatch(batchId, 'Pharmacist');
+      toastEvent.trigger(res.message || `Refill batch ${batchId} approved and added to Live Cart!`, 'success', '/pharmarack-cart');
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      refillEvent.triggerRefresh();
+      window.dispatchEvent(new CustomEvent('refresh-refills'));
+      onRefreshDailyLog();
+      onActionComplete();
+    } catch (err: any) {
+      console.error('Failed to approve refill batch:', err);
+      toastEvent.trigger(`Failed to approve batch: ${err?.response?.data?.error || err?.message || 'Unknown error'}`, 'error');
+    } finally {
+      setApprovingBatchIds(prev => {
+        const next = new Set(prev);
+        next.delete(batchId);
+        return next;
+      });
+    }
+  };
+
+  const handleRejectBatch = async (batchId: string, patientName: string) => {
+    if (!batchId) return;
+    try {
+      setRejectingBatchIds(prev => new Set(prev).add(batchId));
+      const res = await api.rejectRefillBatch(batchId, 'Pharmacist', 'Quantity exceeds 2-month limit / rejected by pharmacist');
+      toastEvent.trigger(res.message || `Refill batch ${batchId} rejected`, 'info');
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      refillEvent.triggerRefresh();
+      window.dispatchEvent(new CustomEvent('refresh-refills'));
+      onRefreshDailyLog();
+      onActionComplete();
+    } catch (err: any) {
+      console.error('Failed to reject refill batch:', err);
+      toastEvent.trigger(`Failed to reject batch: ${err?.response?.data?.error || err?.message || 'Unknown error'}`, 'error');
+    } finally {
+      setRejectingBatchIds(prev => {
+        const next = new Set(prev);
+        next.delete(batchId);
+        return next;
+      });
+    }
+  };
+
   const handleBookRefillToPos = (group: {
     key: string;
     patient_name: string;
@@ -500,7 +548,7 @@ export const QuickAssistSidebar = memo(({
 
     const cleanDigits = (group.patient_phone || '').replace(/\D/g, '').slice(-10);
 
-    // Optimistically hide from Quick Assist
+    // Optimistically hide from Quick Assist immediately across key, phone, name, and medicine IDs
     setOptimisticHiddenRefillKeys(prev => {
       const next = new Set(prev);
       next.add(group.key);
@@ -511,6 +559,46 @@ export const QuickAssistSidebar = memo(({
         next.add(String(m.id));
       }
       return next;
+    });
+
+    // Also optimistically hide any companion special orders created for this patient / refill
+    const matchingOrderIds = (Array.isArray(specialOrders) ? specialOrders : [])
+      .filter(so => {
+        const soPhoneDigits = (so.phone || '').replace(/\D/g, '').slice(-10);
+        const phoneMatch = cleanDigits && soPhoneDigits && (cleanDigits === soPhoneDigits || soPhoneDigits.includes(cleanDigits) || cleanDigits.includes(soPhoneDigits));
+        const medNames = new Set(group.medicines.map(m => (m.medicine_name || '').toLowerCase().trim()));
+        const medMatch = so.product && medNames.has(so.product.toLowerCase().trim());
+        const sourceRefillMatch = group.medicines.some(m => so.source_refill_id === m.id);
+        return sourceRefillMatch || (phoneMatch && (so.source === 'refill' || medMatch));
+      })
+      .map(so => so.id);
+
+    if (matchingOrderIds.length > 0) {
+      setOptimisticHiddenOrderIds(prev => {
+        const next = new Set(prev);
+        matchingOrderIds.forEach(id => next.add(id));
+        return next;
+      });
+    }
+
+    // Persist refill fulfillment to database immediately so the cycle advances by interval (+30d)
+    // and pending call tasks close, ensuring the patient is removed from Quick Assist until the next cycle
+    // even if the bill is not ultimately saved in POS.
+    api.fulfillAllRefills(group.patient_phone, {
+      refill_ids: group.medicines.map(m => m.id),
+      fulfilled_via: 'quick_assist_pos',
+      patient_phone: group.patient_phone,
+      customer_id: group.customer_id || group.medicines[0]?.customer_id || undefined
+    }).then(() => {
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      refillEvent.triggerRefresh();
+      specialOrdersEvent.triggerUpdated();
+      automationHubEvent.triggerUpdated();
+      onRefreshDailyLog();
+      onActionComplete();
+    }).catch(err => {
+      console.warn('[QuickAssist] Background fulfillment on POS transfer:', err);
     });
 
     setExpanded(false);
@@ -923,6 +1011,11 @@ export const QuickAssistSidebar = memo(({
             reminder_mode: med.reminder_mode || (item as any).reminder_mode,
             next_refill_date: med.next_refill_date || (item as any).next_refill_date,
             last_refill_date: med.last_refill_date || (item as any).last_refill_date,
+            batch_id: med.batch_id || (item as any).batch_id || null,
+            source: med.source || (item as any).source || null,
+            source_id: med.source_id || (item as any).source_id || null,
+            approval_status: med.approval_status || (item as any).approval_status || 'none',
+            approval_reason: med.approval_reason || (item as any).approval_reason || null,
           });
         }
       } else {
@@ -933,6 +1026,7 @@ export const QuickAssistSidebar = memo(({
   }, [refills]);
 
   // Filter actionable refills: active, non-completed, and due within today + upcoming 7 calendar days (diffDays <= 7)
+  // Approval required items are always actionable for pharmacist reconfirmation
   const actionableRefills = useMemo(() => {
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
@@ -941,11 +1035,18 @@ export const QuickAssistSidebar = memo(({
       const st = (r.status || '').toLowerCase().trim();
       if (
         r.is_active !== 1 ||
-        !r.next_refill_date ||
         st === 'completed' ||
         st === 'fulfilled' ||
         st === 'cancelled' ||
-        st === 'canceled' ||
+        st === 'canceled'
+      ) {
+        return false;
+      }
+      if (r.approval_status === 'required') {
+        return true;
+      }
+      if (
+        !r.next_refill_date ||
         isRefillSettled(r) ||
         isRefillFulfilledToday(r) ||
         checkRefillCycleBooking(r).alreadyDispensed
@@ -980,6 +1081,11 @@ export const QuickAssistSidebar = memo(({
       collection_reminder_count?: number;
       last_collection_reminder_at?: string | null;
       isReady?: boolean;
+      batch_id?: string | null;
+      source?: string | null;
+      source_id?: string | null;
+      approval_status?: 'none' | 'required' | 'approved' | 'rejected';
+      approval_reason?: string | null;
       medicines: Array<{
         id: number;
         medicine_id: number;
@@ -1017,6 +1123,11 @@ export const QuickAssistSidebar = memo(({
         pack_size?: number;
         batch_quantity?: number;
         batch_loose_quantity?: number;
+        batch_id?: string | null;
+        source?: string | null;
+        source_id?: string | null;
+        approval_status?: 'none' | 'required' | 'approved' | 'rejected';
+        approval_reason?: string | null;
       }>;
     }> = [];
 
@@ -1046,10 +1157,22 @@ export const QuickAssistSidebar = memo(({
           auto_remind: 0,
           collection_reminder_count: 0,
           last_collection_reminder_at: null,
+          batch_id: r.batch_id || null,
+          source: r.source || null,
+          source_id: r.source_id || null,
+          approval_status: r.approval_status || 'none',
+          approval_reason: r.approval_reason || null,
           medicines: [],
         };
         map.set(key, existing);
         list.push(existing);
+      }
+      if (r.batch_id && !existing.batch_id) existing.batch_id = r.batch_id;
+      if (r.source && !existing.source) existing.source = r.source;
+      if (r.source_id && !existing.source_id) existing.source_id = r.source_id;
+      if (r.approval_status === 'required') {
+        existing.approval_status = 'required';
+        existing.approval_reason = r.approval_reason || existing.approval_reason;
       }
       if (r.hold_for_stock === 1) existing.hasHoldStock = true;
       if ((r as any).patient_confirmed === 1) existing.isPatientConfirmed = true;
@@ -1096,6 +1219,11 @@ export const QuickAssistSidebar = memo(({
         pack_size: (r as any).pack_size,
         batch_quantity: (r as any).batch_quantity,
         batch_loose_quantity: (r as any).batch_loose_quantity,
+        batch_id: r.batch_id || null,
+        source: r.source || null,
+        source_id: r.source_id || null,
+        approval_status: r.approval_status || 'none',
+        approval_reason: r.approval_reason || null,
       });
     }
 
@@ -1128,7 +1256,9 @@ export const QuickAssistSidebar = memo(({
     // Sort by diffDays ascending (most urgent first)
     list.sort((a, b) => a.diffDays - b.diffDays);
     // Exclude any patient groups that are already dispensed for this cycle or fully settled
+    // Hold approval required items strictly visible for pharmacist reconfirmation
     return list.filter(g => {
+      if (g.approval_status === 'required') return true;
       if (checkPatientRefillCycleBooking(g.medicines).alreadyDispensed) return false;
       if (g.medicines.every(m => isRefillSettled(m) || checkRefillCycleBooking(m).alreadyDispensed)) return false;
       if (optimisticHiddenRefillKeys.has(g.key)) return false;
@@ -1573,6 +1703,31 @@ export const QuickAssistSidebar = memo(({
                             <span>{group.medicines.length}</span>
                           </span>
                           {timingBadge}
+                          {/* Source Badge */}
+                          {group.source === 'website' ? (
+                            <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 text-[8px] font-bold shrink-0" title="Booked via Website Refill">
+                              <Globe size={8} className="shrink-0" />
+                              <span>Website</span>
+                            </span>
+                          ) : group.source === 'crm' ? (
+                            <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[8px] font-bold shrink-0" title="Booked via Manual CRM Refill">
+                              <Building2 size={8} className="shrink-0" />
+                              <span>CRM</span>
+                            </span>
+                          ) : null}
+                          {/* Batch ID Chip */}
+                          {group.batch_id && (
+                            <span className="px-1.5 py-0.5 rounded font-mono text-[8px] bg-bg3 text-muted border border-border shrink-0" title={`Refill Batch: ${group.batch_id}`}>
+                              {group.batch_id}
+                            </span>
+                          )}
+                          {/* Approval Status Badge */}
+                          {group.approval_status === 'required' && (
+                            <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[8px] font-bold shrink-0 animate-pulse" title="Exceeds 2-month limit: Pharmacist Approval Required">
+                              <AlertTriangle size={8} className="shrink-0 text-amber-400" />
+                              <span>Approval Required</span>
+                            </span>
+                          )}
                           {(() => {
                             const st = getRefillStage(group.medicines);
                             if (st === 'reminded') {
@@ -1592,31 +1747,13 @@ export const QuickAssistSidebar = memo(({
                             }
                             return null;
                           })()}
-                          {group.isPatientConfirmed ? (
+                          {group.isPatientConfirmed && (
                             <span
                               className="p-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0"
                               title="Refill confirmed & added to Pharmarack live cart"
                             >
                               <MessageSquareIcon size={10} className="shrink-0" />
                             </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleConfirmRefillGroup(group);
-                              }}
-                              disabled={confirmingRefillKeys.has(group.key)}
-                              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[8px] font-bold transition-all cursor-pointer shadow-xs shrink-0"
-                              title="1-Click Confirm refill & add directly to Live Cart"
-                            >
-                              {confirmingRefillKeys.has(group.key) ? (
-                                <Loader2 size={8} className="animate-spin shrink-0" />
-                              ) : (
-                                <CheckCircle2 size={8} className="shrink-0" />
-                              )}
-                              <span>+ Confirm</span>
-                            </button>
                           )}
                         </div>
                         {group.patient_phone && (
@@ -1635,6 +1772,57 @@ export const QuickAssistSidebar = memo(({
                         <ChevronDown size={13} className={`text-muted transition-transform duration-200 ${isExpanded ? 'rotate-180 text-purple-500' : ''}`} />
                       </div>
                     </div>
+
+                    {/* Flowchart: Hold for pharmacist reconfirmation -> QA Refill Panel: Approval Required -> Approve / Reject */}
+                    {group.approval_status === 'required' && (
+                      <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px]">
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1 min-w-0 font-bold">
+                            <AlertTriangle size={12} className="shrink-0 text-amber-400" />
+                            <span className="truncate">Approval Required: {group.approval_reason || 'Quantity exceeds 2-month limit'}</span>
+                          </div>
+                        </div>
+                        <p className="text-[9px] text-muted leading-tight">
+                          Held for pharmacist reconfirmation. Confirm dosage schedule and approve to release into Live Cart.
+                        </p>
+                        <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-amber-500/20">
+                          <button
+                            type="button"
+                            disabled={approvingBatchIds.has(group.batch_id || '') || rejectingBatchIds.has(group.batch_id || '')}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (group.batch_id) handleApproveBatch(group.batch_id, group.patient_name);
+                            }}
+                            className="h-6 px-2.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[9.5px] font-bold flex items-center gap-1 shadow-xs cursor-pointer disabled:opacity-50"
+                            title="Approve refill batch: releases approved medicines and adds to Live Cart"
+                          >
+                            {approvingBatchIds.has(group.batch_id || '') ? (
+                              <Loader2 size={10} className="animate-spin shrink-0" />
+                            ) : (
+                              <CheckCircle2 size={11} className="shrink-0" />
+                            )}
+                            <span>Approve & Add to Cart</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={approvingBatchIds.has(group.batch_id || '') || rejectingBatchIds.has(group.batch_id || '')}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (group.batch_id) handleRejectBatch(group.batch_id, group.patient_name);
+                            }}
+                            className="h-6 px-2 rounded bg-red-600/20 hover:bg-red-600 hover:text-white text-red-400 border border-red-500/30 text-[9.5px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                            title="Reject refill batch: remain on hold / rejected"
+                          >
+                            {rejectingBatchIds.has(group.batch_id || '') ? (
+                              <Loader2 size={10} className="animate-spin shrink-0" />
+                            ) : (
+                              <X size={11} className="shrink-0" />
+                            )}
+                            <span>Reject</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Unfolded Medicine Names: shows only medicine names with cart status / order buttons */}
                     {isExpanded && (
@@ -1676,7 +1864,7 @@ export const QuickAssistSidebar = memo(({
                                   <span className="px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/20 text-[9px] font-mono font-bold" title={`Quantity needed: ${med.quantity_needed}`}>
                                     x{med.quantity_needed}
                                   </span>
-                                  {isMedInCart ? (
+                                  {isMedInCart && (
                                     <span
                                       className="h-5 px-1.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0"
                                       title={`In Live Cart / Ordered (${med.cart_store_name || 'In Live Cart'})`}
@@ -1684,22 +1872,21 @@ export const QuickAssistSidebar = memo(({
                                       <Check size={9} className="shrink-0" />
                                       <span>In Cart</span>
                                     </span>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setRefillOrderModalGroup({
-                                          patient_name: group.patient_name,
-                                          medicines: [med]
-                                        });
-                                      }}
-                                      className="h-5 px-1.5 rounded bg-primary hover:bg-primary/90 text-white text-[8px] font-bold flex items-center gap-0.5 shrink-0 transition-colors cursor-pointer shadow-xs"
-                                      title={`Review and order ${med.medicine_name} to Live Cart`}
-                                    >
-                                      <ShoppingCart size={9} className="shrink-0" />
-                                      <span>+ Cart</span>
-                                    </button>
+                                  )}
+                                  {med.status === 'needs_link' && (
+                                    <span className="h-5 px-1.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0" title="Needs Distributor Mapping">
+                                      Needs Link
+                                    </span>
+                                  )}
+                                  {med.status === 'linked_oos' && (
+                                    <span className="h-5 px-1.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0" title="Out of Stock across mapped distributors">
+                                      Out of Stock
+                                    </span>
+                                  )}
+                                  {med.status === 'failed' && (
+                                    <span className="h-5 px-1.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0" title="Cart Addition Failed">
+                                      Cart Failed
+                                    </span>
                                   )}
                                 </div>
                               </div>
@@ -1764,37 +1951,24 @@ export const QuickAssistSidebar = memo(({
                             );
                           }
 
-                          const confirmBtn = !group.isPatientConfirmed ? (
-                            <button
-                              type="button"
-                              disabled={confirmingRefillKeys.has(group.key)}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleConfirmRefillGroup(group);
-                              }}
-                              className="h-6.5 px-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
-                              title="Confirm refill and directly add to Pharmarack Live Cart"
-                            >
-                              {confirmingRefillKeys.has(group.key) ? (
-                                <Loader2 size={10} className="animate-spin shrink-0" />
-                              ) : (
-                                <CheckCircle2 size={10} className="shrink-0" />
-                              )}
-                              <span>Confirm</span>
-                            </button>
-                          ) : null;
+                          if (group.approval_status === 'required') {
+                            return (
+                              <div className="flex-1 text-[9.5px] text-amber-300 font-medium italic py-1 truncate">
+                                Held for pharmacist reconfirmation. Approve above to release into Live Cart.
+                              </div>
+                            );
+                          }
 
                           if (stage === 'upcoming') {
                             return (
                               <>
-                                {confirmBtn}
                                 <button
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleBookRefillToPos(group);
                                   }}
-                                  className="h-6.5 px-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
+                                  className="h-6.5 px-2.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
                                   title={`Book & bill refill for ${group.patient_name} in POS`}
                                 >
                                   <ShoppingCart size={10} className="shrink-0" />
@@ -1815,24 +1989,12 @@ export const QuickAssistSidebar = memo(({
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOrderRefillGroupToCart(group);
-                                  }}
-                                  className="flex-1 h-6.5 px-2 rounded-lg bg-primary hover:bg-primary/90 text-white text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 shadow-xs cursor-pointer active:scale-95 truncate"
-                                  title={`Add un-added medicines to Pharmarack Live Cart (${unaddedMeds.length} items)`}
-                                >
-                                  <ShoppingCart size={11} className="shrink-0" />
-                                  <span className="truncate">Add to Cart ({unaddedMeds.length})</span>
-                                </button>
-                                <button
-                                  type="button"
                                   disabled={isMarkingGroup}
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     handleMarkRefillGroupOrdered(group);
                                   }}
-                                  className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs truncate"
+                                  className="flex-1 h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs truncate"
                                   title="Already added / ordered outside Pharmarack"
                                 >
                                   {isMarkingGroup ? <Loader2 size={11} className="animate-spin shrink-0" /> : <CheckCheck size={11} className="shrink-0" />}
@@ -1912,7 +2074,6 @@ export const QuickAssistSidebar = memo(({
                           if (stage === 'ordered') {
                             return (
                               <>
-                                {confirmBtn}
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -1957,7 +2118,6 @@ export const QuickAssistSidebar = memo(({
 
                           return (
                             <>
-                              {confirmBtn}
                               <button
                                 type="button"
                                 onClick={(e) => {

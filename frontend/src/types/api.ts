@@ -149,6 +149,52 @@ export interface Refill {
   cart_product_name?: string | null;
   cart_qty?: number | null;
   in_live_cart?: boolean;
+  batch_id?: string | null;
+  source?: 'website' | 'crm' | 'counter' | string;
+  source_id?: string | null;
+  approval_status?: 'none' | 'required' | 'approved' | 'rejected';
+  approval_reason?: string | null;
+}
+
+export interface RefillBatch {
+  id: number;
+  batch_id: string;
+  source: 'website' | 'crm';
+  source_id?: string | null;
+  customer_id?: number | null;
+  patient_name: string;
+  patient_phone: string;
+  store_id: number;
+  status: 'pending' | 'approval_required' | 'approved' | 'rejected' | 'processing' | 'completed' | 'partially_completed' | 'failed';
+  approval_status: 'none' | 'required' | 'approved' | 'rejected';
+  approval_reason?: string | null;
+  approved_by?: string | null;
+  approved_at?: string | null;
+  total_items: number;
+  eligible_items: number;
+  added_items: number;
+  failed_items: number;
+  items: Array<{
+    refill_id: number;
+    medicine_id: number;
+    medicine_name: string;
+    requested_quantity: number;
+    prescribed_quantity: number;
+    interval_days: number;
+    two_month_limit: number;
+    exceeds_two_month_limit: boolean;
+    approval_status: 'none' | 'required' | 'approved' | 'rejected';
+    approval_reason?: string | null;
+    is_duplicate: boolean;
+    cart_status: string;
+    cart_store_name?: string | null;
+    cart_product_code?: string | null;
+    cart_qty?: number | null;
+    error?: string | null;
+  }>;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AutomationNotification {

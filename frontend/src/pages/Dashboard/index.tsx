@@ -6,6 +6,7 @@ import { api } from '../../services/api';
 import type { DashboardStats } from '../../services/api';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { formatINR } from '../../utils/currency';
+import { MorningBriefingDashboard } from '../../components/MorningBriefingDashboard';
 
 let cachedDashboardStats: DashboardStats | null = null;
 
@@ -113,6 +114,9 @@ const Dashboard = () => {
           </Link>
         </div>
       </div>
+
+      {/* Morning Briefing & Reorder Hub Flow */}
+      <MorningBriefingDashboard className="mb-6" />
 
       {/* Primary KPI Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6">

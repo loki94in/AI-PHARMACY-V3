@@ -191,6 +191,7 @@ import type {
   InventoryItem,
   SpecialOrder,
   Refill,
+  RefillBatch,
   AutomationNotification,
   AutomationHubActivityItem,
   AutomationHubSummary,
@@ -204,6 +205,7 @@ export type {
   InventoryItem,
   SpecialOrder,
   Refill,
+  RefillBatch,
   AutomationNotification,
   AutomationHubActivityItem,
   AutomationHubSummary,
@@ -1919,6 +1921,29 @@ export const api = {
   createRefill: (data: Partial<Refill>) => apiClient.post('/refills', data).then(res => res.data),
   updateRefill: (id: number, data: Partial<Refill>) => apiClient.put(`/refills/${id}`, data).then(res => res.data),
   deleteRefill: (id: number) => apiClient.delete(`/refills/${id}`).then(res => res.data),
+  // Refill Batches & Validation Pipeline
+  createRefillBatch: (data: {
+    source: 'website' | 'crm';
+    source_id?: string;
+    patient_name: string;
+    patient_phone: string;
+    items: Array<{
+      medicine_name: string;
+      medicine_id?: number;
+      quantity: number;
+      refill_interval_days?: number;
+      doctor_name?: string;
+      instructions?: string;
+    }>;
+  }) => apiClient.post<{ success: boolean; batch: RefillBatch; items: any[]; holds: any[]; message: string }>('/refills/batch', data).then(res => res.data),
+  approveRefillBatch: (batchId: string, reviewedBy?: string) =>
+    apiClient.post<{ success: boolean; batch_id: string; message: string; results?: any[] }>(`/refills/batch/${encodeURIComponent(batchId)}/approve`, { reviewed_by: reviewedBy }).then(res => res.data),
+  rejectRefillBatch: (batchId: string, reviewedBy?: string, reason?: string) =>
+    apiClient.post<{ success: boolean; batch_id: string; message: string }>(`/refills/batch/${encodeURIComponent(batchId)}/reject`, { reviewed_by: reviewedBy, reason }).then(res => res.data),
+  getRefillBatches: (params?: { source?: string; status?: string; limit?: number }) =>
+    apiClient.get<{ success: boolean; batches: RefillBatch[] }>('/refills/batches', { params }).then(res => res.data),
+  getRefillBatch: (batchId: string) =>
+    apiClient.get<{ success: boolean; batch: RefillBatch; items: Refill[] }>(`/refills/batch/${encodeURIComponent(batchId)}`).then(res => res.data),
   // Server does cart read → live search → add → cart re-read; slow Pharmarack can take a while.
   // dryRun: plan only (never writes the cart) → 'ready' with the distributor it would use.
   addRefillToCart: (id: number, body: { qty?: number; pick?: RefillCartPick[]; dryRun?: boolean }) =>

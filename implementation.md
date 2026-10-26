@@ -1,87 +1,92 @@
-# Implementation Plan: 7-Day Refill Operational Lifecycle & Automation
+# Implementation Plan: Morning Briefing & Reorder Hub Flow
 
 ## 1. Objective & Requirements
-Implement and verify the complete operational refill lifecycle in AI Pharmacy v2:
-1. **7-Day Auto-Inclusion Window**: All non-completed refills due within 7 days (`<= DATE('now', 'localtime', '+7 days')`) are automatically included across Quick Assist, CRM, and Morning Briefing.
-2. **1-Click "Mark Ready" with Auto-Collection Reminder**:
-   - In Quick Assist and CRM: Allow 1-click "Mark Ready" directly from stage `upcoming` (when inventory is already in store stock) as well as stage `ordered`.
-   - Update `frontend/src/utils/refillSettled.ts` (`getRefillStage`) so that `is_ready === 1` and reminded status take precedence over `orderedCount === 0`. Refills marked ready must immediately display in the Ready stage (`reminded`) with the Ready badge.
-   - Calling `POST /api/refills/patient/:phone/mark-ready` updates `is_ready = 1`, sets `reminder_status = 'SENT'`, and automatically queues the WhatsApp pickup collection message (`refill_collection`) to the patient.
-3. **Cycle Fulfillment & Auto-Scheduling for Next Month**:
-   - Marking completed in CRM (`/fulfill-all` or `executeCloseRefillCycles`) or billing in POS (`POST /api/sales` checkout):
-     - Automatically stamps `last_refill_date` and advances `next_refill_date` by `refill_interval_days` (default 30 days) to next month.
-     - Automatically cancels pending staged notifications and purges unneeded collection/reminder messages in `whatsapp_send_queue`.
-     - Automatically removes the patient from the daily morning briefing.
-4. **Call Tasks & Non-WhatsApp Patients**:
-   - Completing the refill cycle (via POS sale or CRM fulfill) automatically completes pending call tasks in `patient_call_tasks` for both WhatsApp and non-WhatsApp patients.
-   - Broadcasts `call_tasks_updated` via `eventService` to refresh the call board.
-   - Prevents duplicate call task alerts to the store owner.
-5. **Quality & Safety Assurance**:
-   - Pass `npx tsc --noEmit`.
-   - Pass `npm test -- tests/dailyBriefingCleanup.test.ts` and `npm test -- tests/refillTodayListTruth.test.ts`.
-   - Pass mandatory `npm run guardrails`.
-   - Auto-update knowledge graph via `node scripts/quick-update.mjs`.
+Implement the consolidated Morning Briefing & Reorder Hub pipeline according to the approved architecture:
+1. **Collect Data from All Sources**:
+   - `Online Orders`: website orders pending, processing, awaiting stock, not delivered.
+   - `Refill Requests`: pending refills, partially fulfilled refills, approval required.
+   - `Special Orders`: customer requests, procurement needed, supplier follow-up.
+   - `Manual Call Tasks`: non-WhatsApp / unregistered / manual calling queue.
+2. **Process & Prepare Briefing**:
+   - Fetch all pending records from Reorder Hub, Special Orders, Online Orders, and Call Tasks.
+   - Deduplicate & filter completed/cancelled items.
+   - Verify WhatsApp registration & phone availability (3-way check).
+3. **Morning Briefing Dashboard**:
+   - 4 Live Cards with live badge counts and view details actions:
+     - Pending Refills (Green)
+     - Special Orders (Purple)
+     - Online Orders (Blue)
+     - Call Tasks (Amber)
+   - Real-time SSE updates so briefing updates immediately as orders/tasks change status.
+4. **Channel Routing Engine**:
+   - `WhatsApp Available`: stage reminder/update in `automation_notifications` (human-in-the-loop review).
+   - `WhatsApp Unavailable`: add to `patient_call_tasks` queue with customer details, order/medicine context, priority, and reason.
+   - `No Usable Phone Number`: flag for `Contact Details Review` so staff can correct missing contact info before calling.
+5. **Call Outcome Pipeline State Machine**:
+   - `Pending Call` -> `Called` -> `Call Outcome`:
+     - `Customer Responded` -> `Resolved` (completed).
+     - `No Answer` -> `Follow-up Required` -> loops back into `Pending Call` with follow-up timestamp.
+     - `Further Action Needed` -> `Follow-up Required` -> loops back into `Pending Call` with follow-up timestamp.
 
 ---
 
 ## 2. Architecture & File Plan
 
 | File | Subsystem | Action | Purpose |
-|------|-----------|--------|---------|
-| `frontend/src/utils/refillSettled.ts` | Frontend Utility | Edit | Fix `getRefillStage` precedence bug: prioritize `is_ready` / reminded before `orderedCount === 0`. |
-| `frontend/src/pages/CRM/RefillsSection.tsx` | CRM Refills | Edit | Map `is_ready` into `meds`, add 1-click `[Mark Ready]` button in `upcoming` stage, add `[Complete]` action button in `ordered`/`reminded` stages. |
-| `frontend/src/components/QuickAssistSidebar.tsx` | Quick Assist | Edit | Add 1-click `[Mark Ready]` button in `upcoming` stage, render Ready badge in card header. |
-| `src/routes/refills.ts` | Backend API | Edit | Enhance `executeCloseRefillCycles`: broad `reference_id` pattern match for call tasks and broadcast `call_tasks_updated`. |
-| `src/routes/sales.ts` | Backend API | Edit | Enhance POS checkout: broad `reference_id` pattern match for call tasks and broadcast `call_tasks_updated`. |
-| `src/services/refillService.ts` | Backend Service | Edit | Ensure `DATE(pr.last_refill_date) < DATE('now', 'localtime')` strictly excludes today-fulfilled refills from the briefing. |
-| `tests/dailyBriefingCleanup.test.ts` | Automated Tests | Verify / Update | Verify briefing excludes today-fulfilled refills. |
-| `tests/refillTodayListTruth.test.ts` | Automated Tests | Update | Align test expectations with 7-day operational briefing lookahead. |
-| `SMALL_BUG_FIX_PLAN.md` | Tracking | Update | Document bug P2-124 fix. |
+| :--- | :--- | :--- | :--- |
+| `src/services/morningBriefingService.ts` | Backend Service | Create | Fetch, deduplicate, validate contact availability, and compile morning briefing data. Handle channel routing and call outcome pipeline. |
+| `src/routes/morningBriefing.ts` | Backend Routes | Create | API endpoints `GET /api/morning-briefing`, `POST /api/morning-briefing/update-contact`, `POST /api/morning-briefing/call-outcome`. |
+| `src/server.ts` | Express Server | Edit | Mount `/api/morning-briefing` router. |
+| `frontend/src/types/morningBriefing.ts` | Frontend Types | Create | TypeScript types for morning briefing summary, cards, routing queues, and call outcomes. |
+| `frontend/src/services/morningBriefingApi.ts` | Frontend API | Create | API client for morning briefing endpoints and contact updates. |
+| `frontend/src/components/MorningBriefingDashboard.tsx` | Frontend UI | Create | 4 Cards dashboard, 3-way routing controls, contact review modal/banner, and interactive Call Outcome pipeline. |
+| `frontend/src/pages/Dashboard/index.tsx` | Dashboard Page | Edit | Embed `MorningBriefingDashboard` at the top of the main Dashboard. |
+| `tests/morningBriefingPipeline.test.ts` | Automated Tests | Create | Comprehensive integration tests verifying 4 source collections, deduplication, 3-way routing, and call outcome state machine. |
+| `implementation.md` | Task Tracking | Maintain | Live task completion log per Rule 10. |
 
 ---
 
 ## 3. Step-by-Step Execution Plan
 
-1. **Step 1: Fix `getRefillStage` in `frontend/src/utils/refillSettled.ts`**
-   - Check `isRefillReady(m)` before checking `orderedCount === 0`.
-   - Verify: Stage evaluates to `'reminded'` whenever any item is ready.
-2. **Step 2: Update `frontend/src/pages/CRM/RefillsSection.tsx`**
-   - Include `is_ready: (m as any).is_ready ?? 0` in `meds` array.
-   - Add `[Mark Ready]` button to `stage === 'upcoming'`.
-   - Add `[Complete]` button to `stage === 'ordered'` and `stage === 'reminded'`.
-   - Verify: Clicking Mark Ready or Complete functions in 1 click.
-3. **Step 3: Update `frontend/src/components/QuickAssistSidebar.tsx`**
-   - In `stage === 'upcoming'`, add `[Mark Ready]` button calling `handleMarkRefillGroupReady(group)`.
-   - Add Ready badge in the header when `stage === 'reminded'`.
-   - Verify: 1-click ready marks ready and queues WhatsApp pickup reminder.
-4. **Step 4: Harden Backend Call Task & Briefing Exclusions**
-   - In `src/routes/refills.ts` & `src/routes/sales.ts`: broadcast `call_tasks_updated` and enhance `reference_id` matching.
-   - In `src/services/refillService.ts`: strictly exclude today-fulfilled refills from `buildDailyOperationalBriefing`.
-5. **Step 5: Run Tests & Quality Gates**
-   - Run `npm test -- tests/dailyBriefingCleanup.test.ts` & `npm test -- tests/refillTodayListTruth.test.ts`.
-   - Run `npx tsc --noEmit`.
-   - Run `npm run guardrails`.
-   - Run `node scripts/quick-update.mjs`.
+1. **Step 1: Backend Service (`src/services/morningBriefingService.ts`)**
+   - Query pending records across Refills, Special Orders, Online Orders, and Call Tasks.
+   - Deduplicate records and evaluate contact validity (valid 10-digit mobile).
+   - Classify into 3 channels: WhatsApp Available, WhatsApp Unavailable, No Usable Phone.
+   - Implement `recordCallOutcome` advancing tasks through `Pending Call` -> `Called` -> `Resolved` vs `Follow-up Required` (loop to `Pending Call`).
+   - Implement `updateContactDetails` updating customer phone and re-evaluating routing.
+2. **Step 2: API Route Handler (`src/routes/morningBriefing.ts` & `src/server.ts`)**
+   - Expose `GET /api/morning-briefing`, `POST /api/morning-briefing/route-channel`, `POST /api/morning-briefing/update-contact`, `POST /api/morning-briefing/call-outcome`.
+   - Mount in `src/server.ts`.
+3. **Step 3: Frontend Types & API Client (`frontend/src/types/morningBriefing.ts` & `frontend/src/services/morningBriefingApi.ts`)**
+   - Define data contracts and query hooks using TanStack Query.
+4. **Step 4: Frontend UI Component (`frontend/src/components/MorningBriefingDashboard.tsx`)**
+   - 4 Overview cards with real-time counts, status chips, and quick navigation.
+   - Contact Review drawer/alert for items with missing phone numbers.
+   - Interactive Call Outcome buttons (Called, Customer Responded, No Answer, Further Action Needed).
+   - Strictly semantic Tailwind classes (`bg-bg`, `bg-bg2`, `text-text`, etc.).
+5. **Step 5: Integrate into Main Dashboard (`frontend/src/pages/Dashboard/index.tsx`)**
+   - Place `MorningBriefingDashboard` at the top of the Dashboard.
+6. **Step 6: Automated Integration Tests (`tests/morningBriefingPipeline.test.ts`)**
+   - Write and run integration tests for all 4 sources, deduplication, 3-way routing, and call outcome state transitions.
+7. **Step 7: Verification & Quality Gates**
+   - Verify client build (`npm run build:client`).
+   - Verify performance guardrails (`npm run guardrails`).
+   - Update knowledge graph (`node scripts/quick-update.mjs`).
 
 ---
 
 ## 4. Completed Tasks Log
-- **Task 1: Precedence & Ready Fix in `frontend/src/utils/refillSettled.ts`** [Completed]
-  - Fixed `getRefillStage` precedence by checking `meds.some(isRefillReady)` first so that refills marked ready directly from existing stock immediately transition to `'reminded'` stage.
-- **Task 2: Direct 1-Click Mark Ready & Complete in `frontend/src/pages/CRM/RefillsSection.tsx`** [Completed]
-  - Mapped `is_ready` into `meds` on line 1805.
-  - Added direct `[Mark Ready]` button to `stage === 'upcoming'` alongside `[POS]`, `[Add to Cart]`, and `[Already Added]`.
-  - Added direct `[Complete]` button to `stage === 'ordered'` and `stage === 'reminded'`.
-- **Task 3: 1-Click Mark Ready & Header Badge in `frontend/src/components/QuickAssistSidebar.tsx`** [Completed]
-  - Added direct `[Mark Ready]` button to `stage === 'upcoming'` calling `handleMarkRefillGroupReady(group)`.
-  - Rendered `Ready` and `Ordered` badges in patient card headers when `stage === 'reminded'` or `'ordered'`.
-- **Task 4: Call Tasks & Briefing Ledger Synchronization** [Completed]
-  - In `src/routes/refills.ts` and `src/routes/sales.ts`, enhanced call task completion query to match single and comma-separated reference IDs and broadcast `call_tasks_updated` via `eventService`.
-  - In `src/services/refillService.ts`, unified briefing exclusions on the `refill_fulfillments` ledger so fulfilled cycles are immediately removed from the daily briefing.
-- **Task 5: Quality Gates & Verification** [Completed]
-  - `tests/dailyBriefingCleanup.test.ts` passed (4/4 tests pass).
-  - `tests/refillTodayListTruth.test.ts` passed (9/9 tests pass).
-  - `npx tsc --noEmit` exit 0 on root backend.
-  - `npx tsc --noEmit` exit 0 on frontend.
-  - `npm run guardrails` exit 0 (0 violations).
-  - Recorded in `SMALL_BUG_FIX_PLAN.md` under `[Fixed] P2-124`.
+- [x] Task 1: Create `src/services/morningBriefingService.ts` with source collection, deduplication, 3-way contact classification, and call outcome state transitions.
+  - *Details*: Implemented `getMorningBriefing()` aggregating 4 data streams: Online Orders (`website_orders`), Refill Requests (`patient_refills`), Special Orders (`special_orders`), and Call Tasks (`patient_call_tasks`). Implemented deduplication by phone/medicine, 3-way contact classification (`whatsapp_available`, `whatsapp_unavailable`, `no_usable_phone`), channel routing (`routeToWhatsAppQueue`, `routeToCallTaskQueue`, `updateContactDetails`), and call outcome progression (`advanceCallOutcome`: `called` -> `customer_responded`/`resolved`, `no_answer` -> `follow_up_required` loop back to `pending_call` with reschedule date, `further_action_needed` -> `follow_up_required` loop back to `pending_call` with reschedule date). Uses `toLocalSqlDateTime()` complying with guardrail B4.
+- [x] Task 2: Create `src/routes/morningBriefing.ts` and mount in `src/server.ts`.
+  - *Details*: Built express endpoints `GET /api/morning-briefing`, `POST /api/morning-briefing/route-channel`, `POST /api/morning-briefing/update-contact`, and `POST /api/morning-briefing/call-outcome`. Mounted lazy router at `/api/morning-briefing` in `src/server.ts`. Also updated `src/database.ts` schema v83 to expand `patient_call_tasks` check constraint and add columns (`priority`, `call_attempts`, `last_called_at`).
+- [x] Task 3: Create frontend types and API client (`morningBriefing.ts` & `morningBriefingApi.ts`).
+  - *Details*: Defined models for `MorningBriefingItem`, `MorningBriefingCategorySummary`, `MorningBriefingSummary`, `ContactChannelClassification`, and `CallOutcomeRequest`. Implemented TanStack query and mutation functions with SSE invalidations in `morningBriefingApi.ts`.
+- [x] Task 4: Create `MorningBriefingDashboard.tsx` with 4 overview cards, 3-way routing, contact review, and call outcome loop.
+  - *Details*: Built 4 live metric cards (Pending Refills, Special Orders, Online Orders, Call Tasks) with status badges, detail breakdown drawer, Contact Details Review banner/dialog for missing/invalid phones, and interactive Call Outcome modal supporting `called`, `customer_responded`, `no_answer`, and `further_action_needed` with loop-back rescheduling. Uses strictly semantic Tailwind classes (`bg-bg`, `bg-bg2`, `text-text`, `border-border`) and local date formatters.
+- [x] Task 5: Embed `MorningBriefingDashboard` into `frontend/src/pages/Dashboard/index.tsx`.
+  - *Details*: Mounted `<MorningBriefingDashboard className="mb-6" />` directly beneath the Quick Action Bar on the primary dashboard view.
+- [x] Task 6: Create and run `tests/morningBriefingPipeline.test.ts` to verify all pipeline branches.
+  - *Details*: Added 12 comprehensive unit and integration tests covering multi-source aggregation, deduplication across refills, 3-way channel routing, phone number correction, and the complete call outcome state machine loop (`pending_call` -> `called` -> `no_answer` -> `follow_up_required` -> `pending_call`). All 12 tests passed (Exit Code 0). Verified regression against `refillBatchPipeline.test.ts` (9 of 9 passed).
+- [x] Task 7: Pass all quality gates (`npm run build:client`, `npm run guardrails`, `node scripts/quick-update.mjs`).
+  - *Details*: Production client build succeeded (`tsc -b && vite build` built in 51.89s with 0 errors). Guardrails scanner (`npm run guardrails`) passed with 0 violations. Knowledge graph synchronized (`node scripts/quick-update.mjs`) with 1311 nodes and 856 edges.
