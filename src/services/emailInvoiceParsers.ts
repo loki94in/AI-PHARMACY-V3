@@ -1158,3 +1158,276 @@ export function extractTotalsFromText(text: string) {
   return { subtotal, cgst, sgst, igst, total_amount, global_cd_per, total_discount, round_off, cn_amount, cn_number };
 }
 
+/**
+ * Specialized parser for DEV AGENCY (Dava Infotech software) multi-line block invoice layout.
+ * Text layout:
+ * - Product Name
+ * - Quantity
+ * - Rate MRP
+ * - SrNo GST%
+ * - HSN Amount
+ * - Extra discount / scheme
+ * - Batch+Expiry (e.g. SIG1351A11/27 or 472R03/28)
+ * - Manufacturer (e.g. SUN, GSK)
+ * - Pack size (e.g. 10, 30 GM)
+ */
+export function parseDevAgencyInvoice(content: string, globalCdPer: number = 0): {
+  items: any[];
+  invoice_no: string;
+  invoice_date: string;
+  total_amount: number;
+  distributor_name: string;
+} {
+  const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+  const items: any[] = [];
+  let invoice_no = '';
+  let invoice_date = '';
+  let total_amount = 0;
+  const distributor_name = 'DEV AGENCY';
+
+  // 1. Extract Invoice No & Date & Total
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.includes('Inv.No') || l.includes('Inv. No') || l.startsWith('Inv.No.')) {
+      const inlineMatch = l.match(/Inv\.?\s*No\.?\s*[:\-]?\s*([A-Za-z0-9\-]+)/i);
+      if (inlineMatch && inlineMatch[1] && !/^\s*$/.test(inlineMatch[1])) {
+        invoice_no = inlineMatch[1];
+      } else {
+        for (let offset = -5; offset <= 5; offset++) {
+          const candidate = lines[i + offset];
+          if (candidate && /^\d{4,8}$/.test(candidate) && !candidate.includes('-')) {
+            invoice_no = candidate;
+            break;
+          }
+        }
+      }
+    }
+    if (l.includes('Inv Dt') || l.includes('Inv. Date') || l.startsWith('Inv Dt')) {
+      const inlineDate = l.match(/Inv\.?\s*D(?:ate|t)\.?\s*[:\-]?\s*(\d{2}[\/\-]\d{2}[\/\-]\d{2,4})/i);
+      if (inlineDate && inlineDate[1]) {
+        const parts = inlineDate[1].split(/[\/\-]/);
+        const year = parts[2].length === 2 ? '20' + parts[2] : parts[2];
+        invoice_date = `${year}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      } else {
+        for (let offset = -5; offset <= 5; offset++) {
+          const candidate = lines[i + offset];
+          if (candidate && /^\d{2}\/\d{2}\/\d{2,4}$/.test(candidate)) {
+            const parts = candidate.split('/');
+            const year = parts[2].length === 2 ? '20' + parts[2] : parts[2];
+            invoice_date = `${year}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            break;
+          }
+        }
+      }
+    }
+    if (l.includes('TotalAmt :') || l.includes('TO PAY :') || l.includes('TotalAmt') || l.includes('TOPAY')) {
+      const inlineAmt = l.match(/(?:TotalAmt|TO\s*PAY)\s*[:\-]?\s*(\d+(?:\.\d{2})?)/i);
+      if (inlineAmt) {
+        total_amount = parseFloat(inlineAmt[1]);
+      } else {
+        const next = lines[i + 1];
+        if (next && /^\d+(?:\.\d{2})?$/.test(next)) {
+          total_amount = parseFloat(next);
+        }
+      }
+    }
+  }
+
+  // 2A. Try Single-Line pattern (common when text lines are grouped by Y-coordinate or OCR)
+  for (const line of lines) {
+    if (line.includes('BANK:') || line.includes('SHOP NO') || line.includes('PRODUCT NAME') || line.length < 15) continue;
+    const expMatch = line.match(/\b([A-Za-z0-9\-\/]{3,15})\s+(\d{2}[\/\-]\d{2,4})\b/);
+    if (!expMatch) continue;
+
+    const batch = expMatch[1];
+    const expiry = expMatch[2];
+    const expIdx = line.indexOf(expMatch[0]);
+    const beforeExp = line.substring(0, expIdx).trim();
+    const afterExp = line.substring(expIdx + expMatch[0].length).trim();
+
+    const beforeTokens = beforeExp.split(/\s+/);
+    if (beforeTokens.length < 4) continue;
+
+    let rate = 0;
+    let mrp = 0;
+    let qty = 0;
+    let hsn = '';
+    let name = '';
+
+    for (let k = 0; k < beforeTokens.length - 2; k++) {
+      if (/^\d+$/.test(beforeTokens[k]) && /^\d+\.\d{2}$/.test(beforeTokens[k + 1]) && /^\d+\.\d{2}$/.test(beforeTokens[k + 2])) {
+        qty = parseInt(beforeTokens[k], 10);
+        rate = parseFloat(beforeTokens[k + 1]);
+        mrp = parseFloat(beforeTokens[k + 2]);
+        name = beforeTokens.slice(0, k).join(' ');
+        break;
+      }
+    }
+
+    if (!name || !qty || !rate) continue;
+
+    const hsnToken = beforeTokens.find(t => /^\d{6,8}$/.test(t));
+    if (hsnToken) hsn = hsnToken;
+
+    let mfg = '';
+    let pack = '';
+    const packMatch = afterExp.match(/\b(\d+\s*(?:GM|ML|TAB|CAP)s?|\d+)\s*$/i);
+    if (packMatch) {
+      pack = packMatch[1].trim();
+    }
+    const mfgMatch = afterExp.match(/\b([A-Za-z]{2,15})\b/);
+    if (mfgMatch && mfgMatch[1].toUpperCase() !== 'GM' && mfgMatch[1].toUpperCase() !== 'ML' && mfgMatch[1].toUpperCase() !== 'TAB') {
+      mfg = mfgMatch[1].trim();
+    }
+
+    let fullName = name;
+    if (pack && !fullName.toLowerCase().includes(pack.toLowerCase())) {
+      fullName = `${fullName} ${pack}`.trim();
+    }
+
+    const formattedExp = formatExpiryDate(expiry);
+
+    items.push({
+      name: fullName,
+      quantity: qty,
+      rate,
+      mrp,
+      batch_no: batch,
+      expiry_date: formattedExp,
+      manufacturer: mfg,
+      hsn_code: hsn,
+      cgst_per: 2.5,
+      sgst_per: 2.5,
+      cd_per: globalCdPer,
+      cd_rs: 0,
+      free_qty: 0,
+      _extracted_data: {
+        name: fullName,
+        manufacturer: mfg,
+        hsn_code: hsn,
+        rate,
+        mrp,
+        qty,
+        free_qty: 0,
+        batch_no: batch,
+        expiry_date: formattedExp,
+        cgst_per: 2.5,
+        sgst_per: 2.5,
+        cd_per: globalCdPer,
+        cd_rs: 0
+      }
+    });
+  }
+
+  // 2B. If single-line didn't match, try multi-line block pattern (common in pdf-parse line-by-line dumps)
+  if (items.length === 0) {
+    for (let i = 0; i < lines.length - 6; i++) {
+      const line = lines[i];
+      if (
+        line.includes('BANK:') || line.includes('SHOP NO') || line.includes('DEV AGENCY') ||
+        line.includes('GST') || line.includes('INVOICE') || line.includes('TOTAL') ||
+        line.includes('PACK') || line.includes('WARRANTY') || line.includes('Remark') ||
+        line.length < 3
+      ) continue;
+
+      const qtyStr = lines[i + 1];
+      const pricesStr = lines[i + 2];
+      const snGstStr = lines[i + 3];
+      const hsnAmtStr = lines[i + 4];
+
+      if (!/^\d+$/.test(qtyStr)) continue;
+
+      const priceTokens = pricesStr.split(/\s+/);
+      if (priceTokens.length < 2 || !priceTokens.every(p => /^\d+\.\d{2}$/.test(p))) continue;
+
+      if (!/^\d+\s+\d+(?:\.\d+)?$/.test(snGstStr)) continue;
+      if (!/^\d{6,8}\s+\d+\.\d{2}$/.test(hsnAmtStr)) continue;
+
+      let batch = '';
+      let expiry = '';
+      let mfg = '';
+      let pack = '';
+      let batchExpLineIdx = -1;
+
+      for (let j = i + 5; j <= Math.min(i + 8, lines.length - 1); j++) {
+        const expMatch = lines[j].match(/^([A-Za-z0-9\-\/]+?)(\d{2}[\/\-]\d{2,4})$/);
+        if (expMatch) {
+          batch = expMatch[1];
+          expiry = expMatch[2];
+          batchExpLineIdx = j;
+
+          let metaIdx = j + 1;
+          while (metaIdx < lines.length && /^\d+(?:\.\d+)?$/.test(lines[metaIdx])) {
+            metaIdx++;
+          }
+          if (lines[metaIdx] && /^[A-Za-z\s.]{2,20}$/.test(lines[metaIdx])) {
+            mfg = lines[metaIdx].trim();
+            metaIdx++;
+          }
+          if (lines[metaIdx] && /^(\d+\s*(?:GM|ML|TAB|CAP)?|\d+)$/i.test(lines[metaIdx])) {
+            pack = lines[metaIdx].trim();
+          }
+          break;
+        }
+      }
+
+      if (batchExpLineIdx === -1) continue;
+
+      const qty = parseInt(qtyStr, 10);
+      const rate = parseFloat(priceTokens[0]);
+      const mrp = parseFloat(priceTokens[1]);
+      const gstTokens = snGstStr.split(/\s+/);
+      const totalGst = parseFloat(gstTokens[1]) || 0;
+      const hsnTokens = hsnAmtStr.split(/\s+/);
+      const hsn = hsnTokens[0];
+
+      let fullName = line;
+      if (pack && !fullName.toLowerCase().includes(pack.toLowerCase())) {
+        fullName = `${fullName} ${pack}`;
+      }
+
+      const formattedExp = formatExpiryDate(expiry);
+
+      items.push({
+        name: fullName,
+        quantity: qty,
+        rate,
+        mrp,
+        batch_no: batch,
+        expiry_date: formattedExp,
+        manufacturer: mfg,
+        hsn_code: hsn,
+        cgst_per: totalGst / 2,
+        sgst_per: totalGst / 2,
+        cd_per: globalCdPer,
+        cd_rs: 0,
+        free_qty: 0,
+        _extracted_data: {
+          name: fullName,
+          manufacturer: mfg,
+          hsn_code: hsn,
+          rate,
+          mrp,
+          qty,
+          free_qty: 0,
+          batch_no: batch,
+          expiry_date: formattedExp,
+          cgst_per: totalGst / 2,
+          sgst_per: totalGst / 2,
+          cd_per: globalCdPer,
+          cd_rs: 0
+        }
+      });
+    }
+  }
+
+  return {
+    distributor_name,
+    invoice_no,
+    invoice_date,
+    total_amount,
+    items
+  };
+}
+
+

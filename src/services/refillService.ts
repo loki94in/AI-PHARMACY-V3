@@ -746,7 +746,7 @@ export async function buildDailyOperationalBriefing(
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND NOT EXISTS (
@@ -778,7 +778,7 @@ export async function buildDailyOperationalBriefing(
     ) inv ON inv.medicine_id = pr.medicine_id
     WHERE pr.is_active = 1
       AND pr.status IN ('pending', 'notified', 'staged', 'ordered')
-      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+      AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
       AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime') OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date) OR NOT EXISTS (SELECT 1 FROM refill_fulfillments rf WHERE rf.refill_id = pr.id))
       AND NOT EXISTS (
@@ -867,7 +867,8 @@ export async function buildDailyOperationalBriefing(
 
   // Staged reminders breakdown — only active, non-completed refills
   const stagedRows = await db.all(`
-    SELECT an.id, COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
+    SELECT an.id, an.recipient_name, an.recipient_phone, an.message,
+           COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
     FROM automation_notifications an
     LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
     LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
@@ -876,14 +877,36 @@ export async function buildDailyOperationalBriefing(
   const autoStagedCount = stagedRows.filter((r: any) => r.reminder_mode === 'auto').length;
   const manualStagedCount = stagedRows.filter((r: any) => r.reminder_mode !== 'auto').length;
 
+  const dueDayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const dueMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const formatDate = (ymd: string) => {
+  const formatDateWithDay = (ymd: string) => {
     if (!ymd) return 'Due soon';
-    const parts = ymd.split('-');
+    const cleanYmd = ymd.slice(0, 10);
+    const parts = cleanYmd.split('-');
     if (parts.length === 3) {
-      return `${parts[2]} ${dueMonthNames[parseInt(parts[1], 10) - 1] || parts[1]}`;
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const dateObj = new Date(year, month, day);
+      const dayName = dueDayNames[dateObj.getDay()] || '';
+      const dateNum = String(day).padStart(2, '0');
+      const monthName = dueMonthNames[month] || parts[1];
+      return `${dayName}, ${dateNum} ${monthName}`;
     }
     return ymd;
+  };
+
+  const getDueBadge = (ymd: string) => {
+    if (!ymd) return 'Due soon';
+    const cleanYmd = ymd.slice(0, 10);
+    const formatted = formatDateWithDay(cleanYmd);
+    if (cleanYmd < todayStr) {
+      return `🚨 Overdue: ${formatted}`;
+    } else if (cleanYmd === todayStr) {
+      return `Today: ${formatted}`;
+    } else {
+      return formatted;
+    }
   };
 
   let ordersBlock = '• No pending orders';
@@ -950,7 +973,9 @@ export async function buildDailyOperationalBriefing(
     dailyTasks.push(`📞 *Patient Follow-up Calls*: ${callCount} pending call(s) on CRM Call Board`);
   }
   if (stagedRows.length > 0) {
-    dailyTasks.push(`🔔 *Staged Customer Reminders*: ${stagedRows.length} reminder(s) pending in CRM (${autoStagedCount} Auto, ${manualStagedCount} Manual)`);
+    const stagedPatients = Array.from(new Set(stagedRows.map((r: any) => (r.recipient_name || r.recipient_phone || 'Patient').trim()))).slice(0, 5);
+    const extraStaged = stagedRows.length > 5 ? ` (+${stagedRows.length - 5} more)` : '';
+    dailyTasks.push(`🔔 *Staged Customer Reminders*: ${stagedRows.length} pending in Quick Assist / CRM — ${stagedPatients.join(', ')}${extraStaged}`);
   }
 
   let dailyTasksBlock = '';
@@ -1027,14 +1052,14 @@ export async function buildDailyOperationalBriefing(
       patientGroups.set(row.patient_name, list);
     }
 
-    let t4Details = '• No refills due today';
+    let t4Details = '• No refills due in next 7 days';
     if (patientGroups.size > 0) {
       let pIdx = 1;
       const pBlocks: string[] = [];
       for (const [pName, meds] of patientGroups.entries()) {
-        const dueStr = meds[0]?.due_date ? formatDate(meds[0].due_date) : '';
+        const dueBadge = meds[0]?.due_date ? getDueBadge(meds[0].due_date) : 'Due soon';
         const medLines = meds.map(m => `   - ${m.medicine_name} × ${m.quantity_needed || 1} (${m.in_stock ? '✅ Stock' : '⏳ Hold'})`).join('\n');
-        pBlocks.push(`${pIdx++}. *${pName}* (Due ${dueStr}):\n${medLines}`);
+        pBlocks.push(`${pIdx++}. *${pName}* (${dueBadge}):\n${medLines}`);
       }
       t4Details = pBlocks.join('\n');
     }
@@ -1046,7 +1071,7 @@ export async function buildDailyOperationalBriefing(
 📅 *Date*: ${todayStr} (${todayDayName})
 🏪 *Store Status*: ${statusLine}
 
-📋 *REFILL PRESCRIPTIONS (Today & Overdue)*:
+📋 *REFILL PRESCRIPTIONS (7 Days)*:
 ${t4Details}
 
 📦 *TODAY'S SPECIAL & ONLINE ORDERS*:
@@ -1054,12 +1079,13 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
 
   } else if (templateKey === 'compact') {
     // TEMPLATE 1: Compact worklist (no medicine names)
-    let t1Refills = '• No refills due today';
+    let t1Refills = '• No refills due in next 7 days';
     if (refillRows.length > 0) {
       t1Refills = refillRows.map((r: any, i: number) => {
         const stockStatus = r.out_of_stock_count === 0 ? '✅ In Stock' : (r.in_stock_count === 0 ? '⏳ Hold for Stock' : '⚠️ Partial Stock');
         const medUnit = Number(r.med_count) === 1 ? '1 med' : `${r.med_count} meds`;
-        return `${i + 1}. *${r.patient_name}* (Due ${formatDate(r.earliest_due)}) — ${medUnit} (${stockStatus})`;
+        const dueBadge = r.earliest_due ? getDueBadge(r.earliest_due) : 'Due soon';
+        return `${i + 1}. *${r.patient_name}* (${dueBadge}) — ${medUnit} (${stockStatus})`;
       }).join('\n');
     }
 
@@ -1080,7 +1106,7 @@ ${ordersBlock}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
 📅 *Date*: ${todayStr} (${todayDayName})
 🏪 *Store Status*: ${statusLine}
 
-📋 *1. REFILLS WORKLIST (Today & Overdue)*:
+📋 *1. REFILLS WORKLIST (7 Days)*:
 ${t1Refills}
 
 📦 *2. SPECIAL & ONLINE ORDERS*:
@@ -1104,7 +1130,7 @@ ${t1Orders}${slaBlock}${dailyTasksBlock}${milestoneBlock}${allClearBlock}`;
     }
     const inStockRefills = refillRows.filter((r: any) => r.out_of_stock_count === 0);
     if (inStockRefills.length > 0) {
-      t2Items.push(`[ ] *PACK REFILLS*: ${inStockRefills.map((r: any) => `${r.patient_name} (${formatDate(r.earliest_due)})`).join(', ')}`);
+      t2Items.push(`[ ] *PACK REFILLS (7 Days)*: ${inStockRefills.map((r: any) => `${r.patient_name} (${formatDateWithDay(r.earliest_due)})`).join(', ')}`);
     }
     if (groupedCustomerOrders.length > 0) {
       const totalOrderItems = groupedCustomerOrders.reduce((sum, c) => sum + c.items.length, 0);
@@ -1145,7 +1171,7 @@ ${t2Items.map((item, idx) => `${idx + 1}. ${item}`).join('\n\n')}`;
 📅 *Date*: ${todayStr} (${todayDayName}) | ${statusLine}
 
 📊 *Morning KPI Dashboard*:
-• 📋 Refills Due Today: *${totalRefillsDue} meds* (${refillRows.length} patient(s))
+• 📋 Refills Due (7 Days): *${totalRefillsDue} meds* (${refillRows.length} patient(s))
 • 📦 Active Orders: *${totalSpecialOrderItems} items* (${groupedCustomerOrders.length} customer(s))
 • ⏱️ 24h SLA Overdue: *${incomplete24hAudit.stats.totalOverdueCount}* (${incomplete24hAudit.stats.totalOverdueMedicines} meds)
 • ⏸️ Market-Paused Held: *${incomplete24hAudit.stats.totalPausedCount}*

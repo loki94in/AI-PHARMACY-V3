@@ -58,7 +58,8 @@ import {
   parseNitinInvoice,
   splitConcatenatedDecimals,
   extractMrp,
-  extractTotalsFromText
+  extractTotalsFromText,
+  parseDevAgencyInvoice
 } from './emailInvoiceParsers.js';
 export { detectLayoutType };
 
@@ -1548,10 +1549,51 @@ export class EmailService {
         const isImage = /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(nameLower);
 
         if (isPdf) {
-          const { default: pdfParse } = await import('pdf-parse');
-          const fileBuffer = fs.readFileSync(filePath);
-          const pdfData = await pdfParse(fileBuffer);
-          content = pdfData.text || '';
+          try {
+            const { default: pdfParse } = await import('pdf-parse');
+            const fileBuffer = fs.readFileSync(filePath);
+            const pdfData = await pdfParse(fileBuffer);
+            content = pdfData.text || '';
+          } catch (pdfErr: any) {
+            console.warn('[emailService] pdf-parse extraction failed, falling back to pdfjs-dist:', pdfErr?.message || pdfErr);
+            content = '';
+          }
+
+          // If pdf-parse failed (e.g. bad XRef table) or returned empty text, extract digital text with modern pdfjs-dist
+          if (!content || content.replace(/\s+/g, '').trim().length < 50) {
+            try {
+              const fileBuffer = fs.readFileSync(filePath);
+              const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+              const pdfDoc = await pdfjsLib.getDocument({
+                data: new Uint8Array(fileBuffer),
+                verbosity: 0,
+                stopAtErrors: false
+              } as any).promise;
+
+              let pdfjsText = '';
+              for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+                const page = await pdfDoc.getPage(pageNum);
+                const textContent = await page.getTextContent();
+                let lastY: number | null = null;
+                for (const item of textContent.items as any[]) {
+                  const y = item.transform ? Math.round(item.transform[5]) : null;
+                  if (lastY !== null && y !== null && Math.abs(y - lastY) > 4) {
+                    pdfjsText += '\n';
+                  } else if (pdfjsText && !pdfjsText.endsWith('\n') && !pdfjsText.endsWith(' ')) {
+                    pdfjsText += ' ';
+                  }
+                  pdfjsText += (item.str || '');
+                  lastY = y;
+                }
+                pdfjsText += '\n';
+              }
+              if (pdfjsText.trim().length >= 50) {
+                content = pdfjsText;
+              }
+            } catch (pdfjsErr: any) {
+              console.warn('[emailService] pdfjs-dist digital text extraction failed:', pdfjsErr?.message || pdfjsErr);
+            }
+          }
         } else if (isImage) {
           const fileBuffer = fs.readFileSync(filePath);
           const ocrResult = await (await loadAiCamera()).processImage(fileBuffer, true);
@@ -1592,9 +1634,13 @@ export class EmailService {
             const canvasFactory = new NodeCanvasFactory();
 
             const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+            const standardFontsPath = path.resolve(process.cwd(), 'node_modules/pdfjs-dist/standard_fonts/');
             const pdfDoc = await pdfjsLib.getDocument({
               data: new Uint8Array(fileBuffer),
-              CanvasFactory: NodeCanvasFactory
+              canvasFactory,
+              standardFontDataUrl: fs.existsSync(standardFontsPath) ? standardFontsPath + '/' : undefined,
+              verbosity: 0,
+              stopAtErrors: false
             } as any).promise;
             const numPages = pdfDoc.numPages;
             let ocrText = '';
@@ -1757,6 +1803,16 @@ export class EmailService {
             }
             if (items.length === 0 && (detectedLayout === 'concatenated' || content.includes('NITIN AGENCY') || content.includes('NA/'))) {
               const customRes = parseNitinInvoice(content, global_cd_per);
+              if (customRes.items && customRes.items.length > 0) {
+                items = customRes.items;
+                if (customRes.invoice_no) invoice_no = customRes.invoice_no;
+                if (customRes.invoice_date) invoice_date = customRes.invoice_date;
+                if (customRes.total_amount) total_amount = customRes.total_amount;
+                if (customRes.distributor_name) distributor_name = customRes.distributor_name;
+              }
+            }
+            if (items.length === 0 && (content.includes('DEV AGENCY') || content.includes('Dava Infotech') || (content.includes('COM PACK SCHBACHEXP.') && content.includes('GST TAX INVOICE')))) {
+              const customRes = parseDevAgencyInvoice(content, global_cd_per);
               if (customRes.items && customRes.items.length > 0) {
                 items = customRes.items;
                 if (customRes.invoice_no) invoice_no = customRes.invoice_no;

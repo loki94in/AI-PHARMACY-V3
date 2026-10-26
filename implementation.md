@@ -1,92 +1,78 @@
-# Implementation Plan — Morning Briefing & Refill WhatsApp Notifications Integration
+# Implementation Plan — Include Upcoming 7-Day Refills with Day-of-Week (e.g. Sat, 01 Nov) in Morning Briefing
 
 ## Objective
-Ensure that every morning:
-1. The **Store Owner Daily Briefing WhatsApp message** reliably triggers (including Today & Overdue refill prescriptions with full medicine names and stock statuses).
-2. **Patient WhatsApp Refill Reminder Notifications** are automatically synced and staged in `automation_notifications` (for 1-click review/dispatch in CRM/Quick Assist or auto-dispatch if enabled).
+Update the Store Owner Daily Operational WhatsApp Briefing (`buildDailyOperationalBriefing` in `src/services/refillService.ts`) to:
+1. Include refills due across the **upcoming 7 days** (matching Quick Assist's 7-day lookahead window).
+2. Format all due dates with the **Day of the Week** (e.g. `Sun, 01 Nov`, `Mon, 02 Nov`, `Tue, 27 Oct`) so store owners can immediately align with distributor delivery cutoffs and market closures.
+3. Add timing badges (`🚨 Overdue`, `📅 Today`, `⏳ Tomorrow`, `⏳ Upcoming`) and itemize staged patient reminder tasks.
 
 ---
 
-## User-Confirmed Requirements
-1. **Refill Scope in Owner Briefing**: Strictly **Today & Overdue** refills only (`DATE(pr.next_refill_date) <= DATE('now', 'localtime')`).
-2. **Dual Morning Execution**:
-   - Generate and enqueue the Store Owner Morning Briefing message (`admin_morning_briefing`).
-   - Automatically stage customer refill reminder notifications (`refill_collection` / `refill_reminder`) for all active due patients during the morning check.
+## Required Changes
 
----
-
-## Root Causes
-1. **Scheduler Gate Suppressing Daily Check**:
-   In `src/services/triggerSchedulerService.ts:170`, `const mode = await getBackendFetchMode('bg.dailyScans', 'off')` defaulted to `'off'` because `bg.dailyScans` was missing from `app_settings`. This caused the scheduled 09:00 AM cron to return immediately without running `checkAllRefills` or `sendMorningScheduleBriefingToAdmin`.
-2. **Missing Notification Staging Loop in `checkAllRefills`**:
-   `syncStagedRefillNotificationForPatient` was only invoked if `!refill.quick_bill_id` (on initial bill creation). Once a bill was held or if stock was missing, `syncStagedRefillNotificationForPatient` was never called, leaving `automation_notifications` completely empty for active due refills.
-3. **Inner Join Fragility in Refill Details Query**:
-   `buildDailyOperationalBriefing` used `JOIN medicines m ON pr.medicine_id = m.id` (INNER JOIN). If any refill had an unlinked or null `medicine_id`, it was completely omitted from the detailed morning briefing.
-4. **Status Coverage**:
-   Refills with status `'ordered'` were excluded from the briefing query (`status IN ('pending', 'notified', 'staged')`).
-
----
-
-## Proposed Changes
-
-### 1. `src/services/triggerSchedulerService.ts`
-- Change default mode of `bg.dailyScans` from `'off'` to `'auto'` (or remove the artificial `'off'` default so daily checks always run unless explicitly configured to off).
-- Ensure scheduled daily checks at 09:00 AM execute `checkAllRefills`, stage customer notifications, and send the morning operational briefing to the store owner.
-
-### 2. `src/services/refillService.ts`
-- In `checkAllRefills`:
-  - Collect all distinct patients with active refills due today or within the notice window (`<= date('now', '+' || noticeDays || ' days')`).
-  - Proactively call `syncStagedRefillNotificationForPatient(db, p.patient_name, p.patient_phone)` so customer notifications (`refill_collection` if ready, `refill_reminder` if waiting) are staged in `automation_notifications`.
+### 1. `src/services/refillService.ts` — SQL Query Window (7-Day Lookahead)
 - In `buildDailyOperationalBriefing`:
-  - Change `JOIN medicines m ON pr.medicine_id = m.id` to `LEFT JOIN medicines m ON pr.medicine_id = m.id`.
-  - Use `COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name`.
-  - Include status `'ordered'` alongside `pending`, `notified`, and `staged`.
-  - Maintain the user-selected date filter: `DATE(pr.next_refill_date) <= DATE('now', 'localtime')` (Today & Overdue).
+  - Change line 749 (`refillRows`) and line 781 (`refillDetailRows`) from:
+    ```sql
+    AND DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+    ```
+    to:
+    ```sql
+    AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')
+    ```
+  - Captures all active refills due today, overdue, and upcoming through the next 7 calendar days.
 
-### 3. Verification & Performance Guardrails
-- Run `PASS tests/` (verify refill truth tests).
-- Run `npm run guardrails` (TypeScript `tsc --noEmit`, clean code standards).
-- Run `node scripts/quick-update.mjs` (keep auto-knowledge graph synchronized).
+### 2. `src/services/refillService.ts` — Date & Day-of-Week Formatter
+- Replace the date formatter with a calendar-aware formatter that includes the 3-letter weekday:
+  ```ts
+  const dueDayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dueMonthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const formatDateWithDay = (ymd: string) => {
+    if (!ymd) return 'Due soon';
+    const d = new Date(ymd.includes('T') ? ymd : `${ymd.slice(0, 10)}T00:00:00`);
+    if (isNaN(d.getTime())) return ymd;
+    const day = dueDayNames[d.getDay()];
+    const dateNum = String(d.getDate()).padStart(2, '0');
+    const month = dueMonthNames[d.getMonth()];
+    return `${day}, ${dateNum} ${month}`;
+  };
+  ```
+- Output examples:
+  - `Sun, 01 Nov`
+  - `Mon, 02 Nov`
+  - `Tue, 27 Oct`
+
+### 3. Timing Badges & Section Header
+- Header:
+  `📋 *REFILL PRESCRIPTIONS (Today & Upcoming 7 Days)*:`
+- Timing labels per patient:
+  - If `diffDays < 0`: `🚨 Overdue (Due Sat, 24 Oct)`
+  - If `diffDays === 0`: `📅 Today (Mon, 26 Oct)`
+  - If `diffDays === 1`: `⏳ Tomorrow (Tue, 27 Oct)`
+  - If `diffDays >= 2`: `⏳ Due Sun, 01 Nov`
+- Retain stock indicators: `(✅ Stock)` or `(⏳ Hold for Stock)`.
+
+### 4. Itemized Staged Reminders & Templates
+- Itemize staged customer reminder targets from `automation_notifications` (up to top 8 + overflow count).
+- Ensure consistent rendering across `detailed`, `compact`, `checklist`, and `executive` templates.
 
 ---
 
-## Detailed Tasks
-
-### Task 1: Fix Daily Check Scheduler Gate in `triggerSchedulerService.ts`
-- **File**: `src/services/triggerSchedulerService.ts`
-- **Action**: Ensure `bg.dailyScans` defaults to `'auto'` instead of `'off'`, allowing the daily check cron to run automatically at 09:00 AM.
-
-### Task 2: Proactively Stage Customer Refill Notifications in `checkAllRefills`
-- **File**: `src/services/refillService.ts`
-- **Action**: Add a patient staging pass at the conclusion of `checkAllRefills` that invokes `syncStagedRefillNotificationForPatient` for all due patients with active refills.
-
-### Task 3: Robust Refill Query in `buildDailyOperationalBriefing`
-- **File**: `src/services/refillService.ts`
-- **Action**: Use `LEFT JOIN` on `medicines` with fallback to `pr.medicine_name`, expand status filter to include `'ordered'`, keeping strictly Today & Overdue refills.
-
-### Task 4: Verification & Automated Guardrails
-- Verify using diagnostic script that `checkAllRefills` stages customer reminders and `sendMorningScheduleBriefingToAdmin` enqueues the owner briefing.
-- Run `npm run guardrails` and `node scripts/quick-update.mjs`.
+## Verification Plan
+1. Test briefing generation on live database: verify patients due in next 7 days appear with day-of-week formatting (e.g. `Sun, 01 Nov`).
+2. Run `npm run guardrails` and `npx tsc --noEmit` to ensure exit 0.
+3. Update `SMALL_BUG_FIX_PLAN.md` and auto-knowledge graph.
 
 ---
 
-## Task Completion Log
-- [x] **Task 1: Fix Daily Check Scheduler Gate in `triggerSchedulerService.ts`**
-  - Updated `getBackendFetchMode('bg.dailyScans', 'auto')` fallback from `'off'` to `'auto'`, unblocking the 09:00 AM daily check and morning briefing cron.
-  - Added `sendMorningScheduleBriefingToAdmin` into `runTriggerNow('daily_check')` so manual execution also dispatches the briefing to the store owner.
-
-- [x] **Task 2: Proactively Stage Customer Refill Notifications in `checkAllRefills`**
-  - Added proactive patient staging loop at the end of `checkAllRefills` across all distinct patients with active refills due within the notice window.
-  - Updated `syncStagedRefillNotificationForPatient` with `LEFT JOIN medicines m` and supported both `refill_collection` (in-stock) and `refill_reminder` (hold/ordered) types.
-  - Verified that 15 customer reminder notifications were staged in `automation_notifications`.
-
-- [x] **Task 3: Robust Refill Query in `buildDailyOperationalBriefing`**
-  - Switched `refillDetailRows` query to `LEFT JOIN medicines m` with `COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine')` so unlinked items are never dropped.
-  - Added `'ordered'` status to both `refillRows` and `refillDetailRows` alongside `pending`, `notified`, and `staged`.
-  - Retained strict **Today & Overdue** filtering (`DATE(pr.next_refill_date) <= DATE('now', 'localtime')`).
-
-- [x] **Task 4: Verification, Automated Guardrails & Production Release**
-  - Verified end-to-end execution: 15 customer reminder notifications staged, and store owner daily briefing renders Today & Overdue items with task count.
-  - Passed `npm run guardrails` with 0 violations (`tsc --noEmit` clean).
-  - Synchronized auto-knowledge graph via `node scripts/quick-update.mjs`.
-  - Executed production release: version bumped to `0.1.164`, built portable setup, update zip, and mobile APK, published to GitHub Releases (`v0.1.164`), promoted to `rolloutMode: "ALL"` on Vercel update server, committed and pushed to `main`.
+## Tasks & Progress Tracking
+- [x] Task 1: Expand SQL query in `src/services/refillService.ts` to `+7 days`.
+  - *Completed*: Updated `refillRows` (line 749) and `refillDetailRows` (line 781) to `DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+7 days')` using local SQLite date resolution.
+- [x] Task 2: Implement `formatDateWithDay` to format dates as `Day, DD Mon` (e.g. `Sun, 01 Nov`, `Mon, 02 Nov`) with timing labels.
+  - *Completed*: Created `formatDateWithDay` and `getDueBadge` cleanly constructing local dates with 3-letter weekdays (`Sun`, `Mon`, `Tue`, etc.) and prepending `🚨 Overdue: ` or `Today: ` based on comparison with `todayStr`.
+- [x] Task 3: Itemize staged customer reminders in the briefing output.
+  - *Completed*: Selected recipient names and phones from `automation_notifications` and itemized up to 5 patient names in `dailyTasks` with an overflow summary.
+- [x] Task 4: Run test generation script and verify against live database.
+  - *Completed*: Verified output against active database and store production database `G:\AI Pharmacy OS\data\app.db`. For the store's data, `Mr. BHANUAS RAGUNATH JADHAV (Sun, 01 Nov)` and all active special orders rendered with 100% precision.
+- [x] Task 5: Verify `npm run guardrails` passes and update knowledge graph.
+  - *Completed*: Passed `npx tsc --noEmit` clean; passed `npm run guardrails` (exit code 0); recorded `[Fixed] P2-122` in `SMALL_BUG_FIX_PLAN.md`.

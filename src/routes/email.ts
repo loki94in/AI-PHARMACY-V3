@@ -273,10 +273,15 @@ router.get('/attachments/preview', async (req, res) => {
       const text = await fs.promises.readFile(filePath, 'utf-8');
       res.json({ success: true, type: 'text', content: text.substring(0, 50000) });
     } else if (ext === '.pdf') {
-      const { default: pdfParse } = await import('pdf-parse');
-      const dataBuffer = await fs.promises.readFile(filePath);
-      const data = await pdfParse(dataBuffer);
-      res.json({ success: true, type: 'text', content: data.text });
+      try {
+        const { default: pdfParse } = await import('pdf-parse');
+        const dataBuffer = await fs.promises.readFile(filePath);
+        const data = await pdfParse(dataBuffer);
+        res.json({ success: true, type: 'text', content: data.text });
+      } catch (pdfErr: any) {
+        console.warn('[routes/email] Preview pdfParse failed:', pdfErr?.message || pdfErr);
+        res.status(500).json({ error: 'Failed to extract text from PDF attachment', details: pdfErr?.message });
+      }
     } else if (ext === '.xlsx' || ext === '.xls') {
       const { default: XLSX } = await import('xlsx');
       const dataBuffer = await fs.promises.readFile(filePath);

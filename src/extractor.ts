@@ -206,8 +206,14 @@ async function extractFromPdfViaOcr(filePath: string, pdfBuffer: Buffer, onProgr
  */
 export async function extractFromPdf(filePath: string, onProgress?: (percent: number) => void): Promise<ExtractedMedicine[]> {
   const data = await fs.promises.readFile(filePath);
-  const pdfData = await pdfParse(data);
-  const text = pdfData.text;
+  let text = '';
+  try {
+    const pdfData = await pdfParse(data);
+    text = pdfData.text || '';
+  } catch (pdfErr) {
+    console.warn('[Extractor] pdf-parse failed (corrupted XRef or format error), falling back to OCR:', (pdfErr as any)?.message || pdfErr);
+    return await extractFromPdfViaOcr(filePath, data, onProgress);
+  }
 
   // Check if pdf-parse returned usable text content
   const cleanedText = text.replace(/\s+/g, '').trim();
