@@ -1,8 +1,14 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ShoppingCart, X, Check, AlertCircle, Link2, Plus, Minus, Package, Layers } from 'lucide-react';
+import {
+  ShoppingCart, X, Check, AlertCircle, Link2, Plus, Minus,
+  Package, Layers, Loader2, BellRing, CheckCheck
+} from 'lucide-react';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import { MedicineLinkModal } from './MedicineLinkModal';
+import { api, apiClient } from '../services/api';
+import { toastEvent, refillEvent, whatsappQueueEvent } from '../services/events';
+import { queryClient } from '../lib/queryClient';
 import type { RefillCartItemInput } from '../services/refillCartJobs';
 
 export interface RefillMedicineItem {
@@ -20,12 +26,15 @@ export interface RefillMedicineItem {
   linked_distributors?: string[];
 }
 
-interface RefillOrderModalProps {
+export interface RefillOrderModalProps {
   patientName: string;
+  patientPhone?: string;
   medicines: RefillMedicineItem[];
-  onConfirm: (items: RefillCartItemInput[]) => void;
+  onConfirm?: (items: RefillCartItemInput[]) => void | Promise<void>;
   onClose: () => void;
   onMedicineLinked?: (medicineId: number, linked: string[]) => void;
+  onMarkReady?: () => Promise<void> | void;
+  onPostAndComplete?: () => Promise<void> | void;
 }
 
 interface ItemState {
@@ -35,19 +44,33 @@ interface ItemState {
 
 export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   patientName,
+  patientPhone,
   medicines,
   onConfirm,
   onClose,
-  onMedicineLinked
+  onMedicineLinked,
+  onMarkReady,
+  onPostAndComplete
 }) => {
-  // Only active medicines are candidates for ordering
-  const activeMeds = medicines.filter(m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'paused');
+  // Local state of medicines reflecting live in-cart status
+  const [localMeds, setLocalMeds] = useState<RefillMedicineItem[]>(medicines);
 
-  // Mode: 'full' (default, guarantees dispatch stock) or 'shortage' (subtracts shelf stock)
+  // Only active medicines are candidates for ordering
+  const activeMeds = localMeds.filter(m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'paused');
+
+  // Mode: 'full' (guarantees dispatch stock) or 'shortage' (subtracts shelf stock)
   const [mode, setMode] = useState<'full' | 'shortage'>('full');
 
   // Linking modal state
   const [linkingMed, setLinkingMed] = useState<{ id: number; name: string } | null>(null);
+
+  // Status & Feedback States
+  const [isUpdatingCart, setIsUpdatingCart] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [cartError, setCartError] = useState<string | null>(null);
+  const [isCartUpdated, setIsCartUpdated] = useState(false);
+  const [isMarkingReady, setIsMarkingReady] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
 
   // Initialize selection and quantities
   const [itemStates, setItemStates] = useState<Record<number, ItemState>>(() => {
@@ -56,11 +79,10 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     activeMeds.forEach(m => {
       const isAlreadyInCart = !!m.in_live_cart || !!m.cart_store_name;
       const shortage = Math.max(0, Number(m.quantity_needed || 3) - Number(m.in_stock_qty || 0));
-      const defaultQty = Number(m.quantity_needed || 3);
+      const defaultQty = Number(m.cart_qty || m.quantity_needed || 3);
       initial[m.id] = {
-        // Pre-select items needing order; unselect items that are already in today's cart to prevent duplicate adds,
-        // unless all are already marked/in cart (re-order scenario) in which case default to selected.
-        selected: allAlreadyInCart ? true : !isAlreadyInCart,
+        // Pre-select items needing order; if already in cart, default to selected so user can edit qty or re-order
+        selected: allAlreadyInCart ? true : (!isAlreadyInCart || true),
         orderQty: defaultQty > 0 ? defaultQty : Math.max(1, shortage)
       };
     });
@@ -81,7 +103,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
         next[m.id] = {
           ...next[m.id],
           orderQty: targetQty,
-          selected: newMode === 'full' ? true : (shortage > 0 && !m.in_live_cart)
+          selected: newMode === 'full' ? true : (shortage > 0)
         };
       });
       return next;
@@ -89,6 +111,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   };
 
   const toggleSelect = (id: number) => {
+    setValidationError(null);
     setItemStates(prev => ({
       ...prev,
       [id]: {
@@ -99,6 +122,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   };
 
   const toggleSelectAll = () => {
+    setValidationError(null);
     const allSelected = activeMeds.every(m => itemStates[m.id]?.selected);
     setItemStates(prev => {
       const next = { ...prev };
@@ -110,6 +134,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   };
 
   const updateQty = (id: number, delta: number) => {
+    setValidationError(null);
     setItemStates(prev => {
       const current = prev[id]?.orderQty || 1;
       const nextQty = Math.max(1, current + delta);
@@ -121,6 +146,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   };
 
   const setExactQty = (id: number, val: number) => {
+    setValidationError(null);
     const safeVal = Math.max(1, isNaN(val) ? 1 : val);
     setItemStates(prev => ({
       ...prev,
@@ -131,7 +157,27 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   const selectedList = activeMeds.filter(m => itemStates[m.id]?.selected);
   const totalSelectedQty = selectedList.reduce((sum, m) => sum + (itemStates[m.id]?.orderQty || 1), 0);
 
-  const handleConfirm = () => {
+  // Node L, M, O, P, Q, R: Validate, Update Cart with selected medicines only, preserve existing cart on failure
+  const handleUpdateCart = async () => {
+    // Node J: At least one valid medicine selected?
+    if (selectedList.length === 0) {
+      setValidationError('Please select at least one medicine with quantity ≥ 1 to update the cart.');
+      return;
+    }
+
+    // Node L: Validate selected medicines and quantities
+    for (const med of selectedList) {
+      const q = itemStates[med.id]?.orderQty;
+      if (!q || isNaN(q) || q < 1 || !Number.isInteger(q)) {
+        setValidationError(`Invalid quantity for "${med.medicine_name}". Quantity must be a positive whole number.`);
+        return;
+      }
+    }
+
+    setValidationError(null);
+    setCartError(null);
+    setIsUpdatingCart(true);
+
     const payload: RefillCartItemInput[] = selectedList.map(m => ({
       refillId: m.id,
       medicineId: m.medicine_id,
@@ -143,7 +189,112 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
       cartQty: m.cart_qty,
       inLiveCart: m.in_live_cart
     }));
-    onConfirm(payload);
+
+    try {
+      // Execute live cart addition for each selected medicine
+      const updatePromises = selectedList.map(item => {
+        const qty = itemStates[item.id]?.orderQty || 1;
+        return api.addRefillToCart(item.id, { qty }).then(res => ({ item, res }));
+      });
+
+      const results = await Promise.all(updatePromises);
+      const anySuccess = results.some(r => r.res.status === 'added' || r.res.status === 'in_cart');
+      const failures = results.filter(r => r.res.status === 'failed' || r.res.status === 'not_found');
+
+      if (!anySuccess && failures.length > 0) {
+        // Node Q: Show failure; preserve existing cart and retain user edits
+        setCartError(failures[0]?.res.message || 'Failed to update live cart. Existing cart was preserved.');
+        setIsUpdatingCart(false);
+        return;
+      }
+
+      // If callback was provided, notify consumer as well
+      if (onConfirm) {
+        try {
+          await onConfirm(payload);
+        } catch (_) {}
+      }
+
+      // Node R: Refresh popup and cart status
+      setLocalMeds(prev => prev.map(m => {
+        const match = results.find(r => r.item.id === m.id);
+        if (match && (match.res.status === 'added' || match.res.status === 'in_cart')) {
+          return {
+            ...m,
+            in_live_cart: true,
+            cart_qty: itemStates[m.id]?.orderQty || m.cart_qty || 1,
+            cart_store_name: match.res.line?.storeName || m.cart_store_name || 'Live Cart'
+          };
+        }
+        return m;
+      }));
+
+      setIsCartUpdated(true);
+      refillEvent.triggerRefresh();
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      queryClient.invalidateQueries({ queryKey: ['pharmarack-cart'] });
+      toastEvent.trigger(`Live cart updated with ${selectedList.length} refill item(s)!`, 'success', '/pharmarack-cart');
+    } catch (err: unknown) {
+      // Node Q: Show failure; preserve existing cart
+      console.error('Failed to update live cart for refills:', err);
+      const apiErr = err as { response?: { data?: { error?: string } }; message?: string };
+      setCartError(apiErr.response?.data?.error || apiErr.message || 'Failed to update live cart. Existing cart was preserved.');
+    } finally {
+      setIsUpdatingCart(false);
+    }
+  };
+
+  // Node T & V: Run existing Mark Ready workflow
+  const handleRunMarkReady = async () => {
+    setIsMarkingReady(true);
+    try {
+      if (onMarkReady) {
+        await onMarkReady();
+      } else if (patientPhone) {
+        const res = await apiClient.post(`/refills/patient/${encodeURIComponent(patientPhone)}/mark-ready`);
+        if (res.data?.whatsapp_queued) {
+          toastEvent.trigger(`Marked ready & pickup WhatsApp queued for "${patientName}"!`, 'success');
+        } else {
+          toastEvent.trigger(`Marked refills for "${patientName}" as Ready!`, 'success');
+        }
+      }
+      refillEvent.triggerRefresh();
+      whatsappQueueEvent.triggerUpdated();
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      onClose();
+    } catch (err: unknown) {
+      const apiErr = err as { response?: { data?: { error?: string } }; message?: string };
+      toastEvent.trigger(apiErr.response?.data?.error || apiErr.message || 'Failed to mark refills ready', 'error');
+    } finally {
+      setIsMarkingReady(false);
+    }
+  };
+
+  // Node U & W: Run existing Post & Complete workflow
+  const handleRunPostAndComplete = async () => {
+    setIsCompleting(true);
+    try {
+      if (onPostAndComplete) {
+        await onPostAndComplete();
+      } else if (patientPhone) {
+        const cleanPhone = patientPhone.trim();
+        const res = await api.fulfillAllRefills(cleanPhone, {
+          refill_ids: activeMeds.map(m => m.id),
+          fulfilled_via: 'refill_order_modal_complete',
+          patient_phone: cleanPhone
+        });
+        toastEvent.trigger(res.message || `Refill cycle completed & scheduled for next month for "${patientName}"!`, 'success');
+      }
+      refillEvent.triggerRefresh();
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      onClose();
+    } catch (err: unknown) {
+      const apiErr = err as { response?: { data?: { error?: string } }; message?: string };
+      toastEvent.trigger(apiErr.response?.data?.error || apiErr.message || 'Failed to complete refill cycle', 'error');
+    } finally {
+      setIsCompleting(false);
+    }
   };
 
   return createPortal(
@@ -156,8 +307,8 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
               <ShoppingCart size={16} />
             </div>
             <div>
-              <h3 className="font-extrabold text-text text-sm">Order Refill to Live Cart — {patientName}</h3>
-              <p className="text-[11px] text-muted">Review medicines, quantities, and distributor links before adding to the live cart.</p>
+              <h3 className="font-extrabold text-text text-sm">Refill to Live Cart — {patientName}</h3>
+              <p className="text-[11px] text-muted">Select medicines, adjust quantities, update cart, and execute downstream actions.</p>
             </div>
           </div>
           <button
@@ -183,7 +334,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                     ? 'bg-primary text-white shadow-xs'
                     : 'text-muted hover:text-text'
                 }`}
-                title="Default: Orders the full requested prescription quantity to guarantee refill stock on dispatch day"
+                title="Orders full prescribed quantity"
               >
                 <Package size={12} />
                 <span>Full Prescribed Qty</span>
@@ -196,7 +347,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                     ? 'bg-primary text-white shadow-xs'
                     : 'text-muted hover:text-text'
                 }`}
-                title="Calculates order quantity as (Prescribed - Shelf Stock)"
+                title="Orders only current shortage (Prescribed - Shelf Stock)"
               >
                 <Layers size={12} />
                 <span>Shortage Only</span>
@@ -214,6 +365,63 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Node K / N / Q: Guidance & Error Alerts */}
+        {selectedList.length === 0 && (
+          <div className="mx-4 mt-3 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2 shrink-0">
+            <AlertCircle size={14} className="shrink-0 text-amber-400" />
+            <span>Select at least one medicine with quantity ≥ 1 to proceed with cart update.</span>
+          </div>
+        )}
+
+        {validationError && (
+          <div className="mx-4 mt-3 p-2.5 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 text-xs flex items-center gap-2 shrink-0">
+            <AlertCircle size={14} className="shrink-0" />
+            <span>{validationError}</span>
+          </div>
+        )}
+
+        {cartError && (
+          <div className="mx-4 mt-3 p-2.5 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 text-xs flex items-center gap-2 shrink-0">
+            <AlertCircle size={14} className="shrink-0" />
+            <span>{cartError}</span>
+          </div>
+        )}
+
+        {/* Node R & S: Post-Update Success Guidance & Next Actions Banner */}
+        {isCartUpdated && (
+          <div className="mx-4 mt-3 p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs flex items-center justify-between gap-3 shrink-0 flex-wrap">
+            <div className="flex items-center gap-2">
+              <CheckCheck size={16} className="shrink-0" />
+              <div>
+                <div className="font-extrabold text-sm">Cart updated successfully!</div>
+                <div className="text-[11px] text-emerald-300">Choose a next action below or keep in cart:</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                type="button"
+                disabled={isMarkingReady}
+                onClick={handleRunMarkReady}
+                className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 transition-all"
+                title="Mark refills ready and dispatch WhatsApp pickup alert"
+              >
+                {isMarkingReady ? <Loader2 size={12} className="animate-spin" /> : <BellRing size={12} />}
+                <span>Mark Ready</span>
+              </button>
+              <button
+                type="button"
+                disabled={isCompleting}
+                onClick={handleRunPostAndComplete}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 transition-all"
+                title="Complete refill cycle and schedule next month"
+              >
+                {isCompleting ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                <span>Post & Complete</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Medicine List */}
         <div className="p-4 overflow-y-auto flex-1 min-h-0 space-y-2.5 text-xs">
@@ -282,7 +490,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                           {isAlreadyInCart && (
                             <span
                               className="px-2 py-0.5 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-400 font-bold flex items-center gap-1"
-                              title="Already in today's active Pharmarack live cart"
+                              title="Already in active Pharmarack live cart"
                             >
                               <ShoppingCart size={10} /> In Live Cart: {med.cart_store_name || 'Cart'} ×{med.cart_qty || 1}
                             </span>
@@ -364,16 +572,25 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
               onClick={onClose}
               className="px-4 py-2 rounded-xl bg-bg border border-border text-muted hover:text-text font-bold transition-all cursor-pointer"
             >
-              Cancel
+              {isCartUpdated ? 'Done / Close' : 'Cancel'}
             </button>
             <button
               type="button"
-              disabled={selectedList.length === 0}
-              onClick={handleConfirm}
+              disabled={selectedList.length === 0 || isUpdatingCart}
+              onClick={handleUpdateCart}
               className="px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-extrabold shadow-md shadow-primary/25 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
             >
-              <ShoppingCart size={14} />
-              <span>⚡ Add Selected ({selectedList.length}) to Cart</span>
+              {isUpdatingCart ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>Updating Cart…</span>
+                </>
+              ) : (
+                <>
+                  <ShoppingCart size={14} />
+                  <span>Update Cart ({selectedList.length})</span>
+                </>
+              )}
             </button>
           </div>
         </div>

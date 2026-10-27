@@ -1,92 +1,126 @@
-# Implementation Plan: Morning Briefing & Reorder Hub Flow
+# Implementation Plan: Reports Product Name Normalization & Interactive Column Sorting Pipeline
 
-## 1. Objective & Requirements
-Implement the consolidated Morning Briefing & Reorder Hub pipeline according to the approved architecture:
-1. **Collect Data from All Sources**:
-   - `Online Orders`: website orders pending, processing, awaiting stock, not delivered.
-   - `Refill Requests`: pending refills, partially fulfilled refills, approval required.
-   - `Special Orders`: customer requests, procurement needed, supplier follow-up.
-   - `Manual Call Tasks`: non-WhatsApp / unregistered / manual calling queue.
-2. **Process & Prepare Briefing**:
-   - Fetch all pending records from Reorder Hub, Special Orders, Online Orders, and Call Tasks.
-   - Deduplicate & filter completed/cancelled items.
-   - Verify WhatsApp registration & phone availability (3-way check).
-3. **Morning Briefing Dashboard**:
-   - 4 Live Cards with live badge counts and view details actions:
-     - Pending Refills (Green)
-     - Special Orders (Purple)
-     - Online Orders (Blue)
-     - Call Tasks (Amber)
-   - Real-time SSE updates so briefing updates immediately as orders/tasks change status.
-4. **Channel Routing Engine**:
-   - `WhatsApp Available`: stage reminder/update in `automation_notifications` (human-in-the-loop review).
-   - `WhatsApp Unavailable`: add to `patient_call_tasks` queue with customer details, order/medicine context, priority, and reason.
-   - `No Usable Phone Number`: flag for `Contact Details Review` so staff can correct missing contact info before calling.
-5. **Call Outcome Pipeline State Machine**:
-   - `Pending Call` -> `Called` -> `Call Outcome`:
-     - `Customer Responded` -> `Resolved` (completed).
-     - `No Answer` -> `Follow-up Required` -> loops back into `Pending Call` with follow-up timestamp.
-     - `Further Action Needed` -> `Follow-up Required` -> loops back into `Pending Call` with follow-up timestamp.
+## 1. Flowchart Specification & Context
+
+This implementation follows the user's specification flowchart:
+
+```mermaid
+flowchart TD
+    A[Open Reports] --> B[Select Report Type]
+    B --> C[Fetch Report Data]
+    C --> D[Normalize Product Names]
+    D --> E[Apply Default Sorting A-Z]
+    E --> F[Display Report]
+    F --> G{User Changes Sorting?}
+    G -- Yes --> H[Sort by Selected Column]
+    H --> F
+    G -- No --> I[Keep Current Sorting]
+```
 
 ---
 
-## 2. Architecture & File Plan
+## 2. Technical Architecture & Component Mapping
 
-| File | Subsystem | Action | Purpose |
-| :--- | :--- | :--- | :--- |
-| `src/services/morningBriefingService.ts` | Backend Service | Create | Fetch, deduplicate, validate contact availability, and compile morning briefing data. Handle channel routing and call outcome pipeline. |
-| `src/routes/morningBriefing.ts` | Backend Routes | Create | API endpoints `GET /api/morning-briefing`, `POST /api/morning-briefing/update-contact`, `POST /api/morning-briefing/call-outcome`. |
-| `src/server.ts` | Express Server | Edit | Mount `/api/morning-briefing` router. |
-| `frontend/src/types/morningBriefing.ts` | Frontend Types | Create | TypeScript types for morning briefing summary, cards, routing queues, and call outcomes. |
-| `frontend/src/services/morningBriefingApi.ts` | Frontend API | Create | API client for morning briefing endpoints and contact updates. |
-| `frontend/src/components/MorningBriefingDashboard.tsx` | Frontend UI | Create | 4 Cards dashboard, 3-way routing controls, contact review modal/banner, and interactive Call Outcome pipeline. |
-| `frontend/src/pages/Dashboard/index.tsx` | Dashboard Page | Edit | Embed `MorningBriefingDashboard` at the top of the main Dashboard. |
-| `tests/morningBriefingPipeline.test.ts` | Automated Tests | Create | Comprehensive integration tests verifying 4 source collections, deduplication, 3-way routing, and call outcome state machine. |
-| `implementation.md` | Task Tracking | Maintain | Live task completion log per Rule 10. |
+### A. Core View (`A` & `B`)
+- Target File: `frontend/src/pages/Reports/index.tsx`.
+- Supported Report Tabs (`B`):
+  1. **Inventory Status** (`inventory`): Contains `medicine_name`, `batch_no`, `stock`, `cost_price`, `mrp`, `value`.
+  2. **Expiry Warning Forecast** (`expiry`): Contains `medicine_name`, `batch_no`, `quantity`, `cost_price`, `expiry_date`, `value`.
+  3. **Non-Moving Inventory** (`nonMoving`): Contains `medicineName`, `batchNo`, `daysSinceLastTransaction`, `quantity`, `costPrice`, `totalCostValue`, `mrp`, `totalValue`, `expiryDate`.
+  4. **Sales Invoices** (`sales`): Contains `date`, `invoice_no`, `total_amount`.
+  5. **Purchase Log Bills** (`purchases`): Contains `date`, `invoice_no`, `distributor`, `total_amount`.
+  6. **Product Trace** (`trace`): Contains purchases and sales ledger rows per product.
+
+### B. Product Name Normalization (`D`)
+- Implement a dedicated normalization utility: `normalizeProductName(name?: string | null): string`:
+  - Trims leading and trailing whitespace.
+  - Replaces irregular consecutive whitespaces with a single space (`\s+` -> `' '`).
+  - Gracefully handles missing/null/undefined names with clean standard fallback (`'—'`).
+  - Provides a normalized key for case-insensitive and diacritic-insensitive sorting via `localeCompare(..., undefined, { sensitivity: 'base', numeric: true })`.
+
+### C. Default Sorting A-Z (`E`)
+- When a report type tab is selected or new data is fetched (`C`):
+  - For tabs with product names (**Inventory**, **Expiry**, **Non-Moving**):
+    - Default sort column: `medicine_name` / `medicineName`.
+    - Default sort direction: **`asc` (A to Z)**.
+  - For transactional reports (**Sales**, **Purchases**):
+    - Default sort column: `date` (`desc` for recency or `asc` for chronological) or primary text field.
+- Tab-specific default sort state resets smoothly on tab change.
+
+### D. Interactive Column Sorting Engine (`F`, `G`, `H`, `I`)
+- Sort State:
+  ```typescript
+  interface SortConfig {
+    key: string;
+    direction: 'asc' | 'desc';
+  }
+  ```
+- **User Changes Sorting?** (`G`):
+  - Clicking any table header triggers `handleSort(columnKey)`:
+    - If clicked column is already active: toggles `direction` (`asc` <-> `desc`).
+    - If clicked column is new: activates that column with `direction = 'asc'` (or `'desc'` for numerical values).
+  - Sort Comparator:
+    - Strings (e.g. `medicine_name`, `distributor`, `batch_no`): localized natural sort (`a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })`).
+    - Numbers (e.g. `stock`, `cost_price`, `mrp`, `value`, `total_amount`, `daysSinceLastTransaction`): numerical subtraction (`valA - valB`).
+    - Dates (e.g. `date`, `expiry_date`, `purchaseDate`): timestamp parsing and comparison.
+- **Header Visual Indicators**:
+  - Interactive headers with pointer cursor, hover highlight, and clear sort icons (`ChevronUp`, `ChevronDown`, or `ArrowUpDown`).
+  - Active sorted column highlighted using semantic Tailwind classes (`text-primary`, `bg-bg3`).
+- **Export Consistency & PDF Column Requirements**:
+  - Ensure exported reports (CSV & PDF) respect the currently sorted and normalized dataset.
+  - When exporting PDF reports, the PDF document must explicitly include the four essential inventory tracking columns:
+    1. **Medicine Name** (`medicine_name` / `name`)
+    2. **Batch Number** (`batch_no`)
+    3. **Expiry Date** (`expiry_date`)
+    4. **Quantity** (`stock` / `quantity`)
+  - Ensure `im.expiry_date` is queried in backend `/reports/data` for inventory status so the UI table and client-side split PDF export also retain the expiry date alongside batch and quantity.
 
 ---
 
-## 3. Step-by-Step Execution Plan
+## 3. Step-by-Step Implementation Plan
 
-1. **Step 1: Backend Service (`src/services/morningBriefingService.ts`)**
-   - Query pending records across Refills, Special Orders, Online Orders, and Call Tasks.
-   - Deduplicate records and evaluate contact validity (valid 10-digit mobile).
-   - Classify into 3 channels: WhatsApp Available, WhatsApp Unavailable, No Usable Phone.
-   - Implement `recordCallOutcome` advancing tasks through `Pending Call` -> `Called` -> `Resolved` vs `Follow-up Required` (loop to `Pending Call`).
-   - Implement `updateContactDetails` updating customer phone and re-evaluating routing.
-2. **Step 2: API Route Handler (`src/routes/morningBriefing.ts` & `src/server.ts`)**
-   - Expose `GET /api/morning-briefing`, `POST /api/morning-briefing/route-channel`, `POST /api/morning-briefing/update-contact`, `POST /api/morning-briefing/call-outcome`.
-   - Mount in `src/server.ts`.
-3. **Step 3: Frontend Types & API Client (`frontend/src/types/morningBriefing.ts` & `frontend/src/services/morningBriefingApi.ts`)**
-   - Define data contracts and query hooks using TanStack Query.
-4. **Step 4: Frontend UI Component (`frontend/src/components/MorningBriefingDashboard.tsx`)**
-   - 4 Overview cards with real-time counts, status chips, and quick navigation.
-   - Contact Review drawer/alert for items with missing phone numbers.
-   - Interactive Call Outcome buttons (Called, Customer Responded, No Answer, Further Action Needed).
-   - Strictly semantic Tailwind classes (`bg-bg`, `bg-bg2`, `text-text`, etc.).
-5. **Step 5: Integrate into Main Dashboard (`frontend/src/pages/Dashboard/index.tsx`)**
-   - Place `MorningBriefingDashboard` at the top of the Dashboard.
-6. **Step 6: Automated Integration Tests (`tests/morningBriefingPipeline.test.ts`)**
-   - Write and run integration tests for all 4 sources, deduplication, 3-way routing, and call outcome state transitions.
-7. **Step 7: Verification & Quality Gates**
-   - Verify client build (`npm run build:client`).
-   - Verify performance guardrails (`npm run guardrails`).
-   - Update knowledge graph (`node scripts/quick-update.mjs`).
+### Step 1: Implement Normalization & Sorting Utilities
+1. Add `normalizeProductName(name?: string | null): string` helper.
+2. Add generic `sortReportRows<T>(rows: T[], sortConfig: SortConfig): T[]` supporting text, numeric, and date fields.
+
+### Step 2: Integrate Sort State & Normalization in `Reports/index.tsx`
+1. Add `sortConfig` state with tab-aware default:
+   - For `inventory`, `expiry`, `nonMoving`: `{ key: 'medicine_name', direction: 'asc' }`.
+   - For `sales`, `purchases`: `{ key: 'date', direction: 'desc' }`.
+2. Normalize product names in `reportData.records` and `nonMovingData.items` via a `useMemo` transformation pipeline:
+   - `rawRecords` -> `normalizedRecords` -> `sortedRecords`.
+3. Provide `handleSort(key)` function that updates sort state.
+
+### Step 3: Upgrade Table Headers in All Report Tabs
+1. Update `inventory` table headers to be clickable with sort indicators.
+2. Update `expiry` table headers to be clickable with sort indicators.
+3. Update `nonMoving` table headers to be clickable with sort indicators.
+4. Update `sales` and `purchases` table headers to be clickable with sort indicators.
+
+### Step 4: Verification & Quality Gates
+1. Run TypeScript check & client production build: `npm run build:client`.
+2. Run performance guardrails scanner: `npm run guardrails`.
+3. Update knowledge graph: `node scripts/quick-update.mjs`.
 
 ---
 
 ## 4. Completed Tasks Log
-- [x] Task 1: Create `src/services/morningBriefingService.ts` with source collection, deduplication, 3-way contact classification, and call outcome state transitions.
-  - *Details*: Implemented `getMorningBriefing()` aggregating 4 data streams: Online Orders (`website_orders`), Refill Requests (`patient_refills`), Special Orders (`special_orders`), and Call Tasks (`patient_call_tasks`). Implemented deduplication by phone/medicine, 3-way contact classification (`whatsapp_available`, `whatsapp_unavailable`, `no_usable_phone`), channel routing (`routeToWhatsAppQueue`, `routeToCallTaskQueue`, `updateContactDetails`), and call outcome progression (`advanceCallOutcome`: `called` -> `customer_responded`/`resolved`, `no_answer` -> `follow_up_required` loop back to `pending_call` with reschedule date, `further_action_needed` -> `follow_up_required` loop back to `pending_call` with reschedule date). Uses `toLocalSqlDateTime()` complying with guardrail B4.
-- [x] Task 2: Create `src/routes/morningBriefing.ts` and mount in `src/server.ts`.
-  - *Details*: Built express endpoints `GET /api/morning-briefing`, `POST /api/morning-briefing/route-channel`, `POST /api/morning-briefing/update-contact`, and `POST /api/morning-briefing/call-outcome`. Mounted lazy router at `/api/morning-briefing` in `src/server.ts`. Also updated `src/database.ts` schema v83 to expand `patient_call_tasks` check constraint and add columns (`priority`, `call_attempts`, `last_called_at`).
-- [x] Task 3: Create frontend types and API client (`morningBriefing.ts` & `morningBriefingApi.ts`).
-  - *Details*: Defined models for `MorningBriefingItem`, `MorningBriefingCategorySummary`, `MorningBriefingSummary`, `ContactChannelClassification`, and `CallOutcomeRequest`. Implemented TanStack query and mutation functions with SSE invalidations in `morningBriefingApi.ts`.
-- [x] Task 4: Create `MorningBriefingDashboard.tsx` with 4 overview cards, 3-way routing, contact review, and call outcome loop.
-  - *Details*: Built 4 live metric cards (Pending Refills, Special Orders, Online Orders, Call Tasks) with status badges, detail breakdown drawer, Contact Details Review banner/dialog for missing/invalid phones, and interactive Call Outcome modal supporting `called`, `customer_responded`, `no_answer`, and `further_action_needed` with loop-back rescheduling. Uses strictly semantic Tailwind classes (`bg-bg`, `bg-bg2`, `text-text`, `border-border`) and local date formatters.
-- [x] Task 5: Embed `MorningBriefingDashboard` into `frontend/src/pages/Dashboard/index.tsx`.
-  - *Details*: Mounted `<MorningBriefingDashboard className="mb-6" />` directly beneath the Quick Action Bar on the primary dashboard view.
-- [x] Task 6: Create and run `tests/morningBriefingPipeline.test.ts` to verify all pipeline branches.
-  - *Details*: Added 12 comprehensive unit and integration tests covering multi-source aggregation, deduplication across refills, 3-way channel routing, phone number correction, and the complete call outcome state machine loop (`pending_call` -> `called` -> `no_answer` -> `follow_up_required` -> `pending_call`). All 12 tests passed (Exit Code 0). Verified regression against `refillBatchPipeline.test.ts` (9 of 9 passed).
-- [x] Task 7: Pass all quality gates (`npm run build:client`, `npm run guardrails`, `node scripts/quick-update.mjs`).
-  - *Details*: Production client build succeeded (`tsc -b && vite build` built in 51.89s with 0 errors). Guardrails scanner (`npm run guardrails`) passed with 0 violations. Knowledge graph synchronized (`node scripts/quick-update.mjs`) with 1311 nodes and 856 edges.
+
+- [x] Task 1: Create product name normalization and robust column sorting utilities in `Reports/index.tsx`.
+  - Added `normalizeProductName(name?: string | null): string` to clean excess whitespace and fall back cleanly to `'—'`.
+  - Added `sortReportData<T>(items: T[], sortConfig: SortConfig): T[]` handling string normalization, numeric values, and dates.
+- [x] Task 2: Implement default A-Z product name sorting and interactive sort state across all report types.
+  - Added `getDefaultSortForTab(tab)` defaulting to `medicine_name` / `medicineName` ascending (A-Z) for inventory, expiry, and non-moving reports, and `date` descending for sales/purchases.
+  - Integrated tab change listener resetting sort to defaults on tab switches.
+  - Memoized datasets via `displayRecords` and `sortedAndNormalizedNonMovingItems`.
+- [x] Task 3: Upgrade table headers with clickable sort controls, active column indicators, and hover styling.
+  - Created reusable `renderSortTh` helper rendering accessible sort indicators (`▲` / `▼` / `⇅`).
+  - Added Expiry Date column to Inventory Status table.
+  - Applied interactive column sorting across Sales, Purchases, Inventory, Expiry, and Non-Moving tables.
+- [x] Task 4: Ensure PDF/CSV export uses the normalized, sorted dataset, and guarantees PDF exports include Medicine Name, Batch No, Expiry Date, and Stock Qty.
+  - Updated backend query in `src/routes/reports.ts` for `/reports/data` (`type=inventory`) to select `im.expiry_date`.
+  - Configured client-side `exportToPDF` and `exportToCSV` in `handleDownloadExport` to export sorted, normalized rows directly with all 4 required columns (Medicine Name, Batch, Expiry Date, Quantity) plus valuation.
+- [x] Task 5: Pass all quality gates (`npm run build:client`, `npm run guardrails`, `node scripts/quick-update.mjs`).
+  - `npm run build:client` passed with 0 errors (47.58s build time).
+  - `npm run guardrails` passed with 0 violations.
+  - `node scripts/quick-update.mjs` synchronized knowledge graph (1311 nodes, 859 edges).

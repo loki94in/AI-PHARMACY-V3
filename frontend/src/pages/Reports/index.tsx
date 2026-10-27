@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { 
   BarChart3, 
@@ -21,7 +21,10 @@ import {
   Users,
   Send,
   FileSpreadsheet,
-  X
+  X,
+  ArrowUpDown,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, apiClient, type NonMovingReportItem, type ProductTracePurchaseRow, type ProductTraceSaleRow } from '../../services/api';
@@ -52,6 +55,70 @@ interface LocalReportRow {
 type LocalApiError = { response?: { data?: { error?: string; message?: string } }; message?: string };
 import { formatINR, formatCount } from '../../utils/currency';
 
+interface SortConfig {
+  key: string;
+  direction: 'asc' | 'desc';
+}
+
+const normalizeProductName = (name?: string | null): string => {
+  if (!name || typeof name !== 'string' || !name.trim()) return '—';
+  return name.trim().replace(/\s+/g, ' ');
+};
+
+function sortReportData<T extends Record<string, any>>(items: T[], sortConfig: SortConfig): T[] {
+  if (!sortConfig.key) return items;
+  const { key, direction } = sortConfig;
+  const multiplier = direction === 'asc' ? 1 : -1;
+
+  return [...items].sort((a, b) => {
+    const valA = a[key];
+    const valB = b[key];
+
+    // Normalized comparison for medicine names
+    if (key === 'medicine_name' || key === 'medicineName') {
+      const strA = normalizeProductName(valA);
+      const strB = normalizeProductName(valB);
+      if (strA === '—' && strB !== '—') return 1;
+      if (strA !== '—' && strB === '—') return -1;
+      return strA.localeCompare(strB, undefined, { numeric: true, sensitivity: 'base' }) * multiplier;
+    }
+
+    // Always sort nullish / empty items to the end
+    const isBlankA = valA === undefined || valA === null || valA === '';
+    const isBlankB = valB === undefined || valB === null || valB === '';
+    if (isBlankA && !isBlankB) return 1;
+    if (!isBlankA && isBlankB) return -1;
+    if (isBlankA && isBlankB) return 0;
+
+    // Numbers
+    if (typeof valA === 'number' && typeof valB === 'number') {
+      return (valA - valB) * multiplier;
+    }
+
+    // Dates
+    if (typeof valA === 'string' && typeof valB === 'string') {
+      const isDateA = !isNaN(Date.parse(valA)) && (valA.includes('-') || valA.includes('/'));
+      const isDateB = !isNaN(Date.parse(valB)) && (valB.includes('-') || valB.includes('/'));
+      if (isDateA && isDateB) {
+        return (new Date(valA).getTime() - new Date(valB).getTime()) * multiplier;
+      }
+      return valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' }) * multiplier;
+    }
+
+    return String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' }) * multiplier;
+  });
+}
+
+const getDefaultSortForTab = (tab: string): SortConfig => {
+  if (tab === 'inventory' || tab === 'expiry') {
+    return { key: 'medicine_name', direction: 'asc' };
+  }
+  if (tab === 'nonMoving') {
+    return { key: 'medicineName', direction: 'asc' };
+  }
+  return { key: 'date', direction: 'desc' };
+};
+
 // Module-level cache for instant report hydration on tab switches / re-mounts
 const cachedReportsMap: Record<string, { summary: LocalReportSummary; records: LocalReportRow[] }> = {};
 const cachedNonMovingMap: Record<number, { success: boolean; periodDays: number; count: number; items: NonMovingReportItem[] }> = {};
@@ -67,6 +134,17 @@ const Reports = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = (searchParams.get('tab') || 'sales') as 'sales' | 'inventory' | 'purchases' | 'expiry' | 'nonMoving' | 'trace';
 
+  const [sortConfig, setSortConfig] = useState<SortConfig>(() => getDefaultSortForTab(activeTab));
+
+  const handleSort = (key: string) => {
+    setSortConfig(prev => {
+      if (prev.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { key, direction: 'asc' };
+    });
+  };
+
   const setActiveTab = (tab: string) => {
     setSearchParams((prev) => {
       prev.set('tab', tab);
@@ -74,10 +152,11 @@ const Reports = () => {
     });
   };
 
-  // Preset the range when the expiry tab is opened (render-time adjustment)
+  // Preset the range when the expiry tab is opened (render-time adjustment) & reset default sort
   const [prevTab, setPrevTab] = useState(activeTab);
   if (prevTab !== activeTab) {
     setPrevTab(activeTab);
+    setSortConfig(getDefaultSortForTab(activeTab));
     if (activeTab === 'expiry') {
       setFromDate(getTodayString());
       setToDate(getNDaysAgoString(-365));
@@ -148,21 +227,21 @@ const Reports = () => {
       let reportTitle = `${activeTab.toUpperCase()} Report`;
 
       if (activeTab === 'nonMoving') {
-        exportData = filteredNonMovingItems;
+        exportData = sortedAndNormalizedNonMovingItems as any;
         reportTitle = `Non-Moving Inventory Report (${nonMovingDays}+ Days Inactive)`;
         exportColumns = [
           { key: 'medicineName', label: 'Medicine Name' },
           { key: 'batchNo', label: 'Batch No' },
-          { key: 'purchaseDate', label: 'Purchase Date' },
-          { key: 'quantity', label: 'Stock Qty' },
           { key: 'expiryDate', label: 'Expiry Date' },
+          { key: 'quantity', label: 'Stock Qty' },
+          { key: 'purchaseDate', label: 'Purchase Date' },
           { key: 'costPrice', label: 'Unit Cost (Rs.)' },
           { key: 'totalCostValue', label: 'Hold Value Cost (Rs.)' },
           { key: 'totalValue', label: 'Hold Value MRP (Rs.)' },
           { key: 'dormantDaysLabel', label: 'Dormant Period' }
         ];
       } else if (activeTab === 'sales') {
-        exportData = records;
+        exportData = displayRecords;
         reportTitle = `Sales History Report (${fromDate} to ${toDate})`;
         exportColumns = [
           { key: 'date', label: 'Date' },
@@ -170,7 +249,7 @@ const Reports = () => {
           { key: 'total_amount', label: 'Total Amount (Rs.)' }
         ];
       } else if (activeTab === 'purchases') {
-        exportData = records;
+        exportData = displayRecords;
         reportTitle = `Purchase Log Bills Report (${fromDate} to ${toDate})`;
         exportColumns = [
           { key: 'date', label: 'Date' },
@@ -179,39 +258,48 @@ const Reports = () => {
           { key: 'total_amount', label: 'Amount (Rs.)' }
         ];
       } else if (activeTab === 'inventory') {
-        exportData = records;
+        exportData = displayRecords;
         reportTitle = `Valued Inventory Status Report`;
         exportColumns = [
-          { key: 'medicine_name', label: 'Medicine Stock Name' },
+          { key: 'medicine_name', label: 'Medicine Name' },
           { key: 'batch_no', label: 'Batch No' },
-          { key: 'stock', label: 'Current Stock Qty' },
+          { key: 'expiry_date', label: 'Expiry Date' },
+          { key: 'stock', label: 'Stock Qty' },
           { key: 'cost_price', label: 'Unit Cost (Rs.)' },
           { key: 'mrp', label: 'Unit MRP (Rs.)' },
           { key: 'value', label: 'Hold Valuation Cost (Rs.)' }
         ];
       } else if (activeTab === 'expiry') {
-        exportData = records;
+        exportData = displayRecords;
         reportTitle = `Expiry Warning Report (${fromDate} to ${toDate})`;
         exportColumns = [
           { key: 'medicine_name', label: 'Medicine Name' },
           { key: 'batch_no', label: 'Batch Number' },
+          { key: 'expiry_date', label: 'Expiry Date' },
           { key: 'quantity', label: 'Stock Qty' },
           { key: 'cost_price', label: 'Unit Cost (Rs.)' },
-          { key: 'expiry_date', label: 'Expiry Date' },
           { key: 'value', label: 'Valuation at Risk (Rs.)' }
         ];
       }
 
+      const filename = stampedDownloadName(activeTab, exportFormat === 'pdf' ? 'pdf' : 'csv');
       if (exportSplitMode && exportData.length > 0) {
         // Multi-file export mode: generate & download separate files for each 30 items chunk
-        const filename = splitExportBase(activeTab);
+        const splitFilename = splitExportBase(activeTab);
         if (exportFormat === 'pdf') {
-          exportToPDF(exportData, exportColumns, filename, reportTitle, { split: true, itemsPerPage: 30 });
+          await exportToPDF(exportData, exportColumns, splitFilename, reportTitle, { split: true, itemsPerPage: 30 });
         } else {
-          exportToCSV(exportData, exportColumns, filename, { split: true, itemsPerPage: 30 });
+          exportToCSV(exportData, exportColumns, splitFilename, { split: true, itemsPerPage: 30 });
+        }
+      } else if (exportData.length > 0) {
+        // Single file download mode preserving active sorting & normalized columns
+        if (exportFormat === 'pdf') {
+          await exportToPDF(exportData, exportColumns, filename, reportTitle);
+        } else {
+          exportToCSV(exportData, exportColumns, filename);
         }
       } else {
-        // Single file download mode
+        // Fallback for empty or server-streamed mode
         let blob: Blob;
         if (activeTab === 'nonMoving') {
           if (exportFormat === 'pdf') {
@@ -229,7 +317,7 @@ const Reports = () => {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = stampedDownloadName(activeTab, exportFormat === 'pdf' ? 'pdf' : 'csv');
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         window.URL.revokeObjectURL(url);
@@ -389,12 +477,56 @@ const Reports = () => {
   const stats = reportData?.summary ?? {};
   const records = reportData?.records ?? [];
 
-  const filteredNonMovingItems = (nonMovingData?.items ?? []).filter((item) => {
-    if (!nonMovingSearchQuery.trim()) return true;
-    const q = nonMovingSearchQuery.toLowerCase().trim();
-    return (item.medicineName && item.medicineName.toLowerCase().includes(q)) ||
-           (item.batchNo && item.batchNo.toLowerCase().includes(q));
-  });
+  const displayRecords = useMemo(() => {
+    const normalized = records.map(row => {
+      if (row.medicine_name !== undefined) {
+        return { ...row, medicine_name: normalizeProductName(row.medicine_name) };
+      }
+      return row;
+    });
+    return sortReportData(normalized, sortConfig);
+  }, [records, sortConfig]);
+
+  const sortedAndNormalizedNonMovingItems = useMemo(() => {
+    const rawItems = nonMovingData?.items ?? [];
+    const normalized = rawItems.map(item => ({
+      ...item,
+      medicineName: normalizeProductName(item.medicineName)
+    }));
+    const filtered = normalized.filter((item) => {
+      if (!nonMovingSearchQuery.trim()) return true;
+      const q = nonMovingSearchQuery.toLowerCase().trim();
+      return (item.medicineName && item.medicineName.toLowerCase().includes(q)) ||
+             (item.batchNo && item.batchNo.toLowerCase().includes(q));
+    });
+    return sortReportData(filtered, sortConfig);
+  }, [nonMovingData?.items, nonMovingSearchQuery, sortConfig]);
+
+  const renderSortTh = (label: string, colKey: string, align: 'left' | 'center' | 'right' = 'left', extraClass: string = '') => {
+    const isActive = sortConfig.key === colKey;
+    return (
+      <th
+        onClick={() => handleSort(colKey)}
+        className={`p-3.5 border-b border-glass-border/20 select-none cursor-pointer group transition-colors hover:bg-bg3/50 ${
+          align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'
+        } ${extraClass}`}
+        title={`Sort by ${label} (${isActive && sortConfig.direction === 'asc' ? 'A-Z / Ascending' : isActive ? 'Z-A / Descending' : 'Click to sort'})`}
+      >
+        <div className={`inline-flex items-center gap-1.5 ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'}`}>
+          <span className={`transition-colors ${isActive ? 'text-primary font-black' : 'text-muted group-hover:text-text'}`}>
+            {label}
+          </span>
+          <span className={`inline-flex items-center transition-opacity ${isActive ? 'opacity-100 text-primary' : 'opacity-0 group-hover:opacity-40 text-muted'}`}>
+            {isActive ? (
+              sortConfig.direction === 'asc' ? <ChevronUp size={13} className="stroke-[2.5]" /> : <ChevronDown size={13} className="stroke-[2.5]" />
+            ) : (
+              <ArrowUpDown size={12} />
+            )}
+          </span>
+        </div>
+      </th>
+    );
+  };
 
   // Calculate dynamic stats based on active tab
   const getStatsCards = () => {
@@ -909,9 +1041,9 @@ const Reports = () => {
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="sticky top-0 bg-bg2 border-b border-glass-border/30 shadow-sm z-10">
                     <tr className="text-muted/80 text-[10px] font-black uppercase tracking-wider">
-                      <th className="p-3.5 border-b border-glass-border/20 pl-5">Date</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Invoice Number</th>
-                      <th className="p-3.5 border-b border-glass-border/20 text-right pr-5">Total Amount</th>
+                      {renderSortTh('Date', 'date', 'left', 'pl-5')}
+                      {renderSortTh('Invoice Number', 'invoice_no')}
+                      {renderSortTh('Total Amount', 'total_amount', 'right', 'pr-5')}
                     </tr>
                   </thead>
                   <tbody>
@@ -922,7 +1054,7 @@ const Reports = () => {
                           <span className="font-bold">Loading sales dataset...</span>
                         </td>
                       </tr>
-                    ) : records.length === 0 ? (
+                    ) : displayRecords.length === 0 ? (
                       <tr>
                         <td colSpan={3} className="p-16 text-center text-xs text-muted">
                           <AlertTriangle className="mx-auto mb-3 opacity-30 text-amber-500" size={28} />
@@ -931,7 +1063,7 @@ const Reports = () => {
                         </td>
                       </tr>
                     ) : (
-                      records.map((row, idx) => (
+                      displayRecords.map((row, idx) => (
                         <tr key={idx} className="hover:bg-bg2/40 transition-colors border-b border-glass-border/20">
                           <td className="p-3.5 pl-5 font-mono font-bold text-muted">{row.date ? row.date.substring(0, 10) : '—'}</td>
                           <td className="p-3.5 font-semibold text-text">{row.invoice_no || '—'}</td>
@@ -983,10 +1115,10 @@ const Reports = () => {
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="sticky top-0 bg-bg2 border-b border-glass-border/30 shadow-sm z-10">
                     <tr className="text-muted/80 text-[10px] font-black uppercase tracking-wider">
-                      <th className="p-3.5 border-b border-glass-border/20 pl-5">Date</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Bill / Invoice No</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Distributor Supplier</th>
-                      <th className="p-3.5 border-b border-glass-border/20 text-right pr-5">Amount</th>
+                      {renderSortTh('Date', 'date', 'left', 'pl-5')}
+                      {renderSortTh('Bill / Invoice No', 'invoice_no')}
+                      {renderSortTh('Distributor Supplier', 'distributor')}
+                      {renderSortTh('Amount', 'total_amount', 'right', 'pr-5')}
                     </tr>
                   </thead>
                   <tbody>
@@ -997,7 +1129,7 @@ const Reports = () => {
                           <span className="font-bold">Loading purchase dataset...</span>
                         </td>
                       </tr>
-                    ) : records.length === 0 ? (
+                    ) : displayRecords.length === 0 ? (
                       <tr>
                         <td colSpan={4} className="p-16 text-center text-xs text-muted">
                           <AlertTriangle className="mx-auto mb-3 opacity-30 text-amber-500" size={28} />
@@ -1006,7 +1138,7 @@ const Reports = () => {
                         </td>
                       </tr>
                     ) : (
-                      records.map((row, idx) => (
+                      displayRecords.map((row, idx) => (
                         <tr key={idx} className="hover:bg-bg2/40 transition-colors border-b border-glass-border/20">
                           <td className="p-3.5 pl-5 font-mono font-bold text-muted">{row.date ? row.date.substring(0, 10) : '—'}</td>
                           <td className="p-3.5 font-semibold text-text">{row.invoice_no || '—'}</td>
@@ -1059,35 +1191,37 @@ const Reports = () => {
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="sticky top-0 bg-bg2 border-b border-glass-border/30 shadow-sm z-10">
                     <tr className="text-muted/80 text-[10px] font-black uppercase tracking-wider">
-                      <th className="p-3.5 border-b border-glass-border/20 pl-5">Medicine Stock Name</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Batch No</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Current Stock Qty</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Unit Cost (₹)</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Unit MRP (₹)</th>
-                      <th className="p-3.5 border-b border-glass-border/20 text-right pr-5">Hold Valuation (Cost)</th>
+                      {renderSortTh('Medicine Stock Name', 'medicine_name', 'left', 'pl-5')}
+                      {renderSortTh('Batch No', 'batch_no')}
+                      {renderSortTh('Expiry Date', 'expiry_date', 'center')}
+                      {renderSortTh('Current Stock Qty', 'stock')}
+                      {renderSortTh('Unit Cost (₹)', 'cost_price')}
+                      {renderSortTh('Unit MRP (₹)', 'mrp')}
+                      {renderSortTh('Hold Valuation (Cost)', 'value', 'right', 'pr-5')}
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
                       <tr>
-                        <td colSpan={6} className="p-12 text-center text-xs text-muted">
+                        <td colSpan={7} className="p-12 text-center text-xs text-muted">
                           <Loader2 className="animate-spin mx-auto mb-2 text-primary" size={20} />
                           <span className="font-bold">Loading inventory metrics...</span>
                         </td>
                       </tr>
-                    ) : records.length === 0 ? (
+                    ) : displayRecords.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-16 text-center text-xs text-muted">
+                        <td colSpan={7} className="p-16 text-center text-xs text-muted">
                           <AlertTriangle className="mx-auto mb-3 opacity-30 text-amber-500" size={28} />
                           <p className="font-bold">No inventory master records</p>
                           <p className="text-[10px] mt-0.5">No stock is registered in the database catalog.</p>
                         </td>
                       </tr>
                     ) : (
-                      records.map((row, idx) => (
+                      displayRecords.map((row, idx) => (
                         <tr key={idx} className="hover:bg-bg2/40 transition-colors border-b border-glass-border/20">
                           <td className="p-3.5 pl-5 font-bold text-text">{row.medicine_name || '—'}</td>
                           <td className="p-3.5 font-mono text-muted">{row.batch_no || 'N/A'}</td>
+                          <td className="p-3.5 font-mono text-center text-muted">{row.expiry_date || '—'}</td>
                           <td className="p-3.5 font-mono font-semibold text-text">{row.stock ?? 0}</td>
                           <td className="p-3.5 font-mono text-text">₹{(row.cost_price || 0).toFixed(2)}</td>
                           <td className="p-3.5 font-mono text-text">₹{(row.mrp || 0).toFixed(2)}</td>
@@ -1139,12 +1273,12 @@ const Reports = () => {
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="sticky top-0 bg-bg2 border-b border-glass-border/30 shadow-sm z-10">
                     <tr className="text-muted/80 text-[10px] font-black uppercase tracking-wider">
-                      <th className="p-3.5 border-b border-glass-border/20 pl-5">Medicine Name</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Batch Number</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Stock Qty</th>
-                      <th className="p-3.5 border-b border-glass-border/20">Unit Cost (₹)</th>
-                      <th className="p-3.5 border-b border-glass-border/20 text-red font-bold">Expiry Date</th>
-                      <th className="p-3.5 border-b border-glass-border/20 text-right pr-5">Valuation at Risk (Cost)</th>
+                      {renderSortTh('Medicine Name', 'medicine_name', 'left', 'pl-5')}
+                      {renderSortTh('Batch Number', 'batch_no')}
+                      {renderSortTh('Stock Qty', 'quantity')}
+                      {renderSortTh('Unit Cost (₹)', 'cost_price')}
+                      {renderSortTh('Expiry Date', 'expiry_date', 'center')}
+                      {renderSortTh('Valuation at Risk (Cost)', 'value', 'right', 'pr-5')}
                     </tr>
                   </thead>
                   <tbody>
@@ -1155,7 +1289,7 @@ const Reports = () => {
                           <span className="font-bold">Loading expiry warning lists...</span>
                         </td>
                       </tr>
-                    ) : records.length === 0 ? (
+                    ) : displayRecords.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="p-16 text-center text-xs text-muted">
                           <AlertTriangle className="mx-auto mb-3 opacity-30 text-amber-500" size={28} />
@@ -1164,7 +1298,7 @@ const Reports = () => {
                         </td>
                       </tr>
                     ) : (
-                      records.map((row, idx) => (
+                      displayRecords.map((row, idx) => (
                         <tr key={idx} className="hover:bg-bg2/40 transition-colors border-b border-glass-border/20">
                           <td className="p-3.5 pl-5 font-bold text-text">{row.medicine_name || '—'}</td>
                           <td className="p-3.5 font-mono font-semibold text-muted">{row.batch_no || '—'}</td>
@@ -1219,15 +1353,15 @@ const Reports = () => {
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="sticky top-0 bg-bg2 border-b border-border shadow-sm z-10">
                     <tr className="text-muted/80 text-[10px] font-black uppercase tracking-wider">
-                      <th className="p-3.5 border-b border-border/50 pl-5">Medicine Name</th>
-                      <th className="p-3.5 border-b border-border/50">Batch</th>
-                      <th className="p-3.5 border-b border-border/50">Purchase Date</th>
-                      <th className="p-3.5 border-b border-border/50">Quantity</th>
-                      <th className="p-3.5 border-b border-border/50">Expiry Date</th>
-                      <th className="p-3.5 border-b border-border/50">Unit Cost (₹)</th>
-                      <th className="p-3.5 border-b border-border/50">Hold Value (Cost)</th>
-                      <th className="p-3.5 border-b border-border/50">Hold Value (MRP)</th>
-                      <th className="p-3.5 border-b border-border/50 text-right pr-5">Dormant Period</th>
+                      {renderSortTh('Medicine Name', 'medicineName', 'left', 'pl-5')}
+                      {renderSortTh('Batch', 'batchNo')}
+                      {renderSortTh('Purchase Date', 'purchaseDate', 'center')}
+                      {renderSortTh('Quantity', 'quantity')}
+                      {renderSortTh('Expiry Date', 'expiryDate', 'center')}
+                      {renderSortTh('Unit Cost (₹)', 'costPrice')}
+                      {renderSortTh('Hold Value (Cost)', 'totalCostValue')}
+                      {renderSortTh('Hold Value (MRP)', 'totalValue')}
+                      {renderSortTh('Dormant Period', 'daysSinceLastTransaction', 'right', 'pr-5')}
                     </tr>
                   </thead>
                   <tbody>
@@ -1238,7 +1372,7 @@ const Reports = () => {
                           <span className="font-bold">Calculating dormant items...</span>
                         </td>
                       </tr>
-                    ) : filteredNonMovingItems.length === 0 ? (
+                    ) : sortedAndNormalizedNonMovingItems.length === 0 ? (
                       <tr>
                         <td colSpan={9} className="p-16 text-center text-xs text-muted">
                           <FileCheck2 className="mx-auto mb-3 opacity-30 text-green" size={28} />
@@ -1251,7 +1385,7 @@ const Reports = () => {
                         </td>
                       </tr>
                     ) : (
-                      filteredNonMovingItems.map((row, idx) => (
+                      sortedAndNormalizedNonMovingItems.map((row, idx) => (
                         <tr key={idx} className="hover:bg-bg2/40 transition-colors border-b border-glass-border/20">
                           <td className="p-3.5 pl-5 font-bold text-text">{row.medicineName || '—'}</td>
                           <td className="p-3.5 font-mono font-semibold text-muted">{row.batchNo || 'N/A'}</td>
@@ -1314,7 +1448,7 @@ const Reports = () => {
                           traceData.purchases.map((row, idx) => (
                             <div key={idx} className="p-3 bg-bg3/25 border border-glass-border/40 rounded-xl hover:border-glass-border/80 transition-colors flex flex-col gap-1.5">
                               <div className="flex justify-between items-start">
-                                <span className="font-bold text-text text-xs">{row.medicine_name}</span>
+                                <span className="font-bold text-text text-xs">{normalizeProductName(row.medicine_name)}</span>
                                 <span className="font-mono text-[9px] bg-amber-500/10 border border-amber-500/20 text-amber-500 px-1.5 py-0.5 rounded">
                                   Batch: {row.batch_no || 'N/A'}
                                 </span>
@@ -1349,7 +1483,7 @@ const Reports = () => {
                           traceData.sales.map((row, idx) => (
                             <div key={idx} className="p-3 bg-bg3/25 border border-glass-border/40 rounded-xl hover:border-glass-border/80 transition-colors flex flex-col gap-1.5">
                               <div className="flex justify-between items-start">
-                                <span className="font-bold text-text text-xs">{row.medicine_name}</span>
+                                <span className="font-bold text-text text-xs">{normalizeProductName(row.medicine_name)}</span>
                                 <span className="font-mono text-[9px] bg-green/10 border border-green/20 text-green px-1.5 py-0.5 rounded">
                                   Batch: {row.batch_no || 'N/A'}
                                 </span>

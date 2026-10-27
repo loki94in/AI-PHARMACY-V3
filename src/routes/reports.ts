@@ -224,7 +224,7 @@ router.get('/data', async (req, res) => {
       const storeCond = allStores ? '' : 'WHERE (im.store_id = ? OR (im.store_id IS NULL AND ? = 1))';
       const params = allStores ? [] : [targetStoreId, targetStoreId];
       data = await db.all(`
-        SELECT m.name as medicine_name, im.batch_no, im.quantity as stock, im.cost_price, im.mrp, (im.quantity * im.cost_price) as value 
+        SELECT m.name as medicine_name, im.batch_no, im.expiry_date, im.quantity as stock, im.cost_price, im.mrp, (im.quantity * im.cost_price) as value 
         FROM inventory_master im 
         JOIN medicines m ON im.medicine_id = m.id 
         ${storeCond}

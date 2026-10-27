@@ -1832,14 +1832,15 @@ export const RefillsSection: React.FC = () => {
                         <span>POS</span>
                       </button>
                     );
+                    const hasAnyInCart = (selectedPatient.medicines || []).some(m => m.in_live_cart || m.cart_store_name);
                     const addToCartBtn = (
                       <button
                         onClick={() => handleOrderRefillShortages(selectedPatient)}
-                        title="Add prescribed medicines to the Pharmarack live cart using saved distributors"
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs"
+                        title={hasAnyInCart ? "View or edit medicines in Pharmarack live cart" : "Add prescribed medicines to the Pharmarack live cart using saved distributors"}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs ${hasAnyInCart ? 'bg-sky-600 hover:bg-sky-500 text-white' : 'bg-primary hover:bg-primary/90 text-white'}`}
                       >
                         <ShoppingCart size={13} />
-                        <span>Add to Cart{unaddedCount > 0 ? ` (${unaddedCount})` : ''}</span>
+                        <span>{hasAnyInCart ? 'In Cart / Edit' : `Add to Cart${unaddedCount > 0 ? ` (${unaddedCount})` : ''}`}</span>
                       </button>
                     );
                     const isConfirmed = (selectedPatient.medicines || []).some(m => m.patient_confirmed === 1);
@@ -2231,9 +2232,14 @@ export const RefillsSection: React.FC = () => {
                                   <span>+ Live Cart ({cartOrderQty})</span>
                                 </button>
                                 {med.cart_store_name && (
-                                  <span className="px-2 py-1 rounded-lg bg-sky-500/15 border border-sky-500/40 text-sky-400 text-[10px] font-bold flex items-center gap-1 shadow-xs" title="Currently in today's active Pharmarack live cart">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOrderRefillShortages(selectedPatient)}
+                                    className="px-2 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/40 text-sky-400 text-[10px] font-bold flex items-center gap-1 shadow-xs cursor-pointer transition-colors"
+                                    title="Currently in active Pharmarack live cart — click to view, adjust quantity, or re-order"
+                                  >
                                     <ShoppingCart size={10} /> In Live Cart: {med.cart_store_name} ×{med.cart_qty}
-                                  </span>
+                                  </button>
                                 )}
 
                                 {/* Link / Priority Distributor Selector */}
@@ -3131,12 +3137,14 @@ export const RefillsSection: React.FC = () => {
       {orderingPatient && (
         <RefillOrderModal
           patientName={orderingPatient.patient_name}
+          patientPhone={orderingPatient.patient_phone}
           medicines={orderingPatient.medicines}
           onClose={() => setOrderingPatient(null)}
           onConfirm={(selectedItems) => {
-            setOrderingPatient(null);
             startRefillCartJob(orderingPatient.patient_name, selectedItems);
           }}
+          onMarkReady={() => handleMarkReadyPatient(orderingPatient)}
+          onPostAndComplete={() => handleFulfillAllForPatient(orderingPatient)}
           onMedicineLinked={(medId, links) => {
             setSelectedPatient(prev => {
               if (!prev) return prev;

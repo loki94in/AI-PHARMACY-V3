@@ -97,10 +97,7 @@ export const QuickAssistSidebar = memo(({
     items: Array<{ id: number; product: string; qty: number }>;
   } | null>(null);
   const [editingGroup, setEditingGroup] = useState<QuickAssistEditGroup | null>(null);
-  const [refillOrderModalGroup, setRefillOrderModalGroup] = useState<{
-    patient_name: string;
-    medicines: Array<any>;
-  } | null>(null);
+  const [refillOrderModalGroup, setRefillOrderModalGroup] = useState<any | null>(null);
   const [earlyBookingConfirm, setEarlyBookingConfirm] = useState<{
     group: any;
     daysEarly: number;
@@ -278,23 +275,7 @@ export const QuickAssistSidebar = memo(({
     }
   }, [expanded]);
 
-  const handleOrderRefillGroupToCart = (group: {
-    patient_name: string;
-    medicines: Array<{
-      id: number;
-      medicine_id: number;
-      medicine_name: string;
-      quantity_needed: number;
-      in_stock_qty?: number;
-      packaging?: string;
-      status?: string;
-      is_active?: number;
-      cart_store_name?: string | null;
-      cart_qty?: number | null;
-      in_live_cart?: boolean;
-      linked_distributors?: string[];
-    }>;
-  }) => {
+  const handleOrderRefillGroupToCart = (group: any) => {
     setRefillOrderModalGroup(group);
   };
 
@@ -1865,13 +1846,18 @@ export const QuickAssistSidebar = memo(({
                                     x{med.quantity_needed}
                                   </span>
                                   {isMedInCart && (
-                                    <span
-                                      className="h-5 px-1.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0"
-                                      title={`In Live Cart / Ordered (${med.cart_store_name || 'In Live Cart'})`}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOrderRefillGroupToCart(group);
+                                      }}
+                                      className="h-5 px-1.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 text-[8px] font-bold flex items-center gap-0.5 shrink-0 cursor-pointer transition-colors"
+                                      title={`In Live Cart / Ordered (${med.cart_store_name || 'In Live Cart'}) — click to view, adjust quantity, or re-order`}
                                     >
                                       <Check size={9} className="shrink-0" />
                                       <span>In Cart</span>
-                                    </span>
+                                    </button>
                                   )}
                                   {med.status === 'needs_link' && (
                                     <span className="h-5 px-1.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0" title="Needs Distributor Mapping">
@@ -1962,6 +1948,18 @@ export const QuickAssistSidebar = memo(({
                           if (stage === 'upcoming') {
                             return (
                               <>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOrderRefillGroupToCart(group);
+                                  }}
+                                  className="h-6.5 px-2 rounded-lg bg-primary/20 hover:bg-primary text-primary hover:text-white border border-primary/30 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
+                                  title="Open Add to Cart popup to select medicines and quantities for live cart"
+                                >
+                                  <ShoppingCart size={10} className="shrink-0" />
+                                  <span>{unaddedMeds.length > 0 ? `Cart (${unaddedMeds.length})` : 'In Cart'}</span>
+                                </button>
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -2074,6 +2072,18 @@ export const QuickAssistSidebar = memo(({
                           if (stage === 'ordered') {
                             return (
                               <>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOrderRefillGroupToCart(group);
+                                  }}
+                                  className="h-6.5 px-2 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-400 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
+                                  title="View / adjust medicines in Pharmarack live cart"
+                                >
+                                  <ShoppingCart size={10} className="shrink-0" />
+                                  <span>In Cart</span>
+                                </button>
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -3159,6 +3169,7 @@ export const QuickAssistSidebar = memo(({
         {refillOrderModalGroup && (
           <RefillOrderModal
             patientName={refillOrderModalGroup.patient_name}
+            patientPhone={refillOrderModalGroup.patient_phone}
             medicines={refillOrderModalGroup.medicines.map((m: any) => ({
               id: m.id,
               medicine_id: m.medicine_id,
@@ -3176,10 +3187,11 @@ export const QuickAssistSidebar = memo(({
             onClose={() => setRefillOrderModalGroup(null)}
             onConfirm={(selectedItems) => {
               const patientName = refillOrderModalGroup.patient_name;
-              setRefillOrderModalGroup(null);
               startRefillCartJob(patientName, selectedItems);
               toastEvent.trigger(`Adding ${selectedItems.length} refill item(s) for ${patientName} to Live Cart...`, 'info', '/pharmarack-cart');
             }}
+            onMarkReady={() => handleMarkRefillGroupReady(refillOrderModalGroup)}
+            onPostAndComplete={() => handleCompleteRefillGroup(refillOrderModalGroup)}
             onMedicineLinked={() => {
               queryClient.invalidateQueries({ queryKey: ['refills'] });
               refillEvent.triggerRefresh();
