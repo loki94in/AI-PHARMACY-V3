@@ -1,126 +1,134 @@
-# Implementation Plan: Reports Product Name Normalization & Interactive Column Sorting Pipeline
+# Implementation Plan: POS Dual-Input (Keyboard & Mouse) Fast-Billing & Zero-Lockup Architecture
 
-## 1. Flowchart Specification & Context
+## 1. Specification Flowchart & Context
 
-This implementation follows the user's specification flowchart:
+This implementation fulfills the user's finalized POS specification flowchart:
 
 ```mermaid
 flowchart TD
-    A[Open Reports] --> B[Select Report Type]
-    B --> C[Fetch Report Data]
-    C --> D[Normalize Product Names]
-    D --> E[Apply Default Sorting A-Z]
-    E --> F[Display Report]
-    F --> G{User Changes Sorting?}
-    G -- Yes --> H[Sort by Selected Column]
-    H --> F
-    G -- No --> I[Keep Current Sorting]
+    A([Open POS]) --> B[Focus Medicine Search]
+    B --> C[Type, Scan or Click Search]
+
+    C --> D{Suggestions Available?}
+    D -- No --> E[Show Non-blocking Notice]
+    E --> C
+    D -- Yes --> F[Show Live Sellable Stock]
+
+    F --> G{Keyboard or Mouse}
+    G -- Arrow Up/Down --> H[Highlight Suggestion]
+    H --> G
+    G -- Enter --> I[Select Highlighted Medicine]
+    G -- Hover --> J[Highlight Hovered Medicine]
+    J --> G
+    G -- Click Medicine --> I
+    G -- Escape --> B
+    G -- Click Outside --> K[Dismiss Dropdown]
+    K --> L[Preserve Cart and Allow Other Controls]
+
+    I --> M{Medicine and Batch Valid?}
+    M -- No --> N[Show Warning Without Blocking UI]
+    N --> B
+    M -- Yes --> O{Loose Sale Eligible and Available?}
+
+    O -- Yes --> P[Focus Loose Quantity]
+    O -- No --> Q[Default Full-unit Quantity to 1]
+    Q --> R[Focus Full-unit Quantity]
+
+    P --> S[Edit Quantity, Batch or Price]
+    R --> S
+    S --> T{Quantity, Stock and Price Valid?}
+    T -- No --> U[Show Inline Error; Keep Fields Editable]
+    U --> S
+
+    T -- Yes --> V[Commit Cart Line]
+    V --> W[Recalculate Cart and Batch-level Availability]
+    W --> X{Sellable Stock Remaining?}
+    X -- No --> Y[Hide Unavailable Medicine]
+    X -- Yes --> Z[Refresh Available Stock]
+
+    Y --> AA[Reset Search and Return Focus if Appropriate]
+    Z --> AA
+    AA --> AB{Next User Action}
+    AB -- Add Medicine --> C
+    AB -- Edit Cart --> S
+    AB -- Checkout --> AC[Revalidate Entire Cart and Stock]
+
+    AC --> AD{Validation Passed?}
+    AD -- No --> AE[Show Errors; Preserve Cart]
+    AE --> C
+    AD -- Yes --> AF[Open Payment Interface]
+
+    AF --> AG{Payment Successful?}
+    AG -- No --> AH[Preserve Bill and Allow Recovery]
+    AH --> AF
+    AG -- Yes --> AI[Finalize Sale and Generate Receipt]
+    AI --> AJ([Reset POS for Next Sale])
 ```
 
 ---
 
 ## 2. Technical Architecture & Component Mapping
 
-### A. Core View (`A` & `B`)
-- Target File: `frontend/src/pages/Reports/index.tsx`.
-- Supported Report Tabs (`B`):
-  1. **Inventory Status** (`inventory`): Contains `medicine_name`, `batch_no`, `stock`, `cost_price`, `mrp`, `value`.
-  2. **Expiry Warning Forecast** (`expiry`): Contains `medicine_name`, `batch_no`, `quantity`, `cost_price`, `expiry_date`, `value`.
-  3. **Non-Moving Inventory** (`nonMoving`): Contains `medicineName`, `batchNo`, `daysSinceLastTransaction`, `quantity`, `costPrice`, `totalCostValue`, `mrp`, `totalValue`, `expiryDate`.
-  4. **Sales Invoices** (`sales`): Contains `date`, `invoice_no`, `total_amount`.
-  5. **Purchase Log Bills** (`purchases`): Contains `date`, `invoice_no`, `distributor`, `total_amount`.
-  6. **Product Trace** (`trace`): Contains purchases and sales ledger rows per product.
+### A. Dynamic In-Cart Stock Reservation & Suggestion Filtering (Nodes W, X, Y, Z)
+- Target: `frontend/src/pages/POS/index.tsx` (in both `searchTerm` header search and `rowSearchTerm` inline search).
+- Add helper `getRemainingSellableUnits(item, cart, excludeRowIndex?)`:
+  - Calculate `totalUnits = (quantity * packSize) + loose_quantity`.
+  - Calculate `inCartUnits = sum(cart.filter(c != excludeRowIndex).qty * packSize + looseQty)`.
+  - Calculate `remainingSellableUnits = max(0, totalUnits - inCartUnits)`.
+- **Hide Unavailable Medicine (Node Y)**:
+  - If `remainingSellableUnits <= 0`, dynamically filter the item out of `searchResults` and `rowSearchResults`.
+  - Cashiers are prevented from seeing or double-allocating medicines whose total physical inventory is already committed in the current draft cart.
+- **Refresh Available Stock (Node Z)**:
+  - When remaining stock > 0, reflect the exact live remaining packs and loose units in the suggestion item display.
 
-### B. Product Name Normalization (`D`)
-- Implement a dedicated normalization utility: `normalizeProductName(name?: string | null): string`:
-  - Trims leading and trailing whitespace.
-  - Replaces irregular consecutive whitespaces with a single space (`\s+` -> `' '`).
-  - Gracefully handles missing/null/undefined names with clean standard fallback (`'—'`).
-  - Provides a normalized key for case-insensitive and diacritic-insensitive sorting via `localeCompare(..., undefined, { sensitivity: 'base', numeric: true })`.
+### B. Smart Focus Return & Zero-Lockup Mouse Parity (Nodes K, L, AA)
+- Target: `frontend/src/pages/POS/index.tsx` (`focusCartMedicineInput` and `useEffect` on `cart.length`).
+- Guard `focusCartMedicineInput` with active-element detection:
+  - If the user clicked with their mouse into another control (`customer-phone-input`, `doctor-name-input`, `pos-bill-discount-input`, payment buttons, or another cart row cell), do **NOT** steal focus back to the empty row search input.
+  - Return focus to the next empty row only if the line was committed via keyboard `Enter` hopping or when the user has not actively selected another element.
+- Ensure all dropdown dismissals (`Escape` or `useOnClickOutside`) cleanly clear highlight indices and dropdown states without modal freeze or trapped focus.
 
-### C. Default Sorting A-Z (`E`)
-- When a report type tab is selected or new data is fetched (`C`):
-  - For tabs with product names (**Inventory**, **Expiry**, **Non-Moving**):
-    - Default sort column: `medicine_name` / `medicineName`.
-    - Default sort direction: **`asc` (A to Z)**.
-  - For transactional reports (**Sales**, **Purchases**):
-    - Default sort column: `date` (`desc` for recency or `asc` for chronological) or primary text field.
-- Tab-specific default sort state resets smoothly on tab change.
+### C. Loose vs. Full-Unit Routing & Validation (Nodes M, N, O, P, Q, R, S, T, U, V)
+- Solid medicines with loose sale enabled auto-focus loose tablets; full-pack only & liquids default quantity to 1 and focus strip quantity.
+- Direct mouse click allows cashiers to jump to any field without completing intermediate keyboard steps.
+- Inline errors (loss sales, stock caps, invalid batch) display non-blocking warnings while keeping all inputs completely editable.
 
-### D. Interactive Column Sorting Engine (`F`, `G`, `H`, `I`)
-- Sort State:
-  ```typescript
-  interface SortConfig {
-    key: string;
-    direction: 'asc' | 'desc';
-  }
-  ```
-- **User Changes Sorting?** (`G`):
-  - Clicking any table header triggers `handleSort(columnKey)`:
-    - If clicked column is already active: toggles `direction` (`asc` <-> `desc`).
-    - If clicked column is new: activates that column with `direction = 'asc'` (or `'desc'` for numerical values).
-  - Sort Comparator:
-    - Strings (e.g. `medicine_name`, `distributor`, `batch_no`): localized natural sort (`a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })`).
-    - Numbers (e.g. `stock`, `cost_price`, `mrp`, `value`, `total_amount`, `daysSinceLastTransaction`): numerical subtraction (`valA - valB`).
-    - Dates (e.g. `date`, `expiry_date`, `purchaseDate`): timestamp parsing and comparison.
-- **Header Visual Indicators**:
-  - Interactive headers with pointer cursor, hover highlight, and clear sort icons (`ChevronUp`, `ChevronDown`, or `ArrowUpDown`).
-  - Active sorted column highlighted using semantic Tailwind classes (`text-primary`, `bg-bg3`).
-- **Export Consistency & PDF Column Requirements**:
-  - Ensure exported reports (CSV & PDF) respect the currently sorted and normalized dataset.
-  - When exporting PDF reports, the PDF document must explicitly include the four essential inventory tracking columns:
-    1. **Medicine Name** (`medicine_name` / `name`)
-    2. **Batch Number** (`batch_no`)
-    3. **Expiry Date** (`expiry_date`)
-    4. **Quantity** (`stock` / `quantity`)
-  - Ensure `im.expiry_date` is queried in backend `/reports/data` for inventory status so the UI table and client-side split PDF export also retain the expiry date alongside batch and quantity.
+### D. Whole-Cart Revalidation, Payment Recovery & POS Reset (Nodes AC, AD, AE, AF, AG, AH, AI, AJ)
+- Checkout button (`POSCheckoutBar` or `Alt+S` / `F2` / `Tab`) revalidates every cart line against live compact inventory.
+- On validation failure: surfaces clear, actionable error toasts while preserving the entire cart draft intact.
+- On validation success: opens `POSPostSaleModal`.
+- On payment abort/failure: preserves bill in `useDraftStore`, allows complete cashier recovery.
+- On payment confirmation: posts bill via `api.saveBill`, prints/sends receipt, and calls `resetSaleState()` to reset POS cleanly for the next customer.
 
 ---
 
-## 3. Step-by-Step Implementation Plan
+## 3. Step-by-Step Implementation Steps
 
-### Step 1: Implement Normalization & Sorting Utilities
-1. Add `normalizeProductName(name?: string | null): string` helper.
-2. Add generic `sortReportRows<T>(rows: T[], sortConfig: SortConfig): T[]` supporting text, numeric, and date fields.
+### Step 1: Implement Dynamic In-Cart Stock Reservation Helper
+1. Add `getRemainingSellableUnits` helper to calculate available units after deducting active cart lines.
+2. Filter `searchResults` and `rowSearchResults` to hide items with 0 remaining sellable units.
+3. Update suggestion display to show live remaining sellable stock (`remainingPacks` & `remainingLoose`).
 
-### Step 2: Integrate Sort State & Normalization in `Reports/index.tsx`
-1. Add `sortConfig` state with tab-aware default:
-   - For `inventory`, `expiry`, `nonMoving`: `{ key: 'medicine_name', direction: 'asc' }`.
-   - For `sales`, `purchases`: `{ key: 'date', direction: 'desc' }`.
-2. Normalize product names in `reportData.records` and `nonMovingData.items` via a `useMemo` transformation pipeline:
-   - `rawRecords` -> `normalizedRecords` -> `sortedRecords`.
-3. Provide `handleSort(key)` function that updates sort state.
+### Step 2: Implement Non-Disruptive Smart Focus Guard
+1. Update `cart.length` auto-focus effect in `POS/index.tsx` to check `document.activeElement`.
+2. Ensure mouse interactions on Customer Phone, Doctor Name, Bill Discount, or table cells are never hijacked.
+3. Validate that `Escape` and `useOnClickOutside` dismiss dropdowns cleanly without residual locks.
 
-### Step 3: Upgrade Table Headers in All Report Tabs
-1. Update `inventory` table headers to be clickable with sort indicators.
-2. Update `expiry` table headers to be clickable with sort indicators.
-3. Update `nonMoving` table headers to be clickable with sort indicators.
-4. Update `sales` and `purchases` table headers to be clickable with sort indicators.
-
-### Step 4: Verification & Quality Gates
-1. Run TypeScript check & client production build: `npm run build:client`.
-2. Run performance guardrails scanner: `npm run guardrails`.
-3. Update knowledge graph: `node scripts/quick-update.mjs`.
+### Step 3: Verification & Quality Gates
+1. Run `npm run guardrails` to ensure zero performance and theme rule violations.
+2. Run backend TypeScript compilation check (`tsc --noEmit`).
+3. Run frontend production bundle build (`npm run build:client`).
+4. Update auto-knowledge graph (`node scripts/quick-update.mjs`).
 
 ---
 
 ## 4. Completed Tasks Log
 
-- [x] Task 1: Create product name normalization and robust column sorting utilities in `Reports/index.tsx`.
-  - Added `normalizeProductName(name?: string | null): string` to clean excess whitespace and fall back cleanly to `'—'`.
-  - Added `sortReportData<T>(items: T[], sortConfig: SortConfig): T[]` handling string normalization, numeric values, and dates.
-- [x] Task 2: Implement default A-Z product name sorting and interactive sort state across all report types.
-  - Added `getDefaultSortForTab(tab)` defaulting to `medicine_name` / `medicineName` ascending (A-Z) for inventory, expiry, and non-moving reports, and `date` descending for sales/purchases.
-  - Integrated tab change listener resetting sort to defaults on tab switches.
-  - Memoized datasets via `displayRecords` and `sortedAndNormalizedNonMovingItems`.
-- [x] Task 3: Upgrade table headers with clickable sort controls, active column indicators, and hover styling.
-  - Created reusable `renderSortTh` helper rendering accessible sort indicators (`▲` / `▼` / `⇅`).
-  - Added Expiry Date column to Inventory Status table.
-  - Applied interactive column sorting across Sales, Purchases, Inventory, Expiry, and Non-Moving tables.
-- [x] Task 4: Ensure PDF/CSV export uses the normalized, sorted dataset, and guarantees PDF exports include Medicine Name, Batch No, Expiry Date, and Stock Qty.
-  - Updated backend query in `src/routes/reports.ts` for `/reports/data` (`type=inventory`) to select `im.expiry_date`.
-  - Configured client-side `exportToPDF` and `exportToCSV` in `handleDownloadExport` to export sorted, normalized rows directly with all 4 required columns (Medicine Name, Batch, Expiry Date, Quantity) plus valuation.
-- [x] Task 5: Pass all quality gates (`npm run build:client`, `npm run guardrails`, `node scripts/quick-update.mjs`).
-  - `npm run build:client` passed with 0 errors (47.58s build time).
-  - `npm run guardrails` passed with 0 violations.
-  - `node scripts/quick-update.mjs` synchronized knowledge graph (1311 nodes, 859 edges).
+- [x] Task 1: Add dynamic in-cart stock reservation and hide exhausted medicines from POS search suggestions (Nodes W, X, Y, Z).
+  - *Completed*: Implemented `getRemainingSellableUnits(item, cart, excludeCartIndex)` in `frontend/src/pages/POS/index.tsx`. Both header search and row search autocomplete now dynamically deduct drafted cart units and hide medicines with zero remaining sellable units. Dropdown suggestions display live remaining packs and loose units. Added `cart` to search dependency arrays.
+- [x] Task 2: Implement non-disruptive smart focus return respecting mouse clicks (Nodes K, L, AA).
+  - *Completed*: Guarded `cart.length` auto-focus effect and `focusCartMedicineInput` against `document.activeElement`. If the cashier is interacting with customer fields, doctor inputs, bill discount, action buttons, or other cart row cells via mouse, focus is never hijacked. Clean `Escape` and outside-click handling cleanly dismisses dropdowns without UI freeze.
+- [x] Task 3: Verify checkout revalidation, bill preservation on payment abort, and POS reset pipeline (Nodes AC-AJ).
+  - *Completed*: Verified `validateCartBeforeCheckout` revalidates every cart line against live compact inventory and loss sales while preserving cart draft on errors. Verified payment recovery preserves draft bill, and sale finalization cleanly triggers `resetSaleState()` to reset POS for the next customer.
+- [x] Task 4: Pass all quality gates (`npm run guardrails`, `build:client`, `quick-update.mjs`).
+  - *Completed*: Verified with `npm run guardrails` (0 violations, TypeScript clean), `npm run build:client` (bundled in 47.01s, 0 errors), and `node scripts/quick-update.mjs` (knowledge graph synchronized).
