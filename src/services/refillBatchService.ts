@@ -26,6 +26,8 @@ import { formatCustomerName } from '../utils/nameFormatter.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
 import { toLocalSqlDateTime } from '../utils/localTime.js';
 import { processRefillCartItem, RefillCartResult } from './refillCartService.js';
+import { whatsappQueueWorker } from './whatsappQueueWorker.js';
+import { resolveAdminWhatsappNumber } from './waAdminEscalationService.js';
 
 export interface RefillBatchItemInput {
   medicine_id?: number;
@@ -68,6 +70,7 @@ export interface RefillBatchItemRecord {
   cart_store_name?: string | null;
   cart_product_code?: string | null;
   cart_qty?: number | null;
+  is_zero_stock?: boolean;
   error?: string | null;
 }
 
@@ -371,9 +374,6 @@ export async function createRefillBatch(input: CreateRefillBatchInput): Promise<
     await dispatchBatchEligibleItemsToCart(batchId);
   }
 
-  // Stage patient notification in automation_notifications (human-in-the-loop)
-  await stageBatchRefillNotification(batchRecord);
-
   const updated = await getRefillBatch(batchId);
   return updated || batchRecord;
 }
@@ -423,12 +423,18 @@ export async function dispatchBatchEligibleItemsToCart(batchId: string): Promise
         if (cartRes.line) {
           item.cart_store_name = cartRes.line.storeName;
           item.cart_qty = cartRes.line.qty;
+        } else if (cartRes.linked && cartRes.linked.length > 0) {
+          item.cart_store_name = cartRes.linked[0].storeName;
         }
       } else {
         // Keep failed items visible in QA! Do not drop or silently ignore.
         failedCount++;
         item.cart_status = status;
         item.error = cartRes.message;
+        const isZeroStock = status === 'linked_oos' || /zero stock|out of stock|oos|0 stock/i.test(cartRes.message || '');
+        if (isZeroStock) {
+          item.is_zero_stock = true;
+        }
       }
 
       results.push({
@@ -441,6 +447,9 @@ export async function dispatchBatchEligibleItemsToCart(batchId: string): Promise
       failedCount++;
       item.cart_status = 'failed';
       item.error = err.message || 'Cart addition failed';
+      if (/zero stock|out of stock|oos|0 stock/i.test(err.message || '')) {
+        item.is_zero_stock = true;
+      }
       results.push({
         refill_id: item.refill_id,
         medicine_name: item.medicine_name,
@@ -470,6 +479,66 @@ export async function dispatchBatchEligibleItemsToCart(batchId: string): Promise
     added_count: addedCount,
     failed_count: failedCount
   });
+
+  // Node I & N: Create / update QA Refill Task for successfully processed / batch items
+  try {
+    const existingQaTask = await db.get(
+      `SELECT id FROM patient_call_tasks WHERE reference_id = ? AND task_type = 'refill_qa'`,
+      [batchId]
+    );
+    const qaTaskDetails = {
+      batch_id: batchId,
+      source: batch.source,
+      patient_name: batch.patient_name,
+      patient_phone: batch.patient_phone,
+      added_count: addedCount,
+      failed_count: failedCount,
+      total_items: items.length,
+      medicines: items.map(it => ({
+        name: it.medicine_name,
+        qty: it.cart_qty || it.requested_quantity,
+        status: it.cart_status,
+        distributor: it.cart_store_name || null,
+        is_zero_stock: it.is_zero_stock || it.cart_status === 'linked_oos',
+        error: it.error || null
+      }))
+    };
+    if (!existingQaTask) {
+      await db.run(
+        `INSERT INTO patient_call_tasks 
+         (task_type, patient_name, patient_phone, reference_id, details_json, status, priority, created_at, updated_at)
+         VALUES ('refill_qa', ?, ?, ?, ?, 'pending', 'normal', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [batch.patient_name, batch.patient_phone, batchId, JSON.stringify(qaTaskDetails)]
+      );
+      eventService.broadcast('call_tasks_updated', { at: Date.now(), batch_id: batchId, task_type: 'refill_qa' });
+    } else {
+      await db.run(
+        `UPDATE patient_call_tasks SET details_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [JSON.stringify(qaTaskDetails), existingQaTask.id]
+      );
+    }
+  } catch (qaTaskErr: any) {
+    console.warn('[RefillBatchService] Note creating QA refill task:', qaTaskErr.message);
+  }
+
+  // Node J, K, L, M: Notify Owner of batch outcome with medicine breakdown, zero stock & non-WA detection
+  const updatedBatchRecord = await getRefillBatch(batchId);
+  if (updatedBatchRecord) {
+    try {
+      await notifyOwnerOfRefillBatchOutcome(updatedBatchRecord, items);
+    } catch (ownerNotifErr: any) {
+      console.warn('[RefillBatchService] Error notifying owner of batch outcome:', ownerNotifErr.message);
+    }
+
+    // Node O: All Medicines Successfully Processed?
+    if (failedCount === 0 && addedCount > 0) {
+      // Node P: Send Existing Patient Live Cart Notification
+      await stageBatchRefillNotification(updatedBatchRecord);
+    } else {
+      // Node Q: Do Not Send Patient Live Cart Notification
+      console.log(`[RefillBatch] Partial/failed cart items detected (${failedCount} failed of ${items.length}) for batch ${batchId}. Suppressed patient notification per flowchart Node Q.`);
+    }
+  }
 
   return { batch_id: batchId, added_count: addedCount, failed_count: failedCount, results };
 }
@@ -658,14 +727,135 @@ export async function listRefillBatches(opts: { status?: string; limit?: number 
 }
 
 /**
+ * Notifies the pharmacy owner of successful and failed medicines in a refill batch.
+ * Contract (Flowchart Nodes J, K, L, M):
+ * - Includes medicine names and distributor details (Node K)
+ * - Identifies distributor confirmed zero stock (Node L)
+ * - Saves non-WhatsApp contacts for manual follow-up (Node M)
+ */
+export async function notifyOwnerOfRefillBatchOutcome(
+  batch: RefillBatchRecord,
+  items: RefillBatchItemRecord[]
+): Promise<void> {
+  const db = await dbManager.getConnection();
+  const adminPhone = await resolveAdminWhatsappNumber(db);
+  if (!adminPhone) {
+    console.warn(`[RefillBatchService] Owner WhatsApp notification skipped for batch #${batch.batch_id}: No admin WhatsApp number configured in Settings.`);
+    return;
+  }
+
+  const addedItems = items.filter(it => it.cart_status === 'added' || it.cart_status === 'in_cart');
+  const failedItems = items.filter(it => it.cart_status !== 'added' && it.cart_status !== 'in_cart');
+
+  // Node M: Validate if patient phone is a WhatsApp-capable mobile number
+  const phoneValidation = validate10DigitPhone(batch.patient_phone, { allowEmpty: false, requireMobilePrefix: true });
+  const isNonWa = !phoneValidation.isValid;
+
+  if (isNonWa) {
+    try {
+      // 1. Create a high-priority call task for manual telephone follow-up
+      const existingCallTask = await db.get(
+        `SELECT id FROM patient_call_tasks WHERE reference_id = ? AND task_type = 'refill_non_wa_followup'`,
+        [batch.batch_id]
+      );
+      if (!existingCallTask) {
+        await db.run(
+          `INSERT INTO patient_call_tasks 
+           (task_type, patient_name, patient_phone, reference_id, details_json, status, priority, created_at, updated_at)
+           VALUES ('refill_non_wa_followup', ?, ?, ?, ?, 'pending', 'high', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [
+            batch.patient_name,
+            phoneValidation.cleanPhone || batch.patient_phone,
+            batch.batch_id,
+            JSON.stringify({
+              reason: 'Non-WhatsApp contact for refill batch. Manual telephone follow-up required.',
+              batch_id: batch.batch_id,
+              patient_name: batch.patient_name,
+              patient_phone: batch.patient_phone,
+              total_items: items.length
+            })
+          ]
+        );
+        eventService.broadcast('call_tasks_updated', { at: Date.now(), batch_id: batch.batch_id, type: 'refill_non_wa_followup' });
+      }
+
+      // 2. Update contacts table notes if patient contact exists
+      const cleanDigits = (batch.patient_phone || '').replace(/\D/g, '').slice(-10);
+      if (cleanDigits.length >= 7) {
+        await db.run(
+          `UPDATE contacts 
+           SET notes = CASE 
+             WHEN notes IS NULL OR notes = '' THEN 'Non-WhatsApp Contact: Manual telephone follow-up required.'
+             WHEN notes LIKE '%Non-WhatsApp%' THEN notes
+             ELSE notes || ' | Non-WhatsApp Contact: Manual telephone follow-up required.'
+           END
+           WHERE phone LIKE ?`,
+          [`%${cleanDigits}%`]
+        ).catch(() => {});
+      }
+    } catch (nonWaErr: any) {
+      console.warn('[RefillBatchService] Note saving non-WhatsApp follow-up:', nonWaErr.message);
+    }
+  }
+
+  // Compose Owner WhatsApp Message (Nodes J, K, L, M)
+  const sourceLabel = batch.source === 'website' ? 'Website Refill' : 'Manual CRM Refill';
+  const lines: string[] = [
+    `📋 *Refill Batch Outcome (${sourceLabel} #${batch.batch_id})*`,
+    `👤 *Patient:* ${batch.patient_name} (${batch.patient_phone})`,
+    `📦 *Total Items:* ${items.length} (${addedItems.length} added to live cart, ${failedItems.length} failed/unresolved)`
+  ];
+
+  // Node K: Successfully processed medicines with distributor details
+  if (addedItems.length > 0) {
+    lines.push(`\n✅ *Added to Live Cart (${addedItems.length}):*`);
+    for (const it of addedItems) {
+      const dist = it.cart_store_name ? ` [Distributor: ${it.cart_store_name}]` : '';
+      const qty = it.cart_qty ?? it.requested_quantity;
+      lines.push(`• *${it.medicine_name}* × ${qty}${dist}`);
+    }
+  }
+
+  // Node K & L: Failed medicines with failure cause and confirmed distributor zero stock
+  if (failedItems.length > 0) {
+    lines.push(`\n❌ *Failed / Needs Attention (${failedItems.length}):*`);
+    for (const it of failedItems) {
+      const isZeroStock = it.is_zero_stock || it.cart_status === 'linked_oos' || /zero stock|out of stock|oos|0 stock/i.test(it.error || '');
+      const dist = it.cart_store_name ? ` (${it.cart_store_name})` : '';
+      if (isZeroStock) {
+        lines.push(`• *${it.medicine_name}* (Qty: ${it.requested_quantity})${dist}\n   🔴 *Distributor Confirmed ZERO STOCK (OOS)*`);
+      } else {
+        const reason = it.error || (it.cart_status === 'needs_link' ? 'Distributor link required' : it.cart_status);
+        lines.push(`• *${it.medicine_name}* (Qty: ${it.requested_quantity})${dist}\n   ⚠️ ${reason}`);
+      }
+    }
+  }
+
+  // Node M: Non-WhatsApp notice
+  if (isNonWa) {
+    lines.push(`\n📞 *Non-WhatsApp Contact Alert:*`);
+    lines.push(`Patient phone is not a WhatsApp mobile number. Saved on Call Tasks board for manual telephone follow-up.`);
+  }
+
+  const msg = lines.join('\n');
+  try {
+    await whatsappQueueWorker.enqueue(adminPhone, msg, 'admin_alert', 'Pharmacy Owner');
+    console.log(`[RefillBatchService] Enqueued owner outcome notification for batch #${batch.batch_id} to ${adminPhone}`);
+  } catch (err: any) {
+    console.warn(`[RefillBatchService] Could not enqueue owner notification for batch #${batch.batch_id}:`, err.message);
+  }
+}
+
+/**
  * Stages a refill batch confirmation notification in automation_notifications.
  * Adheres strictly to the Manual-Only Patient Messaging Contract (D4 / AGENTS.md rule).
+ * Node P: Only invoked when all medicines are successfully processed.
  */
 async function stageBatchRefillNotification(batch: RefillBatchRecord): Promise<void> {
   const db = await dbManager.getConnection();
   try {
     const medList = batch.items.map(m => `• ${m.medicine_name} (Qty: ${m.requested_quantity})`).join('\n');
-    const msg = `🔔 *Refill Request Received (${batch.source === 'website' ? 'Website' : 'CRM'} Batch #${batch.batch_id})*\n\nHello ${batch.patient_name},\nWe have received your refill request for:\n\n${medList}\n\nOur pharmacy is preparing your order.`;
+    const msg = `🔔 *Refill Request Received (${batch.source === 'website' ? 'Website' : 'CRM'} Batch #${batch.batch_id})*\n\nHello ${batch.patient_name},\nWe have received your refill request for:\n\n${medList}\n\nOur pharmacy is preparing your order. Your medicines have been added to our live cart.`;
 
     await db.run(
       `INSERT INTO automation_notifications (

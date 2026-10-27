@@ -2934,25 +2934,42 @@ export default function PharmarackCart() {
 
       toastEvent.trigger(`⚡ Placing official order for ${dist.storeName} on Pharmarack...`, 'info');
 
+      const phoneNum = getDistributorPhoneNumber(dist);
+      const cleanPhone = toWaDigits(phoneNum);
+      const boyId = resolveInitialDeliveryBoyId(dist, distributorMappings, deliveryBoysList);
+      const assignedBoy = deliveryBoysList.find(b => b.id === boyId);
+
       const res = await api.placeOfficialPharmarackOrders({
         targetStoreNames: [dist.storeName],
         targetStoreIds: [dist.storeId],
         orders: [{
           storeName: dist.storeName,
           storeId: dist.storeId,
-          items: finalItems
+          items: finalItems,
+          phone: cleanPhone,
+          deliveryBoyId: assignedBoy?.id ?? null,
+          deliveryBoyName: assignedBoy?.name,
+          deliveryBoyPhone: assignedBoy?.whatsapp_number
         }],
-        skipWhatsAppQueue: true
+        storeInfo,
+        skipWhatsAppQueue: false
       });
 
       if (res && res.success) {
         const placed = res.orders?.find(o => o.status === 'placed' && o.orderNo) || res.orders?.[0];
         const orderNo = placed?.orderNo;
 
+        setSentWaStatusMap(prev => ({ ...prev, [dist.storeId]: 'queued' }));
+        setHasUnreadSentHistory(true);
+        specialOrdersEvent.triggerUpdated();
+        whatsappQueueEvent.triggerUpdated();
+        window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+        window.dispatchEvent(new CustomEvent('sse-dispatch-updated'));
+
         toastEvent.trigger(
           orderNo
-            ? `✅ Official order placed on Pharmarack! Order ID: #${orderNo}`
-            : `✅ Official order placed on Pharmarack for ${dist.storeName}!`,
+            ? `✅ Official order placed on Pharmarack (#${orderNo})! Verified against history & ready for packing.`
+            : `✅ Official order placed on Pharmarack for ${dist.storeName}! Ready for packing.`,
           'success'
         );
 
@@ -3378,7 +3395,7 @@ export default function PharmarackCart() {
         window.dispatchEvent(new CustomEvent('sse-dispatch-updated'));
 
         toastEvent.trigger(
-          `⚡ Official orders placed on Pharmarack (${res.placedCount} placed)! Delivery staff notified & confirmed Order IDs shared with distributors.`,
+          `⚡ Official orders placed on Pharmarack (${res.placedCount} placed)! Confirmed Order IDs shared with distributors. Orders ready for packing.`,
           'info'
         );
 
@@ -3428,7 +3445,7 @@ export default function PharmarackCart() {
           // Success! Orders were placed on Pharmarack and cart was cleared.
           const orderNumbersStr = reallySynced.map(o => `#${o.order_no}`).join(', ');
           toastEvent.trigger(
-            `✅ Official order(s) placed on Pharmarack (${orderNumbersStr})! Cart is clear. Delivery staff notified & confirmed Order IDs shared.`,
+            `✅ Official order(s) placed on Pharmarack (${orderNumbersStr})! Cart is clear & confirmed Order IDs shared. Orders ready for packing.`,
             'info'
           );
 
@@ -7813,7 +7830,7 @@ export default function PharmarackCart() {
                       ? 'Placing orders…'
                       : isValidatingBeforeSend
                         ? 'Verifying live cart…'
-                        : `Place Official Orders & Dispatch (${readyToSendDistributors.length})`}
+                        : `Place Official Orders (${readyToSendDistributors.length})`}
                   </span>
                 </button>
 

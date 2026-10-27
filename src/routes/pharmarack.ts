@@ -3006,26 +3006,8 @@ router.post('/cart/place-official-orders', async (req, res) => {
     const db = await dbManager.getConnection();
     const appPort = process.env.PORT || config.port;
 
-    // STEP 1: Enqueue clean delivery boy pickup list FIRST if batch orders are provided
-    if (!skipWhatsAppQueue && orders && Array.isArray(orders) && orders.length > 0) {
-      try {
-        await fetch(`http://127.0.0.1:${appPort}/api/whatsapp/queue/enqueue-pharmarack-batch`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            orders,
-            deliveryBoyPhone,
-            deliveryBoyName,
-            storeInfo,
-            dispatchDistributorsLater: true, // Hold distributor messages until official Order IDs are captured
-            includeMedicineList: false // Clean distributor list only
-          })
-        }).catch(() => {});
-        console.log('[PharmarackRoute] Step 1: Delivery staff pickup summary enqueued successfully.');
-      } catch (queueErr) {
-        console.warn('[PharmarackRoute] Failed to enqueue delivery boy summary pre-checkout:', queueErr);
-      }
-    }
+    // STEP 1: Official Order Placement Flowchart - Delivery-boy notification is decoupled and handled separately (Node L)
+
 
     // STEP 2: Execute official cart checkout on Pharmarack via direct REST API
     console.log('[PharmarackRoute] Step 2: Executing direct REST API cart checkout (SaveOrderCartForRetailerManager)...');
@@ -3119,16 +3101,12 @@ router.post('/cart/place-official-orders', async (req, res) => {
       }
     }
 
-    // STEP 4: Automatically share confirmed official Order ID with saved distributor numbers with 5-minute grace period hold
+    // STEP 4: Official Order Placement Flowchart (Nodes F, G, H, I, J, K)
+    // Check Permanent Send PO History -> Skip if Already Sent / Send One WhatsApp to Distributor -> Record Status -> Continue Packing
     if (orders && Array.isArray(orders) && orders.length > 0) {
       const placedOrders = checkoutResult.orders?.filter(o => o.status === 'placed') || [];
       const shopRow = await db.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL AND value != '' LIMIT 1");
       const shopName = storeInfo?.name || storeInfo?.storeName || shopRow?.value || 'AI Pharmacy';
-      const shopPhone = storeInfo?.phone || storeInfo?.adminPhone || '';
-      const shopAddress = storeInfo?.address || '';
-      const shopEmail = storeInfo?.email || '';
-      const invoiceFormat = storeInfo?.invoiceFileFormat ? storeInfo.invoiceFileFormat.replace(' File Format', '') : 'CSV';
-      const orderDateFormatted = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
       for (const ord of orders) {
         if (!ord.phone) continue;
@@ -3148,32 +3126,83 @@ router.post('/cart/place-official-orders', async (req, res) => {
 
         // Strict Safeguard: NEVER send a blank dispatch reminder without an official PO number!
         if (!resolvedOrderNo) {
-          console.warn(`[PharmarackRoute] Step 4: Official PO ID not yet confirmed by Pharmarack for ${ord.storeName}. Suppressing blank dispatch reminder. Order preserved in Dispatch.`);
+          console.warn(`[PharmarackRoute] Step 4: Official PO ID not yet confirmed by Pharmarack for ${ord.storeName}. Suppressing blank dispatch reminder. Order preserved for packing.`);
           continue;
         }
 
-        // If checkout confirmed order:
-        // Enqueue exactly ONE concise dispatch reminder message held in a 5-minute review grace period (Human-in-the-loop)
-        const boyName = ord.deliveryBoyName || 'Delivery Staff';
-        const boyPhone = formatDisplayPhone(ord.deliveryBoyPhone);
-        const distMsg = `📦 Pharmarack order #${resolvedOrderNo} — has it been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}`;
+        // Node F: Check Permanent Send PO History
+        // Node G: Message Already Sent for This Order ID?
+        let alreadySent = false;
 
+        // 1. Check permanent placed orders table
+        const placedAudit = await db.get(
+          `SELECT id FROM pharmarack_placed_orders 
+           WHERE order_no = ? AND distributor_notified = 1 LIMIT 1`,
+          [resolvedOrderNo]
+        );
+        if (placedAudit) {
+          alreadySent = true;
+        }
+
+        // 2. Check synced orders announcement claim
+        if (!alreadySent) {
+          const syncedAudit = await db.get(
+            `SELECT order_no FROM pharmarack_synced_orders 
+             WHERE order_no = ? AND announced_at IS NOT NULL LIMIT 1`,
+            [resolvedOrderNo]
+          );
+          if (syncedAudit) {
+            alreadySent = true;
+          }
+        }
+
+        // 3. Check permanent WhatsApp queue history
+        if (!alreadySent) {
+          const queueAudit = await db.get(
+            `SELECT id FROM whatsapp_send_queue 
+             WHERE (message LIKE ? OR message LIKE ?) 
+               AND status IN ('pending', 'processing', 'sent', 'delivered', 'read') LIMIT 1`,
+            [`%#${resolvedOrderNo}%`, `%order #${resolvedOrderNo}%`]
+          );
+          if (queueAudit) {
+            alreadySent = true;
+          }
+        }
+
+        if (alreadySent) {
+          // Node H: Skip Distributor Message Permanently
+          console.log(`[PharmarackRoute] Step 4 (Node H): Distributor message for Order #${resolvedOrderNo} was already sent previously. Skipping permanently.`);
+          
+          // Ensure pharmarack_placed_orders records official order_no & notified state
+          const nowLocal = toLocalSqlDateTime(new Date());
+          await db.run(
+            `UPDATE pharmarack_placed_orders 
+             SET order_no = ?, distributor_notified = 1, distributor_notified_at = COALESCE(distributor_notified_at, ?) 
+             WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
+            [resolvedOrderNo, nowLocal, today, ord.storeName]
+          ).catch(() => {});
+
+          // Node H -> Node K: Continue Order Packing Workflow
+          continue;
+        }
+
+        // Node G: No -> Node I: Send One WhatsApp Message to Distributor
         const cleanDistPhone = ord.phone.replace(/\D/g, '');
         if (cleanDistPhone && cleanDistPhone.length >= 10) {
-          const reminderScheduledAt = Date.now(); // Immediate dispatch per owner requirement (5-min grace hold removed 2026-10-24)
+          const boyPart = (ord.deliveryBoyName && ord.deliveryBoyPhone)
+            ? ` by ${ord.deliveryBoyName} (${formatDisplayPhone(ord.deliveryBoyPhone)})`
+            : '';
+          const distMsg = `📦 Pharmarack order #${resolvedOrderNo} — has it been packed and dispatched${boyPart}? - ${shopName}`;
+          const reminderScheduledAt = Date.now();
+
           try {
-            // Atomic claim on pharmarack_synced_orders: exactly one writer may announce an OrderNo
-            const claim = await db.run(
+            // Atomic claim on pharmarack_synced_orders
+            await db.run(
               `UPDATE pharmarack_synced_orders 
                SET announced_at = CURRENT_TIMESTAMP, announce_result = 'announced_immediate' 
                WHERE order_no = ? AND announced_at IS NULL`,
               [resolvedOrderNo]
             );
-
-            if ((claim?.changes ?? 0) === 0) {
-              console.log(`[PharmarackRoute] Step 4: Order #${resolvedOrderNo} already claimed/announced; skipping duplicate enqueue.`);
-              continue;
-            }
 
             // Pre-check if a waiting reminder already exists in the queue for this distributor today
             const startOfDayMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
@@ -3197,28 +3226,19 @@ router.post('/cart/place-official-orders', async (req, res) => {
               );
               console.log(`[PharmarackRoute] Step 4: Merged Order #${resolvedOrderNo} into waiting queue item #${waiting.id}`);
             } else {
-              // Enqueue WITHOUT skipDedupe: restores queue's same-day number+text dedupe
-              try {
-                const queueId = await whatsappQueueWorker.enqueue(
-                  cleanDistPhone,
-                  distMsg.trim(),
-                  'distributor_dispatch_reminder',
-                  ord.storeName,
-                  reminderScheduledAt
-                );
-                await whatsappQueueWorker.forceNext();
-                console.log(`[PharmarackRoute] Step 4: Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) for immediate dispatch (queue #${queueId})`);
-              } catch (enqueueErr) {
-                // Un-claim so recovery / sync can retry truthfully
-                await db.run(
-                  `UPDATE pharmarack_synced_orders SET announced_at = NULL, announce_result = 'claim_failed' WHERE order_no = ?`,
-                  [resolvedOrderNo]
-                ).catch(() => {});
-                throw enqueueErr;
-              }
+              const queueId = await whatsappQueueWorker.enqueue(
+                cleanDistPhone,
+                distMsg.trim(),
+                'distributor_dispatch_reminder',
+                ord.storeName,
+                reminderScheduledAt
+              );
+              await whatsappQueueWorker.forceNext();
+              console.log(`[PharmarackRoute] Step 4 (Node I): Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) (queue #${queueId})`);
             }
             
-            // 1. Update pharmarack_placed_orders batch_sent status and attach confirmed order_no surgically by row ID
+            // Node J: Record Order ID, Distributor and Send Status
+            const nowLocal = toLocalSqlDateTime(new Date());
             const targetPlacedRow = await db.get(
               `SELECT id FROM pharmarack_placed_orders 
                WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) 
@@ -3226,27 +3246,28 @@ router.post('/cart/place-official-orders', async (req, res) => {
                ORDER BY id DESC LIMIT 1`,
               [today, ord.storeName, resolvedOrderNo]
             );
+
             if (targetPlacedRow?.id) {
               await db.run(
                 `UPDATE pharmarack_placed_orders 
-                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?, distributor_notified = 1, distributor_notified_at = ?
                  WHERE id = ?`,
-                [toLocalSqlDateTime(new Date()), resolvedOrderNo, targetPlacedRow.id]
+                [nowLocal, resolvedOrderNo, nowLocal, targetPlacedRow.id]
               );
             } else {
               await db.run(
                 `UPDATE pharmarack_placed_orders 
-                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?, distributor_notified = 1, distributor_notified_at = ?
                  WHERE id = (
                    SELECT id FROM pharmarack_placed_orders 
                    WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))
                    ORDER BY id DESC LIMIT 1
                  )`,
-                [toLocalSqlDateTime(new Date()), resolvedOrderNo, today, ord.storeName]
+                [nowLocal, resolvedOrderNo, nowLocal, today, ord.storeName]
               );
             }
 
-            // 2. Register reminder in distributor_dispatch_reminders with Pending status so 5-min grace period countdown renders in Dispatch
+            // Register reminder in distributor_dispatch_reminders with Dispatched status
             const existingRem = await db.get(
               `SELECT id FROM distributor_dispatch_reminders 
                WHERE date = ? AND LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) LIMIT 1`,
@@ -3255,7 +3276,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
             if (existingRem?.id) {
               await db.run(
                 `UPDATE distributor_dispatch_reminders 
-                 SET status = 'Pending', order_source = 'pharmarack' 
+                 SET status = 'Dispatched', order_source = 'pharmarack' 
                  WHERE id = ?`,
                 [existingRem.id]
               );
@@ -3263,12 +3284,12 @@ router.post('/cart/place-official-orders', async (req, res) => {
               await db.run(
                 `INSERT INTO distributor_dispatch_reminders 
                  (distributor_name, distributor_phone, date, status, auto_remind, order_source)
-                 VALUES (?, ?, ?, 'Pending', 1, 'pharmarack')`,
+                 VALUES (?, ?, ?, 'Dispatched', 1, 'pharmarack')`,
                 [ord.storeName, cleanDistPhone, today]
               );
             }
 
-            // Paced 1.5s gap between enqueuing successive distributor reminders to prevent fast-flush bursts
+            // Paced 1.5s gap between enqueuing successive distributor reminders
             await new Promise(r => setTimeout(r, 1500));
           } catch (distMsgErr) {
             console.warn(`[PharmarackRoute] Failed to enqueue distributor message for ${ord.storeName}:`, distMsgErr);

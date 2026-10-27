@@ -241,9 +241,10 @@ powershell -NoProfile -Command ^
     "  $curr++; " ^
     "  $dest = Join-Path '%INSTALL_DIR%' $entry.FullName; " ^
     "  if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) { " ^
-    "    if (!(Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null } " ^
+    "    if (-not (Test-Path -LiteralPath $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null } " ^
     "  } else { " ^
-    "    $parent = Split-Path $dest; if (!(Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }; " ^
+    "    $parent = [System.IO.Path]::GetDirectoryName($dest); " ^
+    "    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }; " ^
     "    $success = $false; " ^
     "    for ($attempt = 1; $attempt -le 5; $attempt++) { " ^
     "      try { " ^

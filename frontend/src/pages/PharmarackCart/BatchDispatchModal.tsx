@@ -94,7 +94,7 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
     >
       <div className="space-y-3 max-h-[75vh] flex flex-col">
         <p className="text-[11px] text-muted -mt-2">
-          Places official orders directly on retailers.pharmarack.com/cart for selected distributors, notifies delivery staff with clean pickup stores, and queues distributor dispatch reminders with genuine today's Order IDs.
+          Places official orders directly on retailers.pharmarack.com/cart for selected distributors, checks permanent send history, and shares confirmed Order IDs with distributors.
         </p>
 
         {/* Warning Banner if any selected distributor fails minimum requirements */}
@@ -335,18 +335,18 @@ export const BatchDispatchModal: React.FC<BatchDispatchModalProps> = ({
                 ? 'Please select at least one distributor'
                 : hasSelectedLimitIssues
                 ? 'Please fulfill minimum order requirements for selected distributors, or deselect them'
-                : 'Place official orders on Pharmarack & notify staff'
+                : 'Place official orders on Pharmarack & share confirmed Order IDs'
             }
           >
             {isSendingBatchWhatsApp ? (
               <>
                 <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                <span>Placing Orders &amp; Notifying Staff…</span>
+                <span>Placing Orders &amp; Verifying IDs…</span>
               </>
             ) : (
               <>
                 <Send size={13} />
-                <span>Place Official Orders &amp; Dispatch ({selectedCount} Distributor{selectedCount !== 1 ? 's' : ''})</span>
+                <span>Place Official Orders ({selectedCount} Distributor{selectedCount !== 1 ? 's' : ''})</span>
               </>
             )}
           </button>
