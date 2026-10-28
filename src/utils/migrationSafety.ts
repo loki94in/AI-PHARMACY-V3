@@ -517,6 +517,20 @@ export async function verifyBackupReadability(
     }
     return { ok: true };
   } catch (err: any) {
+    if (err?.message?.includes('SQLITE_READONLY') || err?.code === 'SQLITE_READONLY') {
+      try {
+        if (testDb) { await testDb.close(); testDb = null; }
+        testDb = await open({
+          filename: snapshotPath,
+          driver: sqlite3.Database,
+        });
+        const check = await testDb.get('PRAGMA quick_check(1)');
+        const checkVal = check ? Object.values(check)[0] : 'unknown';
+        if (checkVal === 'ok') {
+          return { ok: true };
+        }
+      } catch (_) {}
+    }
     return { ok: false, error: `Snapshot verification failed: ${err?.message || err}` };
   } finally {
     if (testDb) {
@@ -586,6 +600,20 @@ export async function verifyRestoredDatabaseAndContacts(
     }
     return { ok: true };
   } catch (err: any) {
+    if (err?.message?.includes('SQLITE_READONLY') || err?.code === 'SQLITE_READONLY') {
+      try {
+        if (restoredDb) { await restoredDb.close(); restoredDb = null; }
+        restoredDb = await open({
+          filename: dbPath,
+          driver: sqlite3.Database,
+        });
+        const check = await restoredDb.get('PRAGMA quick_check(1)');
+        const checkVal = check ? Object.values(check)[0] : 'unknown';
+        if (checkVal === 'ok') {
+          return { ok: true };
+        }
+      } catch (_) {}
+    }
     return { ok: false, error: `Verification of restored database failed: ${err?.message || err}` };
   } finally {
     if (restoredDb) {

@@ -75,6 +75,10 @@ describe('Distributor Contact Migration Safety & Data Preservation', () => {
       `INSERT INTO distributors (id, name, contact, phone, email, address, city, gstin, state_code)
        VALUES (4, 'Sun Pharma Direct', 'Sharma Ji', '9890012345', 'sun@pharma.com', 'Sector 12', 'Nagpur', '27SUNPH1111A1Z9', '27')`
     );
+    await db.run(
+      `INSERT INTO distributors (id, name, contact, phone, email, address, city, gstin, state_code)
+       VALUES (5, 'Anand Medical Distributor', 'Anand Medical Distributors <anandmedicaldist@gmail.com>', 'Anand Medical Distributors <anandmedicaldist@gmail.com>', NULL, 'Station Road', 'Pune', '27ANAND1234A1Z1', '27')`
+    );
 
     await db.run(
       `INSERT INTO pharmarack_distributor_mappings (store_name, distributor_id, phone)
@@ -91,7 +95,7 @@ describe('Distributor Contact Migration Safety & Data Preservation', () => {
     expect(fs.existsSync(snapshotPath!)).toBe(true);
 
     const preAudit = await captureDistributorAudit(db, 83);
-    expect(preAudit.distributors.size).toBe(4);
+    expect(preAudit.distributors.size).toBe(5);
     expect(preAudit.mappings.size).toBe(2);
 
     // 4. Simulate safe migration updates:
@@ -110,6 +114,15 @@ describe('Distributor Contact Migration Safety & Data Preservation', () => {
         END
       WHERE (email IS NULL OR email = '')
         AND (contact LIKE '%@%' OR contact LIKE '%.com%' OR phone LIKE '%@%' OR phone LIKE '%.com%')
+    `);
+
+    // Clean email strings incorrectly written into phone/contact column
+    await db.run(`
+      UPDATE distributors SET
+        phone = CASE WHEN phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%' THEN '' ELSE phone END,
+        contact = CASE WHEN (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%') AND email IS NOT NULL AND email != '' THEN '' ELSE contact END
+      WHERE (phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%')
+         OR (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%')
     `);
 
     // Synchronize missing phone only if contact contains numeric digits
@@ -138,6 +151,12 @@ describe('Distributor Contact Migration Safety & Data Preservation', () => {
     const dist3 = await db.get('SELECT * FROM distributors WHERE id = 3');
     expect(dist3.contact).toBe('09822011111'); // Backfilled safely since contact was NULL
     expect(dist3.phone).toBe('09822011111');
+
+    const dist5 = await db.get('SELECT * FROM distributors WHERE id = 5');
+    expect(dist5.name).toBe('Anand Medical Distributor');
+    expect(dist5.email).toBe('Anand Medical Distributors <anandmedicaldist@gmail.com>'); // Rescued into email!
+    expect(dist5.phone).toBe(''); // Erroneous email string cleaned from phone
+    expect(dist5.contact).toBe(''); // Erroneous email string cleaned from contact
 
     await db.close();
 

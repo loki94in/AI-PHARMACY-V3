@@ -24,6 +24,13 @@ const OriginalDatabase = sqlite3.Database;
       return;
     }
     
+    // Read-only connections cannot write pragmas and must not be mutated
+    const isReadOnly = typeof mode === 'number' && (mode & sqlite3.OPEN_READONLY) !== 0;
+    if (isReadOnly) {
+      if (callback) callback(null);
+      return;
+    }
+
     const isTest = process.env.NODE_ENV === 'test' || !!process.env.JEST_WORKER_ID;
     const busyTimeout = isTest ? 10000 : 30000;
 

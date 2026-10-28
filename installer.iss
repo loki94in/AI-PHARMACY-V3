@@ -386,9 +386,18 @@ begin
 end;
 
 function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
 begin
   Result := True;
-  if IsPortInUse(5175) and (not IsProcessRunning('PharmacyOS.exe')) then
+  // Proactively terminate any orphaned background process from a prior crash so port 5175 and files are free
+  if IsProcessRunning('PharmacyBackend.exe') then
+  begin
+    Exec('taskkill.exe', '/F /IM PharmacyBackend.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(500);
+  end;
+
+  if IsPortInUse(5175) and (not IsProcessRunning('PharmacyOS.exe')) and (not IsProcessRunning('PharmacyBackend.exe')) then
   begin
     if MsgBox(
       'Port 5175 is currently in use by another application.' + #13#10 +
