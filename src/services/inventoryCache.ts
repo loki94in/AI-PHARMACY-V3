@@ -95,6 +95,7 @@ class InventoryCache {
             m.manufacturer,
             m.packaging,
             m.pack_size,
+            m.pack_unit,
             m.schedule_type,
             COALESCE(m.allow_loose_sale, 1) AS allow_loose_sale
            FROM inventory_master im

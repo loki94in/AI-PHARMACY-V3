@@ -625,6 +625,7 @@ export interface CompactInventoryItem {
   manufacturer: string;
   packaging: string;
   pack_size: number | null;
+  pack_unit?: string | null;
   salts?: string;
   schedule_type?: string | null;
   medicine_name: string;

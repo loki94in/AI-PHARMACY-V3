@@ -258,4 +258,13 @@ Fast, mouse-free keyboard billing and purchase entry is a core pharmacy speed re
 - **Ownership**: Dispatch reminder status and delivery boy assignment remain owned by the Dispatch page (`/dispatch`).
 - **Sent Orders Extension**: Each card in the Sent PO History tab (`PharmarackCart/index.tsx`) provides an instant user-clicked action button (`📤 Send Dispatch Msg`) that calls `api.sendSentOrderDispatch(order.id)`. This guarantees pharmacy staff can dispatch (or re-send) an official reminder to any distributor carrying the confirmed PO number without creating duplicate order cards or parallel tracking tables.
 
+## POS Pack-Size Visibility & Validation Contract (added 2026-10-28)
+
+- **Authoritative Pack-Size Display**: When a medicine is selected in POS, its saved inventory pack size and unit (`m.pack_unit`, e.g. `Pack: 10 TAB (₹1.50/tab)`) are explicitly displayed under the medicine name.
+- **Strict Pack-Size Detection**: Pure detection utility `frontend/src/utils/packSizeDetector.ts` detects pack counts strictly from packaging syntax (`STRIP OF 15`, `14 TAB`, `20 CAP`, `15'S`) and liquids (`SYRUP`, `DROPS` -> 1 Bottle). It NEVER infers pack size from standalone dosage strengths (`650MG`, `625`, `40MG`, ratios `40/5`) or dimensions (`15 X 8 CM`).
+- **Mismatch Banner & Quick-Apply**: High-confidence discrepancies between detected and saved pack sizes render an amber warning banner. Operators can dismiss the warning (`✕`), quick-apply the detected size (`PUT /api/medicines/:id/quick-edit`), or open `UniversalMedicineEditModal` to edit and save across master records and active cart rows.
+- **No Silent Price or Stock Changes**: Strip MRP, loose rate ($\frac{\text{MRP}}{\text{savedPackSize}}$), purchasing, inventory valuation, and stock decrement logic remain 100% unchanged.
+- **Loose Sale Safeguard & Unblocked Full-Pack Sales**: Whole-strip sales (`qty > 0`, `looseQty = 0`) proceed without interruption even if a mismatch warning is present. If `looseQty > 0` on an unverified mismatch item, the loose input is highlighted in amber and bill completion (`handleCompleteSale`) is gated with a confirmation modal before finalizing the sale.
+
+
 

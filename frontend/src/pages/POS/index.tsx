@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, lazy, Suspense, useMemo, useCallback, useD
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { createPortal } from 'react-dom';
-import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft, RotateCcw, Repeat2, Eye, EyeOff } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft, RotateCcw, Repeat2, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 const AICamera = lazy(() => import('../../components/AICamera'));
 import { CompositionIntelligenceModal } from '../../components/CompositionIntelligenceModal';
 import { api, apiClient, getCompactInventoryCache, isCompactInventoryCacheReady, ensureCompactInventoryReady,
@@ -29,6 +29,7 @@ import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
 import { POSPatientModal, POSDoctorModal, POSPostSaleModal, POSInteractionsModal, POSPhonePromptModal, POSCheckoutBar } from '../../components/POS';
 import { isValidCustomerName } from '../../utils/customerValidator';
 import { useTerminal } from '../../context/TerminalContext';
+import { evaluatePackSize, detectPackSize, normalizeUnit, type PackSizeDetectionResult } from '../../utils/packSizeDetector';
 
 const getLocalDateString = (d: Date = new Date()) => {
   const yyyy = d.getFullYear();
@@ -206,6 +207,9 @@ interface CartRow {
   discountPer?: number;
   packSize?: number;
   pack_size?: number | null;
+  pack_unit?: string | null;
+  packUnit?: string | null;
+  packMismatchDismissed?: boolean;
   gst_percent?: number;
   stock_qty?: number;
   availableStock?: number;
@@ -253,6 +257,9 @@ interface PosBatchItem {
   unit_price?: number;
   sell_price?: number | string | null;
   pack_size?: number | null;
+  pack_unit?: string | null;
+  packUnit?: string | null;
+  packMismatchDismissed?: boolean;
   packaging?: string | null;
   manufacturer?: string;
   salts?: string;
@@ -309,6 +316,8 @@ interface EditSaleLine {
   loose_qty?: number | string | null;
   looseQty?: number | string | null;
   pack_size?: number | string | null;
+  pack_unit?: string | null;
+  name?: string;
   packSize?: number | string | null;
   discount_per?: number | string | null;
   discount?: number | string | null;
@@ -409,6 +418,8 @@ interface MedicineQuickDetails {
   sell_price?: number | string | null;
   packaging?: string | null;
   pack_size?: number | string | null;
+  pack_unit?: string | null;
+  name?: string;
   api_reference?: string;
   hsn_code?: string;
   alternatives?: PosBatchItem[];
@@ -517,6 +528,8 @@ interface StagedLine {
   loose_qty?: number | string | null;
   discount?: number | string | null;
   pack_size?: number | string | null;
+  pack_unit?: string | null;
+  name?: string;
   availableStock?: number | string | null;
   stock_qty?: number | string | null;
   loose_quantity?: number | string | null;
@@ -989,6 +1002,9 @@ export function allocateMedicineBatches(params: {
         unitPrice: Number(refItem.unitPrice || refItem.unit_price || refItem.sell_price || refItem.mrp || 0),
         discount: Number(refItem.discount || 0),
         packSize: pSize,
+      pack_size: pSize,
+      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
+      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
         availableStock: Number(refItem.availableStock || refItem.stock_qty || 0),
         availableLooseStock: Number(refItem.availableLooseStock || refItem.loose_quantity || 0),
         alternative_batches: [],
@@ -1084,6 +1100,12 @@ export function allocateMedicineBatches(params: {
           unitPrice: unitPrice,
           discount: discount || 0,
           packSize: pSize,
+      pack_size: pSize,
+      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
+      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
+          pack_size: pSize,
+          pack_unit: (batch as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
+          packaging: batch.packaging || params.fallbackItem?.packaging || null,
           allow_loose_sale: resolveAllowLooseSale({
             allow_loose_sale: batch.allow_loose_sale !== undefined ? (batch.allow_loose_sale ? 1 : 0) : (params.fallbackItem?.allow_loose_sale !== undefined ? (params.fallbackItem.allow_loose_sale ? 1 : 0) : undefined),
             name: batch.medicine_name || params.medicineName,
@@ -1135,6 +1157,9 @@ export function allocateMedicineBatches(params: {
       unitPrice: Number(firstB.unit_price || mrp),
       discount: 0,
       packSize: pSize,
+      pack_size: pSize,
+      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
+      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
       costPrice: firstB.cost_price != null ? firstB.cost_price : (params.fallbackItem?.costPrice || null),
       availableStock: firstB.stock_qty,
       availableLooseStock: firstB.loose_quantity,
@@ -1672,6 +1697,12 @@ const POS = () => {
                 packaging: med.packaging,
                 pack_size: pSize,
                 packSize: pSize,
+      pack_size: pSize,
+      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
+      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
+          pack_size: pSize,
+          pack_unit: (batch as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
+          packaging: batch.packaging || params.fallbackItem?.packaging || null,
                 sell_price: med.sell_price,
                 mrp: med.mrp,
                 unit_price: med.unit_price || med.unitPrice,
@@ -2596,6 +2627,12 @@ const POS = () => {
           packaging: med.packaging,
           pack_size: pSize,
           packSize: pSize,
+      pack_size: pSize,
+      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
+      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
+          pack_size: pSize,
+          pack_unit: (batch as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
+          packaging: batch.packaging || params.fallbackItem?.packaging || null,
           sell_price: med.sell_price,
           mrp: med.mrp,
           unit_price: med.unit_price || med.unitPrice,
@@ -2751,6 +2788,38 @@ const POS = () => {
   const [intelligenceMedicineId, setIntelligenceMedicineId] = useState<number | null>(null);
   const [showIntelligenceModal, setShowIntelligenceModal] = useState<boolean>(false);
   const [expandedSubstitutes, setExpandedSubstitutes] = useState<Record<number, boolean>>({});
+  const [packMismatchVerificationQueue, setPackMismatchVerificationQueue] = useState<{
+    item: CartRow;
+    packEval: PackSizeDetectionResult;
+    pendingOverridePhone?: string;
+    pendingDirectSave?: boolean;
+  } | null>(null);
+
+  const handleQuickApplyPackSize = async (medicineId: number, newPackSize: number, newUnit?: string) => {
+    try {
+      await api.updateQuickEditMedicine(medicineId, {
+        pack_size: newPackSize,
+        ...(newUnit ? { pack_unit: newUnit } : {})
+      });
+      invalidateAfterStockWrite(queryClient);
+      updateCart(prev => prev.map(item => {
+        if (Number(item.medicine_id) === medicineId) {
+          return {
+            ...item,
+            packSize: newPackSize,
+            pack_size: newPackSize,
+            ...(newUnit ? { pack_unit: newUnit, packUnit: newUnit } : {}),
+            packMismatchDismissed: false
+          };
+        }
+        return item;
+      }));
+      toastEvent.trigger(`Pack size updated to ${newPackSize} in master inventory!`, 'success');
+    } catch (err) {
+      console.error('Failed to quick-apply pack size:', err);
+      toastEvent.trigger('Failed to update pack size in inventory.', 'error');
+    }
+  };
 
   // Keyboard shortcut listeners (e.g. 'X' for camera, 'Alt+E' or 'F8' for quick edit medicine)
   useEffect(() => {
@@ -3903,6 +3972,7 @@ const POS = () => {
   useModalEscape(!!zoomedImage, () => setZoomedImage(null));
   useModalEscape(showCamera, () => setShowCamera(false));
   useModalEscape(!!editMedicineId, () => setEditMedicineId(null));
+  useModalEscape(!!packMismatchVerificationQueue, () => setPackMismatchVerificationQueue(null));
 
   const handleCompleteSale = async (overridePhone?: string, isDirectSave: boolean = false) => {
     if (isSavingBillRef.current) return;
@@ -3925,6 +3995,40 @@ const POS = () => {
         docEl.focus();
         (docEl as HTMLInputElement).select?.();
       }
+      return;
+    }
+
+    // Loose-sale pack size mismatch gatekeeper:
+    // Full-strip sales remain completely unblocked.
+    // If loose units are being sold on an item with an unverified mismatch, require confirmation before completing.
+    const unverifiedLooseItem = cart.find(c => {
+      if (c.isEmptyRow || !c.looseQty || c.looseQty <= 0 || c.packMismatchDismissed) return false;
+      const evalResult = evaluatePackSize({
+        name: c.name || c.medicine_name,
+        packaging: c.packaging,
+        savedPackSize: c.packSize || c.pack_size,
+        savedUnit: c.pack_unit,
+        mrp: c.mrp,
+        allowLooseSale: c.allow_loose_sale
+      });
+      return evalResult.hasMismatch;
+    });
+
+    if (unverifiedLooseItem) {
+      const evalResult = evaluatePackSize({
+        name: unverifiedLooseItem.name || unverifiedLooseItem.medicine_name,
+        packaging: unverifiedLooseItem.packaging,
+        savedPackSize: unverifiedLooseItem.packSize || unverifiedLooseItem.pack_size,
+        savedUnit: unverifiedLooseItem.pack_unit,
+        mrp: unverifiedLooseItem.mrp,
+        allowLooseSale: unverifiedLooseItem.allow_loose_sale
+      });
+      setPackMismatchVerificationQueue({
+        item: unverifiedLooseItem,
+        packEval: evalResult,
+        pendingOverridePhone: overridePhone,
+        pendingDirectSave: isDirectSave
+      });
       return;
     }
 
@@ -5939,6 +6043,82 @@ const POS = () => {
                                 }}
                                 placeholder={item.isEmptyRow ? "Search medicine..." : "Change medicine..."}
                               />
+                              {!item.isEmptyRow && (() => {
+                                const packEval = evaluatePackSize({
+                                  name: item.name || item.medicine_name,
+                                  packaging: item.packaging,
+                                  savedPackSize: item.packSize || item.pack_size,
+                                  savedUnit: item.pack_unit,
+                                  mrp: item.mrp,
+                                  allowLooseSale: item.allow_loose_sale
+                                });
+
+                                return (
+                                  <div className="flex flex-col gap-0.5 mt-0.5 px-0.5 select-none">
+                                    <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-muted font-mono leading-tight">
+                                      <span className="font-semibold text-text/80 bg-bg3/60 px-1 py-0.5 rounded border border-border/40">
+                                        Pack: {packEval.savedPackSize} {packEval.savedUnit}
+                                      </span>
+                                      {packEval.calculatedSavedUnitPrice > 0 && (
+                                        <span className="text-muted/90">
+                                          (₹{packEval.calculatedSavedUnitPrice.toFixed(2)}/{packEval.savedUnit.toLowerCase()})
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {packEval.hasMismatch && !item.packMismatchDismissed && (
+                                      <div className="flex items-center justify-between gap-1.5 mt-0.5 py-1 px-1.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-500 text-[11px] leading-tight animate-in fade-in duration-150">
+                                        <div className="flex items-center gap-1 min-w-0">
+                                          <AlertTriangle size={12} className="shrink-0 text-amber-500" />
+                                          <span className="font-semibold truncate" title={packEval.message}>
+                                            Mismatch: Saved {packEval.savedPackSize} vs Detected {packEval.detectedPackSize} {packEval.detectedUnit}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          {item.medicine_id && (
+                                            <button
+                                              type="button"
+                                              title="Fix pack size in Universal Medicine Editor"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setEditMedicineId(Number(item.medicine_id));
+                                              }}
+                                              className="px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-600 dark:text-amber-400 font-bold flex items-center gap-0.5 cursor-pointer text-[10px]"
+                                            >
+                                              <Edit size={10} />
+                                              <span>Fix</span>
+                                            </button>
+                                          )}
+                                          {packEval.detectedPackSize && (
+                                            <button
+                                              type="button"
+                                              title={`Quick apply ${packEval.detectedPackSize} ${packEval.detectedUnit} to inventory record`}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleQuickApplyPackSize(Number(item.medicine_id), packEval.detectedPackSize, packEval.detectedUnit || undefined);
+                                              }}
+                                              className="px-1.5 py-0.5 rounded bg-sky-500/20 hover:bg-sky-500/30 text-sky font-bold cursor-pointer text-[10px]"
+                                            >
+                                              Apply {packEval.detectedPackSize}
+                                            </button>
+                                          )}
+                                          <button
+                                            type="button"
+                                            title="Acknowledge and keep saved pack size for this bill"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              updateCart(prev => prev.map(c => c.id === item.id ? { ...c, packMismatchDismissed: true } : c));
+                                            }}
+                                            className="px-1 py-0.5 text-[10px] text-muted hover:text-text rounded cursor-pointer"
+                                          >
+                                            ✕
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                               
                               {activeRowSearchIndex === cart.indexOf(item) && rowSearchTerm.trim().length >= 2 && (
                                 <div 
@@ -6347,10 +6527,21 @@ const POS = () => {
                               return <div className="font-mono text-sm font-bold text-muted">-</div>;
                             }
                             const isLooseAllowed = !!resolveAllowLooseSale(item);
+                            const rowPackEval = evaluatePackSize({
+                              name: item.name || item.medicine_name,
+                              packaging: item.packaging,
+                              savedPackSize: item.packSize || item.pack_size,
+                              savedUnit: item.pack_unit,
+                              mrp: item.mrp,
+                              allowLooseSale: item.allow_loose_sale
+                            });
+                            const isLooseMismatched = Number(item.looseQty || 0) > 0 && rowPackEval.hasMismatch && !item.packMismatchDismissed;
                             return (
                               <div className="flex items-center justify-center">
                                 <div className={`flex items-center gap-0.5 border rounded-lg px-1.5 py-0.5 h-8 transition-all ${
-                                  isLooseAllowed 
+                                  isLooseMismatched
+                                    ? 'bg-amber-500/15 border-amber-500 ring-2 ring-amber-500/40 text-amber-500'
+                                    : isLooseAllowed 
                                     ? 'bg-amber-500/5 border-amber-500/20 hover:border-amber-500/40 focus-within:border-amber-500/50 focus-within:ring-1 focus-within:ring-amber-500/20' 
                                     : 'bg-rose-500/5 border-rose-500/20 opacity-75'
                                 }`}>
@@ -6376,7 +6567,11 @@ const POS = () => {
                                     min="0"
                                     placeholder={isLooseAllowed ? "0" : "N/A"}
                                     disabled={item.isEmptyRow || !isLooseAllowed}
-                                    title={isLooseAllowed ? "Loose Tablets Qty" : "Restricted: Full Pack Only"}
+                                    title={
+                                      isLooseMismatched
+                                        ? `⚠️ Pack size mismatch! Saved: ${rowPackEval.savedPackSize}, Detected: ${rowPackEval.detectedPackSize}. Loose pricing calculates at ₹${rowPackEval.calculatedSavedUnitPrice}/unit instead of ₹${rowPackEval.calculatedDetectedUnitPrice}/unit.`
+                                        : isLooseAllowed ? "Loose Tablets Qty" : "Restricted: Full Pack Only"
+                                    }
                                     onKeyDown={e => {
                                       if (e.key === 'ArrowLeft') {
                                         e.preventDefault();
@@ -6852,8 +7047,12 @@ const POS = () => {
                     if (!item.isEmptyRow && item.medicine_id === currentMedId) {
                       return {
                         ...item,
-                        name: details.name,
+                        name: details.name || item.name,
                         packSize: newPackSize,
+                        pack_size: newPackSize,
+                        pack_unit: (details as any).pack_unit || item.pack_unit,
+                        packaging: details.packaging || item.packaging,
+                        packMismatchDismissed: false,
                         mrp: details.mrp || item.mrp,
                         salts: details.api_reference || details.hsn_code || item.salts,
                         // Loose-sale lock edited in the Universal Editor applies to this sale at once
@@ -6884,6 +7083,105 @@ const POS = () => {
             }}
           />
         </Suspense>
+      )}
+
+      {/* Loose Sale Pack Size Verification Modal */}
+      {packMismatchVerificationQueue && (
+        <div className="fixed inset-0 z-global-modal flex items-center justify-center p-4 bg-bg/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-bg2 border border-border rounded-2xl p-5 shadow-2xl max-w-lg w-full flex flex-col gap-4">
+            <div className="flex items-center gap-2.5 text-amber-500 border-b border-border/40 pb-3">
+              <div className="p-2 rounded-xl bg-amber-500/15 border border-amber-500/30">
+                <AlertTriangle size={20} className="text-amber-500" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-text">Verify Pack Size for Loose Sale</h3>
+                <p className="text-xs text-muted">A discrepancy was detected between inventory and packaging.</p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 p-3 bg-bg3/50 border border-border/40 rounded-xl text-sm">
+              <div className="font-bold text-text truncate">
+                {packMismatchVerificationQueue.item.name}
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 rounded-lg bg-bg border border-border/50">
+                  <span className="text-muted block text-[11px]">Saved in Inventory:</span>
+                  <span className="font-bold text-text text-sm">
+                    {packMismatchVerificationQueue.packEval.savedPackSize} {packMismatchVerificationQueue.packEval.savedUnit}
+                  </span>
+                  <span className="text-muted block text-[11px] mt-0.5">
+                    Unit Rate: ₹{packMismatchVerificationQueue.packEval.calculatedSavedUnitPrice.toFixed(2)}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg bg-sky/5 border border-sky/30">
+                  <span className="text-sky block text-[11px] font-bold">Detected Packaging:</span>
+                  <span className="font-bold text-sky text-sm">
+                    {packMismatchVerificationQueue.packEval.detectedPackSize} {packMismatchVerificationQueue.packEval.detectedUnit || packMismatchVerificationQueue.packEval.savedUnit}
+                  </span>
+                  {packMismatchVerificationQueue.packEval.calculatedDetectedUnitPrice !== undefined && (
+                    <span className="text-muted block text-[11px] mt-0.5">
+                      Unit Rate: ₹{packMismatchVerificationQueue.packEval.calculatedDetectedUnitPrice.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="text-xs text-muted leading-relaxed mt-1">
+                Selling <strong className="text-amber-500">{packMismatchVerificationQueue.item.looseQty} loose units</strong> using the saved pack size ({packMismatchVerificationQueue.packEval.savedPackSize}) will charge <strong className="text-text font-mono">₹{((packMismatchVerificationQueue.item.looseQty || 0) * packMismatchVerificationQueue.packEval.calculatedSavedUnitPrice).toFixed(2)}</strong>. If the physical strip contains {packMismatchVerificationQueue.packEval.detectedPackSize} units, the rate should be <strong className="text-text font-mono">₹{((packMismatchVerificationQueue.item.looseQty || 0) * (packMismatchVerificationQueue.packEval.calculatedDetectedUnitPrice || 0)).toFixed(2)}</strong>.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1 flex-wrap sm:flex-nowrap">
+              <button
+                type="button"
+                onClick={() => {
+                  const medId = Number(packMismatchVerificationQueue.item.medicine_id);
+                  setPackMismatchVerificationQueue(null);
+                  setEditMedicineId(medId);
+                }}
+                className="px-3 py-2 rounded-xl bg-bg border border-border hover:bg-bg3 text-text font-semibold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Edit size={13} />
+                <span>Open Universal Editor</span>
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const itemId = packMismatchVerificationQueue.item.id;
+                    updateCart(prev => prev.map(c => c.id === itemId ? { ...c, packMismatchDismissed: true } : c));
+                    const pendingPhone = packMismatchVerificationQueue.pendingOverridePhone;
+                    const pendingSave = packMismatchVerificationQueue.pendingDirectSave;
+                    setPackMismatchVerificationQueue(null);
+                    setTimeout(() => handleCompleteSale(pendingPhone, pendingSave), 50);
+                  }}
+                  className="px-3 py-2 rounded-xl bg-bg border border-border hover:bg-bg3 text-muted hover:text-text font-bold text-xs transition-all cursor-pointer"
+                >
+                  Keep Saved ({packMismatchVerificationQueue.packEval.savedPackSize})
+                </button>
+                {packMismatchVerificationQueue.packEval.detectedPackSize && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const medId = Number(packMismatchVerificationQueue.item.medicine_id);
+                      const newSize = packMismatchVerificationQueue.packEval.detectedPackSize;
+                      const newUnit = packMismatchVerificationQueue.packEval.detectedUnit || undefined;
+                      await handleQuickApplyPackSize(medId, newSize, newUnit);
+                      const pendingPhone = packMismatchVerificationQueue.pendingOverridePhone;
+                      const pendingSave = packMismatchVerificationQueue.pendingDirectSave;
+                      setPackMismatchVerificationQueue(null);
+                      setTimeout(() => handleCompleteSale(pendingPhone, pendingSave), 50);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-primary text-white font-bold text-xs shadow-sm hover:brightness-110 transition-all cursor-pointer"
+                  >
+                    Update to {packMismatchVerificationQueue.packEval.detectedPackSize} & Proceed
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
 
