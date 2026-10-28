@@ -19468,6 +19468,7 @@ __export(refillBatchService_exports, {
   generateBatchId: () => generateBatchId,
   getRefillBatch: () => getRefillBatch,
   listRefillBatches: () => listRefillBatches,
+  notifyOwnerOfRefillBatchOutcome: () => notifyOwnerOfRefillBatchOutcome,
   rejectRefillBatch: () => rejectRefillBatch
 });
 function generateBatchId(source) {
@@ -19693,7 +19694,6 @@ async function createRefillBatch(input) {
   if (shouldAutoDispatch && eligibleCount > 0) {
     await dispatchBatchEligibleItemsToCart(batchId);
   }
-  await stageBatchRefillNotification(batchRecord);
   const updated = await getRefillBatch(batchId);
   return updated || batchRecord;
 }
@@ -19725,11 +19725,17 @@ async function dispatchBatchEligibleItemsToCart(batchId) {
         if (cartRes.line) {
           item.cart_store_name = cartRes.line.storeName;
           item.cart_qty = cartRes.line.qty;
+        } else if (cartRes.linked && cartRes.linked.length > 0) {
+          item.cart_store_name = cartRes.linked[0].storeName;
         }
       } else {
         failedCount++;
         item.cart_status = status;
         item.error = cartRes.message;
+        const isZeroStock = status === "linked_oos" || /zero stock|out of stock|oos|0 stock/i.test(cartRes.message || "");
+        if (isZeroStock) {
+          item.is_zero_stock = true;
+        }
       }
       results.push({
         refill_id: item.refill_id,
@@ -19741,6 +19747,9 @@ async function dispatchBatchEligibleItemsToCart(batchId) {
       failedCount++;
       item.cart_status = "failed";
       item.error = err.message || "Cart addition failed";
+      if (/zero stock|out of stock|oos|0 stock/i.test(err.message || "")) {
+        item.is_zero_stock = true;
+      }
       results.push({
         refill_id: item.refill_id,
         medicine_name: item.medicine_name,
@@ -19766,6 +19775,58 @@ async function dispatchBatchEligibleItemsToCart(batchId) {
     added_count: addedCount,
     failed_count: failedCount
   });
+  try {
+    const existingQaTask = await db2.get(
+      `SELECT id FROM patient_call_tasks WHERE reference_id = ? AND task_type = 'refill_qa'`,
+      [batchId]
+    );
+    const qaTaskDetails = {
+      batch_id: batchId,
+      source: batch.source,
+      patient_name: batch.patient_name,
+      patient_phone: batch.patient_phone,
+      added_count: addedCount,
+      failed_count: failedCount,
+      total_items: items.length,
+      medicines: items.map((it) => ({
+        name: it.medicine_name,
+        qty: it.cart_qty || it.requested_quantity,
+        status: it.cart_status,
+        distributor: it.cart_store_name || null,
+        is_zero_stock: it.is_zero_stock || it.cart_status === "linked_oos",
+        error: it.error || null
+      }))
+    };
+    if (!existingQaTask) {
+      await db2.run(
+        `INSERT INTO patient_call_tasks 
+         (task_type, patient_name, patient_phone, reference_id, details_json, status, priority, created_at, updated_at)
+         VALUES ('refill_qa', ?, ?, ?, ?, 'pending', 'normal', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [batch.patient_name, batch.patient_phone, batchId, JSON.stringify(qaTaskDetails)]
+      );
+      eventService.broadcast("call_tasks_updated", { at: Date.now(), batch_id: batchId, task_type: "refill_qa" });
+    } else {
+      await db2.run(
+        `UPDATE patient_call_tasks SET details_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [JSON.stringify(qaTaskDetails), existingQaTask.id]
+      );
+    }
+  } catch (qaTaskErr) {
+    console.warn("[RefillBatchService] Note creating QA refill task:", qaTaskErr.message);
+  }
+  const updatedBatchRecord = await getRefillBatch(batchId);
+  if (updatedBatchRecord) {
+    try {
+      await notifyOwnerOfRefillBatchOutcome(updatedBatchRecord, items);
+    } catch (ownerNotifErr) {
+      console.warn("[RefillBatchService] Error notifying owner of batch outcome:", ownerNotifErr.message);
+    }
+    if (failedCount === 0 && addedCount > 0) {
+      await stageBatchRefillNotification(updatedBatchRecord);
+    } else {
+      console.log(`[RefillBatch] Partial/failed cart items detected (${failedCount} failed of ${items.length}) for batch ${batchId}. Suppressed patient notification per flowchart Node Q.`);
+    }
+  }
   return { batch_id: batchId, added_count: addedCount, failed_count: failedCount, results };
 }
 async function approveRefillBatch(batchId, optsOrApprover) {
@@ -19903,6 +19964,105 @@ async function listRefillBatches(opts = {}) {
     };
   });
 }
+async function notifyOwnerOfRefillBatchOutcome(batch, items) {
+  const db2 = await dbManager.getConnection();
+  const adminPhone = await resolveAdminWhatsappNumber(db2);
+  if (!adminPhone) {
+    console.warn(`[RefillBatchService] Owner WhatsApp notification skipped for batch #${batch.batch_id}: No admin WhatsApp number configured in Settings.`);
+    return;
+  }
+  const addedItems = items.filter((it) => it.cart_status === "added" || it.cart_status === "in_cart");
+  const failedItems = items.filter((it) => it.cart_status !== "added" && it.cart_status !== "in_cart");
+  const phoneValidation = validate10DigitPhone(batch.patient_phone, { allowEmpty: false, requireMobilePrefix: true });
+  const isNonWa = !phoneValidation.isValid;
+  if (isNonWa) {
+    try {
+      const existingCallTask = await db2.get(
+        `SELECT id FROM patient_call_tasks WHERE reference_id = ? AND task_type = 'refill_non_wa_followup'`,
+        [batch.batch_id]
+      );
+      if (!existingCallTask) {
+        await db2.run(
+          `INSERT INTO patient_call_tasks 
+           (task_type, patient_name, patient_phone, reference_id, details_json, status, priority, created_at, updated_at)
+           VALUES ('refill_non_wa_followup', ?, ?, ?, ?, 'pending', 'high', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+          [
+            batch.patient_name,
+            phoneValidation.cleanPhone || batch.patient_phone,
+            batch.batch_id,
+            JSON.stringify({
+              reason: "Non-WhatsApp contact for refill batch. Manual telephone follow-up required.",
+              batch_id: batch.batch_id,
+              patient_name: batch.patient_name,
+              patient_phone: batch.patient_phone,
+              total_items: items.length
+            })
+          ]
+        );
+        eventService.broadcast("call_tasks_updated", { at: Date.now(), batch_id: batch.batch_id, type: "refill_non_wa_followup" });
+      }
+      const cleanDigits = (batch.patient_phone || "").replace(/\D/g, "").slice(-10);
+      if (cleanDigits.length >= 7) {
+        await db2.run(
+          `UPDATE contacts 
+           SET notes = CASE 
+             WHEN notes IS NULL OR notes = '' THEN 'Non-WhatsApp Contact: Manual telephone follow-up required.'
+             WHEN notes LIKE '%Non-WhatsApp%' THEN notes
+             ELSE notes || ' | Non-WhatsApp Contact: Manual telephone follow-up required.'
+           END
+           WHERE phone LIKE ?`,
+          [`%${cleanDigits}%`]
+        ).catch(() => {
+        });
+      }
+    } catch (nonWaErr) {
+      console.warn("[RefillBatchService] Note saving non-WhatsApp follow-up:", nonWaErr.message);
+    }
+  }
+  const sourceLabel = batch.source === "website" ? "Website Refill" : "Manual CRM Refill";
+  const lines = [
+    `\u{1F4CB} *Refill Batch Outcome (${sourceLabel} #${batch.batch_id})*`,
+    `\u{1F464} *Patient:* ${batch.patient_name} (${batch.patient_phone})`,
+    `\u{1F4E6} *Total Items:* ${items.length} (${addedItems.length} added to live cart, ${failedItems.length} failed/unresolved)`
+  ];
+  if (addedItems.length > 0) {
+    lines.push(`
+\u2705 *Added to Live Cart (${addedItems.length}):*`);
+    for (const it of addedItems) {
+      const dist = it.cart_store_name ? ` [Distributor: ${it.cart_store_name}]` : "";
+      const qty = it.cart_qty ?? it.requested_quantity;
+      lines.push(`\u2022 *${it.medicine_name}* \xD7 ${qty}${dist}`);
+    }
+  }
+  if (failedItems.length > 0) {
+    lines.push(`
+\u274C *Failed / Needs Attention (${failedItems.length}):*`);
+    for (const it of failedItems) {
+      const isZeroStock = it.is_zero_stock || it.cart_status === "linked_oos" || /zero stock|out of stock|oos|0 stock/i.test(it.error || "");
+      const dist = it.cart_store_name ? ` (${it.cart_store_name})` : "";
+      if (isZeroStock) {
+        lines.push(`\u2022 *${it.medicine_name}* (Qty: ${it.requested_quantity})${dist}
+   \u{1F534} *Distributor Confirmed ZERO STOCK (OOS)*`);
+      } else {
+        const reason = it.error || (it.cart_status === "needs_link" ? "Distributor link required" : it.cart_status);
+        lines.push(`\u2022 *${it.medicine_name}* (Qty: ${it.requested_quantity})${dist}
+   \u26A0\uFE0F ${reason}`);
+      }
+    }
+  }
+  if (isNonWa) {
+    lines.push(`
+\u{1F4DE} *Non-WhatsApp Contact Alert:*`);
+    lines.push(`Patient phone is not a WhatsApp mobile number. Saved on Call Tasks board for manual telephone follow-up.`);
+  }
+  const msg = lines.join("\n");
+  try {
+    await whatsappQueueWorker.enqueue(adminPhone, msg, "admin_alert", "Pharmacy Owner");
+    console.log(`[RefillBatchService] Enqueued owner outcome notification for batch #${batch.batch_id} to ${adminPhone}`);
+  } catch (err) {
+    console.warn(`[RefillBatchService] Could not enqueue owner notification for batch #${batch.batch_id}:`, err.message);
+  }
+}
 async function stageBatchRefillNotification(batch) {
   const db2 = await dbManager.getConnection();
   try {
@@ -19914,7 +20074,7 @@ We have received your refill request for:
 
 ${medList}
 
-Our pharmacy is preparing your order.`;
+Our pharmacy is preparing your order. Your medicines have been added to our live cart.`;
     await db2.run(
       `INSERT INTO automation_notifications (
         type, recipient_name, recipient_phone, message, status,
@@ -19940,6 +20100,8 @@ var init_refillBatchService = __esm({
     init_phoneValidation();
     init_localTime();
     init_refillCartService();
+    init_whatsappQueueWorker();
+    init_waAdminEscalationService();
   }
 });
 
@@ -39662,28 +39824,6 @@ var init_pharmarack = __esm({
         const today = toLocalSqlDateTime(/* @__PURE__ */ new Date()).slice(0, 10);
         const db2 = await dbManager.getConnection();
         const appPort = process.env.PORT || config.port;
-        if (!skipWhatsAppQueue && orders && Array.isArray(orders) && orders.length > 0) {
-          try {
-            await fetch(`http://127.0.0.1:${appPort}/api/whatsapp/queue/enqueue-pharmarack-batch`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                orders,
-                deliveryBoyPhone,
-                deliveryBoyName,
-                storeInfo,
-                dispatchDistributorsLater: true,
-                // Hold distributor messages until official Order IDs are captured
-                includeMedicineList: false
-                // Clean distributor list only
-              })
-            }).catch(() => {
-            });
-            console.log("[PharmarackRoute] Step 1: Delivery staff pickup summary enqueued successfully.");
-          } catch (queueErr) {
-            console.warn("[PharmarackRoute] Failed to enqueue delivery boy summary pre-checkout:", queueErr);
-          }
-        }
         console.log("[PharmarackRoute] Step 2: Executing direct REST API cart checkout (SaveOrderCartForRetailerManager)...");
         const checkoutResult = await pharmarackCheckoutService.placeOrdersViaApi(targetStoreNames, targetStoreIds);
         invalidatePharmarackCartCache();
@@ -39767,11 +39907,6 @@ var init_pharmarack = __esm({
           const placedOrders = checkoutResult.orders?.filter((o) => o.status === "placed") || [];
           const shopRow = await db2.get("SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name') AND value IS NOT NULL AND value != '' LIMIT 1");
           const shopName = storeInfo?.name || storeInfo?.storeName || shopRow?.value || "AI Pharmacy";
-          const shopPhone = storeInfo?.phone || storeInfo?.adminPhone || "";
-          const shopAddress = storeInfo?.address || "";
-          const shopEmail = storeInfo?.email || "";
-          const invoiceFormat = storeInfo?.invoiceFileFormat ? storeInfo.invoiceFileFormat.replace(" File Format", "") : "CSV";
-          const orderDateFormatted = (/* @__PURE__ */ new Date()).toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" });
           for (const ord of orders) {
             if (!ord.phone) continue;
             const normOrdStore = (ord.storeName || "").toLowerCase().trim();
@@ -39785,26 +39920,63 @@ var init_pharmarack = __esm({
             });
             const resolvedOrderNo = matchedPlaced?.orderNo || matchedSynced?.order_no || "";
             if (!resolvedOrderNo) {
-              console.warn(`[PharmarackRoute] Step 4: Official PO ID not yet confirmed by Pharmarack for ${ord.storeName}. Suppressing blank dispatch reminder. Order preserved in Dispatch.`);
+              console.warn(`[PharmarackRoute] Step 4: Official PO ID not yet confirmed by Pharmarack for ${ord.storeName}. Suppressing blank dispatch reminder. Order preserved for packing.`);
               continue;
             }
-            const boyName = ord.deliveryBoyName || "Delivery Staff";
-            const boyPhone = formatDisplayPhone(ord.deliveryBoyPhone);
-            const distMsg = `\u{1F4E6} Pharmarack order #${resolvedOrderNo} \u2014 has it been dispatched or collected by ${boyName} (${boyPhone})? - ${shopName}`;
+            let alreadySent = false;
+            const placedAudit = await db2.get(
+              `SELECT id FROM pharmarack_placed_orders 
+           WHERE order_no = ? AND distributor_notified = 1 LIMIT 1`,
+              [resolvedOrderNo]
+            );
+            if (placedAudit) {
+              alreadySent = true;
+            }
+            if (!alreadySent) {
+              const syncedAudit = await db2.get(
+                `SELECT order_no FROM pharmarack_synced_orders 
+             WHERE order_no = ? AND announced_at IS NOT NULL LIMIT 1`,
+                [resolvedOrderNo]
+              );
+              if (syncedAudit) {
+                alreadySent = true;
+              }
+            }
+            if (!alreadySent) {
+              const queueAudit = await db2.get(
+                `SELECT id FROM whatsapp_send_queue 
+             WHERE (message LIKE ? OR message LIKE ?) 
+               AND status IN ('pending', 'processing', 'sent', 'delivered', 'read') LIMIT 1`,
+                [`%#${resolvedOrderNo}%`, `%order #${resolvedOrderNo}%`]
+              );
+              if (queueAudit) {
+                alreadySent = true;
+              }
+            }
+            if (alreadySent) {
+              console.log(`[PharmarackRoute] Step 4 (Node H): Distributor message for Order #${resolvedOrderNo} was already sent previously. Skipping permanently.`);
+              const nowLocal = toLocalSqlDateTime(/* @__PURE__ */ new Date());
+              await db2.run(
+                `UPDATE pharmarack_placed_orders 
+             SET order_no = ?, distributor_notified = 1, distributor_notified_at = COALESCE(distributor_notified_at, ?) 
+             WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
+                [resolvedOrderNo, nowLocal, today, ord.storeName]
+              ).catch(() => {
+              });
+              continue;
+            }
             const cleanDistPhone = ord.phone.replace(/\D/g, "");
             if (cleanDistPhone && cleanDistPhone.length >= 10) {
+              const boyPart = ord.deliveryBoyName && ord.deliveryBoyPhone ? ` by ${ord.deliveryBoyName} (${formatDisplayPhone(ord.deliveryBoyPhone)})` : "";
+              const distMsg = `\u{1F4E6} Pharmarack order #${resolvedOrderNo} \u2014 has it been packed and dispatched${boyPart}? - ${shopName}`;
               const reminderScheduledAt = Date.now();
               try {
-                const claim = await db2.run(
+                await db2.run(
                   `UPDATE pharmarack_synced_orders 
                SET announced_at = CURRENT_TIMESTAMP, announce_result = 'announced_immediate' 
                WHERE order_no = ? AND announced_at IS NULL`,
                   [resolvedOrderNo]
                 );
-                if ((claim?.changes ?? 0) === 0) {
-                  console.log(`[PharmarackRoute] Step 4: Order #${resolvedOrderNo} already claimed/announced; skipping duplicate enqueue.`);
-                  continue;
-                }
                 const startOfDayMs = new Date((/* @__PURE__ */ new Date()).setHours(0, 0, 0, 0)).getTime();
                 const waiting = await db2.get(
                   `SELECT id, message FROM whatsapp_send_queue
@@ -39826,25 +39998,17 @@ ${waiting.message}`;
                   );
                   console.log(`[PharmarackRoute] Step 4: Merged Order #${resolvedOrderNo} into waiting queue item #${waiting.id}`);
                 } else {
-                  try {
-                    const queueId = await whatsappQueueWorker.enqueue(
-                      cleanDistPhone,
-                      distMsg.trim(),
-                      "distributor_dispatch_reminder",
-                      ord.storeName,
-                      reminderScheduledAt
-                    );
-                    await whatsappQueueWorker.forceNext();
-                    console.log(`[PharmarackRoute] Step 4: Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) for immediate dispatch (queue #${queueId})`);
-                  } catch (enqueueErr) {
-                    await db2.run(
-                      `UPDATE pharmarack_synced_orders SET announced_at = NULL, announce_result = 'claim_failed' WHERE order_no = ?`,
-                      [resolvedOrderNo]
-                    ).catch(() => {
-                    });
-                    throw enqueueErr;
-                  }
+                  const queueId = await whatsappQueueWorker.enqueue(
+                    cleanDistPhone,
+                    distMsg.trim(),
+                    "distributor_dispatch_reminder",
+                    ord.storeName,
+                    reminderScheduledAt
+                  );
+                  await whatsappQueueWorker.forceNext();
+                  console.log(`[PharmarackRoute] Step 4 (Node I): Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) (queue #${queueId})`);
                 }
+                const nowLocal = toLocalSqlDateTime(/* @__PURE__ */ new Date());
                 const targetPlacedRow = await db2.get(
                   `SELECT id FROM pharmarack_placed_orders 
                WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) 
@@ -39855,20 +40019,20 @@ ${waiting.message}`;
                 if (targetPlacedRow?.id) {
                   await db2.run(
                     `UPDATE pharmarack_placed_orders 
-                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?, distributor_notified = 1, distributor_notified_at = ?
                  WHERE id = ?`,
-                    [toLocalSqlDateTime(/* @__PURE__ */ new Date()), resolvedOrderNo, targetPlacedRow.id]
+                    [nowLocal, resolvedOrderNo, nowLocal, targetPlacedRow.id]
                   );
                 } else {
                   await db2.run(
                     `UPDATE pharmarack_placed_orders 
-                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?
+                 SET batch_sent = 1, batch_sent_at = ?, order_no = ?, distributor_notified = 1, distributor_notified_at = ?
                  WHERE id = (
                    SELECT id FROM pharmarack_placed_orders 
                    WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))
                    ORDER BY id DESC LIMIT 1
                  )`,
-                    [toLocalSqlDateTime(/* @__PURE__ */ new Date()), resolvedOrderNo, today, ord.storeName]
+                    [nowLocal, resolvedOrderNo, nowLocal, today, ord.storeName]
                   );
                 }
                 const existingRem = await db2.get(
@@ -39879,7 +40043,7 @@ ${waiting.message}`;
                 if (existingRem?.id) {
                   await db2.run(
                     `UPDATE distributor_dispatch_reminders 
-                 SET status = 'Pending', order_source = 'pharmarack' 
+                 SET status = 'Dispatched', order_source = 'pharmarack' 
                  WHERE id = ?`,
                     [existingRem.id]
                   );
@@ -39887,7 +40051,7 @@ ${waiting.message}`;
                   await db2.run(
                     `INSERT INTO distributor_dispatch_reminders 
                  (distributor_name, distributor_phone, date, status, auto_remind, order_source)
-                 VALUES (?, ?, ?, 'Pending', 1, 'pharmarack')`,
+                 VALUES (?, ?, ?, 'Dispatched', 1, 'pharmarack')`,
                     [ord.storeName, cleanDistPhone, today]
                   );
                 }
@@ -68428,7 +68592,7 @@ var init_licenseService = __esm({
       }
     } catch (_) {
     }
-    APP_VERSION = "0.1.168";
+    APP_VERSION = "0.1.169";
     TESTING_FREE_PERIOD_MS = 365 * 24 * 60 * 60 * 1e3;
   }
 });
