@@ -1367,6 +1367,16 @@ const Purchases: React.FC = () => {
   const [searchHighlightIndex, setSearchHighlightIndex] = useState(-1);
   // True while the single master-database search (debounce + fetch) is in flight.
   const [searchSearching, setSearchSearching] = useState(false);
+  const distributorContainerRef = useRef<HTMLDivElement>(null);
+  useOnClickOutside(distributorContainerRef, () => {
+    setShowDistributorDropdown(false);
+    setDistributorHighlightIndex(-1);
+  });
+
+  const cnContainerRef = useRef<HTMLDivElement>(null);
+  useOnClickOutside(cnContainerRef, () => setShowCreditNotesPanel(false));
+
+
   useOnClickOutside(activeSearchRef, () => {
     setActiveSearchIndex(null);
     setSearchResults([]);
@@ -1490,6 +1500,24 @@ const Purchases: React.FC = () => {
   useDropdownAutoScroll(searchResultsRef, searchHighlightIndex, activeSearchIndex !== null);
   useDropdownAutoScroll(batchDropdownRef, batchHighlightIndex, activeBatchRowIndex !== null, '[data-batch-highlighted="true"]');
   useDropdownAutoScroll(distributorDropdownRef, distributorHighlightIndex, showDistributorDropdown);
+
+  // Auto-close batch picker on outside click
+  useEffect(() => {
+    if (activeBatchRowIndex === null) return;
+    const handleBatchOutsideClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Element | null;
+      if (target && !target.closest('[data-purchases-batch-cell="true"]')) {
+        setActiveBatchRowIndex(null);
+        setBatchHighlightIndex(-1);
+      }
+    };
+    document.addEventListener('mousedown', handleBatchOutsideClick);
+    document.addEventListener('touchstart', handleBatchOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleBatchOutsideClick);
+      document.removeEventListener('touchstart', handleBatchOutsideClick);
+    };
+  }, [activeBatchRowIndex]);
 
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -3301,7 +3329,7 @@ const Purchases: React.FC = () => {
               )}
             </div>
             <div className="flex gap-1">
-              <div className="flex-1 min-w-0 relative">
+              <div className="flex-1 min-w-0 relative" ref={distributorContainerRef}>
                 <input
                   id="distributor-search-input"
                   type="text"
@@ -3619,7 +3647,7 @@ const Purchases: React.FC = () => {
           </div>
 
           {/* Credit Note Application */}
-          <div className="w-48 relative">
+          <div className="w-48 relative" ref={cnContainerRef}>
             <label className="block text-sm font-medium text-purple-300 mb-1 flex items-center justify-between">
               <span>CN Number</span>
               {pendingReturns.length > 0 && (
@@ -4206,7 +4234,7 @@ const Purchases: React.FC = () => {
                       <p className="text-yellow-400 text-xs mt-1">{schemeMatchStatus[item.id]}</p>
                     )}
                   </td>
-                  <td className="py-2.5 px-1 relative">
+                  <td className="py-2.5 px-1 relative" data-purchases-batch-cell="true">
                     <input
                       type="text"
                       data-row-index={index}

@@ -84,7 +84,12 @@ export const TerminalModeSwitcher: React.FC = () => {
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/60 animate-fade-in">
+        <div
+          className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/60 animate-fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsOpen(false);
+          }}
+        >
           <div className="bg-bg2 border border-border w-full max-w-sm rounded-3xl p-5 shadow-2xl flex flex-col gap-4 text-text animate-scale-up">
             <div className="flex items-center justify-between pb-3 border-b border-border">
               <div className="flex items-center gap-2">

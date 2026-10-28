@@ -7,6 +7,64 @@
 
 ## Fixed
 
+### [Fixed] P2-131 — WhatsApp Toggle Independence, Registration Indication & Dropdown Auto-Close Fix
+- Cause:
+  1. In `SpecialOrderAddModal.tsx`, the WhatsApp confirmation toggle button was locked with `disabled={isNotOnWa}` and displayed `'OFF'` whenever `isNotOnWa` was true, preventing the user from keeping WhatsApp alerts ON or toggling their preference.
+  2. In `QuickOrderModal.tsx` and `POS/index.tsx`, an automatic `useEffect` invoked `setSendWhatsApp(false)` and saved `'false'` to `localStorage` whenever `isNotOnWa` was true. This corrupted the user's explicit preference in `localStorage`, causing all subsequent new order and refill creations to default to OFF.
+  3. In `src/routes/crm.ts`, when an entered phone number had 0 patient matches, lines 161–178 executed `findSimilarNames(q, candidateNames)` on numeric digits against patient names, returning unrelated "Suggested patients".
+  4. In `PhoneInputWithBadge.tsx` and `SalutationNameInput.tsx`, selecting a patient in one input updated the other input programmatically (`onSelectPatient`). Neither input checked if it was currently focused, causing the other input to fire a debounced `getPatients` query and pop open a suggestions dropdown that never auto-closed. Neither component implemented `useOnClickOutside`.
+- Fix:
+  1. Decoupled user toggle preference from phone capability in `SpecialOrderAddModal.tsx`, `QuickOrderModal.tsx`, and `POS/index.tsx`. The toggle button always reflects the user's explicit setting (`ON` / `OFF`), defaults to ON, and is never auto-disabled or clobbered.
+  2. Added independent live WhatsApp registration status indicators: `🟢 On WhatsApp`, `🔴 Not on WhatsApp`, or `⏳ Checking WA...` in `SpecialOrderAddModal.tsx`, `QuickOrderModal.tsx`, and `POS/index.tsx`, keeping user intent and phone capabilities clearly distinguished.
+  3. In `src/routes/crm.ts`, guarded fuzzy name matching: numeric/phone queries (`cleanDigits.length >= 3`) bypass `findSimilarNames`, returning `[]` when no customer matches rather than generating spurious name suggestions.
+  4. In `PhoneInputWithBadge.tsx` and `SalutationNameInput.tsx`, added `isFocusedRef` focus guards so programmatic state updates never trigger autocomplete lookups or open dropdowns. Added `useOnClickOutside` on both components, and immediately dismiss suggestions upon selecting an item or completing a 10-digit number.
+- Priority: P2
+- Verified by: `npm run guardrails` exit 0 (TypeScript compilation clean, 0 violations); frontend production build clean.
+
+### [Fixed] P2-130 — Equalize All CRM Top Metric Cards to Identical Size & Layout
+- Cause: On the CRM Refills page, the 4 top elements in the cards grid were visually asymmetrical and different in size. Cards 1, 2, and 3 were formatted as metric KPI summary cards (padding `p-3.5`, title, count, and `w-9 h-9` icon container), whereas Slot 4 was formatted as a container packed with 5 small buttons (`+ Add Refill`, `Delay Notice`, `Unlinked`, `Run Check`, `Refresh`) with different padding (`p-2.5`) and mismatched styling.
+- Fix:
+  1. Converted Slot 4 into a dedicated **Delay Notice** KPI card matching Cards 1, 2, and 3 in exact dimensions: `h-[76px] p-3.5 rounded-2xl border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-left flex items-center justify-between cursor-pointer`, with title "Delay Notice", stat "Broadcast Alert", and matching `w-9 h-9` purple Clock icon container.
+  2. Standardized all 4 cards to `h-[76px]`, `p-3.5`, `rounded-2xl`, `w-9 h-9` icon box, and consistent typography across the 4-column grid (`25%` width each).
+  3. Relocated `+ Add Refill` as a prominent primary button in the Left Patient List header ("Patients & Schedules"), and relocated `Run Check`, `Refresh`, and the `⚠️ Unlinked` trigger into the Left Search toolbar for a natural, uncluttered workflow.
+- Priority: P2
+- Verified by: Production frontend build (`npm run build --prefix frontend`) built in 57.86s with 0 errors (`dist/assets/CRM-WcgBg676.js`); `npm run guardrails` exit 0 (0 violations); `node scripts/quick-update.mjs` synchronized.
+
+### [Fixed] P2-129 — Lock CRM Refills Metric Cards in Fixed Position & Eliminate Layout Shifts
+- Cause:
+  1. In `frontend/src/pages/CRM/RefillsSection.tsx`, when patients had medicines not linked to distributors, an extra 5th card was injected into the 4-column grid. This pushed the 4th action box (`+ Add Refill`, `Delay Notice`, `Run Check`, `Refresh`) onto a second row, making the cards jump positions and double in height whenever unlinked medicines were resolved or detected.
+  2. In Card 2 (Overdue), the handled count was rendered as a block element beneath the count, causing Card 2 to be taller than Cards 1 and 3. The card row lacked a fixed height, causing layout micro-shifts during state transitions.
+  3. In `frontend/src/components/IncompleteOrders24hCard.tsx`, when 0 orders were incomplete, a 56px green audit banner was mounted after asynchronous API resolution, pushing down the entire CRM page and Refills section.
+- Fix:
+  1. Enforced strict 4-column fixed layout with fixed height (`h-[74px]`) on the top cards grid in `RefillsSection.tsx`. All 4 cards have `h-full` with identical, locked vertical boundaries.
+  2. In Card 2, rendered the handled count inline with the overdue count so Card 2 never expands vertically.
+  3. Relocated the unlinked distributor alert into Slot 4 as a compact alert button (`⚠️ N Unlinked`) with a dropdown, preserving the strict 4-slot structure so no cards ever wrap or jump rows.
+  4. In `IncompleteOrders24hCard.tsx`, returned `null` when `totalItemsCount === 0`, preventing zero-SLA banners from popping in and causing Cumulative Layout Shift (CLS).
+- Priority: P2
+- Verified by: Production frontend build (`npm run build --prefix frontend`) built in 51.55s with 0 errors; `npm run guardrails` exit 0 (0 violations); `node scripts/quick-update.mjs` synchronized.
+
+### [Fixed] P2-128 — Interactive Clickable Metric Cards for CRM Refills
+- Cause: On the CRM page (Refills tab), the top summary metric cards ("Total Prescribed Patients", "Overdue Prescriptions", "Due in 5-6 Days Upcoming") were static `div` containers. Users could not click them to toggle and filter the patient list directly—unlike the Online Orders (Website Orders) page which provides one-click card filtering—forcing users to hunt for smaller pills in the sidebar.
+- Fix:
+  1. In `frontend/src/pages/CRM/RefillsSection.tsx`, converted the top 3 metric cards into accessible interactive buttons (`role="button"`, `active:scale-[0.99]`, `cursor-pointer`) with dynamic active borders, subtle background tints, and active pill badges.
+  2. Implemented `handleFilterChange` unifying the top metric cards with the left sidebar filter pills: clicking "Total Prescribed Patients" toggles to All (`filterTab = 'all'`), "Overdue Prescriptions" filters to Overdue (`filterTab = 'overdue'`), and "Due in 5-6 Days" filters to Upcoming Prep Window (`filterTab = 'lead'`). Clicking an active filtered card toggles back to All.
+  3. When changing filters, if the previously selected patient is not part of the filtered list, the first matching patient is automatically selected for instant details preview.
+- Priority: P2
+- Verified by: Frontend production build (`npm run build --prefix frontend`) completed with 0 errors; `npm run guardrails` passed with 0 violations; `node scripts/quick-update.mjs` synchronized.
+
+### [Fixed] P2-127 — Fix "Error generating commit message: proto: field google.cloud.aiplatform.master.Part.text contains invalid UTF-8"
+- Cause:
+  1. In `.gitattributes`, only `* text=auto eol=crlf` was configured without explicit rules for binary files or build directories. Git treated binary files (`.blob`, `.pdf`, `.ico`, `.jpg`, `.png`, etc.) as candidate text.
+  2. `dist-pkg/sea-prep.blob` (5.4 MB Node Single Executable Application binary) and `dist-pkg/server.cjs` (5.4 MB esbuild bundle) were historically checked into Git index despite `dist-pkg/` being in `.gitignore`. In commit `14dd90d3`, both were modified and staged.
+  3. When the AI commit message generator in the IDE invoked `git diff` to construct the prompt for Google Cloud Vertex AI / Gemini (`google.cloud.aiplatform.master.Part.text`), the diff contained raw binary bytes from `.blob` or truncated multi-byte sequences. Protobuf v3 string fields strictly reject invalid UTF-8 sequences, triggering the error.
+  4. Git's default `core.quotepath = true` escaped non-ASCII filename paths using octal sequences (`\340...`), compounding UTF-8 stream parsing failures in tools reading diff output.
+- Fix:
+  1. In `.gitattributes`, explicitly declared all binary formats (`*.blob`, `*.jpg`, `*.jpeg`, `*.png`, `*.webp`, `*.ico`, `*.gif`, `*.pdf`, `*.exe`, `*.dll`, `*.node`, `*.db`, `*.sqlite`, `*.sqlite3`, `*.zip`, `*.tar`, `*.gz`, `*.7z`, `*.traineddata`) as `binary` (`-text -diff -merge`), suppressed textual diffs for build directories (`dist/** binary -diff`, `dist-pkg/** binary -diff`), and strictly declared source files (`*.ts`, `*.tsx`, `*.js`, `*.mjs`, `*.cjs`, `*.json`, `*.md`, etc.) as text.
+  2. Untracked `dist-pkg/` from Git cache (`git rm --cached -r dist-pkg`) while keeping local files on disk intact, ensuring build outputs are never staged in git commits.
+  3. Configured repository Git settings: `core.quotepath = false`, `i18n.commitencoding = utf-8`, and `i18n.logoutputencoding = utf-8`.
+- Priority: P2
+- Verified by: `git check-attr -a` confirmed binary files set to `binary: set`, `diff: unset`, `text: unset`; `git diff --cached` outputs clean UTF-8; `npm run guardrails` exit 0 (0 violations); `node scripts/quick-update.mjs` synchronized.
+
 ### [Fixed] P2-126 — Fix Application Launch Crash Due to SQLITE_READONLY in Pre-Migration Snapshot Verification, Distributor Contact Email-Sanitization Mismatch, and Installer Port 5175 Stale Process Blocker
 - Cause:
   1. In `src/database/sqlitePatch.ts`, `sqlite3.Database` was globally patched to execute `PRAGMA journal_mode = WAL;` and `PRAGMA synchronous = NORMAL;` on every single newly opened connection. When commit `eb56e0a2` introduced Section 24 backup safety verification (`verifyBackupReadability`), it opened the snapshot database using `mode: sqlite3.OPEN_READONLY`. Executing write PRAGMAs on a read-only database threw `SQLITE_READONLY: attempt to write a readonly database`, causing `ensureSchema` to abort boot and call `process.exit(1)`, crashing the application at launch on both upgrades and fresh boots.

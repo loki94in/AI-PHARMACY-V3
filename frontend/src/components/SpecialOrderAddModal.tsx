@@ -9,6 +9,7 @@ import { api, apiClient } from '../services/api';
 import { toastEvent, messageSendEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import { useDropdownAutoScroll } from '../hooks/useDropdownAutoScroll';
+import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import { useWaPhoneStatus } from '../hooks/useWaPhoneStatus';
 import { PhoneInputWithBadge } from './PhoneInputWithBadge';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from './SalutationNameInput';
@@ -77,10 +78,11 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
 
   // Auto-scroll dropdown active item
   useDropdownAutoScroll(prDropdownRef, activePrIndex, showPrDropdown);
+  useOnClickOutside([prDropdownRef, productInputRef], () => setShowPrDropdown(false));
 
   // WhatsApp verification for entered phone
   const cleanPhone = phone.replace(/\D/g, '').slice(-10);
-  const { isNotOnWa } = useWaPhoneStatus(cleanPhone);
+  const { isNotOnWa, waStatus } = useWaPhoneStatus(cleanPhone);
 
   // Universal Escape key dismissal
   useModalEscape(isOpen, onClose);
@@ -881,38 +883,50 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
               {/* WhatsApp Booking Alert Toggle */}
               <div className="p-3 rounded-xl bg-bg3/60 border border-border text-xs flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <MessageCircle size={15} className={isNotOnWa ? 'text-rose-400' : sendWhatsApp ? 'text-emerald-400' : 'text-muted'} />
+                  <MessageCircle size={15} className={sendWhatsApp ? 'text-emerald-400' : 'text-muted'} />
                   <div>
-                    <span className="font-bold text-text">WhatsApp Confirmation</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-text">WhatsApp Confirmation</span>
+                      {isNotOnWa ? (
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                          Not on WhatsApp
+                        </span>
+                      ) : waStatus === 'AVAILABLE' ? (
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          On WhatsApp
+                        </span>
+                      ) : waStatus === 'checking' ? (
+                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-sky-500/15 text-sky-400 border border-sky-500/30 animate-pulse">
+                          Checking WA...
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="text-[10px] text-muted leading-tight">
-                      {isNotOnWa
-                        ? 'Number not registered on WhatsApp.'
-                        : sendWhatsApp
-                        ? `Auto-send booking notice in ${language === 'mr' ? 'Marathi' : language === 'hi' ? 'Hindi' : 'English'}.`
-                        : 'Confirmation message turned OFF.'}
+                      {!sendWhatsApp
+                        ? 'Confirmation message turned OFF by user.'
+                        : isNotOnWa
+                        ? 'WhatsApp alert is ON • Note: Number not registered on WA (dispatch will safely skip WA).'
+                        : `Auto-send booking notice in ${language === 'mr' ? 'Marathi' : language === 'hi' ? 'Hindi' : 'English'}.`}
                     </p>
                   </div>
                 </div>
 
                 <button
                   type="button"
-                  disabled={isNotOnWa}
                   onClick={() => {
-                    if (isNotOnWa) return;
                     const next = !sendWhatsApp;
                     setSendWhatsApp(next);
                     try { localStorage.setItem('crm_order_send_whatsapp', String(next)); } catch {}
                   }}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
-                    isNotOnWa
-                      ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 cursor-not-allowed opacity-60'
-                      : sendWhatsApp
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-xs cursor-pointer'
-                      : 'bg-bg border border-border text-muted cursor-pointer'
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 cursor-pointer ${
+                    sendWhatsApp
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-xs'
+                      : 'bg-bg border border-border text-muted hover:text-text'
                   }`}
+                  title={sendWhatsApp ? 'WhatsApp confirmation enabled' : 'WhatsApp confirmation disabled'}
                 >
-                  <span className={`w-1.5 h-1.5 rounded-full ${isNotOnWa ? 'bg-rose-400' : sendWhatsApp ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
-                  {isNotOnWa ? 'OFF' : sendWhatsApp ? 'ON' : 'OFF'}
+                  <span className={`w-1.5 h-1.5 rounded-full ${sendWhatsApp ? 'bg-emerald-400 animate-pulse' : 'bg-muted'}`} />
+                  {sendWhatsApp ? 'ON' : 'OFF'}
                 </button>
               </div>
             </div>

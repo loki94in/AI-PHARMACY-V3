@@ -94,6 +94,23 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
   const [matchPreview, setMatchPreview] = useState<Record<number, MatchSuggestion>>({});
   const [previewLoading, setPreviewLoading] = useState(false);
   const [lineSearchTerms, setLineSearchTerms] = useState<Record<number, string>>({});
+  const [activeLineSearchIndex, setActiveLineSearchIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (activeLineSearchIndex === null) return;
+    const handleOutsideClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Element | null;
+      if (target && !target.closest('[data-staged-search-container="true"]')) {
+        setActiveLineSearchIndex(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+    };
+  }, [activeLineSearchIndex]);
   const [lineSearchResults, setLineSearchResults] = useState<Record<number, LocalCatalogHit[]>>({});
   const [medEditorIndex, setMedEditorIndex] = useState<number | null>(null);
   const [medEditorInitialData, setMedEditorInitialData] = useState<UniversalMedicineEditModalProps['initialData']>(null);
@@ -733,13 +750,14 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
                             ) : null}
 
                             {!item.medicine_id && (
-                              <div className="mt-2 relative">
+                              <div className="mt-2 relative" data-staged-search-container="true">
                                 <div className="flex gap-2">
                                   <div className="relative flex-1">
                                     <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
                                     <input
                                       type="text"
                                       placeholder="Search master to link (type ≥ 3 chars)..."
+                                      onFocus={() => setActiveLineSearchIndex(index)}
                                       value={lineSearchTerms[index] || ''}
                                       onChange={(e) => handleLineSearch(index, e.target.value)}
                                       onKeyDown={(e) => {
@@ -759,7 +777,7 @@ export const StagedReviewModal: React.FC<Props> = ({ onClose, onActionComplete }
                                     <Plus size={13} /> New Medicine
                                   </button>
                                 </div>
-                                {(lineSearchTerms[index]?.trim().length || 0) >= 3 && (
+                                {activeLineSearchIndex === index && (lineSearchTerms[index]?.trim().length || 0) >= 3 && (
                                   <div className="absolute z-dropdown left-0 right-0 mt-1 bg-bg border border-glass-border rounded-xl shadow-xl overflow-hidden flex flex-col max-h-60">
                                     {/* PINNED TOP HEADER: Always visible New Medicine Creation */}
                                     <div className="p-1.5 border-b border-border/40 bg-bg/95 shrink-0">

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Phone, MessageSquare, Check, X, HelpCircle, Loader2 } from 'lucide-react';
 import { sanitizePhoneInput } from '../utils/phone';
 import { api, apiClient } from '../services/api';
+import { useOnClickOutside } from '../hooks/useOnClickOutside';
 import type { PatientSuggestionItem } from './SalutationNameInput';
 
 interface PhoneInputWithBadgeProps {
@@ -48,7 +49,13 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
   const [isFuzzyMatch, setIsFuzzyMatch] = useState(false);
   const [isLoadingPatients, setIsLoadingPatients] = useState(false);
   const justSelectedRef = useRef(false);
+  const isFocusedRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useOnClickOutside([containerRef, dropdownRef], () => {
+    setShowSuggestions(false);
+  });
 
   // Silent fire-and-forget prewarm — called on first focus so WhatsApp is
   // never sleeping by the time the user finishes typing 10 digits.
@@ -108,10 +115,27 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
 
   // Debounced patient phone autocomplete lookup
   useEffect(() => {
-    if (!enablePatientAutocomplete) return;
+    if (!enablePatientAutocomplete || !isFocusedRef.current) return;
     if (justSelectedRef.current) {
       setSuggestions([]);
       setShowSuggestions(false);
+      return;
+    }
+
+    if (cleanDigits.length >= 10) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      if (cleanDigits.length === 10 && onSelectPatient) {
+        api.getPatients({ q: cleanDigits, limit: 1 }).then(data => {
+          const list = Array.isArray(data) ? data : ((data as any)?.suggestions || []);
+          const exactMatch = (list as PatientSuggestionItem[]).find(
+            p => (p.phone || '').replace(/\D/g, '') === cleanDigits || (p.phone || '').replace(/\D/g, '').endsWith(cleanDigits)
+          );
+          if (exactMatch) {
+            onSelectPatient(exactMatch);
+          }
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -128,7 +152,7 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
         const list = Array.isArray(data) ? data : ((data as any)?.suggestions || []);
         const isFuzzy = !Array.isArray(data) && Boolean((data as any)?.isSuggestion);
 
-        if (!justSelectedRef.current) {
+        if (!justSelectedRef.current && isFocusedRef.current) {
           setSuggestions(list as PatientSuggestionItem[]);
           setIsFuzzyMatch(isFuzzy);
           setShowSuggestions(list.length > 0);
@@ -157,6 +181,7 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
   const handleSelectSuggestion = (patient: PatientSuggestionItem) => {
     justSelectedRef.current = true;
     setShowSuggestions(false);
+    setSuggestions([]);
     setHighlightIndex(-1);
     const cleanP = (patient.phone || '').replace(/\D/g, '');
     const valid10 = cleanP.length === 12 && cleanP.startsWith('91') ? cleanP.slice(2) : cleanP;
@@ -171,6 +196,7 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
   };
 
   const handleBlur = () => {
+    isFocusedRef.current = false;
     setTimeout(() => setShowSuggestions(false), 200);
     if (isPartial || (isEmpty && required)) {
       setIsShaking(true);
@@ -179,8 +205,9 @@ export const PhoneInputWithBadge: React.FC<PhoneInputWithBadgeProps> = ({
   };
 
   const handleFocus = () => {
+    isFocusedRef.current = true;
     prewarmWhatsApp();
-    if (enablePatientAutocomplete && !justSelectedRef.current && suggestions.length > 0) {
+    if (enablePatientAutocomplete && !justSelectedRef.current && suggestions.length > 0 && cleanDigits.length < 10) {
       setShowSuggestions(true);
     }
   };

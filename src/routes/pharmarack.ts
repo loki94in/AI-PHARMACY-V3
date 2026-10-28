@@ -4784,105 +4784,118 @@ router.get('/purchase-reorder-history', async (req, res) => {
       [...params, ...params, ...likeParams, limit]
     );
 
-    // Map rows and enrich with distributor_catalog or mappings
-    const enriched = await Promise.all(
-      rows.map(async (r: any) => {
-        let matchedStoreId: number | null = storeId;
-        let matchedStoreName = r.distributor_name || '';
-        let matchedProductCode = '';
-        let matchedProductId = 0;
-        let isMapped = false;
-        let avail = 0;
-
-        // 1. Resolve store mapping from pharmarack_distributor_mappings
-        if (r.distributor_id) {
-          const mapRow = await db.get(
-            `SELECT store_name FROM pharmarack_distributor_mappings 
-             WHERE distributor_id = ?
-             LIMIT 1`,
-            [r.distributor_id]
-          );
-          if (mapRow?.store_name) {
-            matchedStoreName = mapRow.store_name;
-          }
-        }
-
-        // 2. Resolve store mapping & exact product codes from medicine_distributor_links (scoped to this distributor)
-        if (r.medicine_id && matchedStoreName) {
-          const linkRow = await db.get(
-            `SELECT store_id, store_name, product_code, product_id, packaging, company
-             FROM medicine_distributor_links 
-             WHERE medicine_id = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))
-             ORDER BY pick_order, id LIMIT 1`,
-            [r.medicine_id, matchedStoreName]
-          );
-          if (linkRow) {
-            matchedStoreId = Number(linkRow.store_id) || matchedStoreId;
-            matchedStoreName = linkRow.store_name || matchedStoreName;
-            if (linkRow.product_id) matchedProductId = Number(linkRow.product_id);
-            if (linkRow.product_code) matchedProductCode = linkRow.product_code;
-            if (matchedProductId && matchedProductCode) isMapped = true;
-          }
-        }
-
-        // 3. Check stock availability for this distributor without overwriting the distributor name
-        if (matchedStoreId) {
-          const catRow = await db.get(
-            `SELECT store_id, store_name, product_name, CAST(availability AS INTEGER) as avail, distributor_price
-             FROM distributor_catalog
-             WHERE product_name LIKE ? AND store_id = ?
-             ORDER BY CAST(availability AS INTEGER) DESC
-             LIMIT 1`,
-            [`${r.medicine_name}%`, matchedStoreId]
-          );
-          if (catRow) {
-            avail = Number(catRow.avail || 0);
-          }
-        }
-
-        // 4. Offer highest stock distributor only as an optional alternate
-        let highestStock: any = null;
-        const highStockRow = await db.get(
-          `SELECT store_id, store_name, product_name, CAST(availability AS INTEGER) as avail, distributor_price
-           FROM distributor_catalog
-           WHERE product_name LIKE ?
-           ORDER BY CAST(availability AS INTEGER) DESC
-           LIMIT 1`,
-          [`${r.medicine_name}%`]
-        );
-        if (highStockRow && Number(highStockRow.avail) > 0) {
-          highestStock = {
-            storeId: Number(highStockRow.store_id),
-            storeName: highStockRow.store_name,
-            productName: highStockRow.product_name,
-            availability: Number(highStockRow.avail),
-            ptr: Number(highStockRow.distributor_price || 0)
-          };
-        }
-
-        return {
-          medicineId: r.medicine_id,
-          medicineName: r.medicine_name,
-          manufacturer: r.manufacturer || '',
-          billCount: r.bill_count,
-          totalQty: r.total_qty,
-          lastOrderedDate: r.last_date ? String(r.last_date).slice(0, 10) : '',
-          lastQty: Math.max(1, Math.round(Number(r.last_qty) || 1)),
-          lastDistributorName: r.distributor_name || '',
-          distributorId: r.distributor_id || null,
-          storeId: matchedStoreId,
-          storeName: matchedStoreName,
-          ptr: r.last_rate ? Number(r.last_rate) : 0,
-          mrp: r.last_mrp ? Number(r.last_mrp) : 0,
-          productCode: matchedProductCode,
-          productId: matchedProductId,
-          mapped: isMapped,
-          availability: avail,
-          receiptStatus: 'RECEIVED' as const,
-          highestStockDistributor: highestStock,
-        };
-      })
+    // Batch-enrich distributor mappings, product links, and catalog stock (replaces N+1 queries)
+    const mappingRows = await db.all(
+      `SELECT distributor_id, store_name FROM pharmarack_distributor_mappings WHERE distributor_id IS NOT NULL`
     );
+    const mappingMap = new Map<number, string>();
+    for (const m of mappingRows) {
+      if (m.distributor_id && m.store_name) {
+        mappingMap.set(Number(m.distributor_id), m.store_name);
+      }
+    }
+
+    const medIds = Array.from(new Set(rows.map((r: any) => Number(r.medicine_id)).filter(Boolean)));
+    const linksByMedId = new Map<number, any[]>();
+    if (medIds.length > 0) {
+      const placeholders = medIds.map(() => '?').join(',');
+      const linkRows = await db.all(
+        `SELECT medicine_id, store_id, store_name, product_code, product_id, packaging, company
+         FROM medicine_distributor_links
+         WHERE medicine_id IN (${placeholders})
+         ORDER BY pick_order, id`,
+        medIds
+      );
+      for (const lr of linkRows) {
+        const mid = Number(lr.medicine_id);
+        const arr = linksByMedId.get(mid) || [];
+        arr.push(lr);
+        linksByMedId.set(mid, arr);
+      }
+    }
+
+    const medNames = Array.from(new Set(rows.map((r: any) => (r.medicine_name || '').trim()).filter(Boolean)));
+    const catalogAvailByStoreAndName = new Map<string, number>();
+    const highestStockByName = new Map<string, any>();
+
+    if (medNames.length > 0) {
+      const catPlaceholders = medNames.map(() => '?').join(',');
+      const catRows = await db.all(
+        `SELECT store_id, store_name, product_name, CAST(availability AS INTEGER) as avail, distributor_price
+         FROM distributor_catalog
+         WHERE product_name IN (${catPlaceholders})`,
+        medNames
+      );
+      for (const cat of catRows) {
+        const sId = Number(cat.store_id || 0);
+        const pName = (cat.product_name || '').trim().toLowerCase();
+        const avail = Number(cat.avail || 0);
+        if (sId && pName) {
+          const key = `${sId}:::${pName}`;
+          catalogAvailByStoreAndName.set(key, Math.max(catalogAvailByStoreAndName.get(key) || 0, avail));
+        }
+        if (avail > 0 && pName) {
+          const currentHigh = highestStockByName.get(pName);
+          if (!currentHigh || avail > currentHigh.availability) {
+            highestStockByName.set(pName, {
+              storeId: sId,
+              storeName: cat.store_name || '',
+              productName: cat.product_name,
+              availability: avail,
+              ptr: Number(cat.distributor_price || 0)
+            });
+          }
+        }
+      }
+    }
+
+    const enriched = rows.map((r: any) => {
+      let matchedStoreId: number | null = storeId;
+      let matchedStoreName = (r.distributor_id && mappingMap.get(r.distributor_id)) || r.distributor_name || '';
+      let matchedProductCode = '';
+      let matchedProductId = 0;
+      let isMapped = false;
+
+      const candidateLinks = linksByMedId.get(Number(r.medicine_id)) || [];
+      const matchedLink = candidateLinks.find((l: any) =>
+        matchedStoreName && (l.store_name || '').trim().toLowerCase() === matchedStoreName.trim().toLowerCase()
+      ) || candidateLinks[0];
+
+      if (matchedLink) {
+        matchedStoreId = Number(matchedLink.store_id) || matchedStoreId;
+        matchedStoreName = matchedLink.store_name || matchedStoreName;
+        if (matchedLink.product_id) matchedProductId = Number(matchedLink.product_id);
+        if (matchedLink.product_code) matchedProductCode = matchedLink.product_code;
+        if (matchedProductId && matchedProductCode) isMapped = true;
+      }
+
+      const pNameNorm = (r.medicine_name || '').trim().toLowerCase();
+      const catKey = matchedStoreId ? `${matchedStoreId}:::${pNameNorm}` : '';
+      const avail = catKey ? (catalogAvailByStoreAndName.get(catKey) || 0) : 0;
+      const highestStock = highestStockByName.get(pNameNorm) || null;
+
+      return {
+        medicineId: r.medicine_id,
+        medicineName: r.medicine_name,
+        manufacturer: r.manufacturer || '',
+        billCount: r.bill_count,
+        totalQty: r.total_qty,
+        lastOrderedDate: r.last_date ? String(r.last_date).slice(0, 10) : '',
+        lastQty: Math.max(1, Math.round(Number(r.last_qty) || 1)),
+        lastDistributorName: r.distributor_name || '',
+        distributorId: r.distributor_id || null,
+        storeId: matchedStoreId,
+        storeName: matchedStoreName,
+        ptr: r.last_rate ? Number(r.last_rate) : 0,
+        mrp: r.last_mrp ? Number(r.last_mrp) : 0,
+        productCode: matchedProductCode,
+        productId: matchedProductId,
+        mapped: isMapped,
+        availability: avail,
+        receiptStatus: 'RECEIVED' as const,
+        highestStockDistributor: highestStock,
+      };
+    });
 
     res.json({ success: true, items: enriched });
   } catch (err: any) {

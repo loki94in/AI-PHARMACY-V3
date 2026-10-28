@@ -158,7 +158,10 @@ router.get('/patients', async (req, res) => {
       }
     }
 
-    if (q && patients.length === 0) {
+    const cleanDigits = String(q || '').replace(/\D/g, '');
+    const isPhoneQuery = cleanDigits.length >= 3 && cleanDigits.length === String(q || '').trim().replace(/[\s+-]/g, '').length;
+
+    if (q && patients.length === 0 && !isPhoneQuery) {
       try {
         const candidateQuery = isPosMode
           ? `SELECT c.id, c.name, c.phone, c.address FROM customers c

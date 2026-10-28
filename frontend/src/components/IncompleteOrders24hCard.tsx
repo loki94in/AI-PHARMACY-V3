@@ -143,22 +143,8 @@ export const IncompleteOrders24hCard: React.FC<IncompleteOrders24hCardProps> = (
   const pausedList = data?.marketPaused || [];
   const totalItemsCount = overdueList.length + pausedList.length;
 
-  if (!loading && totalItemsCount === 0) {
-    return (
-      <div className={`p-4 rounded-xl border border-border bg-bg2 text-text flex items-center justify-between text-sm ${className}`}>
-        <div className="flex items-center gap-2 text-emerald-500">
-          <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-          <span className="font-medium">All orders fulfilled within 24h SLA. No delayed or market-paused orders.</span>
-        </div>
-        <button
-          onClick={fetchAudit}
-          className="p-1.5 hover:bg-bg3 rounded-lg text-muted hover:text-text transition-colors"
-          title="Refresh SLA audit"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
-      </div>
-    );
+  if (totalItemsCount === 0) {
+    return null;
   }
 
   const displayedList =

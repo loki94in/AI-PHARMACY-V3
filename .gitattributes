@@ -1,1 +1,45 @@
+# Default text handling with CRLF for Windows
 * text=auto eol=crlf
+
+# Source code & configs strictly UTF-8 text
+*.ts text eol=crlf
+*.tsx text eol=crlf
+*.js text eol=crlf
+*.jsx text eol=crlf
+*.mjs text eol=crlf
+*.cjs text eol=crlf
+*.json text eol=crlf
+*.md text eol=crlf
+*.css text eol=crlf
+*.html text eol=crlf
+*.iss text eol=crlf
+*.bat text eol=crlf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary files - never attempt text diff, merge, or line-ending normalization
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.svg text
+*.pdf binary
+*.blob binary
+*.exe binary
+*.dll binary
+*.node binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.zip binary
+*.tar binary
+*.gz binary
+*.7z binary
+*.traineddata binary
+
+# Generated build artifacts - do not diff
+dist/** binary -diff
+dist-pkg/** binary -diff

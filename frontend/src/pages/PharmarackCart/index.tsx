@@ -777,6 +777,9 @@ let cachedSelectedSentDate: string = '';
 const MAX_CACHED_SENT_DATES = 5;
 const cachedSentOrdersDates: string[] = [];
 const cachedSentOrdersMap: Record<string, LocalSentOrder[]> = {};
+let cachedReorderSuggestions: ReorderSuggestion[] = [];
+let cachedReorderRecentItems: ReorderRecentItem[] = [];
+let cachedPurchaseHistoryItems: ReorderRecentItem[] = [];
 
 function touchCachedSentOrders(dateStr: string) {
   if (!dateStr || !cachedSentOrdersMap[dateStr]) return;
@@ -1027,12 +1030,13 @@ export default function PharmarackCart() {
   }, []);
 
   const [autoReconciledItems, setAutoReconciledItems] = useState<any[]>([]);
-  const [showAddedItems] = useState<boolean>(false);
+  const [hideAlreadyInCart, setHideAlreadyInCart] = useState<boolean>(true);
+  const showAddedItems = !hideAlreadyInCart;
   const [reorderBannerCollapsed, setReorderBannerCollapsed] = useState<boolean>(false);
 
-  const [reorderSuggestions, setReorderSuggestions] = useState<ReorderSuggestion[]>([]);
+  const [reorderSuggestions, setReorderSuggestions] = useState<ReorderSuggestion[]>(() => cachedReorderSuggestions);
   const [, setSuggestionsLoading] = useState<boolean>(false);
-  const [reorderRecentItems, setReorderRecentItems] = useState<ReorderRecentItem[]>([]);
+  const [reorderRecentItems, setReorderRecentItems] = useState<ReorderRecentItem[]>(() => cachedReorderRecentItems);
   const [reorderWindowMonths, setReorderWindowMonths] = useState<number>(2);
   const [reorderSearchQuery, setReorderSearchQuery] = useState<string>('');
   const [reorderQuantities, setReorderQuantities] = useState<Record<string, number>>({});
@@ -1088,6 +1092,7 @@ export default function PharmarackCart() {
     try {
       const res = await api.getSalesReorderSuggestions();
       if (res && res.success && Array.isArray(res.items)) {
+        cachedReorderSuggestions = res.items;
         setReorderSuggestions(res.items);
       }
     } catch (err) {
@@ -1101,6 +1106,7 @@ export default function PharmarackCart() {
     try {
       const res = await api.getPharmarackReorderRecent();
       if (res && res.success && Array.isArray(res.items)) {
+        cachedReorderRecentItems = res.items;
         setReorderRecentItems(res.items);
       }
     } catch (err) {
@@ -1282,7 +1288,7 @@ export default function PharmarackCart() {
   const [purchaseHistoryModalTarget, setPurchaseHistoryModalTarget] = useState<{ medicineName: string; loading: boolean; history: LocalPriceHistoryRow[] } | null>(null);
 
   // Purchase Bills History for Reorder Hub & Shortfalls
-  const [purchaseHistoryItems, setPurchaseHistoryItems] = useState<ReorderRecentItem[]>([]);
+  const [purchaseHistoryItems, setPurchaseHistoryItems] = useState<ReorderRecentItem[]>(() => cachedPurchaseHistoryItems);
   const [purchaseHistoryLoading, setPurchaseHistoryLoading] = useState<boolean>(false);
 
   const fetchPurchaseHistoryItems = async () => {
@@ -1290,6 +1296,7 @@ export default function PharmarackCart() {
       setPurchaseHistoryLoading(true);
       const res = await api.getPurchaseReorderHistory({ months: 6, limit: 500 });
       if (res && res.success && Array.isArray(res.items)) {
+        cachedPurchaseHistoryItems = res.items;
         setPurchaseHistoryItems(res.items);
       }
     } catch (err) {
@@ -2720,22 +2727,34 @@ export default function PharmarackCart() {
   }, [visiblePendingRefills, reorderQueryNorm, queryIsIdOnly, medicineNameMatches]);
 
   const filteredReorderSuggestions = React.useMemo(() => {
-    if (!reorderQueryNorm) return reorderSuggestions;
-    return reorderSuggestions.filter(sug => medicineNameMatches(sug.medicineName));
-  }, [reorderSuggestions, reorderQueryNorm, medicineNameMatches]);
+    let list = reorderSuggestions;
+    if (hideAlreadyInCart) {
+      list = list.filter(sug => !isMedicineInAnyCart(sug.medicineName) && !isMedicineInSentPO(sug.medicineName));
+    }
+    if (!reorderQueryNorm) return list;
+    return list.filter(sug => medicineNameMatches(sug.medicineName));
+  }, [reorderSuggestions, hideAlreadyInCart, isMedicineInAnyCart, isMedicineInSentPO, reorderQueryNorm, medicineNameMatches]);
 
   const filteredReorderRecentItems = React.useMemo(() => {
-    if (!reorderQueryNorm) return reorderRecentItems;
-    return reorderRecentItems.filter(item =>
+    let list = reorderRecentItems;
+    if (hideAlreadyInCart) {
+      list = list.filter(item => !isMedicineInAnyCart(item.medicineName) && !isMedicineInSentPO(item.medicineName));
+    }
+    if (!reorderQueryNorm) return list;
+    return list.filter(item =>
       medicineNameMatches(item.medicineName) ||
       (queryIsIdOnly && (String(item.orderId || '') === reorderQueryNorm || (item.receivedInvoiceNo || '').toLowerCase().includes(reorderQueryNorm)))
     );
-  }, [reorderRecentItems, reorderQueryNorm, queryIsIdOnly, medicineNameMatches]);
+  }, [reorderRecentItems, hideAlreadyInCart, isMedicineInAnyCart, isMedicineInSentPO, reorderQueryNorm, queryIsIdOnly, medicineNameMatches]);
 
   const filteredPurchaseHistoryItems = React.useMemo(() => {
-    if (!reorderQueryNorm) return purchaseHistoryItems;
-    return purchaseHistoryItems.filter(item => medicineNameMatches(item.medicineName));
-  }, [purchaseHistoryItems, reorderQueryNorm, medicineNameMatches]);
+    let list = purchaseHistoryItems;
+    if (hideAlreadyInCart) {
+      list = list.filter(item => !isMedicineInAnyCart(item.medicineName) && !isMedicineInSentPO(item.medicineName));
+    }
+    if (!reorderQueryNorm) return list;
+    return list.filter(item => medicineNameMatches(item.medicineName));
+  }, [purchaseHistoryItems, hideAlreadyInCart, isMedicineInAnyCart, isMedicineInSentPO, reorderQueryNorm, medicineNameMatches]);
 
   const totalReorderMatchesCount =
     filteredPendingOrders.length +
@@ -4750,9 +4769,6 @@ export default function PharmarackCart() {
 
   useEffect(() => {
     if (!showSuggestionsTier) return;
-    fetchReorderSuggestions();
-    fetchReorderRecentItems();
-    fetchPurchaseHistoryItems();
     apiClient.get('/settings').then(res => {
       const val = parseInt(res.data?.pharmarack_reorder_window_months || '2', 10);
       if ([2, 4, 6, 8].includes(val)) setReorderWindowMonths(val);
@@ -5423,7 +5439,7 @@ export default function PharmarackCart() {
                 <h3 className="text-sm font-bold text-text tracking-wide uppercase leading-none flex items-center gap-2">
                   Reorder Hub
                   <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full border bg-amber-500/15 text-amber-400 border-amber-500/30 font-mono">
-                    {reorderSearchQuery ? `${totalReorderMatchesCount} Matches` : `${visiblePendingOrders.length + visiblePendingRefills.length + reorderSuggestions.length + reorderRecentItems.length} Items`}
+                    {reorderSearchQuery ? `${totalReorderMatchesCount} Matches` : `${totalReorderMatchesCount} Items`}
                   </span>
                 </h3>
                 <p className="text-[10px] text-muted tracking-wider mt-1">
@@ -5546,6 +5562,20 @@ export default function PharmarackCart() {
                 </span>
               </div>
             )}
+            {/* Filter Toggle: Hide Already In Cart / Ordered Today */}
+            <button
+              type="button"
+              onClick={() => setHideAlreadyInCart(prev => !prev)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer whitespace-nowrap active:scale-95 ${
+                hideAlreadyInCart
+                  ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                  : 'bg-bg text-muted hover:text-text border-glass-border'
+              }`}
+              title={hideAlreadyInCart ? "Currently hiding medicines already in cart or sent today. Click to show all." : "Currently showing all medicines. Click to hide medicines already in cart."}
+            >
+              <CheckCircle2 size={13} className={hideAlreadyInCart ? "text-emerald-400" : "text-muted"} />
+              <span>{hideAlreadyInCart ? 'Hiding In-Cart' : 'Showing All'}</span>
+            </button>
           </div>
 
           {/* SubTab Content */}

@@ -12,6 +12,7 @@ import { useModalEscape } from '../../services/keyboardShortcuts';
 import { MedicineVisualReferenceModal } from '../../components/MedicineVisualReferenceModal';
 import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import { withSilentRetry, formatTs, type LocalApiError } from './crmTypes';
+import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 
 interface OcrParsedPayload {
   items?: Array<{ name?: string; medicine_name?: string; text?: string }>;
@@ -120,6 +121,9 @@ export const WhatsAppSection: React.FC = () => {
   const [templates, setTemplates] = useState<WaMessageTemplate[]>(cachedWaTemplates);
   const location = useLocation();
   const [showTemplatePopover, setShowTemplatePopover] = useState(false);
+  const templatePopoverRef = useRef<HTMLDivElement>(null);
+  const templateTriggerBtnRef = useRef<HTMLButtonElement>(null);
+  useOnClickOutside([templatePopoverRef, templateTriggerBtnRef], () => setShowTemplatePopover(false));
   const [showManageModal, setShowManageModal] = useState(false);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [newChatNumber, setNewChatNumber] = useState('');
@@ -1060,7 +1064,7 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
               <div className="p-3 border-t border-border bg-bg2 relative">
                 {/* Templates Popover */}
                 {showTemplatePopover && (
-                  <div className="absolute bottom-16 left-3 w-80 max-h-64 bg-bg2 border border-border rounded-2xl shadow-xl z-20 flex flex-col overflow-hidden">
+                  <div ref={templatePopoverRef} className="absolute bottom-16 left-3 w-80 max-h-64 bg-bg2 border border-border rounded-2xl shadow-xl z-20 flex flex-col overflow-hidden">
                     <div className="p-2.5 border-b border-border bg-bg3 flex items-center justify-between text-xs font-bold text-text">
                       <span>Quick Message Templates</span>
                       <button
@@ -1105,6 +1109,7 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
                     type="button"
                     onClick={() => setShowTemplatePopover(prev => !prev)}
                     className="p-2 rounded-xl bg-bg border border-border text-muted hover:text-primary transition-all active:scale-95 text-xs font-bold flex items-center gap-1"
+                    ref={templateTriggerBtnRef}
                     title="Quick Templates"
                   >
                     <Zap size={14} />

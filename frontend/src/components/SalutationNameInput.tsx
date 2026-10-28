@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Loader2 } from 'lucide-react';
 import { api } from '../services/api';
+import { useOnClickOutside } from '../hooks/useOnClickOutside';
 
 export const SALUTATION_OPTIONS = ['Mr.', 'Mrs.', 'Miss', 'Dr.', 'Other'] as const;
 export type SalutationType = typeof SALUTATION_OPTIONS[number];
@@ -125,11 +126,17 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
   const [isLoading, setIsLoading] = useState(false);
 
   const justSelectedRef = useRef(false);
+  const isFocusedRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useOnClickOutside([containerRef, dropdownRef], () => {
+    setShowSuggestions(false);
+  });
 
   // Debounced patient autocomplete lookup
   useEffect(() => {
-    if (!enablePatientAutocomplete) return;
+    if (!enablePatientAutocomplete || !isFocusedRef.current) return;
     if (justSelectedRef.current) {
       setSuggestions([]);
       setShowSuggestions(false);
@@ -150,7 +157,7 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
         const list = Array.isArray(data) ? data : ((data as any)?.suggestions || []);
         const isFuzzy = !Array.isArray(data) && Boolean((data as any)?.isSuggestion);
 
-        if (!justSelectedRef.current && name.trim() === query) {
+        if (!justSelectedRef.current && isFocusedRef.current && name.trim() === query) {
           setSuggestions(list as PatientSuggestionItem[]);
           setIsFuzzyMatch(isFuzzy);
           setShowSuggestions(list.length > 0);
@@ -187,6 +194,7 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
   const handleSelectSuggestion = (patient: PatientSuggestionItem) => {
     justSelectedRef.current = true;
     setShowSuggestions(false);
+    setSuggestions([]);
     setHighlightIndex(-1);
     const parsed = parseSalutationAndName(patient.name);
     onSalutationChange(parsed.salutation, parsed.customSalutation);
@@ -195,7 +203,7 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
   };
 
   return (
-    <div className={`space-y-1 ${containerClassName}`}>
+    <div ref={containerRef} className={`space-y-1 ${containerClassName}`}>
       {label && (
         <label className="block text-xs font-semibold text-text">
           {label} {required && <span className="text-red-500">*</span>}
@@ -245,11 +253,13 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
             value={name}
             onChange={(e) => handleNameInput(e.target.value)}
             onFocus={() => {
+              isFocusedRef.current = true;
               if (enablePatientAutocomplete && !justSelectedRef.current && suggestions.length > 0) {
                 setShowSuggestions(true);
               }
             }}
             onBlur={() => {
+              isFocusedRef.current = false;
               setTimeout(() => setShowSuggestions(false), 200);
             }}
             onKeyDown={(e) => {

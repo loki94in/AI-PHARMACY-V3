@@ -43,7 +43,7 @@ const fefoRank = (stripQty: number, exp?: string) =>
 
 const normKey = (n: unknown) => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
-/** Compact WA ON/OFF toggle for POS toolbar — disables when number confirmed NOT on WhatsApp */
+/** Compact WA ON/OFF toggle for POS toolbar — indicates status without clobbering user preference */
 function POSWaToggleButton({
   phone,
   sendWhatsApp,
@@ -55,38 +55,38 @@ function POSWaToggleButton({
 }) {
   const { isNotOnWa } = useWaPhoneStatus(phone);
 
-  // Auto-turn off when confirmed not on WA
-  useEffect(() => {
-    if (isNotOnWa && sendWhatsApp) setSendWhatsApp(false);
-  }, [isNotOnWa, sendWhatsApp, setSendWhatsApp]);
-
-  if (isNotOnWa) {
-    return (
-      <button
-        type="button"
-        disabled
-        title="This number is not registered on WhatsApp"
-        className="h-9 px-2.5 rounded-xl border text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1 select-none shrink-0 bg-rose-500/10 border-rose-500/20 text-rose-400/70 cursor-not-allowed opacity-70"
-      >
-        <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-        <span>Not on WA</span>
-      </button>
-    );
-  }
-
   return (
     <button
       type="button"
       onClick={() => setSendWhatsApp(!sendWhatsApp)}
       className={`h-9 px-2.5 rounded-xl border text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1 transition-all select-none shrink-0 cursor-pointer ${
-        sendWhatsApp
+        isNotOnWa
+          ? sendWhatsApp
+            ? 'bg-amber-500/15 border-amber-500/30 text-amber-400 hover:bg-amber-500/25'
+            : 'bg-bg border-border text-muted hover:text-text hover:bg-bg2'
+          : sendWhatsApp
           ? 'bg-green/15 border-green/30 text-green hover:bg-green/25'
           : 'bg-bg border-border text-muted hover:text-text hover:bg-bg2'
       }`}
-      title={sendWhatsApp ? 'WhatsApp Notifications Active' : 'WhatsApp Notifications Inactive'}
+      title={
+        isNotOnWa
+          ? sendWhatsApp
+            ? 'WhatsApp is ON (User Setting) • Note: Number not registered on WhatsApp'
+            : 'WhatsApp is OFF • Number not registered on WhatsApp'
+          : sendWhatsApp
+          ? 'WhatsApp Notifications Active'
+          : 'WhatsApp Notifications Inactive'
+      }
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${sendWhatsApp ? 'bg-green animate-pulse' : 'bg-muted/40'}`} />
-      <span>WA:{sendWhatsApp ? 'ON' : 'OFF'}</span>
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${
+          isNotOnWa ? 'bg-rose-400' : sendWhatsApp ? 'bg-green animate-pulse' : 'bg-muted/40'
+        }`}
+      />
+      <span>
+        WA:{sendWhatsApp ? 'ON' : 'OFF'}
+        {isNotOnWa && <span className="text-[9px] opacity-75 font-normal ml-0.5">(No WA)</span>}
+      </span>
     </button>
   );
 }
@@ -2319,6 +2319,23 @@ const POS = () => {
     setIsDoctorDropdownOpen(false);
     setDoctorHighlightIndex(-1);
   });
+
+  // Auto-close cart row batch picker on outside click
+  useEffect(() => {
+    if (!activeBatchRowId) return;
+    const handleBatchOutsideClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Element | null;
+      if (target && !target.closest('[data-pos-batch-container="true"]')) {
+        setActiveBatchRowId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleBatchOutsideClick);
+    document.addEventListener('touchstart', handleBatchOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleBatchOutsideClick);
+      document.removeEventListener('touchstart', handleBatchOutsideClick);
+    };
+  }, [activeBatchRowId]);
 
   // Inventory cache readiness + version (moved up so the shared memoized
   // mapping below can depend on cacheVersion before it is used by either
@@ -6261,7 +6278,7 @@ const POS = () => {
 
                         {/* Batch Selection */}
                         <td className="py-1 px-2.5 relative">
-                          <div className="relative inline-block">
+                          <div className="relative inline-block" data-pos-batch-container="true">
                             <button
                               id={`row-batch-input-${cart.indexOf(item)}`}
                               type="button"
