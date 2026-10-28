@@ -1,134 +1,119 @@
-# Implementation Plan: Unified Refill Lifecycle (Website & CRM) & Owner Visibility Pipeline
+# Implementation Plan: Fix Distributor Contact Data Loss During Database Migrations
 
-## 1. Flowchart Specification & Architecture
+## 1. Problem & Root Cause Analysis
 
-This implementation strictly fulfills the user-specified refill architecture:
+### Identified Root Causes of Data Loss:
+1. **Destructive Contact Overwrite (Lines 3122-3125 & Line 4535 in `src/database.ts`)**:
+   - Query: `UPDATE distributors SET contact = phone WHERE phone IS NOT NULL AND phone != ''`
+   - Symptom: Erases contact person names (e.g., "Ramesh Gupta", "Sharma Ji") and alternate contact/landline numbers stored in `contact`, overwriting them with `phone`.
+2. **Destructive Nullification in Auto-Heal (Lines 406-412 in `src/database.ts`)**:
+   - Query: `UPDATE pharmarack_distributor_mappings SET phone = NULL ... WHERE LENGTH(...) != 10 AND LENGTH(...) > 0`
+   - Symptom: Wipes valid phone numbers (11-digit landlines with STD code, numbers with leading 0 or 91 country code, multiple numbers separated by slash/comma) setting them to NULL.
+3. **Destructive Email Purge (Lines 3105-3110 in `src/database.ts`)**:
+   - Query: `contact = CASE WHEN contact LIKE '%@%' ... THEN '' ELSE contact END`
+   - Symptom: Resets contact/phone to empty string without rescuing the email into the `email` column if `email` was NULL.
+4. **Hardcoded Distributor ID Overwrite (Lines 354-359 in `src/database.ts`)**:
+   - Query: `UPDATE distributors SET phone = '8087125156', contact = '8087125156' WHERE (name LIKE '%CM Distributor%' OR id IN (134, 174))`
+   - Symptom: Overwrites unrelated distributors in other shop databases if they happen to have ID 134 or 174.
+5. **Missing Pre-Migration Backup & Post-Migration Validation**:
+   - `ensureSchema` executes DDL directly without creating a pre-migration snapshot.
+   - If migration errors occur or fields are cleared, there is no automatic rollback or restore, and no validation verifying distributor contact integrity before stamping `schema_version`.
+
+---
+
+## 2. Architecture & Design Specification
 
 ```mermaid
 flowchart TD
-    A([New Refill Created]) --> B{Refill Source?}
+    A([Application Update / Start]) --> B[Check Schema Version in ensureSchema]
 
-    B -->|Patient Website| C[Receive Online Refill]
-    B -->|Staff CRM Page| D[Receive Manual CRM Refill]
+    B --> C{Schema Version Matches<br/>and Required Tables Exist?}
+    C -->|Yes| D[Fast Boot: No Unnecessary DDL]
+    D --> E[Non-Destructive Auto-Heal]
+    E --> Z([Application Ready])
 
-    C --> E[Apply the Same Refill Workflow]
-    D --> E
+    C -->|No| F[Initiate Safe Migration Pipeline]
 
-    E --> F[Process Selected Medicines]
-    F --> G[Add Successfully Processed Medicines to Live Cart]
-    F --> H[Identify Failed Medicines]
+    F --> G[Acquire Migration Lock]
+    G --> H[Verify Database Integrity and Disk Space]
+    H --> I[Create Consistent Pre-Migration Backup]
+    I --> J[Verify Backup Can Be Read]
+    J --> K[Audit Existing Distributor Records]
 
-    G --> I[Create QA Refill Task for Successfully Added Medicines]
-    H --> J[Notify Owner of Successful and Failed Medicines]
-    J --> K[Include Medicine Names and Distributor Details]
-    K --> L[Identify Distributor Zero Stock Where Confirmed]
-    L --> M[Save Non-WhatsApp Contacts for Manual Follow-up]
+    K --> L[Capture Distributor IDs and All Contact Fields]
+    L --> M[Run Versioned Migration Steps]
+    M --> N[Use Additive Schema Changes Where Possible]
+    N --> O[Normalize Data Without Clearing Existing Values]
+    O --> P[Validate Schema and Distributor Contact Data]
 
-    I --> N[Show Relevant Order and QA Refill Task]
-    N --> O{All Medicines Successfully Processed?}
+    P --> Q{All Validations Pass?}
 
-    O -->|Yes| P[Send Existing Patient Live Cart Notification]
-    O -->|No| Q[Do Not Send Patient Live Cart Notification]
+    Q -->|Yes| R[Commit Transaction Where Supported]
+    R --> S[Record Successful Migration and Schema Version]
+    S --> T[Run Post-Migration Integrity Checks]
+    T --> U{Final Checks Pass?}
 
-    P --> R[Staff Uses Existing Mark Ready Button]
-    Q --> R
+    U -->|Yes| V[Release Migration Lock]
+    V --> Z
 
-    R --> S[Start Existing Automatic Collection Messages]
-    S --> T{POS Completed or Task Marked Complete?}
+    U -->|No| W[Execute Recovery Procedure]
+    Q -->|No| W
+    M -->|Exception| W
+    I -->|Backup Failure| X[Abort Migration; Preserve Original Database]
+    J -->|Backup Verification Failure| X
 
-    T -->|No| S
-    T -->|Yes| U[Complete Current Refill Task]
-
-    U --> V[Read Patient's CRM Refill Cycle]
-    V --> W[Calculate Next Refill Date]
-    W --> X[Display Next Refill Date in CRM]
-    X --> Y([Await Next Refill])
+    W --> Y[Restore or Roll Back Using Verified Recovery Point]
+    Y --> AA[Verify Restored Database and Distributor Contacts]
+    AA --> AB[Log Error and Keep Previous Version Usable]
+    AB --> AC([Stop Update and Notify User])
+    X --> AC
 ```
 
 ---
 
-## 2. Technical Design & Component Mapping
+## 3. Step-by-Step Execution Plan
 
-### A. Shared Refill Processing Pipeline (Nodes A, B, C, D, E, F, G, H)
-- **Target File**: [`src/services/refillBatchService.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/refillBatchService.ts).
-- Both Patient Website ([`src/routes/customerPortal.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/customerPortal.ts)) and Staff CRM ([`src/routes/refills.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/refills.ts)) feed into `createRefillBatch()`.
-- `dispatchBatchEligibleItemsToCart()` iterates through selected medicines:
-  - **Node G**: Successfully added items are marked `cart_status: 'added'` or `'in_cart'`, recording the distributor name and quantity.
-  - **Node H**: Failed items are marked `needs_link`, `linked_oos`, `not_found`, or `failed`, capturing the specific error and distributor zero-stock confirmations.
+### Step 1: Remove Destructive Queries & Implement Safe Normalization in `src/database.ts` (Done)
+- Eliminated destructive `contact = phone` queries that overwrote contact person names or alternate numbers.
+- Preserved emails before sanitizing contact/phone.
+- Stopped phone nullification in `autoHealDistributorPhoneMappings`.
+- Scoped CM distributor updates strictly by name.
 
-### B. Owner Notification & Contact Safeguards (Nodes J, K, L, M)
-- **Target File**: [`src/services/refillBatchService.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/refillBatchService.ts).
-- Add `notifyOwnerOfRefillBatchOutcome(batch)`:
-  - Lists successfully carted medicines, quantities, and distributor names (**Node K**).
-  - Lists failed medicines with explicit failure reasons, tagging distributor confirmed zero stock (**Node L**).
-  - Checks if `patient_phone` is a valid WhatsApp mobile. If landline / non-WhatsApp, flags in `contacts` table and explicitly adds a note to the owner notification: `📞 Non-WhatsApp Contact: Saved for manual telephone call follow-up` (**Node M**).
-  - Delivers notification via `whatsappQueueWorker.enqueue` to the configured store admin phone.
+### Step 2: Implement Pre-Migration Snapshot & Headroom Engine in `src/utils/migrationSafety.ts`
+- Implement `acquireMigrationLock(dbPath)` & `releaseMigrationLock(lock)` with stale-lock detection.
+- Implement `verifyPreMigrationIntegrityAndDiskSpace(db, dbPath)` verifying `PRAGMA quick_check` and disk headroom (at least 3x DB size or 50MB free via `fs.statfsSync`).
+- Implement `createPreMigrationSnapshot(db, dbPath, fromVersion, toVersion)` with WAL checkpoint and `VACUUM INTO`.
+- Implement `verifyBackupReadability(snapshotPath)` opening the snapshot in read-only mode to verify `PRAGMA quick_check` and table readability before touching active data.
 
-### C. QA Refill Task & Selective Patient Notification (Nodes I, N, O, P, Q)
-- **Target Files**: [`src/services/refillBatchService.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/refillBatchService.ts), [`src/routes/refills.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/refills.ts), [`frontend/src/components/QuickAssistSidebar.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/QuickAssistSidebar.tsx).
-- Ensure a QA Refill task exists in `patient_call_tasks` linking to `batch_id` and showing cart items.
-- Move patient live cart notification from pre-dispatch to post-dispatch with strict condition (**Node O**):
-  - **Node P (Yes)**: If `failed_items === 0 && added_items > 0`, send/stage the patient live cart notification.
-  - **Node Q (No)**: If `failed_items > 0`, **suppress** patient notification so patients are never given false positive confirmations on partial/OOS orders.
+### Step 3: Implement Distributor Contact Audit, Post-Migration Integrity, & Post-Restore Verification
+- `captureDistributorAudit(db, fromVersion)`: dynamically captures all distributor IDs, names, phones, contacts, emails, addresses, city, GSTIN, DL numbers.
+- `validateDistributorContacts(preAudit, postDb)`: verifies count, identity, contact person names not replaced with phone numbers, emails, addresses, GSTIN.
+- `runPostMigrationIntegrityCheck(db)`: verifies `PRAGMA quick_check` and essential tables post-migration before marking success.
+- `restorePreMigrationSnapshot(dbPath, snapshotPath)`: restores the database on validation failure or exception.
+- `verifyRestoredDatabaseAndContacts(dbPath, preAudit)`: verifies that the restored database is readable, undamaged, and has 100% distributor contacts matching the pre-migration audit.
 
-### D. Counter Preparation, POS Billing & Next Refill Cycle (Nodes R, S, T, U, V, W, X, Y)
-- **Target Files**: [`src/routes/refills.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/refills.ts), [`src/routes/sales.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/sales.ts), [`frontend/src/pages/CRM/index.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CRM/index.tsx).
-- When staff clicks existing "Mark Ready" button (**Node R**), collection reminder messages are queued to the patient (**Node S**).
-- When POS checkout completes or the task is marked complete (**Node T ➔ Yes**):
-  - Mark current refill task completed (**Node U**).
-  - Read `refill_interval_days` from `patient_refills` (**Node V**).
-  - Compute `next_refill_date` using `advanceToNextOpenDay(today + interval_days)` (**Node W**).
-  - Persist new `last_refill_date` and `next_refill_date`, and emit `refill_updated` so CRM displays the new date immediately (**Node X**), awaiting the next cycle (**Node Y**).
+### Step 4: Expand Automated Tests in `tests/migrationDistributorSafety.test.ts`
+- Test 1: Real-world distributor data preservation across migrations (names, landlines, mobile, contacts, emails, addresses, GSTIN).
+- Test 2: Migration lock acquisition, conflict prevention, and release.
+- Test 3: Pre-flight integrity & disk headroom checks.
+- Test 4: Backup readability verification (including immediate abort on corrupted backup file without modifying the db).
+- Test 5: Validation gate failure detection when contact person is overwritten by phone digits.
+- Test 6: Recovery rollback and post-restore verification of database and distributor contacts.
+- Test 7: Idempotent re-runs without data loss.
 
----
-
-## 3. Step-by-Step Implementation Tasks
-
-### Step 1: Implement Owner Notification & Non-WhatsApp Fallback in Refill Batch Service
-- In `src/services/refillBatchService.ts`:
-  1. Add `notifyOwnerOfRefillBatchOutcome()` with medicine names, distributor details, and confirmed zero-stock flags.
-  2. Implement non-WhatsApp contact detection and flag for manual phone follow-up.
-  3. Wire call into `dispatchBatchEligibleItemsToCart()`.
-
-### Step 2: Implement Gated Patient Live Cart Notification
-- In `src/services/refillBatchService.ts`:
-  1. Update `stageBatchRefillNotification()` to be invoked only when `failed_items === 0 && added_items > 0`.
-  2. Suppress patient notification if any medicine failed.
-
-### Step 3: Verify & Ensure QA Refill Task, POS Completion & Cycle Recalculation
-- Ensure `patient_call_tasks` reflects the batch items.
-- Verify POS checkout and `mark-ready` endpoints update `last_refill_date` and `next_refill_date` via `refill_interval_days`.
-
-### Step 4: Verification & Quality Gates
-- Verify TypeScript compilation (`tsc --noEmit`).
-- Verify performance guardrails (`npm run guardrails`).
-- Verify client production bundle (`npm run build:client`).
-- Synchronize knowledge graph (`node scripts/quick-update.mjs`).
+### Step 5: Verify Guardrails & Update Knowledge Graph
+- Run `npm run guardrails` (`node scripts/performance-guardrails.mjs`).
+- Run `node scripts/quick-update.mjs`.
 
 ---
 
 ## 4. Completed Tasks Log
 
-- [x] Task 1: Implement Owner Notification with medicine/distributor breakdown, zero-stock identification, and non-WhatsApp contact flagging (Nodes H, J, K, L, M).
-  - *Completed in*: [`src/services/refillBatchService.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/refillBatchService.ts).
-  - *Details*: Implemented `notifyOwnerOfRefillBatchOutcome()` which generates a detailed WhatsApp breakdown for the pharmacy owner sent via `whatsappQueueWorker.enqueue`. It explicitly includes:
-    1. Medicine names, quantities, and distributor names (`cart_store_name`) for successfully added items (**Node K**).
-    2. Medicine names, requested quantities, and failure reasons for failed items, detecting distributor confirmed zero stock (`item.is_zero_stock` / `linked_oos`) (**Node L**).
-    3. Validates patient phone using `validate10DigitPhone(patient_phone, { requireMobilePrefix: true })`. If not a WhatsApp mobile, automatically creates a high-priority call task in `patient_call_tasks` (`task_type = 'refill_non_wa_followup'`), updates notes on `contacts`, and flags the notice prominently in the owner report for manual telephone call follow-up (**Node M**).
-
-- [x] Task 2: Gate Patient Live Cart Notification strictly on 100% item success (Nodes O, P, Q).
-  - *Completed in*: [`src/services/refillBatchService.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/refillBatchService.ts).
-  - *Details*: Removed the premature unconditioned call to `stageBatchRefillNotification()` in `createRefillBatch()`. Shifted invocation to `dispatchBatchEligibleItemsToCart()`, where it strictly verifies `failedCount === 0 && addedCount > 0` before staging the patient live cart notification in `automation_notifications` (**Node P**). If any medicine fails (`failedCount > 0`), the patient notification is suppressed (**Node Q**), preventing false confirmations on partial or out-of-stock orders.
-
-- [x] Task 3: Verify QA Refill Task, Mark Ready collection reminders, and POS cycle recalculation (Nodes I, N, R, S, T, U, V, W, X, Y).
-  - *Completed in*: [`src/services/refillBatchService.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/refillBatchService.ts), [`src/routes/refills.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/refills.ts), [`src/routes/sales.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/sales.ts).
-  - *Details*:
-    1. Inside `dispatchBatchEligibleItemsToCart()`, automatically creates/updates a `refill_qa` task in `patient_call_tasks` capturing the full medicine breakdown and batch details, and broadcasts `call_tasks_updated` and `refill_updated` (**Nodes I, N**).
-    2. Verified `/refills/patient/:phone/mark-ready` (`refills.ts:3165`) and frontend Mark Ready triggers (`QuickAssistSidebar.tsx`, `RefillOrderModal.tsx`, `RefillsSection.tsx`) to ensure marking ready queues collection reminder messages (**Nodes R, S**).
-    3. Verified POS billing checkout (`sales.ts:950-1015`) and refill fulfillment (`refills.ts:1828-1970`): marks current refill tasks completed in `patient_call_tasks`, advances the schedule using `refill_interval_days`, sets `last_refill_date` and calculates `next_refill_date` for CRM display (**Nodes T, U, V, W, X, Y**).
-
-- [x] Task 4: Pass all quality gates (`npm run guardrails`, `build:client`, `quick-update.mjs`).
-  - *Completed*:
-    1. Verified TypeScript type checking and guardrails with `npm run guardrails` (PASS, exit code 0).
-    2. Verified Vite client production bundle with `npm run build:client` (PASS, built cleanly in 48.51s).
-    3. Synchronized knowledge graph with `node scripts/quick-update.mjs` (PASS, updated in 4.0s).
+| Task # | Description | Completed How | Status |
+|---|---|---|---|
+| Task 1 | Create implementation plan | Documented in root `implementation.md` with root cause analysis, flowchart, and requirements | COMPLETED |
+| Task 2 | Fix destructive queries in `src/database.ts` | Removed destructive `contact = phone` queries (lines 3127-3150 and line 4565) that erased contact names and alternate numbers; preserved emails before sanitizing; removed phone nullification in `autoHealDistributorPhoneMappings` (cleans 10/11/12 digit formats without blanking); strictly scoped CM distributor updates by name | COMPLETED |
+| Task 3 | Add pre-migration backup & post-migration validation | Created `src/utils/migrationSafety.ts` with checkpointed `VACUUM INTO` backup engine (`createPreMigrationSnapshot`), universal schema-tolerant distributor audit (`captureDistributorAudit`), contact preservation validator (`validateDistributorContacts`), and atomic snapshot restorer (`restorePreMigrationSnapshot`). Integrated into `ensureSchema` in `src/database.ts` | COMPLETED |
+| Task 4 | Implement full pipeline flowchart additions | Added `acquireMigrationLock` with stale timeout, `verifyPreMigrationIntegrityAndDiskSpace` with 3x headroom requirement, `verifyBackupReadability` read-only quick_check, `runPostMigrationIntegrityCheck`, and `verifyRestoredDatabaseAndContacts` into `src/utils/migrationSafety.ts` & `src/database.ts` | COMPLETED |
+| Task 5 | Expand automated test verification | Added 9 test suites in `tests/migrationDistributorSafety.test.ts` verifying real-world edge cases, validation gate failure detection, rollback restoration, idempotency, migration locks, pre-flight checks, backup verification, post-migration checks, and post-restore verification (all 9 passed) | COMPLETED |
+| Task 6 | Guardrails & knowledge graph update | Ran `npm run guardrails` (passing `tsc --noEmit` and schema checks with 0 violations) and `node scripts/quick-update.mjs` (knowledge graph updated in 5.4s) | COMPLETED |

@@ -1890,10 +1890,10 @@ export const QuickAssistSidebar = memo(({
                       </div>
                     )}
 
-                    {/* Patient Card Actions — 7-day Refill Quick Assist Workflow (plan 2026-10):
-                        Stage A 'upcoming' → [Confirm?] [Add to Cart] [Already Added] [Snooze] [Edit]
-                        Stage B 'ordered' → [Confirm?] [Mark Ready] [Complete]
-                        Stage C 'reminded' → [Confirm?] [Re-Send Reminder] [Complete] */}
+                    {/* Patient Card Actions — 7-day Refill Quick Assist Workflow:
+                        Stage A 'upcoming' → [Add to Cart] [Already Added] [Snooze] [Edit]
+                        Stage B 'ordered' → [Mark Ready] [PO] [Complete] [Edit]
+                        Stage C 'reminded' → [PO] [Re-Send Reminder] [Complete] */}
                     <div className="flex flex-col gap-1.5 pt-1.5 border-t border-border min-w-0">
                       <div className="flex items-center gap-1 text-[9px] text-muted font-medium truncate" title={`Next refill due: ${group.next_refill_date ? new Date(group.next_refill_date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'N/A'}`}>
                         <Calendar size={9} className="shrink-0 text-muted/70" />
@@ -1954,36 +1954,11 @@ export const QuickAssistSidebar = memo(({
                                     e.stopPropagation();
                                     handleOrderRefillGroupToCart(group);
                                   }}
-                                  className="h-6.5 px-2 rounded-lg bg-primary/20 hover:bg-primary text-primary hover:text-white border border-primary/30 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
+                                  className="flex-1 h-6.5 px-2 rounded-lg bg-primary/20 hover:bg-primary text-primary hover:text-white border border-primary/30 text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs truncate"
                                   title="Open Add to Cart popup to select medicines and quantities for live cart"
                                 >
-                                  <ShoppingCart size={10} className="shrink-0" />
-                                  <span>{unaddedMeds.length > 0 ? `Cart (${unaddedMeds.length})` : 'In Cart'}</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleBookRefillToPos(group);
-                                  }}
-                                  className="h-6.5 px-2.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 hover:text-white text-emerald-400 border border-emerald-500/30 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs shrink-0"
-                                  title={`Book & bill refill for ${group.patient_name} in POS`}
-                                >
-                                  <ShoppingCart size={10} className="shrink-0" />
-                                  <span>POS</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isMarkingReady}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleMarkRefillGroupReady(group);
-                                  }}
-                                  className="h-6.5 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[9.5px] font-bold transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer shrink-0"
-                                  title={`Mark refills ready and send pickup reminder to ${group.patient_name}`}
-                                >
-                                  {isMarkingReady ? <Loader2 size={10} className="animate-spin shrink-0" /> : <BellRing size={11} className="shrink-0" />}
-                                  <span>Mark Ready</span>
+                                  <ShoppingCart size={11} className="shrink-0" />
+                                  <span className="truncate">Add to Cart{unaddedMeds.length > 0 ? ` (${unaddedMeds.length})` : ''}</span>
                                 </button>
                                 <button
                                   type="button"
@@ -2074,30 +2049,6 @@ export const QuickAssistSidebar = memo(({
                               <>
                                 <button
                                   type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOrderRefillGroupToCart(group);
-                                  }}
-                                  className="h-6.5 px-2 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-400 text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
-                                  title="View / adjust medicines in Pharmarack live cart"
-                                >
-                                  <ShoppingCart size={10} className="shrink-0" />
-                                  <span>In Cart</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleBookRefillToPos(group);
-                                  }}
-                                  className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
-                                  title={`Open POS to bill refill for ${group.patient_name}`}
-                                >
-                                  <ShoppingCart size={10} className="shrink-0" />
-                                  <span>POS</span>
-                                </button>
-                                <button
-                                  type="button"
                                   disabled={isMarkingReady}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -2108,6 +2059,18 @@ export const QuickAssistSidebar = memo(({
                                 >
                                   {isMarkingReady ? <Loader2 size={10} className="animate-spin shrink-0" /> : <BellRing size={11} className="shrink-0" />}
                                   <span className="truncate">Mark Ready</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleBookRefillToPos(group);
+                                  }}
+                                  className="h-6.5 px-2.5 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
+                                  title={`Open POS to bill refill for ${group.patient_name}`}
+                                >
+                                  <ShoppingCart size={10} className="shrink-0" />
+                                  <span>PO</span>
                                 </button>
                                 <button
                                   type="button"
@@ -2122,6 +2085,14 @@ export const QuickAssistSidebar = memo(({
                                   {isFulfillingGroup ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
                                   <span className="truncate">Complete</span>
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={openEdit}
+                                  className="h-6.5 w-7 rounded-lg bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border transition-colors flex items-center justify-center cursor-pointer shrink-0"
+                                  title={`Edit refill details for ${group.patient_name}`}
+                                >
+                                  <Edit3 size={11} className="shrink-0" />
+                                </button>
                               </>
                             );
                           }
@@ -2134,11 +2105,11 @@ export const QuickAssistSidebar = memo(({
                                   e.stopPropagation();
                                   handleBookRefillToPos(group);
                                 }}
-                                className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
+                                className="h-6.5 px-2.5 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
                                 title={`Open POS to bill refill for ${group.patient_name}`}
                               >
                                 <ShoppingCart size={10} className="shrink-0" />
-                                <span>POS</span>
+                                <span>PO</span>
                               </button>
                               <button
                                 type="button"

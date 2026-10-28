@@ -1,9 +1,23 @@
 import crypto from 'crypto';
+import fs from 'fs';
 import { dbManager } from './database/connection.js';
+import {
+  createPreMigrationSnapshot,
+  captureDistributorAudit,
+  validateDistributorContacts,
+  restorePreMigrationSnapshot,
+  acquireMigrationLock,
+  verifyPreMigrationIntegrityAndDiskSpace,
+  verifyBackupReadability,
+  runPostMigrationIntegrityCheck,
+  verifyRestoredDatabaseAndContacts,
+  DistributorAuditSnapshot,
+  MigrationLockHandle,
+} from './utils/migrationSafety.js';
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 83;
+const CURRENT_SCHEMA_VERSION = 84;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -350,11 +364,12 @@ export async function autoHealDistributorPhoneMappings(db: any): Promise<void> {
         AND (phone = '087125156' OR phone IS NULL OR LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10)
     `);
 
-    // 2. Ensure distributor 134 / 174 in distributors table has the correct phone
+    // 2. Ensure CM Distributor in distributors table has the correct phone without wiping contact person names
     await db.run(`
       UPDATE distributors
-      SET phone = '8087125156', contact = '8087125156'
-      WHERE (name LIKE '%CM Distributor%' OR id IN (134, 174))
+      SET phone = '8087125156',
+          contact = CASE WHEN contact IS NULL OR contact = '' OR contact = '087125156' THEN '8087125156' ELSE contact END
+      WHERE name LIKE '%CM Distributor%'
         AND (phone IS NULL OR phone = '' OR phone = '087125156')
     `);
 
@@ -401,15 +416,29 @@ export async function autoHealDistributorPhoneMappings(db: any): Promise<void> {
         )
     `);
 
-    // 5. If any mapping still has a phone that is not 10 digits (e.g. truncated 9-digit garbage),
-    // clear it so it doesn't carry corrupted data
-    await db.run(`
-      UPDATE pharmarack_distributor_mappings
-      SET phone = NULL, updated_at = CURRENT_TIMESTAMP
-      WHERE phone IS NOT NULL 
-        AND LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10
-        AND LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) > 0
+    // 5. Clean leading 0 or 91 country code without blanking or dropping phones (safe non-destructive normalization)
+    const mappingsToClean = await db.all(`
+      SELECT store_name, phone FROM pharmarack_distributor_mappings 
+      WHERE phone IS NOT NULL AND phone != ''
     `);
+    if (Array.isArray(mappingsToClean)) {
+      for (const m of mappingsToClean) {
+        if (!m.phone) continue;
+        const digits = String(m.phone).replace(/\D/g, '');
+        let normalized = m.phone;
+        if (digits.length === 11 && digits.startsWith('0')) {
+          normalized = digits.slice(1);
+        } else if (digits.length === 12 && digits.startsWith('91')) {
+          normalized = digits.slice(2);
+        }
+        if (normalized !== m.phone && normalized.length === 10) {
+          await db.run(
+            'UPDATE pharmarack_distributor_mappings SET phone = ?, updated_at = CURRENT_TIMESTAMP WHERE store_name = ?',
+            [normalized, m.store_name]
+          );
+        }
+      }
+    }
 
     // 6. Same for contacts table if type = 'distributor'
     await db.run(`
@@ -1064,9 +1093,10 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cloud_sync_auto', '1')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cloud_cart_queue_mode', 'auto')");
 
+    let versionRow: any = null;
     // Fast-path: skip entire DDL wall if schema is already at current version AND key tables exist
     try {
-      const versionRow = await db.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
+      versionRow = await db.get("SELECT value FROM app_settings WHERE key = 'schema_version'");
       const migrationRow = await db.get("SELECT MAX(version) as version FROM schema_migrations");
       const tableCheck = await db.get("SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name IN ('inventory_master', 'purchase_items', 'sale_items', 'distributors')");
       if (versionRow && parseInt(versionRow.value, 10) >= CURRENT_SCHEMA_VERSION && tableCheck && tableCheck.c >= 4) {
@@ -1724,6 +1754,65 @@ export async function ensureSchema(dbPath: string) {
     }
 
     console.log(`[Boot] Applying schema v${CURRENT_SCHEMA_VERSION}...`);
+
+    // G: Acquire Migration Lock
+    let migrationLock: MigrationLockHandle | null = null;
+    try {
+      migrationLock = acquireMigrationLock(dbPath);
+    } catch (lockErr: any) {
+      console.error('[Migration Safety] Could not acquire migration lock:', lockErr?.message || lockErr);
+      throw lockErr;
+    }
+
+    const currentVersion = versionRow ? parseInt(versionRow.value, 10) : 0;
+    let preMigrationSnapshotPath: string | null = null;
+    let preMigrationAudit: DistributorAuditSnapshot | null = null;
+
+    if (fs.existsSync(dbPath) && (await tableExists(db, 'distributors'))) {
+      // H: Verify Database Integrity and Disk Space
+      const preFlight = await verifyPreMigrationIntegrityAndDiskSpace(db, dbPath);
+      if (!preFlight.ok) {
+        if (migrationLock) migrationLock.release();
+        console.error('[Migration Safety] Pre-migration pre-flight check FAILED:', preFlight.error);
+        throw new Error(`Migration aborted before starting: ${preFlight.error}`);
+      }
+
+      // I: Create Consistent Pre-Migration Backup
+      try {
+        preMigrationSnapshotPath = await createPreMigrationSnapshot(db, dbPath, currentVersion, CURRENT_SCHEMA_VERSION);
+      } catch (snapshotErr: any) {
+        if (migrationLock) migrationLock.release();
+        console.error('[Migration Safety] Backup Failure:', snapshotErr?.message || snapshotErr);
+        // I -->|Backup Failure| X[Abort Migration; Preserve Original Database]
+        throw new Error(`[Migration Safety] Backup Failure: Could not create pre-migration backup (${snapshotErr?.message || snapshotErr}). Migration aborted to preserve original database.`);
+      }
+
+      if (!preMigrationSnapshotPath || !fs.existsSync(preMigrationSnapshotPath)) {
+        if (migrationLock) migrationLock.release();
+        // I -->|Backup Failure| X[Abort Migration; Preserve Original Database]
+        throw new Error('[Migration Safety] Backup Failure: Pre-migration backup file was not created. Migration aborted to preserve original database.');
+      }
+
+      // J: Verify Backup Can Be Read
+      const backupCheck = await verifyBackupReadability(preMigrationSnapshotPath);
+      if (!backupCheck.ok) {
+        if (migrationLock) migrationLock.release();
+        console.error('[Migration Safety] Backup Verification Failure:', backupCheck.error);
+        // J -->|Backup Verification Failure| X[Abort Migration; Preserve Original Database]
+        throw new Error(`[Migration Safety] Backup Verification Failure: Pre-migration backup is unreadable or corrupted (${backupCheck.error}). Migration aborted to preserve original database.`);
+      }
+      console.log(`[Migration Safety] Pre-migration backup verified readable: ${preMigrationSnapshotPath}`);
+
+      // K & L: Audit Existing Distributor Records & Capture Contact Fields
+      try {
+        preMigrationAudit = await captureDistributorAudit(db, currentVersion);
+        console.log(`[Migration Safety] Audited ${preMigrationAudit.distributors.size} distributors and ${preMigrationAudit.mappings.size} mappings before migration.`);
+      } catch (auditErr: any) {
+        console.warn('[Migration Safety] Audit warning:', auditErr?.message || auditErr);
+      }
+    }
+
+    try {
 
     // Ensure prerequisite columns across all tables exist BEFORE DDL / index operations
     try {
@@ -3100,29 +3189,36 @@ export async function ensureSchema(dbPath: string) {
         }
       }
 
-      // Purge email strings incorrectly written into phone/contact columns
+      // Rescue email strings into email column if email is empty before cleaning phone/contact
       await db.run(`
-      UPDATE distributors SET
-        phone = CASE WHEN phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%' THEN '' ELSE phone END,
-        contact = CASE WHEN contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%' THEN '' ELSE contact END
-      WHERE (phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%')
-         OR (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%')
-    `);
+        UPDATE distributors SET
+          email = CASE
+            WHEN (email IS NULL OR email = '') AND (contact LIKE '%@%' OR contact LIKE '%.com%') THEN contact
+            WHEN (email IS NULL OR email = '') AND (phone LIKE '%@%' OR phone LIKE '%.com%') THEN phone
+            ELSE email
+          END
+        WHERE (email IS NULL OR email = '')
+          AND (contact LIKE '%@%' OR contact LIKE '%.com%' OR phone LIKE '%@%' OR phone LIKE '%.com%')
+      `);
 
-      // Synchronize distributors contact and phone columns
-      await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
+      // Clean email strings incorrectly written into phone column without blanking valid contact person names
+      await db.run(`
+        UPDATE distributors SET
+          phone = CASE WHEN phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%' THEN '' ELSE phone END,
+          contact = CASE WHEN (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%') AND email IS NOT NULL AND email != '' THEN '' ELSE contact END
+        WHERE (phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%')
+           OR (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%')
+      `);
+
+      // Synchronize distributors contact and phone columns safely without data loss:
+      // If phone is missing and contact contains numeric digits, populate phone
+      await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != '' AND (contact GLOB '[0-9]*' OR contact LIKE '+%')");
+      // If contact is completely empty, populate contact = phone as default fallback (never overwrite existing contact person name or landline)
       await db.run("UPDATE distributors SET contact = phone WHERE (contact IS NULL OR contact = '') AND phone IS NOT NULL AND phone != ''");
 
       // Synchronize special_orders product and medicine_name columns to eliminate column name confusion
       await db.run("UPDATE special_orders SET product = medicine_name WHERE (product IS NULL OR product = '') AND medicine_name IS NOT NULL AND medicine_name != ''");
       await db.run("UPDATE special_orders SET medicine_name = product WHERE (medicine_name IS NULL OR medicine_name = '') AND product IS NOT NULL AND product != ''");
-
-      // Sanitize distributors contact table: overwrite legacy contact column with phone so old numbers are purged
-      await db.run(`
-      UPDATE distributors 
-      SET contact = phone 
-      WHERE phone IS NOT NULL AND phone != '' AND (contact IS NULL OR contact != phone)
-    `);
     } catch (err) {
       console.warn('Customer contact backfill warning:', err);
     }
@@ -4528,11 +4624,10 @@ export async function ensureSchema(dbPath: string) {
       await db.run('ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL');
     } catch { }
 
-    // Consolidate legacy 'contact' into 'phone' if 'phone' is empty, then ensure 'phone' is the single source of truth
-
+    // Safely synchronize distributors contact and phone without overwriting contact person names
     try {
-      await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != ''");
-      await db.run("UPDATE distributors SET contact = phone WHERE phone IS NOT NULL AND phone != ''");
+      await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != '' AND (contact GLOB '[0-9]*' OR contact LIKE '+%')");
+      await db.run("UPDATE distributors SET contact = phone WHERE (contact IS NULL OR contact = '') AND phone IS NOT NULL AND phone != ''");
     } catch (syncErr) {
       console.warn('[Database Schema] Distributor phone sync warning:', syncErr);
     }
@@ -5065,11 +5160,56 @@ export async function ensureSchema(dbPath: string) {
       console.warn('[Boot] Post-DDL migration note:', postErr.message);
     }
 
-    // Stamp schema version so subsequent boots skip all DDL
-    await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
-    await db.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
-    console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully.`);
-    // ponytail: don't close — we reuse the dbManager shared connection
+      // P: Validate Schema and Distributor Contact Data
+      if (preMigrationAudit && preMigrationAudit.distributors.size > 0) {
+        const validation = await validateDistributorContacts(preMigrationAudit, db);
+        if (!validation.isValid) {
+          console.error('[Migration Safety] Migration validation FAILED:', validation.errors);
+          // Q -->|No| W[Execute Recovery Procedure]
+          throw new Error(`Database migration failed distributor data validation: ${validation.errors.join('; ')}`);
+        }
+        console.log(`[Migration Safety] Migration validation passed: All ${preMigrationAudit.distributors.size} distributor records and contacts verified intact.`);
+      }
+
+      // R & S: Record Successful Migration and Schema Version
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('schema_version', ?)", [String(CURRENT_SCHEMA_VERSION)]);
+      await db.run("INSERT OR REPLACE INTO schema_migrations (version) VALUES (?)", [CURRENT_SCHEMA_VERSION]);
+
+      // T: Run Post-Migration Integrity Checks
+      const postIntegrity = await runPostMigrationIntegrityCheck(db);
+      if (!postIntegrity.ok) {
+        console.error('[Migration Safety] Post-migration integrity check FAILED:', postIntegrity.error);
+        // U -->|No| W[Execute Recovery Procedure]
+        throw new Error(`Database failed post-migration integrity check: ${postIntegrity.error}`);
+      }
+      console.log(`[Boot] Schema v${CURRENT_SCHEMA_VERSION} applied successfully with all integrity checks passed.`);
+      // ponytail: don't close — we reuse the dbManager shared connection
+    } catch (migErr: any) {
+      // W --> Y: Execute Recovery Procedure / Restore or Roll Back
+      if (preMigrationSnapshotPath && fs.existsSync(preMigrationSnapshotPath)) {
+        try {
+          console.warn('[Migration Safety] Executing recovery procedure: Restoring database from pre-migration snapshot...');
+          await restorePreMigrationSnapshot(dbPath, preMigrationSnapshotPath);
+
+          // AA: Verify Restored Database and Distributor Contacts
+          console.log('[Migration Safety] Verifying restored database integrity and distributor contacts...');
+          const restoreVerification = await verifyRestoredDatabaseAndContacts(dbPath, preMigrationAudit);
+          if (!restoreVerification.ok) {
+            console.error('[Migration Safety] CRITICAL: Restored database verification warning:', restoreVerification.error);
+          } else {
+            console.log('[Migration Safety] Restored database verified healthy and all distributor contacts match pre-migration state.');
+          }
+        } catch (rollErr) {
+          console.error('[Migration Safety] Failed during recovery procedure:', rollErr);
+        }
+      }
+      throw migErr;
+    } finally {
+      // V: Release Migration Lock
+      if (migrationLock) {
+        migrationLock.release();
+      }
+    }
   } finally {
     ensureSchemaRuns--;
     if (ensureSchemaRuns === 0) dbManager.isBooting = false;
