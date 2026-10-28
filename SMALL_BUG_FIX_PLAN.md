@@ -30,6 +30,20 @@
 - Priority: P2
 - Verified by: Production frontend build (`npm run build --prefix frontend`) built in 57.86s with 0 errors (`dist/assets/CRM-WcgBg676.js`); `npm run guardrails` exit 0 (0 violations); `node scripts/quick-update.mjs` synchronized.
 
+### [Fixed] P2-130 — Fix Missing & Disconnected Medicines in Reorder Hub
+- Cause:
+  1. In `src/routes/pharmarack.ts:purchase-reorder-history`, the query had `WHERE a.rank_in_dist <= 15`, which artificially cut off all medicines ranked #16 or lower per distributor. Search queries were also blocked by this cap, causing searched medicines to return empty.
+  2. In `pharmarack_distributor_mappings` lookup within `purchase-reorder-history`, `store_id` was omitted from the `SELECT` query, leaving `matchedStoreId` as `null` for past purchase items.
+  3. In `frontend/src/pages/PharmarackCart/index.tsx`, `handleConfirmReorderSame` executed a strict block: `if (!productCode || !productId || !targetStoreId)`, aborting the add and forcing open Live Search. In `medicine_distributor_links`, `product_id` was often stored as `""` (empty string), which evaluated to `0`, causing even linked medicines to be treated as missing.
+  4. In `src/routes/sales.ts:reorder-suggestions`, candidate medicines lacked distributor attribution, PTR (rate), MRP, and Pharmarack store IDs from past purchase bills.
+- Fix:
+  1. In `src/routes/pharmarack.ts`, replaced `a.rank_in_dist <= 15` with `(${q.length >= 2 ? '1=1' : 'a.rank_in_dist <= 100'})` so search queries never truncate results and browsing includes up to 100 items per distributor. Added `store_id` selection to `pharmarack_distributor_mappings` and set `isMapped = true` when `product_code` exists.
+  2. In `src/routes/sales.ts`, added batch query enriching suggestion items with their latest purchase distributor name, rate (PTR), MRP, purchase date, and Pharmarack store link.
+  3. In `frontend/src/pages/PharmarackCart/index.tsx`, updated `handleConfirmReorderSame` to dynamically resolve `targetStoreId` from distributor mappings when missing, auto-search the target distributor on Pharmarack if not yet linked, and accept verified `productCode` without requiring non-zero `productId`.
+  4. Enriched Sales Restock cards with distributor name and last PTR, passing complete purchase metadata to the reorder quantity confirmation modal.
+- Priority: P2
+- Verified by: `npm run guardrails` passed with 0 violations (`tsc --noEmit` clean); production frontend client build (`npm run build:client`) succeeded in 47.68s with 0 errors; `node scripts/quick-update.mjs` updated knowledge graph (1318 nodes, 867 edges).
+
 ### [Fixed] P2-129 — Lock CRM Refills Metric Cards in Fixed Position & Eliminate Layout Shifts
 - Cause:
   1. In `frontend/src/pages/CRM/RefillsSection.tsx`, when patients had medicines not linked to distributors, an extra 5th card was injected into the 4-column grid. This pushed the 4th action box (`+ Add Refill`, `Delay Notice`, `Run Check`, `Refresh`) onto a second row, making the cards jump positions and double in height whenever unlinked medicines were resolved or detected.

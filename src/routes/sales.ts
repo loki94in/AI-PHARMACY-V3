@@ -3482,6 +3482,73 @@ router.get('/reorder-suggestions', async (_req, res) => {
       : [];
     const ptrByMed: Record<number, number> = Object.fromEntries(ptrRows.map((r: any) => [r.medicine_id, Number(r.ptr || 0)]));
 
+    // Batch-enrich last purchase distributor, rate, and MRP for suggestions
+    const lastPurchasesByMed: Record<number, {
+      distributorId: number | null;
+      distributorName: string;
+      storeId: number | null;
+      storeName: string;
+      rate: number;
+      mrp: number;
+      quantity: number;
+      lastDate: string;
+    }> = {};
+
+    if (candidateIds.length > 0) {
+      const placeholders = candidateIds.map(() => '?').join(',');
+      const purchaseRows = await db.all(
+        `SELECT pi.medicine_id, p.distributor_id, d.name AS distributor_name,
+                pdm.store_id, pdm.store_name, pi.cost_price, pi.mrp, pi.quantity,
+                p.date AS last_purchase_date
+         FROM (
+           SELECT pi.medicine_id, pi.purchase_id, pi.cost_price, pi.mrp, pi.quantity,
+                  ROW_NUMBER() OVER (PARTITION BY pi.medicine_id ORDER BY pi.id DESC) as rn
+           FROM purchase_items pi
+           WHERE pi.medicine_id IN (${placeholders})
+         ) pi
+         JOIN purchases p ON p.id = pi.purchase_id
+         LEFT JOIN distributors d ON d.id = p.distributor_id
+         LEFT JOIN pharmarack_distributor_mappings pdm ON pdm.distributor_id = d.id
+         WHERE pi.rn = 1`,
+        candidateIds
+      );
+      for (const pr of purchaseRows) {
+        lastPurchasesByMed[Number(pr.medicine_id)] = {
+          distributorId: pr.distributor_id ? Number(pr.distributor_id) : null,
+          distributorName: pr.distributor_name || pr.store_name || '',
+          storeId: pr.store_id ? Number(pr.store_id) : null,
+          storeName: pr.store_name || pr.distributor_name || '',
+          rate: Number(pr.cost_price || 0),
+          mrp: Number(pr.mrp || 0),
+          quantity: Number(pr.quantity || 1),
+          lastDate: pr.last_purchase_date ? String(pr.last_purchase_date).slice(0, 10) : ''
+        };
+      }
+    }
+
+    const linksByMed: Record<number, { storeId: number; storeName: string; productCode: string; productId: number }> = {};
+    if (candidateIds.length > 0) {
+      const placeholders = candidateIds.map(() => '?').join(',');
+      const linkRows = await db.all(
+        `SELECT medicine_id, store_id, store_name, product_code, product_id
+         FROM medicine_distributor_links
+         WHERE medicine_id IN (${placeholders})
+         ORDER BY pick_order, id`,
+        candidateIds
+      );
+      for (const lr of linkRows) {
+        const mid = Number(lr.medicine_id);
+        if (!linksByMed[mid]) {
+          linksByMed[mid] = {
+            storeId: Number(lr.store_id || 0),
+            storeName: lr.store_name || '',
+            productCode: lr.product_code || '',
+            productId: Number(lr.product_id || 0)
+          };
+        }
+      }
+    }
+
     const items: any[] = [];
     for (const row of candidates) {
       const medId = Number(row.medicine_id);
@@ -3500,13 +3567,33 @@ router.get('/reorder-suggestions', async (_req, res) => {
 
       if (!result.included) continue;
 
+      const lp = lastPurchasesByMed[medId];
+      const link = linksByMed[medId];
+      const finalStoreId = link?.storeId || lp?.storeId || null;
+      const finalStoreName = link?.storeName || lp?.storeName || lp?.distributorName || '';
+      const finalPtr = lp?.rate || ptrByMed[medId] || 0;
+      const finalMrp = lp?.mrp || Number(row.mrp || 0);
+
       items.push({
         medicineId: medId,
         medicineName: row.medicine_name,
         company: row.company || '',
         packaging: row.packaging || '',
-        ptr: ptrByMed[medId] || 0,
-        mrp: Number(row.mrp || 0),
+        ptr: finalPtr,
+        mrp: finalMrp,
+        storeId: finalStoreId,
+        storeName: finalStoreName,
+        distributorId: lp?.distributorId || null,
+        lastDistributorName: lp?.distributorName || finalStoreName,
+        productCode: link?.productCode || '',
+        productId: link?.productId || 0,
+        previousPurchase: lp ? {
+          supplierName: lp.distributorName,
+          quantity: lp.quantity,
+          price: lp.rate,
+          mrp: lp.mrp,
+          purchaseDate: lp.lastDate
+        } : undefined,
         twoDaySales: Number(row.sales_2d_qty || 0),
         twoMonthSales: Number(row.sales_window_qty || 0),
         twoMonthPurchases: Number(row.purchases_window_qty || 0),

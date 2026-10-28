@@ -4890,15 +4890,34 @@ export default function PharmarackCart() {
     // 1. Immediately close modal so user can proceed without waiting (<10ms)
     setReorderSameModalTarget(null);
 
-    // Directly use the card's native distributor
-    const targetStoreId = card.storeId ? Number(card.storeId) : 0;
+    // Directly use the card's native distributor or resolve via mappings
+    let targetStoreId = card.storeId ? Number(card.storeId) : 0;
+    const rawStoreName = card.storeName || card.previousPurchase?.supplierName || '';
+    if (!targetStoreId && rawStoreName) {
+      const normStore = rawStoreName.toLowerCase().trim();
+      const mapped = distributorMappings[normStore] || Object.entries(distributorMappings).find(([k]) => normStore.includes(k) || k.includes(normStore))?.[1];
+      if (mapped?.distributorId) {
+        const foundDist = distributors.find(d => {
+          const dNorm = (d.storeName || '').toLowerCase().trim();
+          return dNorm === normStore || dNorm.includes(normStore) || normStore.includes(dNorm);
+        });
+        if (foundDist?.storeId) targetStoreId = Number(foundDist.storeId);
+      }
+      if (!targetStoreId) {
+        const foundDist = distributors.find(d => {
+          const dNorm = (d.storeName || '').toLowerCase().trim();
+          return dNorm === normStore || dNorm.includes(normStore) || normStore.includes(dNorm);
+        });
+        if (foundDist?.storeId) targetStoreId = Number(foundDist.storeId);
+      }
+    }
     const targetDist = targetStoreId ? distributors.find(d => d.storeId === targetStoreId) : undefined;
     const itemKey = `${medName}:::${targetStoreId}`;
 
     // 2. Track addition state per item key (keeps all other cards active!)
     setAddingItemKeys(prev => new Set(prev).add(itemKey));
 
-    // 3. Resolve IDs — STRICT ONLY.
+    // 3. Resolve IDs
     let productCode = card.productCode || '';
     let productId = Number(card.productId) || 0;
     let packaging = card.packaging || '';
@@ -4907,8 +4926,8 @@ export default function PharmarackCart() {
     let mrp = card.mrp || card.previousPurchase?.mrp || undefined;
     const storeName = targetDist?.storeName || card.storeName || (targetStoreId ? `Distributor #${targetStoreId}` : 'Distributor');
 
-    // If not yet resolved, check distributorProductsMap ONLY for strict same product on targetStoreId
-    if ((!productCode || !productId) && targetStoreId) {
+    // Check distributorProductsMap for strict same product on targetStoreId
+    if (!productCode && targetStoreId) {
       const storeProducts = distributorProductsMap[targetStoreId] || [];
       const match = storeProducts.find(p => isStrictSameProduct(p.medicineName, medName));
       if (match) {
@@ -4921,9 +4940,31 @@ export default function PharmarackCart() {
       }
     }
 
-    // Fallback: If missing verified Pharmarack IDs or missing target store, DO NOT guess and DO NOT add optimistic dummy!
-    // Seamlessly open Live Cart Search with prefilled query
-    if (!productCode || !productId || !targetStoreId) {
+    // Auto-search distributor on Pharmarack if storeId is known but productCode not yet linked
+    if (!productCode && targetStoreId) {
+      try {
+        const live = await api.searchPharmarack(medName, targetStoreId).catch(() => null);
+        const hits = (Array.isArray(live) ? live : []).filter((r: LocalLiveSearchRow) =>
+          !r.isOffline && !r.isLocalPharmacy && r.productCode &&
+          Number(r.storeId) === Number(targetStoreId) && isStrictSameProduct(r.fullName || r.shortName || r.name, medName));
+        if (hits.length === 1) {
+          const h = hits[0];
+          productCode = String(h.productCode);
+          productId = Number(h.productId) || productId;
+          packaging = packaging || h.packaging || '';
+          company = company || h.company || '';
+          rate = h.rate ?? rate;
+          mrp = h.mrp ?? mrp;
+        }
+      } catch (_) {}
+    }
+
+    if (!productId && productCode) {
+      productId = Number(card.medicineId) || 0;
+    }
+
+    // Fallback: If missing verified productCode or missing target store, open Live Search
+    if (!productCode || !targetStoreId) {
       toastEvent.trigger(`Opening Live Search for "${medName}" (${storeName})...`, 'info');
       liveCartAddEvent.triggerOpen(medName, qtyToAdd, card.sourceOrderId, card.sourceRefillId, targetStoreId ? Number(targetStoreId) : undefined);
       setAddingItemKeys(prev => {
@@ -5718,8 +5759,8 @@ export default function PharmarackCart() {
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {filteredReorderSuggestions.map((sug) => (
-                          <div key={`all-sug-${sug.medicineId}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
+                        {filteredReorderSuggestions.map((sug, idx) => (
+                          <div key={`all-sug-${sug.medicineId}-${idx}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                             <div className="space-y-2">
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-1.5 min-w-0">
@@ -5735,6 +5776,18 @@ export default function PharmarackCart() {
                                 </span>
                               </div>
                               <div className="text-xs text-muted space-y-1">
+                                {(sug.lastDistributorName || sug.storeName) && (
+                                  <div className="flex items-center gap-1.5">
+                                    <Store size={11} className="text-emerald-400 shrink-0" />
+                                    <span className="truncate">Distributor: <strong className="text-text font-bold">{sug.lastDistributorName || sug.storeName}</strong></span>
+                                  </div>
+                                )}
+                                {sug.ptr ? (
+                                  <div className="text-[11px]">
+                                    Last PTR: <strong className="text-emerald-400 font-mono">₹{sug.ptr.toFixed(2)}</strong>
+                                    {sug.mrp ? <span className="text-muted ml-1.5">MRP: ₹{sug.mrp.toFixed(2)}</span> : null}
+                                  </div>
+                                ) : null}
                                 <div>📊 Past {reorderWindowMonths} {reorderWindowMonths === 1 ? 'Month' : 'Months'} Sold: <strong className="text-text font-mono">{sug.twoMonthSales ?? sug.sixMonthTotalSales ?? 0}</strong> units</div>
                                 <div>📦 Current Stock: <strong className="text-rose-400 font-mono">{sug.currentStock}</strong> strips</div>
                               </div>
@@ -5752,6 +5805,15 @@ export default function PharmarackCart() {
                                       medicineName: sug.medicineName,
                                       medicineId: sug.medicineId,
                                       packaging: sug.packaging,
+                                      company: sug.company,
+                                      ptr: sug.ptr,
+                                      mrp: sug.mrp,
+                                      storeId: sug.storeId ? Number(sug.storeId) : undefined,
+                                      storeName: sug.storeName || sug.lastDistributorName,
+                                      productCode: sug.productCode,
+                                      productId: sug.productId,
+                                      previousPurchase: sug.previousPurchase,
+                                      hasPreviousPurchase: Boolean(sug.previousPurchase),
                                       currentStock: sug.currentStock,
                                       minStock: 5,
                                       suggestedQty: sug.suggestedQty
@@ -5782,8 +5844,8 @@ export default function PharmarackCart() {
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredReorderRecentItems.map((item, idx) => {
-                          const itemKey = `all-recent-${item.medicineName}:::${item.storeId || item.storeName || idx}`;
-                          const rawKey = `${item.medicineName}:::${item.storeId || item.storeName || idx}`;
+                          const itemKey = `all-recent-${item.medicineName}:::${item.storeId || item.storeName || ''}:::${idx}`;
+                          const rawKey = `recent-${item.medicineName}:::${item.storeId || item.storeName || ''}:::${idx}`;
                           const itemQty = getReorderItemQty(rawKey, 1);
                           const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
                           const inCart = isMedicineInAnyCart(item.medicineName);
@@ -5868,8 +5930,8 @@ export default function PharmarackCart() {
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredPurchaseHistoryItems.map((item, idx) => {
-                          const itemKey = `all-purchase:::${item.medicineId || item.medicineName}:::${item.storeId || item.storeName || idx}`;
-                          const rawKey = `purchase:::${item.medicineId || item.medicineName}:::${item.storeId || item.storeName || idx}`;
+                          const itemKey = `all-purchase:::${item.medicineId || item.medicineName}:::${item.distributorId || item.storeId || item.storeName || ''}:::${idx}`;
+                          const rawKey = `purchase:::${item.medicineId || item.medicineName}:::${item.distributorId || item.storeId || item.storeName || ''}:::${idx}`;
                           const itemQty = getReorderItemQty(rawKey, 1);
                           const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
                           const inCart = isMedicineInAnyCart(item.medicineName);
@@ -6066,8 +6128,8 @@ export default function PharmarackCart() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredReorderSuggestions.map((sug) => (
-                    <div key={sug.medicineId} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
+                  {filteredReorderSuggestions.map((sug, idx) => (
+                    <div key={`sug-${sug.medicineId}-${idx}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5 min-w-0">
@@ -6084,6 +6146,18 @@ export default function PharmarackCart() {
                         </div>
 
                         <div className="text-xs text-muted space-y-1">
+                          {(sug.lastDistributorName || sug.storeName) && (
+                            <div className="flex items-center gap-1.5">
+                              <Store size={11} className="text-emerald-400 shrink-0" />
+                              <span className="truncate">Distributor: <strong className="text-text font-bold">{sug.lastDistributorName || sug.storeName}</strong></span>
+                            </div>
+                          )}
+                          {sug.ptr ? (
+                            <div className="text-[11px]">
+                              Last PTR: <strong className="text-emerald-400 font-mono">₹{sug.ptr.toFixed(2)}</strong>
+                              {sug.mrp ? <span className="text-muted ml-1.5">MRP: ₹{sug.mrp.toFixed(2)}</span> : null}
+                            </div>
+                          ) : null}
                           <div>📊 Past {reorderWindowMonths} {reorderWindowMonths === 1 ? 'Month' : 'Months'} Sold: <strong className="text-text font-mono">{sug.twoMonthSales ?? sug.sixMonthTotalSales ?? 0}</strong> units</div>
                           <div>📦 Current Stock: <strong className="text-rose-400 font-mono">{sug.currentStock}</strong> strips</div>
                         </div>
@@ -6124,6 +6198,15 @@ export default function PharmarackCart() {
                                   medicineName: sug.medicineName,
                                   medicineId: sug.medicineId,
                                   packaging: sug.packaging,
+                                  company: sug.company,
+                                  ptr: sug.ptr,
+                                  mrp: sug.mrp,
+                                  storeId: sug.storeId ? Number(sug.storeId) : undefined,
+                                  storeName: sug.storeName || sug.lastDistributorName,
+                                  productCode: sug.productCode,
+                                  productId: sug.productId,
+                                  previousPurchase: sug.previousPurchase,
+                                  hasPreviousPurchase: Boolean(sug.previousPurchase),
                                   currentStock: sug.currentStock,
                                   minStock: 5,
                                   suggestedQty: sug.suggestedQty
@@ -6153,7 +6236,7 @@ export default function PharmarackCart() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {filteredReorderRecentItems.map((item, idx) => {
-                    const itemKey = `${item.medicineName}:::${item.storeId || item.storeName || idx}`;
+                    const itemKey = `recent-${item.medicineName}:::${item.storeId || item.storeName || ''}:::${idx}`;
                     const itemQty = getReorderItemQty(itemKey, 1);
                     const stockInfo = checkedStockMap[item.medicineName];
                     const isCheckingStock = checkingStockMed === item.medicineName;
@@ -6382,7 +6465,7 @@ export default function PharmarackCart() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {filteredPurchaseHistoryItems.map((item, idx) => {
-                    const itemKey = `purchase:::${item.medicineId || item.medicineName}:::${item.storeId || item.storeName || idx}`;
+                    const itemKey = `purchase:::${item.medicineId || item.medicineName}:::${item.distributorId || item.storeId || item.storeName || ''}:::${idx}`;
                     const itemQty = getReorderItemQty(itemKey, 1);
 
                     return (
@@ -7548,9 +7631,9 @@ export default function PharmarackCart() {
                                         )}
                                       </div>
                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 pt-0.5">
-                                        {fillers.map(({ item, qty, amount }) => (
+                                        {fillers.map(({ item, qty, amount }, fIdx) => (
                                           <div
-                                            key={`${item.medicineName}-${item.storeId || ''}`}
+                                            key={`${item.medicineName}-${item.storeId || ''}-${fIdx}`}
                                             className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-bg2/80 hover:bg-bg2 border border-glass-border/40 text-[11px] text-text transition-colors"
                                           >
                                             <div className="min-w-0 flex-1">

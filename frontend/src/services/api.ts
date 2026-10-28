@@ -1113,6 +1113,19 @@ export interface ReorderSuggestion {
   packaging: string;
   ptr: number;
   mrp: number;
+  storeId?: number | null;
+  storeName?: string;
+  distributorId?: number | null;
+  lastDistributorName?: string;
+  productCode?: string;
+  productId?: number;
+  previousPurchase?: {
+    supplierName?: string;
+    quantity?: number;
+    price?: number;
+    mrp?: number;
+    purchaseDate?: string;
+  };
   twoDaySales: number;
   twoMonthSales: number;
   twoMonthPurchases: number;

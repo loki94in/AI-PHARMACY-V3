@@ -4777,7 +4777,7 @@ router.get('/purchase-reorder-history', async (req, res) => {
        ) l ON l.mid2 = a.mid AND l.did2 = a.did AND l.rn = 1
        JOIN medicines m ON m.id = a.mid
        LEFT JOIN distributors d ON d.id = a.did
-       WHERE a.rank_in_dist <= 15
+       WHERE (${q.length >= 2 ? '1=1' : 'a.rank_in_dist <= 100'})
        ${medFilterSql ? `AND ${medFilterSql.replace(/^WHERE /, '')}` : ''}
        ORDER BY a.bill_count DESC, a.last_date DESC
        LIMIT ?`,
@@ -4786,12 +4786,15 @@ router.get('/purchase-reorder-history', async (req, res) => {
 
     // Batch-enrich distributor mappings, product links, and catalog stock (replaces N+1 queries)
     const mappingRows = await db.all(
-      `SELECT distributor_id, store_name FROM pharmarack_distributor_mappings WHERE distributor_id IS NOT NULL`
+      `SELECT distributor_id, store_name, store_id FROM pharmarack_distributor_mappings WHERE distributor_id IS NOT NULL`
     );
-    const mappingMap = new Map<number, string>();
+    const mappingMap = new Map<number, { storeName: string; storeId: number }>();
     for (const m of mappingRows) {
-      if (m.distributor_id && m.store_name) {
-        mappingMap.set(Number(m.distributor_id), m.store_name);
+      if (m.distributor_id && (m.store_name || m.store_id)) {
+        mappingMap.set(Number(m.distributor_id), {
+          storeName: m.store_name || '',
+          storeId: Number(m.store_id || 0)
+        });
       }
     }
 
@@ -4850,8 +4853,9 @@ router.get('/purchase-reorder-history', async (req, res) => {
     }
 
     const enriched = rows.map((r: any) => {
-      let matchedStoreId: number | null = storeId;
-      let matchedStoreName = (r.distributor_id && mappingMap.get(r.distributor_id)) || r.distributor_name || '';
+      const distMapping = r.distributor_id ? mappingMap.get(Number(r.distributor_id)) : null;
+      let matchedStoreId: number | null = storeId || (distMapping?.storeId || null);
+      let matchedStoreName = distMapping?.storeName || r.distributor_name || '';
       let matchedProductCode = '';
       let matchedProductId = 0;
       let isMapped = false;
@@ -4859,14 +4863,14 @@ router.get('/purchase-reorder-history', async (req, res) => {
       const candidateLinks = linksByMedId.get(Number(r.medicine_id)) || [];
       const matchedLink = candidateLinks.find((l: any) =>
         matchedStoreName && (l.store_name || '').trim().toLowerCase() === matchedStoreName.trim().toLowerCase()
-      ) || candidateLinks[0];
+      ) || (matchedStoreId ? candidateLinks.find((l: any) => Number(l.store_id) === Number(matchedStoreId)) : null) || candidateLinks[0];
 
       if (matchedLink) {
         matchedStoreId = Number(matchedLink.store_id) || matchedStoreId;
         matchedStoreName = matchedLink.store_name || matchedStoreName;
-        if (matchedLink.product_id) matchedProductId = Number(matchedLink.product_id);
+        if (matchedLink.product_id) matchedProductId = Number(matchedLink.product_id) || 0;
         if (matchedLink.product_code) matchedProductCode = matchedLink.product_code;
-        if (matchedProductId && matchedProductCode) isMapped = true;
+        if (matchedProductCode || matchedProductId) isMapped = true;
       }
 
       const pNameNorm = (r.medicine_name || '').trim().toLowerCase();
