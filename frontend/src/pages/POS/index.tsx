@@ -317,7 +317,6 @@ interface EditSaleLine {
   looseQty?: number | string | null;
   pack_size?: number | string | null;
   pack_unit?: string | null;
-  name?: string;
   packSize?: number | string | null;
   discount_per?: number | string | null;
   discount?: number | string | null;
@@ -529,7 +528,6 @@ interface StagedLine {
   discount?: number | string | null;
   pack_size?: number | string | null;
   pack_unit?: string | null;
-  name?: string;
   availableStock?: number | string | null;
   stock_qty?: number | string | null;
   loose_quantity?: number | string | null;
@@ -1002,9 +1000,9 @@ export function allocateMedicineBatches(params: {
         unitPrice: Number(refItem.unitPrice || refItem.unit_price || refItem.sell_price || refItem.mrp || 0),
         discount: Number(refItem.discount || 0),
         packSize: pSize,
-      pack_size: pSize,
-      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
-      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
+        pack_size: pSize,
+        pack_unit: (refItem as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
+        packaging: (refItem as any).packaging || params.fallbackItem?.packaging || null,
         availableStock: Number(refItem.availableStock || refItem.stock_qty || 0),
         availableLooseStock: Number(refItem.availableLooseStock || refItem.loose_quantity || 0),
         alternative_batches: [],
@@ -1100,9 +1098,6 @@ export function allocateMedicineBatches(params: {
           unitPrice: unitPrice,
           discount: discount || 0,
           packSize: pSize,
-      pack_size: pSize,
-      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
-      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
           pack_size: pSize,
           pack_unit: (batch as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
           packaging: batch.packaging || params.fallbackItem?.packaging || null,
@@ -1697,12 +1692,7 @@ const POS = () => {
                 packaging: med.packaging,
                 pack_size: pSize,
                 packSize: pSize,
-      pack_size: pSize,
-      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
-      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
-          pack_size: pSize,
-          pack_unit: (batch as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
-          packaging: batch.packaging || params.fallbackItem?.packaging || null,
+                pack_unit: (med as any).pack_unit || (med as any).packUnit || null,
                 sell_price: med.sell_price,
                 mrp: med.mrp,
                 unit_price: med.unit_price || med.unitPrice,
@@ -2627,12 +2617,7 @@ const POS = () => {
           packaging: med.packaging,
           pack_size: pSize,
           packSize: pSize,
-      pack_size: pSize,
-      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
-      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
-          pack_size: pSize,
-          pack_unit: (batch as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
-          packaging: batch.packaging || params.fallbackItem?.packaging || null,
+          pack_unit: (med as any).pack_unit || (med as any).packUnit || null,
           sell_price: med.sell_price,
           mrp: med.mrp,
           unit_price: med.unit_price || med.unitPrice,
@@ -2795,7 +2780,8 @@ const POS = () => {
     pendingDirectSave?: boolean;
   } | null>(null);
 
-  const handleQuickApplyPackSize = async (medicineId: number, newPackSize: number, newUnit?: string) => {
+  const handleQuickApplyPackSize = async (medicineId: number, newPackSize: number | null, newUnit?: string) => {
+    if (!newPackSize) return;
     try {
       await api.updateQuickEditMedicine(medicineId, {
         pack_size: newPackSize,

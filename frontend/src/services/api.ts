@@ -967,6 +967,7 @@ export interface QuickEditMedicinePayload {
   marketed_by?: string;
   packaging?: string;
   pack_unit?: string;
+  pack_size?: number | null;
   item_code?: string;
   category?: string;
   api_reference?: string;
