@@ -115,14 +115,18 @@ export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatu
     percent = Math.max(0, Math.min(100, Math.round(frame.downloadProgress)));
   }
 
+  let totalMB = current.totalMB;
+  if (typeof frame.totalBytes === 'number' && frame.totalBytes > 0) {
+    totalMB = Math.round((frame.totalBytes / 1048576) * 10) / 10;
+  } else if (!totalMB || totalMB === 0) {
+    totalMB = 39.4;
+  }
+
   let downloadedMB = current.downloadedMB;
   if (typeof frame.downloadedBytes === 'number') {
     downloadedMB = Math.round((frame.downloadedBytes / 1048576) * 10) / 10;
-  }
-
-  let totalMB = current.totalMB;
-  if (typeof frame.totalBytes === 'number') {
-    totalMB = Math.round((frame.totalBytes / 1048576) * 10) / 10;
+  } else if (percent > 0 && totalMB > 0) {
+    downloadedMB = Math.round(((totalMB * percent) / 100) * 10) / 10;
   }
 
   // An update strictly requires a newer semver target and non-false hasUpdate flag
@@ -135,6 +139,7 @@ export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatu
   } else if (frame.readyToInstall && isTargetNewer) {
     state = 'ready';
     percent = 100;
+    downloadedMB = totalMB > 0 ? totalMB : 39.4;
   } else if (frame.downloading && (hasUpdate || isTargetNewer)) {
     state = 'downloading';
   } else if ((hasUpdate || isTargetNewer) && typeof frame.downloadProgress === 'number' && (current.state === 'downloading' || frame.downloadProgress > 0)) {

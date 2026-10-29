@@ -175,6 +175,8 @@ class AutoUpdateService {
     changelog?: string;
     downloading?: boolean;
     downloadProgress?: number;
+    downloadedBytes?: number;
+    totalBytes?: number;
     readyToInstall?: boolean;
     lastError?: string;
   } | null = null;
@@ -288,6 +290,8 @@ class AutoUpdateService {
       currentVersion: APP_VERSION,
       downloading: Boolean(this.isDownloading && isNewer),
       downloadProgress: isNewer ? (this.lastResult.downloadProgress ?? 0) : 0,
+      downloadedBytes: isNewer ? (this.lastResult.downloadedBytes ?? 0) : 0,
+      totalBytes: isNewer ? (this.lastResult.totalBytes ?? 0) : 0,
       readyToInstall: Boolean(this.lastResult.readyToInstall && isNewer),
     };
   }
@@ -511,6 +515,8 @@ class AutoUpdateService {
         const percent = total > 0 ? Math.round((downloaded / total) * 100) : 0;
         if (this.lastResult) {
           this.lastResult.downloadProgress = percent;
+          this.lastResult.downloadedBytes = downloaded;
+          this.lastResult.totalBytes = total;
         }
         eventService.broadcast('update_progress', {
           latestVersion: version,
@@ -578,6 +584,9 @@ class AutoUpdateService {
         this.lastResult.downloading    = false;
         this.lastResult.readyToInstall = true;
         this.lastResult.downloadProgress = 100;
+        if (this.lastResult.totalBytes && !this.lastResult.downloadedBytes) {
+          this.lastResult.downloadedBytes = this.lastResult.totalBytes;
+        }
         this.lastResult.lastError = undefined;
       }
       console.log(`[AutoUpdate] Download complete. Update v${version} is ready to install.`);

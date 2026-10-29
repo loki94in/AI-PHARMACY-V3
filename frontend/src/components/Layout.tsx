@@ -3339,7 +3339,7 @@ export const Layout = ({
 
   // P1 "events, not timers": ONE global SSE listener replaces all periodic
   // background polling (API_OPTIMIZATION_IMPLEMENTATION_PLAN.md Phase 3).
-  useGlobalSseInvalidation(compactCacheLoaded);
+  useGlobalSseInvalidation(true);
 
   useEffect(() => {
     const handleRefresh = () => {

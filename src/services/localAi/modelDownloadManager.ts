@@ -76,12 +76,19 @@ export class ModelDownloadManager {
 
   /**
    * Resolves absolute download URL for an artifact.
+   * If baseUrl or LOCAL_AI_ASSET_BASE_URL is configured (e.g. Cloudflare R2),
+   * all artifact filenames resolve directly against that base bucket URL.
    */
   public resolveArtifactUrl(art: ManifestArtifact, baseUrl?: string): string {
+    const configuredBase = (baseUrl || process.env.LOCAL_AI_ASSET_BASE_URL || '').trim().replace(/\/+$/, '');
+    if (configuredBase) {
+      const cleanRel = (art.filename || path.basename(art.url || '')).replace(/^\/+/, '');
+      return `${configuredBase}/${cleanRel}`;
+    }
     if (art.url && (art.url.startsWith('https://') || art.url.startsWith('http://'))) {
       return art.url;
     }
-    const cleanBase = (baseUrl || process.env.LOCAL_AI_ASSET_BASE_URL || 'https://assets.aipharmacy.internal/releases/local-ai').replace(/\/+$/, '');
+    const cleanBase = 'https://assets.aipharmacy.internal/releases/local-ai';
     const cleanRel = (art.url || art.filename).replace(/^\/+/, '');
     return `${cleanBase}/${cleanRel}`;
   }

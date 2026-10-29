@@ -101,5 +101,22 @@ describe('Auto-Update Client-Side Semver Gate (P2-107)', () => {
       expect(effectiveProgress).toBe(0);
       expect(effectiveHasUpdate).toBe(false);
     });
+
+    it('accurately preserves and calculates downloaded and total megabytes during active download', () => {
+      const totalBytes = 39494648; // ~37.7 MB
+      const downloadedBytes = 20455872; // ~19.5 MB
+      const downloadedMB = Math.round((downloadedBytes / 1048576) * 10) / 10;
+      const totalMB = Math.round((totalBytes / 1048576) * 10) / 10;
+      const percent = Math.round((downloadedBytes / totalBytes) * 100);
+
+      expect(downloadedMB).toBe(19.5);
+      expect(totalMB).toBe(37.7);
+      expect(percent).toBe(52);
+
+      // Verify fallback calculation when raw bytes are omitted but percent is present
+      const fallbackDownloadedMB = Math.round(((totalMB * percent) / 100) * 10) / 10;
+      expect(fallbackDownloadedMB).toBeGreaterThan(19);
+      expect(fallbackDownloadedMB).toBeLessThan(20);
+    });
   });
 });

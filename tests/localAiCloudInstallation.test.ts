@@ -203,6 +203,20 @@ describe('Cloud-Hosted Local AI Installation & Download Manager', () => {
       expect(verifyManifestAuthenticity(manifestStr, 'invalid-signature-hex', secret)).toBe(false);
       expect(verifyManifestAuthenticity(manifestStr + 'tampered', validHmac, secret)).toBe(false);
     });
+
+    it('resolves Cloudflare R2 bucket URLs cleanly for relative artifact paths', () => {
+      const downloader = new ModelDownloadManager();
+      const r2Base = 'https://pub-123456789abcdef.r2.dev';
+      const art = {
+        filename: 'qwen3-1.7b-q4_k_m.gguf',
+        sha256: 'a'.repeat(64),
+        sizeBytes: 1024,
+        url: 'qwen3-1.7b-q4_k_m.gguf'
+      };
+
+      const resolved = downloader.resolveArtifactUrl(art, r2Base);
+      expect(resolved).toBe('https://pub-123456789abcdef.r2.dev/qwen3-1.7b-q4_k_m.gguf');
+    });
   });
 
   // =========================================================================

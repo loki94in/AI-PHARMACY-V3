@@ -86,8 +86,9 @@ export class LocalAiLifecycleManager {
    * Fetches and verifies remote release manifest from configured URL.
    */
   public async fetchRemoteManifest(customUrl?: string): Promise<LocalAiReleaseManifest | null> {
-    const manifestUrl = customUrl || process.env.LOCAL_AI_MANIFEST_URL ||
-      `${(process.env.LOCAL_AI_ASSET_BASE_URL || 'https://assets.aipharmacy.internal/releases/local-ai').replace(/\/+$/, '')}/manifest.json`;
+    const rawManifestUrl = (customUrl || process.env.LOCAL_AI_MANIFEST_URL || '').trim();
+    const rawBaseUrl = (process.env.LOCAL_AI_ASSET_BASE_URL || '').trim().replace(/\/+$/, '');
+    const manifestUrl = rawManifestUrl || (rawBaseUrl ? `${rawBaseUrl}/manifest.json` : 'https://assets.aipharmacy.internal/releases/local-ai/manifest.json');
 
     try {
       const response = await fetch(manifestUrl, {
