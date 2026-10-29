@@ -352,13 +352,11 @@ export class PharmacyQaEngine {
         `🔍 We could not find a match for *"${candidateName}"* in our current catalog.\n\n` +
         `📸 Please share a photo of the strip or prescription, or check the spelling so our team can check immediately.`;
     } else {
-      // Unclear or generic greeting
+      // Open-ended conversational fallback: do not force the user into a numbered menu.
       draftResponse =
         `👋 Welcome to AI Pharmacy!\n\n` +
-        `How can we assist you today? You can:\n` +
-        `1️⃣ Check medicine availability or price\n` +
-        `2️⃣ Ask store hours and address\n` +
-        `3️⃣ Place an order or send prescription 📸`;
+        `You can ask me naturally about medicine availability, MRP, store hours, refill requests, or help from our pharmacist. Just describe what you need in your own words — no special keywords or menu numbers are required.\n\n` +
+        `If I need more information, I will ask a short follow-up question.`;
     }
 
     const latencyMs = Math.round(performance.now() - startTime);
