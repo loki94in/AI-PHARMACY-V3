@@ -117,7 +117,7 @@ fs.copyFileSync(path.join(electronDistDir, 'preload.cjs'), path.join(appResource
 const localAiSourceDir = path.join(root, 'models', 'local-ai');
 const localAiTargetDir = path.join(root, 'dist', 'resources', 'local-ai');
 const requireLocalAi = process.env.BUNDLE_LOCAL_AI === '1';
-const requiredLocalAiFiles = ['llama-server.exe', 'Qwen_Qwen3-1.7B-Q4_K_M.gguf'];
+const requiredLocalAiFiles = ['llama-server.exe', 'Qwen_Qwen3-1.7B-Q4_K_M.gguf', 'LICENSE-llama.cpp.txt', 'LICENSE-Qwen3.txt', 'MODEL-METADATA.txt'];
 const missingLocalAiFiles = requiredLocalAiFiles.filter(name => !fs.existsSync(path.join(localAiSourceDir, name)));
 if (requireLocalAi && missingLocalAiFiles.length) {
   throw new Error('[build-sea] BUNDLE_LOCAL_AI=1 but required offline assets are missing: ' + missingLocalAiFiles.join(', ') + '. Provision verified assets under models/local-ai before building.');
