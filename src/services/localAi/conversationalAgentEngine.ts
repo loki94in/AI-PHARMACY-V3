@@ -430,7 +430,14 @@ export class ConversationalAgentEngine {
         try {
           const qaResult = await pharmacyQaEngine.processQuery(userText, {
             language: lang,
-            dbInstance: db
+            dbInstance: db,
+            assistantScope: 'customer',
+            conversationHistory: recentTurns
+              .filter((turn) => turn.sender === 'customer' || turn.sender === 'assistant')
+              .map((turn) => ({
+                role: turn.sender === 'customer' ? 'user' as const : 'assistant' as const,
+                content: turn.messageText
+              }))
           });
           replyText = String(qaResult?.draftResponse || '').trim();
         } catch (qaError) {
