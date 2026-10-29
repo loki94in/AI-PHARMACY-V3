@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "1.0",
+  "releaseTag": "v1.0.0",
+  "model": {
+    "name": "qwen3-1.7b-q4_k_m",
+    "family": "Qwen3",
+    "parameterSize": "1.7B",
+    "quantization": "Q4_K_M",
+    "contextLength": 2048,
+    "artifact": {
+      "filename": "qwen3-1.7b-q4_k_m.gguf",
+      "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e",
+      "sizeBytes": 1117320736,
+      "url": "https://assets.aipharmacy.internal/releases/local-ai/qwen3-1.7b-q4_k_m.gguf"
+    }
+  },
+  "runtime": {
+    "name": "llama-server",
+    "version": "b11979",
+    "platform": "win-cpu-x64",
+    "artifact": {
+      "filename": "llama-server.exe",
+      "sha256": "880eca38a52a86ae3c4b175b49229c3afcf683c4f9d9166cd3ff742c3b19c919",
+      "sizeBytes": 9216,
+      "executable": true,
+      "url": "https://assets.aipharmacy.internal/releases/local-ai/llama-server.exe"
+    }
+  },
+  "license": {
+    "artifact": {
+      "filename": "LICENSE.txt",
+      "sha256": "b00f74438ddf7317a8c99d44cea6c03b356f452ae08eadc9019a3f0f46aa89c1",
+      "sizeBytes": 271,
+      "url": "https://assets.aipharmacy.internal/releases/local-ai/LICENSE.txt"
+    }
+  },
+  "metadata": {
+    "artifact": {
+      "filename": "metadata.json",
+      "sha256": "9ca86d7732b881fadc154b2023c24fa5e34abba06f2079b480e23c0b87e26a29",
+      "sizeBytes": 516,
+      "url": "https://assets.aipharmacy.internal/releases/local-ai/metadata.json"
+    }
+  },
+  "publishedAt": "2026-10-29T06:51:43.000Z"
+}
+

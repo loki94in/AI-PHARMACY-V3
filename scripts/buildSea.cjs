@@ -119,32 +119,23 @@ const bundleLocalAi = process.env.BUNDLE_LOCAL_AI === '1' || process.env.BUNDLE_
 const localAiDir = path.join(root, 'models', 'local-ai');
 const stagedLocalAiDir = path.join(distDir, 'resources', 'local-ai');
 
-if (bundleLocalAi || (fs.existsSync(localAiDir) && fs.readdirSync(localAiDir).length > 0)) {
-  console.log('[build-sea] Validating offline Local AI assets...');
+if (bundleLocalAi) {
+  console.log('[build-sea] Mode B: Bundling offline Local AI assets (BUNDLE_LOCAL_AI=1)...');
   try {
-    execFileSync(process.execPath, [path.join(root, 'scripts', 'verify-local-ai-assets.mjs'), ...(bundleLocalAi ? ['--strict'] : [])], {
+    execFileSync(process.execPath, [path.join(root, 'scripts', 'verify-local-ai-assets.mjs'), '--strict'], {
       cwd: root,
       stdio: 'inherit'
     });
+    console.log('[build-sea] ✓ All Local AI assets verified. Will be packaged into {app}\\models\\local-ai.');
   } catch (err) {
     console.error('[build-sea] ❌ Local AI asset verification failed! BUNDLE_LOCAL_AI=1 requires model, runtime, license, and metadata.');
     process.exit(1);
   }
-
-  if (fs.existsSync(localAiDir)) {
-    fs.mkdirSync(stagedLocalAiDir, { recursive: true });
-    console.log('[build-sea] Staging provisioned Local AI assets into dist/resources/local-ai...');
-    for (const file of fs.readdirSync(localAiDir)) {
-      const srcFile = path.join(localAiDir, file);
-      const destFile = path.join(stagedLocalAiDir, file);
-      if (fs.statSync(srcFile).isFile()) {
-        fs.copyFileSync(srcFile, destFile);
-      }
-    }
-    console.log('[build-sea] ✓ Local AI assets successfully staged for offline installer.');
-  }
 } else {
-  console.log('[build-sea] Local AI offline assets not bundled (BUNDLE_LOCAL_AI is not set).');
+  console.log('[build-sea] Mode A: Cloud-download installer (BUNDLE_LOCAL_AI not set). Model weights will NOT be bundled.');
+}
+if (fs.existsSync(stagedLocalAiDir)) {
+  try { fs.rmSync(stagedLocalAiDir, { recursive: true, force: true }); } catch (_) {}
 }
 
 // Automatically check for Inno Setup compiler (ISCC.exe) and compile installer if installed
@@ -210,7 +201,8 @@ if (isccExe && fs.existsSync(issPath)) {
   console.log(`[build-sea] Inno compression mode: ${compression}`);
   try {
     // Pass version via /DMyAppVersion=, compression via /DCompression=, and stamp via /DNodeModulesStamp=
-    execSync(`"${isccExe}" /DMyAppVersion=${APP_VERSION} /DCompression=${compression} /DNodeModulesStamp=${nodeModulesStamp} "${issPath}"`, { cwd: root, stdio: 'inherit' });
+    const bundleLocalAiFlag = bundleLocalAi ? '/DBundleLocalAi=1' : '';
+    execSync(`"${isccExe}" /DMyAppVersion=${APP_VERSION} /DCompression=${compression} /DNodeModulesStamp=${nodeModulesStamp} ${bundleLocalAiFlag} "${issPath}"`, { cwd: root, stdio: 'inherit' });
     console.log(`[build-sea] 🎉 Standalone Installer created at: dist\\installer\\AI-Pharmacy-OS-Portable-Setup-v${APP_VERSION}.exe`);
   } catch (e) {
     console.error('[build-sea] Inno Setup compilation failed:', e.message);

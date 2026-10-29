@@ -126,11 +126,11 @@ Source: "packaging\portable.env"; DestDir: "{app}"; DestName: ".env"; Flags: onl
 Source: "data\medicine_reference_seed.json"; DestDir: "{app}\data"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Pre-seeded master database with 286k+ medicines (installed on clean setup; existing customer CRM/orders/sales strictly preserved on upgrade)
-Source: "data\app.db"; DestDir: "{app}\data"; DestName: "app.db"; Flags: onlyifdoesntexist nocompression skipifsourcedoesntexist
+Source: "data\app.db"; DestDir: "{app}\data"; DestName: "app.db"; Flags: onlyifdoesntexist skipifsourcedoesntexist
 
 ; Master medicine catalog CSV (packaged into {app}\data\reference_medicines.csv)
-Source: "medicines.csv"; DestDir: "{app}\data"; DestName: "reference_medicines.csv"; Flags: ignoreversion nocompression skipifsourcedoesntexist
-Source: "data\reference_medicines.csv"; DestDir: "{app}\data"; Flags: ignoreversion nocompression skipifsourcedoesntexist
+Source: "medicines.csv"; DestDir: "{app}\data"; DestName: "reference_medicines.csv"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "data\reference_medicines.csv"; DestDir: "{app}\data"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Android Mobile Companion APK (downloadable from PC and mobile pairing QR)
 Source: "data\pharmacy-mobile.apk"; DestDir: "{app}\data"; Flags: ignoreversion skipifsourcedoesntexist
@@ -139,7 +139,10 @@ Source: "data\pharmacy-mobile.apk"; DestDir: "{app}\data"; Flags: ignoreversion 
 Source: "eng.traineddata"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Optional Local AI models & llama-server runtime (strictly offline, disabled by default)
-Source: "models\local-ai\*"; DestDir: "{app}\models\local-ai"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; Mode B only: bundled when BUNDLE_LOCAL_AI=1 (/DBundleLocalAi=1)
+#ifdef BundleLocalAi
+Source: "models\local-ai\*"; DestDir: "{app}\models\local-ai"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 
 ; Application Blue Cross Icon
 Source: "packaging\app.ico"; DestDir: "{app}"; Flags: ignoreversion
