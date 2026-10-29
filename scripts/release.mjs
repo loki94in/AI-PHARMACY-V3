@@ -177,12 +177,23 @@ const rollout   = isPilot ? 'PILOT' : 'ALL';
 const releaseStartTime = performance.now();
 const formatElapsed = (start) => `${((performance.now() - start) / 1000).toFixed(1)}s`;
 
+// Local AI offline assets bundling: default to TRUE if verified local-ai assets exist, unless explicitly disabled
+const hasLocalAiAssets = fs.existsSync(path.join(rootDir, 'models', 'local-ai', 'llama-server.exe')) &&
+  fs.existsSync(path.join(rootDir, 'models', 'local-ai', 'qwen3-1.7b-q4_k_m.gguf'));
+const explicitCloudOnly = process.env.BUNDLE_LOCAL_AI === '0' || process.env.BUNDLE_LOCAL_AI === 'false' || args.includes('--no-local-ai') || args.includes('--cloud-only');
+const bundleLocalAi = !explicitCloudOnly && (process.env.BUNDLE_LOCAL_AI === '1' || process.env.BUNDLE_LOCAL_AI === 'true' || hasLocalAiAssets || args.includes('--bundle-local-ai') || args.includes('--offline'));
+
+if (bundleLocalAi) {
+  process.env.BUNDLE_LOCAL_AI = '1';
+}
+
 console.log('\n=============================================================');
 console.log(`🚀  AI Pharmacy OS — Release ${isRemote ? 'Publisher' : 'Builder'} (${tagName})`);
 console.log(`🎯  Rollout Target: ${isPilot ? 'PILOT ONLY (Only test/pilot licensed PCs)' : 'ALL (Production — all customers)'}`);
 console.log(`🌐  Mode: ${isRemote ? 'REMOTE (GitHub + Vercel)' : 'LOCAL ONLY (Installer & Update Package)'}`);
 console.log(`⚙️   Build Mode: ${skipBuild ? 'SKIP BUILD (--skip-build)' : isClean ? 'CLEAN REBUILD (--clean)' : 'INCREMENTAL (fast cached)'}`);
 console.log(`🗜️   Compression: ${process.env.ISCC_COMPRESSION || 'lzma2/fast'}`);
+console.log(`🧠  Local AI: ${bundleLocalAi ? 'BUNDLED OFFLINE (Qwen3-1.7B + llama-server)' : 'CLOUD DOWNLOAD (Lightweight installer)'}`);
 console.log('=============================================================\n');
 
 // ── Paths ───────────────────────────────────────────────────────────────────
@@ -202,7 +213,6 @@ if (!skipBuild) {
 // ── Step 2: Locate installer — must contain the bumped version ──────────────
 const step2Start = performance.now();
 console.log('\n🔍 Step 2: Locating versioned installer...');
-const bundleLocalAi = process.env.BUNDLE_LOCAL_AI === '1' || process.env.BUNDLE_LOCAL_AI === 'true';
 const candidateNames = bundleLocalAi
   ? [`AI-Pharmacy-OS-Offline-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Cloud-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Portable-Setup-${tagName}.exe`]
   : [`AI-Pharmacy-OS-Cloud-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Offline-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Portable-Setup-${tagName}.exe`];

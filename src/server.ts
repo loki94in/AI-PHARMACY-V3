@@ -1079,6 +1079,17 @@ server.on('error', (err: any) => {
         } catch (_) {}
       }, 10_000);
 
+      // Staged Local AI Qwen runtime warm-up (~T+12s)
+      setTimeout(async () => {
+        try {
+          const { isLocalAiEnabled, ensureLlamaServerRunning } = await import('./services/localAi/llamaServerClient.js');
+          if (isLocalAiEnabled()) {
+            console.log('[Boot:LocalAI] Local AI enabled. Pre-warming llama-server on CPU...');
+            ensureLlamaServerRunning().catch((err: any) => console.warn('[Boot:LocalAI] Warm-up notice:', err?.message || err));
+          }
+        } catch (_) {}
+      }, 12_000);
+
     } catch (err) {
       if (err instanceof Error && err.message === 'DB_INTEGRITY_FAILURE') {
         console.error(

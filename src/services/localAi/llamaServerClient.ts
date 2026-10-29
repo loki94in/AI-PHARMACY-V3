@@ -9,6 +9,7 @@ import os from 'os';
 import { validateLocalAiAssets, DEFAULT_LOCAL_AI_DIR } from './localAiAssetValidator.js';
 import { getLocalAiStorageDir } from './localAiStorage.js';
 import { parseStructuredIntent } from './structuredIntentParser.js';
+import { buildOperationalSystemPrompt, parseOperationalIntent, type OperationalModelOutput } from './operationalIntentSchema.js';
 import type { StructuredIntentResult } from './types.js';
 
 export interface LlamaServerConfig {
@@ -38,13 +39,37 @@ export function getLocalAiConfig(overrides: Partial<LlamaServerConfig> = {}): Ll
 
 let serverProcess: ChildProcess | null = null;
 let isStartingServer = false;
+let cachedAssetPresence: boolean | null = null;
+
+export function resetLocalAiAssetCache(): void {
+  cachedAssetPresence = null;
+}
 
 /**
- * Checks if Local AI is explicitly enabled in environment.
- * Default is FALSE (disabled by default).
+ * Checks if Local AI is explicitly enabled in environment, or auto-activates if bundled assets exist.
  */
 export function isLocalAiEnabled(): boolean {
-  return process.env.LOCAL_AI_ENABLED === 'true' || process.env.LOCAL_AI_ENABLED === '1';
+  if (process.env.LOCAL_AI_ENABLED === 'false' || process.env.LOCAL_AI_ENABLED === '0') {
+    return false;
+  }
+  if (process.env.LOCAL_AI_ENABLED === 'true' || process.env.LOCAL_AI_ENABLED === '1') {
+    return true;
+  }
+  // Auto-detect: if bundled local AI assets exist and are verified, activate automatically
+  if (cachedAssetPresence === null) {
+    try {
+      const defaultCheck = validateLocalAiAssets(DEFAULT_LOCAL_AI_DIR);
+      if (defaultCheck.valid) {
+        cachedAssetPresence = true;
+      } else {
+        const storageCheck = validateLocalAiAssets(getLocalAiStorageDir());
+        cachedAssetPresence = storageCheck.valid;
+      }
+    } catch {
+      cachedAssetPresence = false;
+    }
+  }
+  return Boolean(cachedAssetPresence);
 }
 
 /**
@@ -330,5 +355,58 @@ export async function queryLocalAiIntent(
       console.warn('[Local AI] Query failed:', msg);
     }
     return parseStructuredIntent('');
+  }
+}
+
+/**
+ * Queries the local llama.cpp server for operational intent classification.
+ * Non-blocking guarantee: strict timeout, catches all network/server faults, never throws.
+ */
+export async function queryOperationalAiIntent(
+  userText: string,
+  options: Partial<LlamaServerConfig> = {}
+): Promise<OperationalModelOutput> {
+  const cfg = getLocalAiConfig(options);
+
+  if (!userText || !userText.trim()) {
+    return parseOperationalIntent('');
+  }
+
+  const endpoint = `${getLocalAiBaseUrl(cfg)}/v1/chat/completions`;
+  const systemPrompt = buildOperationalSystemPrompt();
+
+  const payload = {
+    model: 'qwen3-1.7b',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userText }
+    ],
+    temperature: 0.1,
+    max_tokens: 180,
+    response_format: { type: 'json_object' }
+  };
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(cfg.timeoutMs)
+    });
+
+    if (!response.ok) {
+      console.warn(`[Local AI] llama-server returned HTTP ${response.status} for operational intent`);
+      return parseOperationalIntent('');
+    }
+
+    const data = await response.json() as any;
+    const content = data?.choices?.[0]?.message?.content || '';
+    return parseOperationalIntent(content);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes('aborted') && !msg.includes('fetch failed')) {
+      console.warn('[Local AI] Operational intent query failed:', msg);
+    }
+    return parseOperationalIntent('');
   }
 }

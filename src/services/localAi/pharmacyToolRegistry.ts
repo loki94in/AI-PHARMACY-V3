@@ -836,6 +836,269 @@ export class PharmacyToolRegistry {
   }
 
   /**
+   * Generates a safe distributor return draft for near-expiry or expired inventory
+   * Strictly read-only draft: does NOT mutate inventory_master or returns table.
+   */
+  public async generateDistributorReturnDraft(
+    daysAhead: number = 60,
+    distributorFilter?: string,
+    dbInstance?: any
+  ): Promise<{
+    draftId: string;
+    daysAhead: number;
+    totalBatches: number;
+    totalUnits: number;
+    estimatedValue: number;
+    batches: Array<{
+      inventoryId: number;
+      medicineName: string;
+      batchNo: string;
+      quantity: number;
+      expiryDate: string;
+      mrp: number;
+      distributorName: string;
+      rackLocation?: string;
+    }>;
+  }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const days = Math.max(1, Math.min(365, Number(daysAhead) || 60));
+
+    let query = `
+      SELECT im.id as inventoryId, im.batch_no as batchNo, im.quantity, im.expiry_date as expiryDate, im.rack_location as rackLocation,
+             m.id as medicineId, m.name as medicineName, COALESCE(m.mrp, 0) as mrp,
+             COALESCE(d.name, 'Standard Distributor') as distributorName
+      FROM inventory_master im
+      JOIN medicines m ON m.id = im.medicine_id
+      LEFT JOIN (
+        SELECT pi.medicine_id, pi.batch_no, dist.name
+        FROM purchase_items pi
+        JOIN purchases p ON p.id = pi.purchase_id
+        LEFT JOIN distributors dist ON dist.id = p.distributor_id
+        GROUP BY pi.medicine_id, pi.batch_no
+      ) d ON d.medicine_id = im.medicine_id AND d.batch_no = im.batch_no
+      WHERE im.quantity > 0
+        AND im.expiry_date IS NOT NULL
+        AND date(im.expiry_date) <= date('now', '+' || ? || ' days')
+    `;
+
+    const params: any[] = [days];
+    if (distributorFilter && distributorFilter.trim()) {
+      query += ` AND LOWER(COALESCE(d.name, '')) LIKE LOWER(?)`;
+      params.push(`%${distributorFilter.trim()}%`);
+    }
+
+    query += ` ORDER BY im.expiry_date ASC LIMIT 50`;
+
+    const rows: any[] = await db.all(query, params).catch(() => []);
+
+    let totalUnits = 0;
+    let estimatedValue = 0;
+
+    const batches = rows.map(r => {
+      const qty = Number(r.quantity) || 0;
+      const mrp = Number(r.mrp) || 0;
+      totalUnits += qty;
+      estimatedValue += (qty * mrp);
+      return {
+        inventoryId: Number(r.inventoryId),
+        medicineName: String(r.medicineName || ''),
+        batchNo: String(r.batchNo || ''),
+        quantity: qty,
+        expiryDate: String(r.expiryDate || ''),
+        mrp,
+        distributorName: String(r.distributorName || 'Standard Distributor'),
+        rackLocation: r.rackLocation ? String(r.rackLocation) : undefined
+      };
+    });
+
+    const draftId = `RET-${Date.now().toString().slice(-4)}`;
+
+    return {
+      draftId,
+      daysAhead: days,
+      totalBatches: batches.length,
+      totalUnits,
+      estimatedValue: Math.round(estimatedValue * 100) / 100,
+      batches
+    };
+  }
+
+  /**
+   * Prepares a low-stock reorder draft based on inventory thresholds and sales velocity
+   * Strictly read-only draft: does NOT place orders or mutate stock.
+   */
+  public async calculateLowStockReorderDraft(
+    minThreshold?: number,
+    dbInstance?: any
+  ): Promise<{
+    draftId: string;
+    totalItems: number;
+    items: Array<{
+      medicineId: number;
+      medicineName: string;
+      currentStock: number;
+      minStock: number;
+      recentSales30d: number;
+      suggestedReorderQty: number;
+      mrp: number;
+    }>;
+  }> {
+    const db = dbInstance || (await dbManager.getConnection());
+
+    const query = `
+      SELECT m.id as medicineId, m.name as medicineName, COALESCE(m.stock_quantity, 0) as currentStock,
+             COALESCE(m.min_stock_alert, 10) as minStock, COALESCE(m.mrp, 0) as mrp,
+             COALESCE(SUM(si.quantity), 0) as recentSales30d
+      FROM medicines m
+      LEFT JOIN sale_items si ON si.medicine_id = m.id AND si.created_at >= date('now', '-30 days')
+      WHERE m.stock_quantity <= COALESCE(?, m.min_stock_alert, 10)
+      GROUP BY m.id
+      ORDER BY recentSales30d DESC, m.stock_quantity ASC
+      LIMIT 25
+    `;
+
+    const rows: any[] = await db.all(query, [minThreshold ?? null]).catch(() => []);
+
+    const items = rows.map(r => {
+      const current = Number(r.currentStock) || 0;
+      const min = Number(r.minStock) || 10;
+      const sales = Number(r.recentSales30d) || 0;
+      // Heuristic: target 15-day stock or at least minimum stock replenishment
+      const suggested = Math.max(10, Math.ceil(sales * 0.5) || (min * 2) - current);
+      return {
+        medicineId: Number(r.medicineId),
+        medicineName: String(r.medicineName || ''),
+        currentStock: current,
+        minStock: min,
+        recentSales30d: sales,
+        suggestedReorderQty: Math.max(1, suggested),
+        mrp: Number(r.mrp) || 0
+      };
+    });
+
+    return {
+      draftId: `REORDER-${Date.now().toString().slice(-4)}`,
+      totalItems: items.length,
+      items
+    };
+  }
+
+  /**
+   * Retrieves active home delivery runs and pending dispatches
+   */
+  public async getDeliveryRunStatus(dbInstance?: any): Promise<{
+    totalActive: number;
+    pendingCount: number;
+    inTransitCount: number;
+    orders: Array<{
+      orderId: number;
+      patientName: string;
+      patientPhone?: string;
+      address?: string;
+      status: string;
+      createdAt: string;
+      deliveryBoyName?: string;
+      deliveryBoyPhone?: string;
+    }>;
+  }> {
+    const db = dbInstance || (await dbManager.getConnection());
+
+    const query = `
+      SELECT d.id as orderId, d.patient_name as patientName, d.patient_phone as patientPhone,
+             d.address, d.status, d.created_at as createdAt,
+             b.name as deliveryBoyName, b.whatsapp_number as deliveryBoyPhone
+      FROM dispatch_orders d
+      LEFT JOIN delivery_boys b ON b.id = d.delivery_boy_id
+      WHERE d.status IN ('Pending', 'In Transit')
+      ORDER BY d.created_at DESC
+      LIMIT 20
+    `;
+
+    const rows: any[] = await db.all(query).catch(() => []);
+
+    let pendingCount = 0;
+    let inTransitCount = 0;
+
+    const orders = rows.map(r => {
+      const status = String(r.status || 'Pending');
+      if (status === 'Pending') pendingCount++;
+      if (status === 'In Transit') inTransitCount++;
+      return {
+        orderId: Number(r.orderId),
+        patientName: String(r.patientName || 'Customer'),
+        patientPhone: r.patientPhone ? String(r.patientPhone) : undefined,
+        address: r.address ? String(r.address) : undefined,
+        status,
+        createdAt: String(r.createdAt || ''),
+        deliveryBoyName: r.deliveryBoyName ? String(r.deliveryBoyName) : undefined,
+        deliveryBoyPhone: r.deliveryBoyPhone ? String(r.deliveryBoyPhone) : undefined
+      };
+    });
+
+    return {
+      totalActive: orders.length,
+      pendingCount,
+      inTransitCount,
+      orders
+    };
+  }
+
+  /**
+   * Queries historical purchase rates across distributors (Strictly Owner access)
+   */
+  public async getPurchaseRateComparison(
+    medicineQuery: string,
+    dbInstance?: any
+  ): Promise<{
+    medicineQuery: string;
+    records: Array<{
+      medicineName: string;
+      batchNo: string;
+      costPrice: number;
+      mrp: number;
+      quantity: number;
+      invoiceNo: string;
+      invoiceDate: string;
+      distributorName: string;
+    }>;
+  }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const term = `%${(medicineQuery || '').trim()}%`;
+
+    const query = `
+      SELECT pi.batch_no as batchNo, pi.cost_price as costPrice, pi.mrp, pi.quantity,
+             p.date as invoiceDate, p.invoice_no as invoiceNo,
+             COALESCE(d.name, 'Standard Distributor') as distributorName,
+             m.name as medicineName
+      FROM purchase_items pi
+      JOIN purchases p ON p.id = pi.purchase_id
+      JOIN medicines m ON m.id = pi.medicine_id
+      LEFT JOIN distributors d ON d.id = p.distributor_id
+      WHERE m.name LIKE ? OR m.generic_name LIKE ?
+      ORDER BY p.date DESC
+      LIMIT 15
+    `;
+
+    const rows: any[] = await db.all(query, [term, term]).catch(() => []);
+
+    const records = rows.map(r => ({
+      medicineName: String(r.medicineName || ''),
+      batchNo: String(r.batchNo || ''),
+      costPrice: Number(r.costPrice) || 0,
+      mrp: Number(r.mrp) || 0,
+      quantity: Number(r.quantity) || 0,
+      invoiceNo: String(r.invoiceNo || ''),
+      invoiceDate: String(r.invoiceDate || ''),
+      distributorName: String(r.distributorName || 'Standard Distributor')
+    }));
+
+    return {
+      medicineQuery,
+      records
+    };
+  }
+
+  /**
    * Switches chat session to manual mode for licensed pharmacist takeover
    */
   public async escalateToPharmacist(
