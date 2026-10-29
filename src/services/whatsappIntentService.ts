@@ -17,7 +17,7 @@ import { paymentQrService } from './paymentQrService.js';
 import { visualIndexService } from './visualIndexService.js';
 import { GATE_VARIANTS, type GateDecision, DOC_SIGNS } from '../../scanGateAlgorithms.js';
 import { getAppDataDir } from '../config/index.js';
-import { classifyWhatsAppIntent } from './localAiIntentService.js';
+import { classifyWhatsAppIntent, shouldRunLocalAiShadow } from './localAiIntentService.js';
 
 // Confidence gate: below these similarity scores a message is discarded as
 // chit-chat instead of being broadcast/escalated. Tune here; every discard is
@@ -5991,9 +5991,16 @@ export async function handleInbound(msg: any): Promise<void> {
     // It never modifies parsed values or any order/cart/database workflow.
     // Run only on ambiguous text; confirmations, repeat requests and media keep
     // their existing deterministic paths.
-    if (!hasMedia && !parsed.medicineName && body.trim().length > 3
-      && !isAffirmativeResponse(body) && !isNegativeResponse(body) && !isRepeatRequest(body)
-      && process.env.LOCAL_AI_ENABLED === 'true' && process.env.LOCAL_AI_MODE === 'shadow') {
+    if (shouldRunLocalAiShadow({
+      message: body,
+      parsedMedicineName: parsed.medicineName,
+      hasMedia,
+      affirmative: isAffirmativeResponse(body),
+      negative: isNegativeResponse(body),
+      repeat: isRepeatRequest(body),
+      enabled: process.env.LOCAL_AI_ENABLED === 'true',
+      mode: process.env.LOCAL_AI_MODE || 'off'
+    })) {
       void classifyWhatsAppIntent(body, [], { enabled: true, mode: 'shadow' })
         .then(result => {
           if (result) console.info('[Local AI shadow]', JSON.stringify({
