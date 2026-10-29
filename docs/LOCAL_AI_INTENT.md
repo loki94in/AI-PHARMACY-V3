@@ -5,6 +5,10 @@
 - Runtime: upstream llama.cpp llama-server, CPU-only and bound to loopback.
 - Model: Qwen3-1.7B GGUF, Q4_K_M quantization.
 - Expected filename: Qwen_Qwen3-1.7B-Q4_K_M.gguf.
+- Model family card/license reference: https://huggingface.co/Qwen/Qwen3-1.7B-GGUF (Apache-2.0; supports 100+ languages).
+- Q4_K_M quantized artifact source to verify and pin: https://huggingface.co/bartowski/Qwen_Qwen3-1.7B-GGUF.
+- Runtime source: https://github.com/ggml-org/llama.cpp/releases.
+- Before production distribution, pin the exact llama.cpp release, model revision, artifact SHA-256, and license notices in MODEL-METADATA.txt; do not build from an unpinned latest download.
 - Target: 8 GB RAM; context is capped at 4096 tokens.
 - Validate English, Hindi, Marathi, and Romanized Hindi/Marathi against real, anonymized pharmacy examples before any behavior-affecting rollout.
 
