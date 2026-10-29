@@ -423,5 +423,39 @@ describe('Unified Pharmacy Operations Assistant Orchestrator Suite', () => {
       expect(confirm2.success).toBe(false);
       expect(confirm2.message).toMatch(/expired|not found|already executed/i);
     });
+
+    it('routes natural-language staff requests through the local classifier when regex triggers do not match', async () => {
+      const previousEnabled = process.env.LOCAL_AI_ENABLED;
+      process.env.LOCAL_AI_ENABLED = 'true';
+      const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          choices: [{
+            message: {
+              content: JSON.stringify({ actionType: 'LIST_TASKS', confidence: 0.94 })
+            }
+          }]
+        })
+      } as Response);
+
+      try {
+        const session = unifiedAssistantOrchestrator.getSessionContext('natural-language-routing-session', 'staff');
+        const res = await unifiedAssistantOrchestrator.processCommand(
+          'Can you tell me which customer follow-ups need attention before I close the shop?',
+          session,
+          { dbInstance: db }
+        );
+
+        expect(res.actionType).toBe('LIST_TASKS');
+        expect(res.reply).toMatch(/task/i);
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        fetchSpy.mockRestore();
+        if (previousEnabled === undefined) delete process.env.LOCAL_AI_ENABLED;
+        else process.env.LOCAL_AI_ENABLED = previousEnabled;
+        unifiedAssistantOrchestrator.clearSession('natural-language-routing-session');
+      }
+    });
+
   });
 });
