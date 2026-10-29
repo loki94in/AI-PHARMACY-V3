@@ -357,7 +357,7 @@ export class PharmacyQaEngine {
       // Generate a natural conversational answer when the grounded structured
       // response has no matching medicine, shop fact, or policy. The model sees
       // only verified evidence and recent conversation; it cannot execute tools.
-      if (localAiActive) {
+      if (isLocalAiEnabled() && await checkLlamaServerHealth()) {
         const conversationalReply = await queryLocalAssistantReply(text, {
           language: lang,
           conversationHistory: options.conversationHistory,
