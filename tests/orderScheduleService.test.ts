@@ -105,6 +105,7 @@ describe('OrderScheduleService & Fulfilment Timing Engine', () => {
         ('sunday_window_start', '10:00'),
         ('sunday_window_end', '14:00'),
         ('holiday_delivery_enabled', 'false'),
+        ('pharmacy_weekly_off', 'none'),
         ('return_window_days', '15'),
         ('refill_pause_recalculation_enabled', 'true');
     `);

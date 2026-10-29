@@ -3099,7 +3099,7 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
             refillIds
           );
           const confirmedRefills = await db.all(
-            `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+            `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed, pr.reminder_sent_at, pr.next_refill_date, pr.reminder_status
              FROM patient_refills pr JOIN medicines m ON m.id = pr.medicine_id
              WHERE pr.id IN (${placeholders})`,
             refillIds
@@ -5515,16 +5515,29 @@ export async function handleInbound(msg: any): Promise<void> {
       const cleanDigits = cleanDigitsForRefill;
       if (cleanDigits) {
         const db = await dbManager.getConnection();
-        const pendingRefills = await db.all(
-          `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed
+        const allRefills = await db.all(
+          `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name, pr.quantity_needed, pr.reminder_sent_at, pr.next_refill_date, pr.reminder_status
            FROM patient_refills pr
            JOIN medicines m ON m.id = pr.medicine_id
            WHERE (pr.patient_phone LIKE ? OR pr.patient_phone LIKE ?)
              AND pr.is_active = 1
-             AND pr.status NOT IN ('completed', 'canceled')
+             AND (pr.patient_confirmed IS NULL OR pr.patient_confirmed = 0) AND pr.status NOT IN ('completed', 'canceled')
            ORDER BY pr.id DESC`,
           [`%${cleanDigits}`, `%${cleanDigits}%`]
         );
+
+        const pendingRefills = (allRefills || []).filter((r: any) => {
+          if (hasActiveClarification) return true;
+          if (r.reminder_sent_at) {
+            const sentMs = new Date(r.reminder_sent_at).getTime();
+            if (Date.now() - sentMs <= 72 * 60 * 60 * 1000) return true;
+          }
+          if (r.next_refill_date) {
+            const dueMs = new Date(r.next_refill_date).getTime();
+            if (dueMs <= Date.now() + (3 * 24 * 60 * 60 * 1000)) return true;
+          }
+          return r.reminder_status === 'SENT';
+        });
 
         if (pendingRefills && pendingRefills.length > 0) {
           // Check if customer also has an active special order under this phone

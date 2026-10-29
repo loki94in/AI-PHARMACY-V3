@@ -1418,6 +1418,23 @@
 
 ---
 
+### [Fixed] P2-82 — Marking single-day market off cascades across upcoming dates as "Shop Closed"
+
+| Field | Content |
+|-------|---------|
+| **What the user saw** | When pharmacist toggled a single date (e.g. 23rd) as Market Off in the calendar, the app treated all upcoming dates (24th, 25th, 26th, etc.) as "Shop Closed". Medicine orders placed on that day skipped all upcoming dates, pushed estimated delivery past the 26th to 27th, and customer WhatsApp messages carried a false notice saying the pharmacy was closed today until next week. |
+| **Root cause** | 1. In `PharmarackCartCalendar.tsx:239`, `syncClosureConfig` had a `while (true)` loop that checked `closedOn(next)`. Because `next.getDay() === 0` (Sunday) was included, it auto-bridged unmarked days and Sundays, expanding `endDate` to multiple future dates and saving `startDate: 23, endDate: 26` in `pharmacy_market_closure_config`.
+2. In `src/utils/pharmacyCalendar.ts:134`, `isClosedDay` set `isClosed = true` for `isMarketClosed` and `isPausedDispatch`, treating wholesale distributor closures as pharmacy store closures.
+3. `advanceToNextOpenDay` skipped every day within the expanded range, shifting delivery schedules and triggering false closure notices in customer messages. |
+| **How it was fixed** | 1. `PharmarackCartCalendar.tsx`: `syncClosureConfig` loop only advances while `explicit(next)` is true, preserving single-day selections with `startDate === endDate`.
+2. `src/utils/pharmacyCalendar.ts`: `isStoreClosed` is strictly separated from wholesale market/dispatch status (`isDispatchClosed`, `isMarketClosed`, `isPausedDispatch`).
+3. `orderScheduleService.ts`: order delivery scheduling uses `forDelivery: true`, advancing past only the specifically marked day (23 → 24) without cascading across upcoming open dates. |
+| **Priority** | P2 |
+| **What not to touch** | `pharmacy_holidays` multi-date bulk inserts and holiday delivery overrides; existing store settings schema. |
+| **Verified by** | `tests/singleDateMarketOff.test.ts`, `tests/closureNotice.test.ts`, `tests/orderScheduleService.test.ts`, `npm run guardrails` exit 0. |
+
+---
+
 ## Open
 
 > P0-74 … P2-80 come from one owner-requested audit (2026-09-30): "the purchase bill is the only truth;

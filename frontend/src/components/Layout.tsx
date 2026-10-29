@@ -43,6 +43,7 @@ import {
   Loader2,
   ChevronDown,
   BrainCircuit,
+  Bot,
   MessageCircle,
   MessageSquareText,
   Zap,
@@ -83,6 +84,7 @@ const AutomationHubPopover = lazy(() => import('./AutomationHubPopover'));
 const StagedReviewModal = lazy(() => import('./StagedReviewModal').then(m => ({ default: m.StagedReviewModal })));
 const MobileConnectionModal = lazy(() => import('./MobileConnectionModal').then(m => ({ default: m.MobileConnectionModal })));
 const BackupCenterModal = lazy(() => import('./BackupCenterModal'));
+const UnifiedOperationsAssistantModal = lazy(() => import('./UnifiedOperationsAssistantModal').then(m => ({ default: m.UnifiedOperationsAssistantModal })));
 
 import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
 import { QuickAssistSidebar } from './QuickAssistSidebar';
@@ -545,10 +547,12 @@ const FlashToast = ({
   onDismiss,
   onOpenReview,
   onOpenAutomationHub,
+  onOpenAssistant,
 }: {
   toast: (ToastEventDetail & { id: number }) | null;
   onDismiss: () => void;
   onOpenReview: () => void;
+  onOpenAssistant?: () => void;
   onOpenAutomationHub?: () => void;
 }) => {
   const [style, setStyle] = useState<ToastStyle>(getToastStyle);
@@ -1438,6 +1442,7 @@ const Topbar = memo(({
   onOpenConnectModal,
   onOpenWaQueue,
   onOpenAutomationHub,
+  onOpenAssistant,
   automationHubHeadline = 'idle',
   onMenuClick,
   compactCacheLoaded = false,
@@ -1453,6 +1458,7 @@ const Topbar = memo(({
   onOpenStagedReview: () => void;
   onOpenConnectModal: () => void;
   onOpenWaQueue?: () => void;
+  onOpenAssistant?: () => void;
   onOpenAutomationHub?: () => void;
   automationHubHeadline?: 'sending' | 'failed' | 'idle';
   onMenuClick?: () => void;
@@ -3023,6 +3029,16 @@ const Topbar = memo(({
             );
           })()}
 
+          {/* Operations AI Assistant */}
+          <button
+            onClick={onOpenAssistant}
+            className="relative p-2 rounded-xl transition-all duration-200 flex items-center justify-center border cursor-pointer group bg-glass-bg border-glass-border text-muted hover:text-text hover:bg-bg3/60"
+            aria-label="Operations AI Assistant (Ctrl+Space)"
+            title="Operations AI Assistant (Ctrl+Space or Alt+A)"
+          >
+            <Bot size={18} className="text-primary group-hover:scale-110 transition-transform" />
+          </button>
+
           {/* Notification bell */}
           <div className="relative">
             <button
@@ -3148,6 +3164,7 @@ export const Layout = ({
   const [pendingStagedPurchasesCount, setPendingStagedPurchasesCount] = useState(0);
   const [showQuickOrder, setShowQuickOrder] = useState(false);
   const [showLiveCartAdd, setShowLiveCartAdd] = useState(false);
+  const [showAssistantModal, setShowAssistantModal] = useState(false);
   const [liveCartAddSearch, setLiveCartAddSearch] = useState<string | undefined>(undefined);
   const [liveCartAddQty, setLiveCartAddQty] = useState<number | undefined>(undefined);
   const [liveCartAddRestrictStoreId, setLiveCartAddRestrictStoreId] = useState<number | undefined>(undefined);
@@ -3544,6 +3561,15 @@ export const Layout = ({
         e.preventDefault();
         setShowLiveCartAdd(prev => !prev);
       }
+
+      const isAssistantKey =
+        (e.ctrlKey && e.code === 'Space') ||
+        (e.altKey && (e.key === 'a' || e.key === 'A'));
+
+      if (isAssistantKey) {
+        e.preventDefault();
+        setShowAssistantModal(prev => !prev);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -3731,6 +3757,7 @@ export const Layout = ({
           onOpenConnectModal={openConnectModal}
           onOpenWaQueue={openWaQueuePopover}
           onOpenAutomationHub={() => setShowAutomationHub(true)}
+          onOpenAssistant={() => setShowAssistantModal(true)}
           automationHubHeadline={automationHubHeadline}
           onMenuClick={openMobileNav}
           compactCacheLoaded={compactCacheLoaded}
@@ -3842,6 +3869,16 @@ export const Layout = ({
               handleQuickAssistActionComplete();
             }}
           />
+        )}
+
+        {/* Unified Operations Assistant Modal */}
+        {showAssistantModal && (
+          <Suspense fallback={null}>
+            <UnifiedOperationsAssistantModal
+              isOpen={showAssistantModal}
+              onClose={() => setShowAssistantModal(false)}
+            />
+          </Suspense>
         )}
 
       </div>

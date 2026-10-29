@@ -1931,7 +1931,7 @@ const recentSendsCache = new Map<string, number>();
 
 export interface SendMessageResult {
   sent: boolean;
-  suppressed?: boolean;
+  suppressed?: boolean; blockedByPolicy?: boolean; error?: string;
 }
 
 /**
@@ -1990,6 +1990,34 @@ export async function sendMessage(
     if (!cleanPhone || cleanPhone.length < 8) {
       console.warn(`[WhatsApp] Invalid phone number passed to sendMessage: "${recipient}". Skipping.`);
       throw new Error(`Invalid phone number: "${recipient}" (must contain at least 8 valid digits).`);
+    }
+
+    // Outbound Security Gateway Check: fail-closed validation of recipient and confidential content
+    try {
+      const { outboundSecurityGateway } = await import('./services/outboundSecurityGateway.js');
+      const gateResult = await outboundSecurityGateway.validateOutboundMessage({
+        recipient: cleanPhone,
+        message: caption || '',
+        mediaUrl: mediaPath,
+        dbInstance: db
+      });
+      if (!gateResult.allowed) {
+        console.warn(`[WhatsApp Safeguard] Outbound Security Gateway blocked message to ${cleanPhone}: ${gateResult.blockReason}`);
+        aggregateResult = {
+          sent: false,
+          suppressed: true,
+          blockedByPolicy: true,
+          error: `Blocked by Outbound Security Gateway: ${gateResult.blockReason}`
+        };
+        continue;
+      }
+    } catch (gateErr: any) {
+      console.error('[WhatsApp Safeguard] Outbound Security Gateway evaluation error:', gateErr);
+      aggregateResult = {
+        sent: false,
+        error: `Outbound Security Gate error: ${gateErr?.message || 'Security check failed'}`
+      };
+      continue;
     }
 
     const chatId = isLidRecipient ? recipient : `${cleanPhone}@c.us`;

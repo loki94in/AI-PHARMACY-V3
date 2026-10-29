@@ -240,7 +240,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
     while (true) {
       const next = new Date(end);
       next.setDate(next.getDate() + 1);
-      if (!closedOn(next)) break;
+      if (!explicit(next)) break;
       end = next;
     }
     let anyStore = false;

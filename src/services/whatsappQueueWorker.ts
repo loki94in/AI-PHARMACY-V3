@@ -538,6 +538,26 @@ class WhatsAppQueueWorker {
     // Lazy-start the poll loop on first enqueue (owner rule: no WhatsApp usage → no ticks).
     this.ensureLoopStarted();
     const cleanPhone = (number && number.includes('@lid')) ? number : normalizeWhatsAppPhone(number);
+
+    // ── Outbound Security Gateway Validation ──────────────────────────────
+    try {
+      const { outboundSecurityGateway } = await import('./outboundSecurityGateway.js');
+      const gateCheck = await outboundSecurityGateway.validateOutboundMessage({
+        recipient: cleanPhone,
+        message,
+        messageType: type,
+        targetName,
+        mediaUrl,
+        dbInstance: db
+      });
+      if (!gateCheck.allowed) {
+        console.warn(`[WhatsAppQueueWorker] Outbound Security Gateway blocked message enqueue to ${cleanPhone} (${type}): ${gateCheck.blockReason}`);
+        return 0;
+      }
+    } catch (gateErr: any) {
+      console.error('[WhatsAppQueueWorker] Outbound Security Gateway evaluation error:', gateErr);
+      return 0;
+    }
     const now = Date.now();
 
     if (CHATBOT_CONVERSATIONAL_TYPES.has(type)) {
@@ -1304,6 +1324,17 @@ class WhatsAppQueueWorker {
 
           // Send message via WhatsApp provider (strictly ONE active send)
           const sendResult = await sendMessage(item.number, item.media_url || undefined, item.message, fileObj);
+
+          if (sendResult && (sendResult as any).blockedByPolicy) {
+            console.warn(`[WhatsAppQueueWorker] Outbound security gateway rejected item #${item.id} to ${item.number}. Marking failed_perm.`);
+            const attemptTs = toLocalSqlDateTime();
+            const newAttemptsLog = appendAttemptLog(item.attempts_log, { ts: attemptTs, result: 'failed_security_gate' });
+            await db.run(
+              "UPDATE whatsapp_send_queue SET status = 'failed_perm', last_attempt_at = ?, attempts_log = ?, error_message = ? WHERE id = ?",
+              [attemptTs, newAttemptsLog, `Security gateway violation: ${(sendResult as any).error || 'Blocked by policy'}`, item.id]
+            );
+            continue;
+          }
 
           const isSent = (sendResult as any) === true || Boolean(sendResult && (sendResult as any).sent);
           if (!isSent) {

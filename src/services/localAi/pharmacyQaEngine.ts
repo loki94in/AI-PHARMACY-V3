@@ -170,7 +170,7 @@ export function extractCandidateMedicineName(text: string): string {
     // Devanagari conversational fillers
     .replace(/(?:क्या|आहे का|उपलब्ध|आहेत का|मिलेगा|मिळेल|मिळतील|दाम|किंमत|भाव|दर|पत्ता|वेळ|दुकान|फोन|नंबर|मला|द्या|पाठवा|हवे|आहे|पाहिजे|हव्या|गोळी|गोळ्या|पट्टी|पत्ते|डिब्बी|शीशी|बाटली|स्टॉकमध्ये)/gi, '')
     // Fillers & politeness
-    .replace(/\b(bhai|bhaiya|sir|madam|please|plz|urgent|urgently|fast|shop|store|pe|par|for|of|the|a|an|in|on|at|ka|ki|ke|ko|se|me|mein|bhejo|patva|dya|aur|and|or|bhi|toh|batao|sanga|kya|hai|h)\b/gi, '')
+    .replace(/\b(bhai|bhaiya|sir|madam|please|plz|urgent|urgently|fast|shop|store|pe|par|for|of|the|a|an|in|on|at|ka|ki|ke|ko|se|me|mein|bhejo|patva|dya|aur|and|or|bhi|toh|batao|sanga|kya|hai|h|your|you|aapka|aapki|apka|apki|tumcha|tumchi|tumchya)\b/gi, '')
     // Numbers 1-10
     .replace(/\b(?:[1-9]|10)\b/g, '')
     .replace(/\s+/g, ' ')

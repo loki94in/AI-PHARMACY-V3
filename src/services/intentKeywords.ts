@@ -476,22 +476,27 @@ export function isRepeatRequest(text: string): boolean {
 export function isRefillConfirmationResponse(text: string): boolean {
   if (!text) return false;
   const cleaned = text.trim();
+  // Guard 1: Questions or pricing inquiries are NEVER refill confirmations
+  if (/[?]|(?:kya|kitna|kitne|price|rate|bhav|cost|mrp|discount|kay|kiti)\b/i.test(cleaned)) return false;
+  // Guard 2: Negative, cancellation, or rejection tokens are NEVER refill confirmations
+  if (/\b(no|nahi|nahin|nako|wrong|galat|cancel|mat|not|don\'t|dont)\b/i.test(cleaned) || /(नाही|नको|रद्द|गलत|मत)/.test(cleaned)) return false;
   const lower = cleaned.toLowerCase().replace(/[.,!?;:()_~#*`]/g, ' ').replace(/\s+/g, ' ').trim();
   const confirmationTokens = [
-    '1', 'refill', 'yes', 'confirm', 'confirmed', 'send', 'ok', 'okay',
+    '1', 'refill', 'yes', 'confirm', 'confirmed', 'send',
     'ha', 'haan', 'haa', 'ho', 'hoye', 'chalel',
-    'bhej do', 'bhejo', 'dedo', 'de do', 'chahiye',
+    'bhej do', 'bhejo', 'dedo', 'de do',
     'pathva', 'pathav', 'dya', 'daya', 'lagta', 'lagte', 'lagtan',
     'ready rakho', 'pack kar do', 'pack kardo'
   ];
-  if (lower === '1' || lower === '1.' || confirmationTokens.some(t => lower === t || lower.startsWith(`${t} `) || lower.endsWith(` ${t}`) || lower.includes(` ${t} `))) {
+  const words = lower.split(' ').filter(Boolean);
+  if (lower === '1' || lower === '1.' || confirmationTokens.some(t => lower === t || lower === `${t}.` || (words.length <= 4 && (lower.startsWith(`${t} `) || lower.endsWith(` ${t}`))))) {
     return true;
   }
   const devanagariTokens = [
-    'हाँ', 'हां', 'हा', 'हो', 'होय', 'पाठवा', 'द्या', 'लागतं',
-    'भेज दो', 'भेजो', 'दे दो', 'चाहिए', 'औषध'
+    'हाँ', 'हां', 'होय', 'पाठवा', 'द्या', 'लागतं',
+    'भेज दो', 'भेजो', 'दे दो', 'कन्फर्म', 'नक्की', 'बरोबर'
   ];
-  return devanagariTokens.some(t => cleaned.includes(t));
+  return devanagariTokens.some(t => cleaned === t || (words.length <= 4 && (cleaned.startsWith(`${t} `) || cleaned.endsWith(` ${t}`))));
 }
 
 const AFFIRMATIVE_RESPONSE_REGEX = /^(1|yes|haan|ha|ho|yep|yup|y|sahi|correct|wahi|bhej do|ok|okay|confirm|confirmed|chalel|pathva|dya|ho ji|हो|होय|होय चालेल|चालेल|पाठवा|द्या|नक्की|बरोबर|कन्फर्म|हाँ|हां|हाँ जी|भेज दो|दीजिए|सही)$/iu;

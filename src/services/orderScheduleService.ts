@@ -328,6 +328,10 @@ export class OrderScheduleService {
       todayHoliday && (Number(todayHoliday.is_closed) === 1 || todayHoliday.is_closed === true) && !config.holidayDelivery
     );
 
+    // Check if today is closed for delivery/dispatch via pharmacyCalendar
+    const todayCheck = await isClosedDay(todayYmd, storeId, db);
+    const isTodayDispatchClosed = todayCheck.isDispatchClosed;
+
     let isNextDayCutoff = false;
     let isSundayShift = false;
     let isHolidayShift = false;
@@ -347,6 +351,10 @@ export class OrderScheduleService {
       const hName = todayHoliday?.holiday_name || todayHoliday?.name || 'Public Holiday';
       scheduleStatus = 'holiday_shift';
       primaryShiftReason = `Pharmacy closed for ${hName}`;
+    } else if (isTodayDispatchClosed) {
+      isHolidayShift = true;
+      scheduleStatus = 'holiday_shift';
+      primaryShiftReason = todayCheck.dispatchReason || todayCheck.reason || 'Wholesale market closed for delivery';
     }
 
     let isSameDay = false;
@@ -363,7 +371,8 @@ export class OrderScheduleService {
       const shiftResult = await advanceToNextOpenDay(now, {
         storeId,
         dbInstance: db,
-        advanceAtLeastOneDay: true
+        advanceAtLeastOneDay: true,
+        forDelivery: true
       });
       targetDate = shiftResult.targetDate;
       daysAdvanced = shiftResult.daysAdvanced;
@@ -574,7 +583,8 @@ export class OrderScheduleService {
     const res = await advanceToNextOpenDay(baseDate, {
       storeId,
       dbInstance: db,
-      advanceAtLeastOneDay: options?.advanceAtLeastOneDay ?? true
+      advanceAtLeastOneDay: options?.advanceAtLeastOneDay ?? true,
+      forDelivery: true
     });
 
     const dayFormatter = new Intl.DateTimeFormat('en-IN', {

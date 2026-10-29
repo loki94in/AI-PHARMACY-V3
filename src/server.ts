@@ -330,6 +330,7 @@ app.use('/api/enquiries', lazyRoute(() => import('./routes/enquiries.js')));
 app.use('/api/system', lazyRoute(() => import('./routes/serviceStatus.js')));
 app.use('/api/local-ai', lazyRoute(() => import('./routes/localAi.js')));
 app.use('/api/call-tasks', lazyRoute(() => import('./routes/callTasks.js')));
+app.use('/api/assistant', lazyRoute(() => import('./routes/assistant.js')));
 app.use('/api/morning-briefing', lazyRoute(() => import('./routes/morningBriefing.js'), 'hot'));
 app.use('/api/network', lazyRoute(() => import('./routes/network.js'), 'hot'));
 

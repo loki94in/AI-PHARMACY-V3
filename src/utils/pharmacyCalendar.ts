@@ -2,9 +2,14 @@ import { dbManager } from '../database/connection.js';
 
 export interface ClosedDayCheckResult {
   isClosed: boolean;
+  isStoreClosed: boolean;
+  isMarketClosed: boolean;
+  isPausedDispatch: boolean;
+  isDispatchClosed: boolean;
   isWeeklyOff: boolean;
   isHolidayClosed: boolean;
   reason?: string;
+  dispatchReason?: string;
 }
 
 export interface AdvanceOpenDayResult {
@@ -99,6 +104,7 @@ export async function isClosedDay(
 
   // 1d. Check market / store closure config
   let isMarketClosed = false;
+  let isStoreClosure = false;
   let closureReason: string | undefined;
   try {
     const rawMarket = settingsMap.get('pharmacy_market_closure_config');
@@ -109,7 +115,8 @@ export async function isClosedDay(
         const end = (parsed.endDate || parsed.startDate).slice(0, 10);
         if (ymd >= start && ymd <= end) {
           isMarketClosed = true;
-          closureReason = parsed.reason || (parsed.type === 'pharmacy_closed' ? 'Pharmacy Closed' : 'Market Closed');
+          isStoreClosure = parsed.type === 'pharmacy_closed' || !parsed.type;
+          closureReason = parsed.reason || (isStoreClosure ? 'Pharmacy Closed' : 'Market Closed');
         }
       }
     }
@@ -131,26 +138,40 @@ export async function isClosedDay(
     !holidayDelivery
   );
 
-  const isClosed = isWeeklyOff || isHolidayClosed || isCustomClosed || isPausedDispatch || isMarketClosed;
+  const isStoreClosed = isWeeklyOff || isHolidayClosed || isCustomClosed || isStoreClosure;
+  const isDispatchClosed = isStoreClosed || isPausedDispatch || isMarketClosed;
+  const isClosed = isStoreClosed;
   let reason: string | undefined;
+  let dispatchReason: string | undefined;
 
   if (isHolidayClosed) {
     reason = `Pharmacy closed for ${holidayRow?.holiday_name || holidayRow?.name || 'Public Holiday'}`;
-  } else if (isMarketClosed) {
-    reason = `Closed: ${closureReason || 'Wholesale Market Closure'}`;
+  } else if (isStoreClosure) {
+    reason = `Closed: ${closureReason || 'Pharmacy Closed'}`;
   } else if (isCustomClosed) {
     reason = `Pharmacy marked closed on ${ymd}`;
-  } else if (isPausedDispatch) {
-    reason = `Pharmarack distributor dispatch paused on ${ymd}`;
   } else if (isWeeklyOff) {
     reason = isSunday ? 'Pharmacy closed on Sundays' : `Pharmacy closed on weekly off (${weeklyOff})`;
   }
 
+  if (isPausedDispatch) {
+    dispatchReason = `Pharmarack distributor dispatch paused on ${ymd}`;
+  } else if (isMarketClosed) {
+    dispatchReason = `Wholesale market closed on ${ymd} (${closureReason || 'Market Closed'})`;
+  } else if (reason) {
+    dispatchReason = reason;
+  }
+
   return {
     isClosed,
+    isStoreClosed,
+    isMarketClosed,
+    isPausedDispatch,
+    isDispatchClosed,
     isWeeklyOff,
     isHolidayClosed,
-    reason
+    reason,
+    dispatchReason
   };
 }
 
@@ -177,11 +198,13 @@ export async function advanceToNextOpenDay(
     storeId?: number;
     dbInstance?: any;
     advanceAtLeastOneDay?: boolean;
+    forDelivery?: boolean;
   }
 ): Promise<AdvanceOpenDayResult> {
   const storeId = options?.storeId || 1;
   const db = options?.dbInstance || (await dbManager.getConnection());
   const advanceAtLeastOne = options?.advanceAtLeastOneDay ?? false;
+  const forDelivery = options?.forDelivery ?? false;
 
   let targetDate = new Date(startDate);
   let daysAdvanced = 0;
@@ -197,12 +220,13 @@ export async function advanceToNextOpenDay(
   while (daysAdvanced < 14) {
     const ymd = formatDateYMD(targetDate);
     const check = await isClosedDay(ymd, storeId, db);
+    const isDayClosed = forDelivery ? check.isDispatchClosed : check.isClosed;
 
-    if (check.isClosed) {
+    if (isDayClosed) {
       if (check.isWeeklyOff) isSundayShift = true;
       if (check.isHolidayClosed) isHolidayShift = true;
-      if (!primaryShiftReason && check.reason) {
-        primaryShiftReason = check.reason;
+      if (!primaryShiftReason && (forDelivery ? (check.dispatchReason || check.reason) : check.reason)) {
+        primaryShiftReason = forDelivery ? (check.dispatchReason || check.reason) : check.reason;
       }
       targetDate.setDate(targetDate.getDate() + 1);
       daysAdvanced++;
