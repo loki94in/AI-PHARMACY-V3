@@ -1,59 +1,55 @@
-# AI-PHARMACY-V3 — Implementation Plan & Progress Tracker
+# Implementation Plan — Enable Qwen Local AI by Default & Bundle in All Releases
 
-## Objective
-Upgrade Qwen / Local AI from a passive chatbot into the unified natural-language operating assistant for AI Pharmacy OS across App Chat, WhatsApp, CRM, Refills, and all 22 core pages.
-
----
-
-## Architecture Blueprint
-- **Channels**: Owner WhatsApp, Patient WhatsApp, Staff / Owner App Assistant Modal (`/api/assistant/chat`).
-- **Identity & Authorization Gate**: Verified Owner allowlist + challenge/nonce verification, Staff token/role, Patient data isolation, public guest restrictions.
-- **Natural-Language Understanding**: Qwen3-1.7B local CPU inference (No-GPU compliant) with bounded operational intent parsing and deterministic instant regex fallbacks.
-- **Approved Action Router**: Two-stage execution. Read-only queries execute immediately; change requests generate verified drafts and require explicit human-in-the-loop confirmation (`APPROVE <ID>` / `YES`).
-- **Audit & Idempotency**: Single-flight proposal locks and mandatory `action_logs` recording via `logMutationAudit()`.
+**Goal:** Enable Qwen3-1.7B local AI by default for all newly installed and existing PCs, bundle the complete offline assets (`llama-server.exe`, `qwen3-1.7b-q4_k_m.gguf`, and DLLs) inside the setup installer during `npm run release`, and publish the release.
 
 ---
 
-## Tasks
-
-- [x] Task 1: Create Operational Intent Schema (`src/services/localAi/operationalIntentSchema.ts`) & update `src/services/localAi/llamaServerClient.ts`.
-- [x] Task 2: Create Owner Identity, Authentication & Replay Shield Gateway (`src/services/localAi/ownerAuthGateway.ts`).
-- [x] Task 3: Expand Scoped Pharmacy Tool Registry (`src/services/localAi/pharmacyToolRegistry.ts`) with distributor return drafts, reorder calculations, delivery status, and purchase rate comparisons.
-- [x] Task 4: Upgrade Conversational Agent Engine (`src/services/localAi/conversationalAgentEngine.ts`) with operational intents, draft actions, and affirmative approvals.
-- [x] Task 5: Bridge Owner WhatsApp Inbound Pipeline (`src/services/whatsappIntentService.ts`) to handle natural language owner commands.
-- [x] Task 6: Synchronize Unified Assistant Orchestrator & 22-Page Capabilities (`src/services/localAi/unifiedAssistantOrchestrator.ts` & `UnifiedOperationsAssistantModal.tsx`).
-- [x] Task 7: Run automated test suites, verify performance guardrails (`npm run guardrails`), update knowledge graph (`node scripts/quick-update.mjs`), and report completion.
+## 1. Overview & Architectural Scope
+- **Model**: Qwen3-1.7B Q4_K_M (1.11 GB GGUF) running on CPU via `llama-server.exe` (`127.0.0.1:8089`, `-ngl 0`, `-t 4`, `-c 2048`).
+- **No-GPU Contract**: Strictly preserves `app.disableHardwareAcceleration()` and CPU-only inference without graphics card dependencies.
+- **Installer Integration**: `scripts/release.mjs` and `installer.iss` include `models/local-ai/*` by default when assets exist (`BUNDLE_LOCAL_AI=1`).
+- **Environment & Activation**:
+  - `packaging/portable.env` defines `LOCAL_AI_ENABLED=true` so portable installations start with Qwen activated.
+  - `src/services/localAi/llamaServerClient.ts` auto-activates when verified offline model assets exist on disk, while still allowing explicit disable via `LOCAL_AI_ENABLED=false`.
+  - Backend startup (`src/server.ts`) initiates lazy warm-up of `llama-server.exe` non-blockingly (~T+12s) so the assistant responds promptly when opened.
 
 ---
 
-## Task Completion Log
+## 2. Tasks & Progress Checklist
 
-### Task 1: Operational Intent Contract & Schemas
-- **What was done**: Created `src/services/localAi/operationalIntentSchema.ts` with 12 bounded operational intents (`EXPIRY_AUDIT`, `DISTRIBUTOR_RETURN_DRAFT`, `LOW_STOCK_REORDER`, `SALES_SUMMARY`, `PURCHASE_QUERY`, `DELIVERY_STATUS`, `REFILL_MANAGEMENT`, `STOCK_ADJUSTMENT`, `CUSTOMER_ENQUIRY`, `PAGE_GUIDANCE`, `CHITCHAT`, `UNKNOWN`), strict JSON schema validation, markdown fence stripping, and safe fallback parser `parseOperationalIntent()`.
-- **How it was done**: Added `queryOperationalAiIntent()` to `src/services/localAi/llamaServerClient.ts` with strict 4000ms abort signal, No-GPU CPU thread budgeting, and silent failover.
+- [x] Task 1: Update `packaging/portable.env` with `LOCAL_AI_ENABLED=true`
+- [x] Task 2: Update `src/services/localAi/llamaServerClient.ts` to auto-detect and activate bundled local AI & add boot warm-up in `src/server.ts`
+- [x] Task 3: Update `scripts/release.mjs` to bundle local AI by default
+- [x] Task 4: Run pre-flight verification (`verify:local-ai` and `guardrails`)
+- [x] Task 5: Execute `npm run release` and confirm live deployment
+- [x] Task 6: Commit and push changes to `main` with auto-updated knowledge graph
 
-### Task 2: Owner Identity, Authentication & Replay Shield Gateway
-- **What was done**: Created `src/services/localAi/ownerAuthGateway.ts` resolving owner phone from `app_settings` setting keys (`owner_whatsapp_number`, `admin_whatsapp_number`, `admin_whatsapp`, `shop_phone`, `store_phone`), `pharmacy_users` (owner/admin roles), and `customers` table.
-- **How it was done**: Implemented 60-second sliding window nonce deduplication (`checkAndRecordNonce()`), single-flight proposal action locks (`acquireActionLock()` / `releaseActionLock()`), and 4-digit session challenge verification (`issueOwnerChallenge()` / `verifyOwnerChallenge()`).
+---
 
-### Task 3: Scoped Pharmacy Tool Registry Expansion
-- **What was done**: Added 4 canonical operational tools to `PharmacyToolRegistry` in `src/services/localAi/pharmacyToolRegistry.ts`:
-  1. `generateDistributorReturnDraft(daysAhead, distributor)`: Analyzes near-expiry batches across `inventory_master`, groups by distributor, calculates claim value, and prepares a draft return memo without decrementing stock.
-  2. `calculateLowStockReorderDraft(minThreshold)`: Identifies fast-moving low stock items across `medicines` and `inventory_master` and drafts suggested replenishment quantities.
-  3. `getDeliveryRunStatus()`: Summarizes pending and in-transit delivery runs from `dispatch_orders` and `delivery_boys`.
-  4. `getPurchaseRateComparison(medicineQuery)`: Strictly owner-gated query comparing historical invoice purchase rates (PTR) across distributors from `purchase_items` and `purchases`.
+## 3. Task Completion Log
 
-### Task 4: Conversational Agent Engine Upgrade
-- **What was done**: Upgraded `src/services/localAi/conversationalAgentEngine.ts` to support `DISTRIBUTOR_RETURN_DRAFT`, `LOW_STOCK_REORDER`, `DELIVERY_STATUS`, and `PURCHASE_QUERY`. Added two-stage proposal generation with Rule 6 Human-in-the-Loop affirmative execution (`APPROVE <ID>` / `YES`).
-- **How it was done**: Added test criteria 21, 22, and 23 to `tests/conversationalAgentEngine.test.ts`. All 23 test criteria passed cleanly in Jest.
+### Task 1: Update `packaging/portable.env`
+- Added `LOCAL_AI_ENABLED=true`, `LOCAL_AI_HOST=127.0.0.1`, and `LOCAL_AI_PORT=8089`.
+- Verified that portable setups launch with local AI enabled.
 
-### Task 5: Bridge Owner WhatsApp Inbound Pipeline
-- **What was done**: Upgraded `src/services/whatsappIntentService.ts`. In `checkIsOwnerPhone()`, integrated `evaluateSenderIdentity()` from `ownerAuthGateway.ts`. In `handleOwnerInteractiveReply()`, routed unhandled natural language owner messages directly through `conversationalAgentEngine.processMessage({ role: 'owner', channel: 'whatsapp', ... })`.
-- **How it was done**: Output enqueued directly via `whatsappQueueWorker.enqueue()`, enabling natural language commands from the registered owner WhatsApp (e.g. checking 60-day expiry and preparing return lists).
+### Task 2: Auto-Detection & Backend Boot Warm-up
+- Updated `isLocalAiEnabled()` in `src/services/localAi/llamaServerClient.ts` to automatically detect valid model assets in `models/local-ai/` and activate local AI if not explicitly set to false.
+- Added non-blocking staged boot warm-up hook at ~T+12s in `src/server.ts` to pre-warm `llama-server.exe` on CPU without blocking HTTP server boot.
 
-### Task 6: 22-Page Capabilities & Assistant Modal Synchronization
-- **What was done**: Expanded `CAPABILITY_REGISTRY` in `src/services/localAi/unifiedAssistantOrchestrator.ts` to include `STAGE_DISTRIBUTOR_RETURNS`, `REORDER_LOW_STOCK`, and `QUERY_DELIVERY_STATUS`.
-- **How it was done**: Updated `getPageContextInfo()` in `frontend/src/components/UnifiedOperationsAssistantModal.tsx` to provide quick suggestion chips for return list drafting, low stock reorders, and delivery checks on `/returns`, `/inventory`, and `/dispatch`.
+### Task 3: Default Bundling in `scripts/release.mjs`
+- Updated `scripts/release.mjs` so `bundleLocalAi` defaults to `true` whenever `models/local-ai` contains the model weights and `llama-server.exe`.
+- Automatically sets `process.env.BUNDLE_LOCAL_AI = '1'` so Inno Setup compiles the offline standalone installer (`AI-Pharmacy-OS-Offline-Setup-v...exe`).
 
-### Task 7: Quality Gates, Guardrails & Documentation
-- **What was done**: Ran full test suite (`tests/conversationalAgentEngine.test.ts`: 23/23 tests passed), verified performance guardrails (`npm run guardrails`: clean TypeScript, zero violations), and updated the knowledge graph (`node scripts/quick-update.mjs`: 1323 nodes, 869 edges synchronized).
+### Task 4: Pre-flight Verification
+- Ran `npm run verify:local-ai --strict`: All 4 required assets (`llama-server.exe`, `qwen3-1.7b-q4_k_m.gguf`, `LICENSE.txt`, `metadata.json`) verified.
+- Ran `npm run guardrails`: TypeScript compilation (`tsc --noEmit`) and all performance rules passed with 0 violations.
+
+### Task 5: Release Build & Deployment (`v0.1.176`)
+- Ran `npm run release` with full offline bundling.
+- Compiled `AI-Pharmacy-OS-Offline-Setup-v0.1.176.exe` (1712.1 MB / ~1.71 GB) containing full Qwen3-1.7B model and llama-server.exe runtime.
+- Built delta update zip `AI-Pharmacy-OS-Update-v0.1.176.zip` (37.7 MB) with SHA-256 `13bd249ad4013feefc6a3d1aac8d3b601a92108009d1b545bda2c4d23c7708d0`.
+- Uploaded assets to GitHub Releases tag `v0.1.176` and published metadata to Vercel/Redis update server. Server verified: `latestVersion="0.1.176"`.
+
+### Task 6: Knowledge Graph & Git Push
+- Knowledge graph synchronized (`node scripts/quick-update.mjs`).
+- Committed version bump and pushed to `main`.
