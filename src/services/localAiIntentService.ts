@@ -105,6 +105,21 @@ async function ensureServer(options: LocalAiOptions, port: number): Promise<void
   });
   return serverStarting;
 }
+export function shouldRunLocalAiShadow(input: {
+  message: string;
+  parsedMedicineName?: string;
+  hasMedia: boolean;
+  affirmative: boolean;
+  negative: boolean;
+  repeat: boolean;
+  enabled: boolean;
+  mode: string;
+}): boolean {
+  return input.enabled && input.mode === 'shadow' && !input.hasMedia
+    && !input.parsedMedicineName && input.message.trim().length > 3
+    && !input.affirmative && !input.negative && !input.repeat;
+}
+
 export async function classifyWhatsAppIntent(message: string, recentContext: string[] = [], options: LocalAiOptions = {}): Promise<LocalAiIntentResult | null> {
   const enabled = options.enabled ?? process.env.LOCAL_AI_ENABLED === 'true';
   const mode = options.mode ?? (process.env.LOCAL_AI_MODE === 'shadow' ? 'shadow' : 'off');
