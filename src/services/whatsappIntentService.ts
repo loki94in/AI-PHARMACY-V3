@@ -17,6 +17,7 @@ import { paymentQrService } from './paymentQrService.js';
 import { visualIndexService } from './visualIndexService.js';
 import { GATE_VARIANTS, type GateDecision, DOC_SIGNS } from '../../scanGateAlgorithms.js';
 import { getAppDataDir } from '../config/index.js';
+import { classifyWhatsAppIntent } from './localAiIntentService.js';
 
 // Confidence gate: below these similarity scores a message is discarded as
 // chit-chat instead of being broadcast/escalated. Tune here; every discard is
@@ -5985,6 +5986,25 @@ export async function handleInbound(msg: any): Promise<void> {
 
     // 3. TEXT PARSE
     const parsed = parseMessage(body);
+
+    // 3a. LOCAL AI SHADOW CLASSIFIER — advisory telemetry only.
+    // It never modifies parsed values or any order/cart/database workflow.
+    // Run only on ambiguous text; confirmations, repeat requests and media keep
+    // their existing deterministic paths.
+    if (!hasMedia && !parsed.medicineName && body.trim().length > 3
+      && !isAffirmativeResponse(body) && !isNegativeResponse(body) && !isRepeatRequest(body)
+      && process.env.LOCAL_AI_ENABLED === 'true' && process.env.LOCAL_AI_MODE === 'shadow') {
+      void classifyWhatsAppIntent(body, [], { enabled: true, mode: 'shadow' })
+        .then(result => {
+          if (result) console.info('[Local AI shadow]', JSON.stringify({
+            intent: result.intent,
+            medicineNames: result.medicineNames,
+            needsClarification: result.needsClarification,
+            confidence: result.confidence
+          }));
+        })
+        .catch(error => console.warn('[Local AI shadow] Non-blocking failure:', error));
+    }
 
     // 3b. SCISPACY NLP — run in parallel on the raw message body (fire-and-forget, 1.5s timeout)
     // This catches medicine names that regex/keyword parsing misses (e.g. "do you have azithromycin?")
