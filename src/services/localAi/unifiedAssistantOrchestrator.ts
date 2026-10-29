@@ -437,6 +437,12 @@ export class UnifiedAssistantOrchestrator {
    * deterministic classifier as a compatibility fallback.
    */
   private async resolveStaffIntent(text: string, session: AssistantSessionContext): Promise<AssistantActionType> {
+    // Preserve known, tested command routes exactly as before. The local model
+    // handles requests that the deterministic router cannot classify, rather
+    // than overriding a known command with a probabilistic guess.
+    const deterministicAction = this.classifyStaffIntent(text.toLowerCase(), session);
+    if (deterministicAction !== 'GENERAL_QA') return deterministicAction;
+
     if (isLocalAiEnabled()) {
       const aiResult = await queryLocalAssistantAction(text, {
         currentPage: session.pageContext?.pathname || session.currentPage,
@@ -445,11 +451,11 @@ export class UnifiedAssistantOrchestrator {
       });
 
       if (aiResult && aiResult.confidence >= 0.82) {
-        return aiResult.actionType as AssistantActionType;
+        return aiResult.actionType;
       }
     }
 
-    return this.classifyStaffIntent(text.toLowerCase(), session);
+    return deterministicAction;
   }
 
   /**
