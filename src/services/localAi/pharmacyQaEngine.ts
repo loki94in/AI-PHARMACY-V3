@@ -156,6 +156,13 @@ const REFILL_REGEX = /(?:\b(?:refill|repeat|purani|wahi|previous|last month|pich
  */
 export function extractCandidateMedicineName(text: string): string {
   if (!text) return '';
+  const trimmed = text.trim();
+  // Common conversational/help messages are not medicine names. Without this
+  // guard, a long sentence can be mistaken for a catalogue search and produce
+  // an irrelevant "medicine not found" response.
+  if (/^(?:i am not sure|i'm not sure|what can i ask|what can you do|how can you help|can you help me|help me understand|how are you|thank you|thanks|hello|hi|hey|good morning|good afternoon|good evening|namaste|namaskar|मदत करा|कशी मदत करू शकता|काय मदत करू शकता|धन्यवाद|नमस्कार)\b/i.test(trimmed)) {
+    return '';
+  }
   let cleaned = text
     .replace(/[?.,!;:_()"'`]/g, ' ')
     // English conversational prefixes
@@ -265,7 +272,7 @@ export class PharmacyQaEngine {
       }
 
       // 3. Fallback entity extraction if model missed it
-      if (extractedMedicines.length === 0 && !isShopInfo) {
+      if (extractedMedicines.length === 0 && !isShopInfo && modelIntent !== 'CHITCHAT') {
         const candidate = extractCandidateMedicineName(text);
         if (candidate && !isNonMedicineCondition(candidate)) {
           extractedMedicines.push({
