@@ -30,7 +30,7 @@ export function getLocalAiConfig(overrides: Partial<LlamaServerConfig> = {}): Ll
 
   return {
     host: overrides.host || process.env.LOCAL_AI_HOST || '127.0.0.1',
-    port: overrides.port || parseInt(process.env.LOCAL_AI_PORT || '8080', 10),
+    port: overrides.port || parseInt(process.env.LOCAL_AI_PORT || '8089', 10),
     timeoutMs: overrides.timeoutMs || parseInt(process.env.LOCAL_AI_TIMEOUT_MS || '4000', 10),
     modelsDir: resolvedModelsDir
   };
@@ -66,6 +66,7 @@ export function getLocalAiBaseUrl(config?: Partial<LlamaServerConfig>): string {
 
 /**
  * Quick ping to llama.cpp server /health endpoint.
+ * Validates that the endpoint is actually llama-server and not another web server (e.g. Tomcat/IIS).
  */
 export async function checkLlamaServerHealth(config?: Partial<LlamaServerConfig>): Promise<boolean> {
   const cfg = getLocalAiConfig(config);
@@ -73,9 +74,17 @@ export async function checkLlamaServerHealth(config?: Partial<LlamaServerConfig>
   try {
     const res = await fetch(url, {
       method: 'GET',
+      headers: { Accept: 'application/json' },
       signal: AbortSignal.timeout(1000)
     });
-    return res.ok;
+    if (!res.ok) return false;
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) return false;
+    const data: any = await res.json().catch(() => null);
+    return Boolean(
+      data &&
+      (data.status === 'ok' || data.status === 'loading model' || data.status === 'no slot available')
+    );
   } catch {
     return false;
   }

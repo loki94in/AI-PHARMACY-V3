@@ -75,16 +75,14 @@ export function evaluateShadowEligibility(ctx: ShadowEvaluationContext): ShadowB
   }
 
   // 3. Confirmation bypass ("YES", "haan", "NO", "cancel", "1", "2", etc.)
-  const wordCount = rawText.split(/\s+/).length;
-  const isShortReply = wordCount <= 4;
+  const isPureConfirmation =
+    /^(?:1|2|y|n|yes|haan|ha|ha ji|haan ji|ho|ho ji|ok|okay|confirm|confirmed|no|nahi|nhi|cancel|sahi|correct|theek hai|yes confirm|haan confirm|haan confirm kar do)$/i.test(rawText) ||
+    /^(?:हाँ|हां|हाँ जी|हो|होय|नाही|नको|कन्फर्म|रद्द|बरोबर|चालेल)$/u.test(rawText);
+
   if (
     ctx.isConfirmation ||
-    (isShortReply && (
-      isRefillConfirmationResponse(rawText) ||
-      isAffirmativeResponse(rawText) ||
-      isNegativeResponse(rawText) ||
-      /^(yes|haan|ha|ho|ok|okay|confirm|confirmed|no|nahi|nhi|cancel|1|2)$/i.test(rawText)
-    ))
+    isPureConfirmation ||
+    (ctx.isConfirmation && (isRefillConfirmationResponse(rawText) || isAffirmativeResponse(rawText) || isNegativeResponse(rawText)))
   ) {
     return { shouldRun: false, reason: 'CONFIRMATION_BYPASS' };
   }

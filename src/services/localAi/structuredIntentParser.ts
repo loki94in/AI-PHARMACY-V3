@@ -78,7 +78,27 @@ export const NON_MEDICINE_TERMS: Set<string> = new Set([
   'same medicine',
   'regular medicine',
   'regular dawa',
-  'prescription'
+  'prescription',
+  // Hindi terms
+  'बुखार',
+  'ताप',
+  'सिरदर्द',
+  'सरदर्द',
+  'डोकेदुखी',
+  'पोटदुखी',
+  'पेटदर्द',
+  'खोकला',
+  'खांसी',
+  'सर्दी',
+  'उल्टी',
+  'दस्त',
+  'चक्कर',
+  'दवा',
+  'दवाई',
+  'गोली',
+  'औषध',
+  'इलाज',
+  'उपचार'
 ]);
 
 /**
@@ -134,15 +154,22 @@ export function sanitizeString(raw: unknown, maxLength: number): string {
     .slice(0, maxLength);
 }
 
+const STOP_CONNECTORS = new Set(['ki', 'ka', 'ke', 'ko', 'se', 'me', 'mein', 'liye', 'keliye', 'sathi', 'cha', 'chi', 'che', 'la', 'kya', 'hai', 'chahiye', 'dya', 'the', 'of', 'for', 'in', 'on', 'की', 'का', 'के', 'साठी', 'चा', 'ची']);
+
 /**
  * Checks if a string represents a generic condition, symptom, or non-medicine word.
  */
 export function isNonMedicineCondition(rawName: string): boolean {
   if (!rawName) return true;
-  const cleaned = rawName.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '');
-  if (NON_MEDICINE_TERMS.has(cleaned)) return true;
-  const tokens = cleaned.split(/\s+/).filter(Boolean);
-  if (tokens.length <= 2 && tokens.every(t => NON_MEDICINE_TERMS.has(t))) {
+  const normalized = rawName.trim().toLowerCase();
+  if (NON_MEDICINE_TERMS.has(normalized)) return true;
+
+  const cleaned = normalized.replace(/[^a-z0-9\s\u0900-\u097F]/g, ' ');
+  if (NON_MEDICINE_TERMS.has(cleaned.trim())) return true;
+
+  const tokens = cleaned.split(/\s+/).filter(t => t && !STOP_CONNECTORS.has(t));
+  if (tokens.length === 0) return true;
+  if (tokens.every(t => NON_MEDICINE_TERMS.has(t))) {
     return true;
   }
   return false;

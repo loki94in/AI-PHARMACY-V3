@@ -109,7 +109,8 @@ async function runBenchmark() {
     { label: 'Hinglish Medicine Order', text: 'bhai paracetamol 650mg 2 strip bhej do please' },
     { label: 'English Medicine Order', text: 'Need 1 box of Amoxicillin 500mg urgently' },
     { label: 'Refill Inquiry', text: 'kal subah tak BP ki regular dawai bhej doge?' },
-    { label: 'Shop Timings (Non-Order)', text: 'bhaiya shop kab tak open rehti hai?' }
+    { label: 'Shop Timings (Non-Order)', text: 'bhaiya shop kab tak open rehti hai?' },
+    { label: 'Grounded Q&A (Availability & Price)', text: 'Is Dolo 650 available and what is the price?' }
   ];
 
   const systemPrompt = `You are a medical pharmacy intent classification engine.

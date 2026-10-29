@@ -148,7 +148,7 @@ export class LocalAiLifecycleManager {
         console.log('[Local AI Lifecycle] ✓ Local AI assets installed and verified. Ensuring runtime is active...');
         const isRunning = await ensureLlamaServerRunning({
           host: process.env.LOCAL_AI_HOST || '127.0.0.1',
-          port: parseInt(process.env.LOCAL_AI_PORT || '8080', 10),
+          port: parseInt(process.env.LOCAL_AI_PORT || '8089', 10),
           timeoutMs: 4000,
           modelsDir: getLocalAiStorageDir()
         });
@@ -176,7 +176,7 @@ export class LocalAiLifecycleManager {
               console.log('[Local AI Lifecycle] Download completed successfully. Starting runtime...');
               await ensureLlamaServerRunning({
                 host: process.env.LOCAL_AI_HOST || '127.0.0.1',
-                port: parseInt(process.env.LOCAL_AI_PORT || '8080', 10),
+                port: parseInt(process.env.LOCAL_AI_PORT || '8089', 10),
                 timeoutMs: 4000,
                 modelsDir: getLocalAiStorageDir()
               });

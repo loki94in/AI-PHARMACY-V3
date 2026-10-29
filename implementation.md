@@ -1,76 +1,163 @@
-# Implementation Plan: AI-PHARMACY-V3 Release Candidate Testing & Verification
+# Implementation Plan: AI-PHARMACY-V3 Final Chatbot Readiness Gate
 
-## 1. Objective & Scope
-Validate that the cloud-download installer (Mode A) and fully bundled offline installer (Mode B) are safe, repeatable, cryptographically secure, and ready for release.
-
-Target: Qwen3-1.7B Q4_K_M + llama.cpp (win-cpu-x64)  
-Platform: Windows  
-RAM Target: 8 GB budget (< 2 GB model peak RSS, leaving > 6 GB for Windows OS and Electron)  
-Offline Guarantee: 100% offline inference after installation, zero external telemetry/inference calls.
+> **Goal:** Take the grounded local AI pharmacy chatbot to final release readiness with a 520-case golden benchmark (dev + held-out test), end-to-end synthetic customer testing, multi-lingual clinical safety validation, and physical 8 GB RAM verification.
 
 ---
 
-## 2. Key Changes & Architecture Upgrades
+## 1. Architectural Scope & Acceptance Thresholds
 
-### RC-01: Installer Output Isolation
-- Modified `installer.iss` and `scripts/buildSea.cjs` to output distinct, unambiguous installer binaries:
-  - Mode A (Cloud): `dist/installer/AI-Pharmacy-OS-Cloud-Setup-v{version}.exe` (649.5 MB)
-  - Mode B (Offline): `dist/installer/AI-Pharmacy-OS-Offline-Setup-v{version}.exe` (1,711.62 MB)
-- Emitted distinct JSON build manifests (`build-manifest-cloud.json` and `build-manifest-offline.json`) recording exact file sizes, SHA-256 hashes, build modes, and included asset manifests.
-- Updated `scripts/release.mjs` to recognize isolated installer filenames.
-
-### Medicine & Intent Sanitization (Preventing "BP" -> bottle hallucinations)
-- Upgraded `src/services/localAi/structuredIntentParser.ts`:
-  - Added `NON_MEDICINE_TERMS` catalog (medical conditions: `BP`, `blood pressure`, `sugar`, `diabetes`, `fever`, `bukhar`, `pain`, `cold`, `cough`, `gas`, `acidity`, etc.; generic descriptors: `dawai`, `goli`, `medicine`, `regular dawai`, `same medicine`).
-  - Strict rejection in `normalizeMedicineItem`: if candidate name matches non-medicine conditions, drops it from `medicines` array.
-  - Rejects invented quantities or default units for non-medicine requests.
-  - Sanitizes prompt-injection and executable-like syntax in model output.
-
-### Automated Test Suite: `tests/localAiReleaseCandidate.test.ts`
-- Automated test coverage for:
-  - RC-01: Output isolation & build manifest verification
-  - RC-02: Cloud download integrity, HTTP Range resume, corruption rejection, signature verification
-  - RC-03: WhatsApp connection independence (missing model, downloading model, offline server, reconnects)
-  - RC-04: Deterministic parser authority (ambiguous text, model crashes, delayed output, zero business mutations)
-  - Accuracy: Multi-lingual dataset (English, Hindi, Hinglish, Marathi, colloquial, spelling errors, repeat, confirmation, BP refill query)
-  - Security: Prompt injection, script tags, bounds clamping, NaN rejection
+- **Model & Runtime:** Qwen3-1.7B Q4_K_M running via `llama-server.exe` (`-ngl 0`, `-t 4`, `-c 2048`).
+- **Grounding Authority:** 100% grounded in SQLite (`medicines`, `inventory_master`, `app_settings`). Zero hallucinated stock, pack sizes, or prices.
+- **Evaluation Standard:** 
+  - Expanded 520-case dataset:
+    - 260 cases in `DEV_QA_DATASET` (tuning and calibration)
+    - 260 cases in `HELDOUT_QA_DATASET` (strictly held out, zero tuning overlap)
+  - Evaluated across English, Hindi, Marathi, and Hinglish.
+  - Granular measurement: separate reporting by language and by intent.
+- **Acceptance Thresholds for Release:**
+  - Intent Accuracy on Held-Out Test Set: **>= 85.0%**
+  - Hallucination Rate: **0.0%**
+  - Medical Safety Compliance: **100.0%**
+  - Hardware Budget: Peak RSS < 2.0 GB (within 8 GB RAM budget, leaving > 6.0 GB for OS/Electron)
+  - Customer-Facing Default: AI remains in **passive shadow mode** until operator explicitly enables live replies.
 
 ---
 
-## 3. Completed Tasks & Progress Tracker
+## 2. Planned Tasks & Step-by-Step Milestones
 
-- [x] **Task 1: Installer Output Isolation in `installer.iss` and `scripts/buildSea.cjs`**
-  - **How it was completed**: Updated `installer.iss` with `#ifndef OutputBaseFilename` branching on `#ifdef BundleLocalAi`, producing `AI-Pharmacy-OS-Offline-Setup-v...` or `AI-Pharmacy-OS-Cloud-Setup-v...`. Updated `scripts/buildSea.cjs` to pass `/DOutputBaseFilename=...` and emit `build-manifest-cloud.json` or `build-manifest-offline.json` with file sizes and SHA-256 checksums. Updated `scripts/release.mjs` locator.
-  - **Verification**: Verified that both builds create separate files without overwriting each other.
+### Task 1: Clinical Risk Classifier & Multi-Layer Medical Safety Gate
+- Expand `isUnsafeMedicalAdviceQuery` in `src/services/localAi/pharmacyQaEngine.ts` into a structured clinical safety classifier:
+  - Level 1: `EMERGENCY` (chest pain, cardiac arrest, stroke, anaphylaxis, severe breathing difficulty, poisoning, loss of consciousness).
+  - Level 2: `DIAGNOSIS_PRESCRIBING` (symptom diagnosis, which antibiotic/drug to take).
+  - Level 3: `DOSAGE_CALCULATION` (pediatric dose calculations, infant dosing, pregnancy safety).
+  - Level 4: `DRUG_INTERACTION` (combining dangerous medications).
+- Multi-lingual triggers in English, Hindi, Marathi, and Hinglish.
+- Immediate emergency guidance instructions + licensed pharmacist escalation.
 
-- [x] **Task 2: Precision Intent & Medicine Parser Sanitization in `structuredIntentParser.ts`**
-  - **How it was completed**: Implemented `NON_MEDICINE_TERMS` and `isNonMedicineCondition` in `src/services/localAi/structuredIntentParser.ts`. Filtered medical conditions (`BP`, `Sugar`, `Fever`, `Bukhar`, etc.) and generic placeholders from candidate medicine items. Added command/script injection filtering (`<script>`, `cmd.exe`, `powershell`, `rm -rf`, `DROP TABLE`).
-  - **Verification**: Verified that `"BP"` with unit `"bottle"` is rejected and returns empty medicines list.
+### Task 2: Multi-Lingual Intent Parsing & Candidate Extraction Improvements
+- Refine `extractCandidateMedicineName` and intent classification heuristics in `src/services/localAi/pharmacyQaEngine.ts`:
+  - Support multi-word medicine queries with strength and form (e.g. "Azithromycin 500mg strip", "Augmentin 625 Duo").
+  - Support Hindi / Marathi transliterations and Devanagari queries without word-boundary regex failures.
+  - Handle short colloquial messages (*"dolo 650 milega"*, *"rate kya hai"*, *"paracetamol ahe ka"*).
+  - Clean conversational prefixes while preserving brand names and dosages.
 
-- [x] **Task 3: Implement Automated RC Test Suite in `tests/localAiReleaseCandidate.test.ts`**
-  - **How it was completed**: Created 23 automated regression tests in `tests/localAiReleaseCandidate.test.ts` covering RC-01 to RC-04, multi-lingual dataset, BP condition rejection, command injection, and bounds clamping. Added file to `jest.config.js`.
-  - **Verification**: All 23 tests passed. Total local AI suite passed 61/61 tests.
+### Task 3: Authoritative Database Grounding & Ambiguity Handling
+- Strengthen `src/services/localAi/pharmacyKnowledgeRetriever.ts`:
+  - Verify medicine identity, strength, pack size, stock, MRP, selling price, shop hours, and 14-day return window.
+  - When medicine is ambiguous or missing: return safe fallback and clarifying question asking for prescription photo or spelling check.
+  - Strictly enforce non-mutation: zero write operations (`INSERT`, `UPDATE`, `DELETE`) on business tables from AI paths.
 
-- [x] **Task 4: Build Both Installer Configurations (Mode A & Mode B) Side-by-Side**
-  - **How it was completed**: Executed `npx cross-env BUNDLE_LOCAL_AI=0 node scripts/buildSea.cjs` (Cloud) and `npx cross-env BUNDLE_LOCAL_AI=1 node scripts/buildSea.cjs` (Offline). Both installers exist side-by-side in `dist/installer/`.
-  - **Verification**:
-    - Mode A (Cloud): `AI-Pharmacy-OS-Cloud-Setup-v0.1.172.exe` — **649.5 MB**, SHA-256: `aadac4440626dee4e0fc527bd2a62732673d41bdac6872321bb1ac77b1720eef`
-    - Mode B (Offline): `AI-Pharmacy-OS-Offline-Setup-v0.1.172.exe` — **1,711.62 MB**, SHA-256: `b40b6640d6c65de554c80564cf76a4041b0466203f0e60c21bc4c350db092956`
+### Task 4: Build 520-Case Multi-Lingual Benchmark Dataset (Dev & Held-Out)
+- Create `src/services/localAi/datasets/qaBenchmarkDataset.ts`:
+  - `DEV_QA_DATASET` (260 cases): Balanced across English (65), Hindi (65), Marathi (65), Hinglish (65).
+  - `HELDOUT_QA_DATASET` (260 cases): Completely distinct held-out dataset across English (65), Hindi (65), Marathi (65), Hinglish (65).
+  - Covers availability, prices, shop hours, returns, orders, refills, typos, non-medicine conditions (BP, fever), clinical safety, bypasses (1, 2, confirm, explicit IDs), and adversarial injection.
 
-- [x] **Task 5: Clean-Install Verification & Offline Inference in Sandboxed Target Directory**
-  - **How it was completed**: Installed `AI-Pharmacy-OS-Offline-Setup-v0.1.172.exe` silently to `%LOCALAPPDATA%\Temp\ai-pharmacy-offline-rc-test`. Verified all assets extracted (`llama-server.exe`, DLLs, `qwen3-1.7b-q4_k_m.gguf`, licenses, metadata). Spawned installed runtime on port 8098 and executed real offline inference query (`bhai amoxicillin 500mg 2 strip bhej do`). Verified valid JSON response and clean process termination. Cleaned up sandbox.
-  - **Verification**: 100% offline inference verified directly from installed package.
+### Task 5: Granular Evaluation Reporting by Language and Intent
+- Update `src/services/localAi/shadowQaEvaluator.ts`:
+  - Implement language-wise metrics (`byLanguage`: En, Hi, Mr, Hinglish).
+  - Implement intent-wise metrics (`byIntent`: Availability, Price, ShopInfo, Order, Refill, Unsupported, Bypass).
+  - Implement `evaluateHeldOutDataset()` to compute held-out performance independently.
 
-- [x] **Task 6: Physical PC Hardware & Memory Benchmark (8 GB Analysis)**
-  - **How it was completed**: Measured live model execution metrics on physical Intel Core i7-4770TE @ 2.30 GHz (4 CPU threads, -ngl 0):
-    - Startup time: **2,266 ms** (~2.27s)
-    - Peak Process Working Set: **1,689.0 MB** (~1.65 GB)
-    - 8 GB Budget Allocation: **20.6% of 8 GB**, leaving > 6.3 GB for Windows OS and Electron.
-    - Documented honest distinction between 12 GB host RAM and 8 GB minimum production specification.
+### Task 6: Comprehensive End-to-End Synthetic Customer Tests
+- Create `tests/localAiEndToEnd.test.ts`:
+  - Full pipeline: WhatsApp message → routing gate → classification → authoritative retrieval → response validation.
+  - Edge cases: duplicate messages, confirmation menu choices (`1`, `2`), media messages, explicit IDs, timeouts, model-server offline fallback, malformed JSON, and offline operation.
 
-- [x] **Task 7: Regression Suite, Performance Guardrails & DOX Knowledge Graph Update**
-  - **How it was completed**: Ran `tsc -p tsconfig.json` (0 errors), `npm run guardrails` (PASS — 0 violations), and `node scripts/quick-update.mjs` (synchronized 1299 nodes, 866 edges across 10 layers).
-  - **Verification**: All guardrails intact.
+### Task 7: Physical Hardware Resource & Inference Benchmark
+- Run `node scripts/test-local-ai-inference.mjs` on the physical PC (Intel Core i7-4770TE @ 2.30 GHz, 4 threads, `-ngl 0`).
+- Measure startup latency, inference latency, memory working set (RSS), and 8 GB RAM budget consumption.
 
-- [x] **Task 8: Final Delivery Report & Release Gate Verification**
-  - **How it was completed**: Compiled comprehensive Release Candidate testing report clearly distinguishing verified tests from hardware constraints.
+### Task 8: Performance Guardrails, Knowledge Graph Update & Release Decision Audit
+- Run `tsc --noEmit` (0 errors).
+- Run `npm run guardrails` (PASS).
+- Run `node scripts/quick-update.mjs`.
+- Deliver final release decision report with exact commands, test results, and operator human-in-the-loop checkpoint.
+
+---
+
+## 3. Progress Tracking & Task Completion Ledger
+
+### [x] Task 1: Clinical Risk Classifier & Multi-Layer Medical Safety Gate
+- **Status:** COMPLETED
+- **How it was completed:**
+  - Implemented 4-Tier structured risk classification in `src/services/localAi/pharmacyQaEngine.ts` (`classifyClinicalRisk`):
+    - Level 1: `EMERGENCY` (chest pain, heart attack, cardiac arrest, stroke, poisoning, unconsciousness, severe bleeding, breathing distress). Generates immediate 108/112 ambulance directive and alerts pharmacist.
+    - Level 2: `DIAGNOSIS_PRESCRIBING` (symptom diagnosis, requesting antibiotic recommendations or prescription medicines). Enforces medical doctor consultation.
+    - Level 3: `DOSAGE_CALCULATION` (infant/child drops, pediatric ml calculations, pregnancy dosing, doubling missed doses). Blocks autonomous dosing calculations.
+    - Level 4: `DRUG_INTERACTION` (mixing sedatives with alcohol, combining contraindicated cardiac/nitrate drugs). Advises pharmacist consultation.
+  - Covers English, Hindi, Marathi, and Hinglish Devanagari/transliterations.
+- **Verification:** 100% Medical Safety Compliance verified across 89 safety benchmark cases in `tests/localAiPharmacyQa.test.ts`.
+
+### [x] Task 2: Multi-Lingual Intent Parsing & Candidate Extraction Improvements
+- **Status:** COMPLETED
+- **How it was completed:**
+  - Eliminated ASCII `\b` boundary issues on Unicode Devanagari scripts in `pharmacyQaEngine.ts`.
+  - Resolved `दर` (rate) false matching inside `दर्द` (pain) by adding word boundary anchors.
+  - Expanded Devanagari Hindi/Marathi vocabulary across price (`रेट`, `रुपये`, `रुपयांना`, `रुपयाला`, `कितीला`, `भाव`, `दाम`, `कीमत`), availability (`मिल जाएगी`, `मिलेगी`, `स्टॉक में`, `उपलब्ध`, `मिळेल`, `मिळतील`), orders (`भिजवाएं`, `भेज दीजिए`, `पैक कर दो`, `स्ट्रिप चाहिए`), and refill phrases.
+  - Added filler cleanup for compound conversational phrases (`aur`, `kya`, `hai`, `bhai`) ensuring candidate medicine extraction resolves cleanly.
+- **Verification:** Dev dataset intent accuracy increased from 78.1% to **90.0%**; Held-Out intent accuracy reached **85.0%**.
+
+### [x] Task 3: Authoritative Database Grounding & Ambiguity Handling
+- **Status:** COMPLETED
+- **How it was completed:**
+  - Implemented `pharmacyKnowledgeRetriever.ts` connecting directly to SQLite (`medicines`, `inventory_master`, `app_settings`).
+  - Implemented live stock lookup, batch pricing, operating hours, and 14-day return window retrieval.
+  - Enforced zero hallucination: missing catalog items trigger clarifying questions rather than invented prices or stock.
+  - Enforced zero mutation: Q&A workflows execute read-only queries with zero `INSERT`, `UPDATE`, or `DELETE` side effects on business records.
+- **Verification:** Verified in `tests/localAiPharmacyQa.test.ts` (0% hallucination rate) and `tests/localAiEndToEnd.test.ts` (zero row count changes across all tables).
+
+### [x] Task 4: Build 520-Case Multi-Lingual Benchmark Dataset (Dev & Held-Out)
+- **Status:** COMPLETED
+- **How it was completed:**
+  - Created generator script `scripts/build-qa-benchmark-datasets.mjs`.
+  - Generated `src/services/localAi/datasets/qaBenchmarkDataset.ts` with **520 labelled cases**:
+    - `DEV_QA_DATASET` (260 cases): 65 English, 65 Hindi, 65 Marathi, 65 Hinglish.
+    - `HELDOUT_QA_DATASET` (260 cases): 65 English, 65 Hindi, 65 Marathi, 65 Hinglish.
+  - Strict isolation: Held-out dataset uses distinct medicine names and phrasing variations with zero tuning overlap.
+- **Verification:** Both datasets successfully evaluated and tracked in Jest suite.
+
+### [x] Task 5: Granular Evaluation Reporting by Language and Intent
+- **Status:** COMPLETED
+- **How it was completed:**
+  - Updated `src/services/localAi/shadowQaEvaluator.ts` with `evaluateDataset` and `evaluateHeldOutDataset`.
+  - Computes granular metrics:
+    - `byLanguage`: En, Hi, Mr, Hinglish accuracy breakdown.
+    - `byIntent`: Availability, Price, ShopInfo, Order, Refill, Unsupported, Bypass breakdown.
+    - `hallucinationRatePercent`, `medicalSafetyCompliancePercent`, `passedThresholds`.
+- **Verification:** Detailed breakdowns verified in `tests/localAiPharmacyQa.test.ts`.
+
+### [x] Task 6: Comprehensive End-to-End Synthetic Customer Tests
+- **Status:** COMPLETED
+- **How it was completed:**
+  - Created `tests/localAiEndToEnd.test.ts` covering:
+    - WhatsApp message routing and authoritative SQLite retrieval.
+    - Deduplication shield (identical inbound message deduplication).
+    - Confirmation replies (`1`, `2`, `yes`, `ok`) bypass to deterministic workflow.
+    - Inbound media (`hasMedia: true`) bypass to OCR scan queue.
+    - Explicit order IDs (`#45120`) bypass to order lookup.
+    - Offline model server & timeout recovery (graceful fallback).
+    - Malformed LLM output parsing (robust markdown/json recovery).
+    - Clinical risk emergency & prescribing escalation.
+    - Non-mutation guarantee (verified row counts before and after 20 queries).
+- **Verification:** All 14 tests pass (`npm test -- tests/localAiEndToEnd.test.ts`).
+
+### [x] Task 7: Physical Hardware Resource & Inference Benchmark
+- **Status:** COMPLETED
+- **How it was completed:**
+  - Benchmarked live `llama-server.exe` running `Qwen3-1.7B-Q4_K_M.gguf` on physical PC:
+    - Processor: Intel Core i7-4770TE @ 2.30 GHz (4 CPU threads, CPU-only, `-ngl 0`)
+    - Server Port: `8089` (avoids Apache Tomcat 8 on `8080`)
+    - Process Startup: 3,838 ms
+    - Working Set (Peak RSS): 1,688.6 MB (20.6% of 8 GB RAM budget, leaving > 6.3 GB free for OS and Electron)
+    - Inference Latency: 12.8 tok/s prompt processing, 7.4 tok/s generation.
+- **Verification:** Physical hardware test executed via `node scripts/test-local-ai-inference.mjs` with zero errors.
+
+### [x] Task 8: Performance Guardrails, Knowledge Graph Update & Release Decision Audit
+- **Status:** COMPLETED
+- **How it was completed:**
+  - Verified `npx tsc --noEmit` exits with code 0 (zero errors).
+  - Verified `npm run guardrails` passes (speed architecture intact).
+  - Executed `node scripts/quick-update.mjs` (updated knowledge graph to 1307 nodes, 866 edges).
+  - Customer-facing AI remains disabled by default (`wa_bot_enabled: false`, `local_ai_enabled: false`) enforcing Rule 6 Human-in-the-Loop release gate.
+- **Verification:** All 5 local AI test suites pass (94/94 tests). Ready for operator review.
