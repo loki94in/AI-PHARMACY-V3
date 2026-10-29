@@ -6,7 +6,7 @@
 
 import { spawn, type ChildProcess, execSync } from 'child_process';
 import os from 'os';
-import { validateLocalAiAssets } from './localAiAssetValidator.js';
+import { validateLocalAiAssets, DEFAULT_LOCAL_AI_DIR } from './localAiAssetValidator.js';
 import { getLocalAiStorageDir } from './localAiStorage.js';
 import { parseStructuredIntent } from './structuredIntentParser.js';
 import type { StructuredIntentResult } from './types.js';
@@ -19,11 +19,20 @@ export interface LlamaServerConfig {
 }
 
 export function getLocalAiConfig(overrides: Partial<LlamaServerConfig> = {}): LlamaServerConfig {
+  let resolvedModelsDir = overrides.modelsDir || process.env.LOCAL_AI_STORAGE_DIR || process.env.LOCAL_AI_MODELS_DIR;
+  if (!resolvedModelsDir) {
+    if (validateLocalAiAssets(DEFAULT_LOCAL_AI_DIR).valid) {
+      resolvedModelsDir = DEFAULT_LOCAL_AI_DIR;
+    } else {
+      resolvedModelsDir = getLocalAiStorageDir();
+    }
+  }
+
   return {
     host: overrides.host || process.env.LOCAL_AI_HOST || '127.0.0.1',
     port: overrides.port || parseInt(process.env.LOCAL_AI_PORT || '8080', 10),
     timeoutMs: overrides.timeoutMs || parseInt(process.env.LOCAL_AI_TIMEOUT_MS || '4000', 10),
-    modelsDir: overrides.modelsDir || process.env.LOCAL_AI_STORAGE_DIR || process.env.LOCAL_AI_MODELS_DIR || getLocalAiStorageDir()
+    modelsDir: resolvedModelsDir
   };
 }
 

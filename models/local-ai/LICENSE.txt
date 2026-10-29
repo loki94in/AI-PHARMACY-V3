@@ -1,0 +1,7 @@
+Apache License 2.0 / MIT License
+
+Model: Qwen3-1.7B Q4_K_M (Alibaba Cloud / Qwen Team - Apache 2.0)
+Runtime: llama.cpp (Georgi Gerganov - MIT License)
+
+This software runs strictly in local shadow evaluation mode.
+No customer or pharmacy data is sent to external servers.

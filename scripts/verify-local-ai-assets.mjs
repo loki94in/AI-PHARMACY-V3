@@ -10,7 +10,10 @@ import fs from 'fs';
 import path from 'path';
 
 const rootDir = process.cwd();
-const localAiDir = path.resolve(rootDir, 'models', 'local-ai');
+const customDirArg = process.argv.find((a, i) => i > 1 && !a.startsWith('--'));
+const localAiDir = customDirArg
+  ? path.resolve(customDirArg)
+  : (process.env.LOCAL_AI_MODELS_DIR ? path.resolve(process.env.LOCAL_AI_MODELS_DIR) : path.resolve(rootDir, 'models', 'local-ai'));
 const isStrict = process.argv.includes('--strict') || process.env.BUNDLE_LOCAL_AI === '1' || process.env.BUNDLE_LOCAL_AI === 'true';
 
 console.log('\n=============================================================');

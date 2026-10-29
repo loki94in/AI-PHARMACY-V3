@@ -370,12 +370,25 @@ describe('Cloud-Hosted Local AI Installation & Download Manager', () => {
   describe('BUNDLE_LOCAL_AI=1 Build Gate Enforcement', () => {
     it('fails build when BUNDLE_LOCAL_AI=1 and required assets are missing', () => {
       const scriptPath = path.resolve(process.cwd(), 'scripts', 'verify-local-ai-assets.mjs');
+      const emptyDir = path.resolve(tempStorageDir, 'empty-missing-models');
+      fs.mkdirSync(emptyDir, { recursive: true });
+
       expect(() => {
         execFileSync(process.execPath, [scriptPath, '--strict'], {
-          env: { ...process.env, BUNDLE_LOCAL_AI: '1' },
+          env: { ...process.env, BUNDLE_LOCAL_AI: '1', LOCAL_AI_MODELS_DIR: emptyDir },
           stdio: 'pipe'
         });
       }).toThrow();
+    });
+
+    it('passes verification when all required assets are present', () => {
+      const scriptPath = path.resolve(process.cwd(), 'scripts', 'verify-local-ai-assets.mjs');
+      const out = execFileSync(process.execPath, [scriptPath, '--strict'], {
+        env: { ...process.env, BUNDLE_LOCAL_AI: '1' },
+        encoding: 'utf8',
+        stdio: 'pipe'
+      });
+      expect(out).toContain('All Local AI assets are present and ready');
     });
   });
 });
