@@ -29,4 +29,4 @@ Do not commit multi-gigabyte model weights or native binaries to Git. Record the
     LOCAL_AI_PORT=47831
     LOCAL_AI_THREADS=4
 
-Shadow mode is advisory only. Missing assets, invalid output, or timeouts must leave the existing workflow unchanged. The WhatsApp transport itself still requires internet and a working WhatsApp session; only AI inference is offline.
+Shadow mode is advisory only. Missing assets, invalid output, or timeouts must leave the existing workflow unchanged. For a release that must be offline on first launch, build with BUNDLE_LOCAL_AI=1 after provisioning the assets; the build then fails rather than silently producing an installer without the model/runtime. In PowerShell: set $env:BUNDLE_LOCAL_AI='1' and run npm run build:exe. The WhatsApp transport itself still requires internet and a working WhatsApp session; only AI inference is offline.
