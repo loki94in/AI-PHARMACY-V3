@@ -165,7 +165,8 @@ export class LocalAiLifecycleManager {
       }
 
       // Assets are missing — initiate non-blocking background download if auto-download is enabled
-      const autoDownload = process.env.LOCAL_AI_AUTO_DOWNLOAD !== 'false';
+      // Preserve the fully-offline default: downloading model assets requires explicit opt-in.
+      const autoDownload = ['true', '1'].includes(String(process.env.LOCAL_AI_AUTO_DOWNLOAD || '').trim().toLowerCase());
       if (autoDownload) {
         console.log('[Local AI Lifecycle] Assets missing. Fetching manifest for non-blocking background download...');
         const manifest = await this.fetchRemoteManifest();
