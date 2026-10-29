@@ -773,6 +773,31 @@ router.get('/catalog-search', async (req, res) => {
           }
         }
       }
+
+      // Pass 2c: Bounded word-boundary matching for short tokens (< 3 chars, e.g. D3, B6, CV)
+      // Only executes when earlier passes return < 15 results. Strictly uses word boundaries to prevent substring pollution.
+      if (rows.length < 15) {
+        const shortTokens = qTokens.filter(t => t.length > 0 && t.length < 3);
+        if (shortTokens.length > 0) {
+          const targetToken = shortTokens[0].toUpperCase();
+          const shortRows = await db.all(
+            `SELECT id, name, item_code, manufacturer, strength, packaging, pack_unit, mrp, rate, cgst_per, sgst_per, hsn_code, generic_name,
+                    COALESCE(total_stock, 0) as stock_qty, COALESCE(total_loose_stock, 0) as loose_qty,
+                    last_purchase_ptr, last_distributor_name, last_purchase_date,
+                    lowest_purchase_ptr, lowest_distributor_name
+             FROM medicines
+             WHERE (name LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE OR name LIKE ? COLLATE NOCASE)
+             ORDER BY name ASC LIMIT 20`,
+            [`${targetToken} %`, `% ${targetToken} %`, `% ${targetToken}`]
+          ).catch(() => []);
+          for (const r of shortRows) {
+            if (!seenIds.has(r.id)) {
+              seenIds.add(r.id);
+              rows.push(r);
+            }
+          }
+        }
+      }
     }
 
     if (rows.length > 0) {

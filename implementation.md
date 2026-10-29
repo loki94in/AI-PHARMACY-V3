@@ -1,71 +1,88 @@
-# Implementation Plan: Fix Missing & Disconnected Medicines in Reorder Hub
+# Implementation Plan — Safely Fix Database Indexing and Verified "Not Found" Bugs
 
-## Context & Root Cause
-1. **Missing Medicines in Reorder Hub**:
-   - `src/routes/pharmarack.ts`: `/api/pharmarack/purchase-reorder-history` had `WHERE a.rank_in_dist <= 15`, which artificially cut off all medicines ranked #16 or lower for any distributor.
-   - It also did not select `store_id` from `pharmarack_distributor_mappings`, leaving `matchedStoreId` as `null` for past purchase items.
-2. **Disconnected Medicines**:
-   - Out of 286,501 medicines, only 352 have rows in `medicine_distributor_links`. For many rows, `product_id` is `''` (empty string).
-   - In `frontend/src/pages/PharmarackCart/index.tsx`, `handleConfirmReorderSame` executed a strict block: `if (!productCode || !productId || !targetStoreId)`, aborting the add and opening Live Search modal.
-   - In `src/routes/sales.ts`, `/api/sales/reorder-suggestions` omitted distributor info, PTR, and store ID from past purchase bills.
-3. **Goal**:
-   - Remove the `rank_in_dist <= 15` bottleneck so all purchase bill medicines appear in Reorder Hub.
-   - Correctly resolve `store_id` and distributor from `pharmarack_distributor_mappings` and `purchases`.
-   - Enrich `/api/sales/reorder-suggestions` with last purchase distributor, rate (PTR), and MRP.
-   - In `handleConfirmReorderSame`, accept valid `productCode` even when `productId` is blank string, and allow items with known distributor and rate/MRP to be added to the distributor's order queue seamlessly.
+**Target Repository**: AI-PHARMACY-V3  
+**Status**: COMPLETED  
+**Governing Documents**: `AGENT_BUG_FIX_RULEBOOK.md`, `AGENTS.md`, `AGENT_DATA_FLOW_TREE.md`, `BACKEND SCHEMA SAFETY.md`
 
 ---
 
-## Proposed Changes
+## 1. Executive Summary of Audit Findings & Results
 
-### Task 1: Backend Route Fixes in `src/routes/pharmarack.ts`
-- In `/api/pharmarack/purchase-reorder-history`:
-  - Remove `WHERE a.rank_in_dist <= 15` or increase to 100 so all purchased medicines are returned.
-  - In `SELECT distributor_id, store_name FROM pharmarack_distributor_mappings`, also select `store_id`.
-  - Store both `store_name` and `store_id` in `mappingMap` (e.g. `Map<number, { storeId: number; storeName: string }>`).
-  - Resolve `matchedStoreId` from `mappingMap.get(r.distributor_id)?.storeId`.
-  - In `medicine_distributor_links` matching, if `lr.product_code` is present, treat `isMapped = true` even if `lr.product_id` is empty string or 0.
-
-### Task 2: Enrich Sales Reorder Suggestions in `src/routes/sales.ts`
-- In `/api/sales/reorder-suggestions`:
-  - For each suggestion candidate medicine, query its most recent purchase bill (`purchases` + `purchase_items`) to retrieve:
-    - `lastDistributorId`: `p.distributor_id`
-    - `lastDistributorName`: `d.name`
-    - `lastRate`: `pi.cost_price`
-    - `lastMrp`: `pi.mrp`
-    - `lastOrderedDate`: `p.date`
-  - Also resolve `store_id` from `pharmarack_distributor_mappings` or `medicine_distributor_links`.
-  - Include these fields in the returned `items` array so Sales Restock cards have their distributor, PTR, and MRP pre-filled.
-
-### Task 3: Frontend Reorder Hub Handling in `frontend/src/pages/PharmarackCart/index.tsx`
-- In `openReorderModalForItem` callers:
-  - For Sales Restock suggestions, pass `storeId`, `storeName`, `ptr`, `mrp`, and `previousPurchase` from the enriched backend suggestion item.
-- In `handleConfirmReorderSame`:
-  - When checking `productId` and `productCode`: recognize that having `productCode` (even with empty `productId`) is valid for catalog ordering.
-  - If `productCode` is missing but `targetStoreId` or `storeName` is known from past purchases, check `distributorProductsMap` or local cache.
-  - If still missing a Pharmarack portal product code, gracefully add the item to that distributor's cart queue with `mapped: false` so it can be ordered via WhatsApp PO / dispatch, instead of blocking the user from reordering.
+| Category | Component / Area | Status | Verified Root Cause & Fix |
+|---|---|---|---|
+| **FTS5 Trigram Tokenizer** | `/inventory/catalog-search` & `src/services/productNameFilterService.ts` | **RESOLVED & VERIFIED** | `medicines_fts` with `tokenize='trigram'` ignores tokens $< 3$ characters. Fixed by adding Pass 2c bounded word-boundary fallback (`D3 %`, `% D3 %`, `% D3`) for short tokens when earlier passes return $< 15$ matches, preventing substring pollution (`IND3X`) and full table scans. |
+| **OCR Trigram Safety** | `src/services/productNameFilterService.ts` | **RESOLVED & VERIFIED** | When all query tokens are $< 3$ chars, FTS5 `MATCH` threw syntax/empty-token errors. Fixed by cleanly bypassing FTS5 (`fts5Used = false`) and proceeding to exact, alias, and fuzzy matching. |
+| **Customer Search Performance** | `/crm/patients` & POS customer lookup | **RESOLVED & VERIFIED** | Uncollated index forced full table scans on prefix matching. Added `COLLATE NOCASE` index on `customers(name COLLATE NOCASE)`. Query plan transitioned from `SCAN customers` (4ms) to `SEARCH customers USING INDEX idx_customers_name_nocase` (0ms). |
+| **Medicine Alternatives Scan** | `GET /medicines/:id/quick-details` (`src/routes/medicines.ts`) | **RESOLVED & VERIFIED** | `LOWER(m.generic_name) = LOWER(?)` invalidated indexes, triggering full scans across 286,501 rows. Replaced with `COLLATE NOCASE` equality and added `idx_medicines_generic_name_nocase` and `idx_medicines_api_ref_nocase`. Query plan transitioned from `SCAN m` to `SEARCH m USING INDEX` (0ms). |
+| **Database Index Declarations** | `src/database.ts` (Fast Boot vs Migrations) | **RESOLVED & VERIFIED** | Redundant duplicate index declarations within the single migration block consolidated. Fast Boot (lines 1108–1150) and schema v84 preserved. |
 
 ---
 
-## Verification Plan
-1. **Static Analysis & Guardrails**:
-   - Run `npm run guardrails` (`tsc --noEmit`).
-2. **Build Verification**:
-   - Run `npm run build:client` or verify zero frontend compile errors.
-3. **Database & API Query Verification**:
-   - Verify `/api/pharmarack/purchase-reorder-history` returns all purchase medicines with `storeId` populated.
-   - Verify `/api/sales/reorder-suggestions` includes `lastDistributorName`, `lastRate`, and `lastMrp`.
-4. **Knowledge Graph Update**:
-   - Run `node scripts/quick-update.mjs`.
+## 2. Verified Before & After Query Plans
+
+### Task 1: Short-Token Search Query Plan (`src/routes/inventory.ts`)
+- **Query**: Multi-token name prefix search (`AARCAL%D3%`)
+  - **Plan**: `SEARCH medicines USING COVERING INDEX idx_medicines_name_nocase (name>? AND name<?)`
+  - **Execution Time**: $< 3\text{ ms}`
+  - **Fallback**: Bounded word boundary `ORDER BY name ASC LIMIT 20` avoids scanning non-matching prefixes.
+
+### Task 3: Customer Search Query Plan (`customers` table)
+- **Before**:
+  ```sql
+  EXPLAIN QUERY PLAN SELECT id, name, phone FROM customers WHERE name LIKE 'A%' LIMIT 20;
+  -- Output: SCAN customers (~4 ms on large datasets)
+  ```
+- **After** (with `idx_customers_name_nocase`):
+  ```sql
+  EXPLAIN QUERY PLAN SELECT id, name, phone FROM customers WHERE name LIKE 'A%' COLLATE NOCASE LIMIT 20;
+  -- Output: SEARCH customers USING INDEX idx_customers_name_nocase (name>? AND name<?) (~0 ms)
+  ```
+
+### Task 4: Alternatives Lookup Query Plan (`medicines` table)
+- **Before**:
+  ```sql
+  EXPLAIN QUERY PLAN SELECT id, name FROM medicines WHERE LOWER(generic_name) = LOWER('paracetamol');
+  -- Output: SCAN medicines (Full table scan over 286,501 rows)
+  ```
+- **After** (with `idx_medicines_generic_name_nocase`):
+  ```sql
+  EXPLAIN QUERY PLAN SELECT id, name FROM medicines WHERE generic_name = 'paracetamol' COLLATE NOCASE;
+  -- Output: SEARCH medicines USING INDEX idx_medicines_generic_name_nocase (generic_name=?) (~0 ms)
+  ```
 
 ---
 
-## Task Progress & Completion Status
-- [x] Task 1: Fix `purchase-reorder-history` in `src/routes/pharmarack.ts` (remove rank cap, populate store_id, allow productCode without productId)
-  - *Completed*: Replaced `WHERE a.rank_in_dist <= 15` with `WHERE (${q.length >= 2 ? '1=1' : 'a.rank_in_dist <= 100'})` so searched medicines are never truncated and browsing shows up to 100 items per distributor. Added `store_id` selection to `pharmarack_distributor_mappings` batch query and populated `matchedStoreId` dynamically. Permitted `isMapped = true` when `matchedProductCode` exists even if `productId` is empty.
-- [x] Task 2: Enrich `reorder-suggestions` in `src/routes/sales.ts` with purchase distributor, PTR, and MRP
-  - *Completed*: Added batch query in `/api/sales/reorder-suggestions` across `purchase_items`, `purchases`, `distributors`, and `pharmarack_distributor_mappings` to retrieve each suggestion's latest purchase distributor, rate (PTR), MRP, purchase date, and Pharmarack link. Updated `ReorderSuggestion` interface in `frontend/src/services/api.ts` with these fields.
-- [x] Task 3: Update `frontend/src/pages/PharmarackCart/index.tsx` for seamless reordering with known distributor details
-  - *Completed*: Updated `handleConfirmReorderSame` in `frontend/src/pages/PharmarackCart/index.tsx` to resolve `targetStoreId` from `storeName` via `distributorMappings` when missing. Auto-searches the target distributor on Pharmarack if `productCode` is not yet linked, and accepts verified `productCode` even when `productId` is blank. Updated Sales Restock cards to display distributor name and last PTR, passing complete purchase metadata to `openReorderModalForItem`.
-- [x] Task 4: Guardrails check (`npm run guardrails`) and knowledge graph update (`node scripts/quick-update.mjs`)
-  - *Completed*: `npm run guardrails` (`tsc --noEmit`) passed with 0 violations. Full frontend client build verified via `npm run build:client` (built in 47.68s). Synchronized knowledge graph via `node scripts/quick-update.mjs` (1318 nodes, 867 edges).
+## 3. Implementation Checklist & Verification Log
+
+- [x] **Task 1: Short-Token Search Fallback** (`src/routes/inventory.ts`)
+  - *Completed*: Added Pass 2c bounded word-boundary query (`${token} %`, `% ${token} %`, `% ${token}`) triggered when earlier passes return $< 15$ items.
+  - *Verification*: Tested multi-token `AARCAL D3`, standalone `D3`, `B6`, `CV`, `H1`, and verified prevention of word-boundary pollution (`IND3X` / `WORD345`).
+- [x] **Task 2: Safe OCR Short-Token Bypass** (`src/services/productNameFilterService.ts`)
+  - *Completed*: Query builder checks `cleanedWords.length === 0`; sets `fts5Used = false` cleanly and falls through to exact/alias/fuzzy matching without throwing SQLite trigram errors.
+  - *Verification*: Verified with test suite asserting no errors on 1-2 letter OCR inputs.
+- [x] **Task 3: Customer Search Query Plan & Index Alignment** (`src/database.ts`)
+  - *Completed*: Added `idx_customers_name_nocase` to both Fast Boot and Migration DDL paths.
+  - *Verification*: Verified prefix index scan transition and full preservation of CRM search semantics.
+- [x] **Task 4: Alternatives Query Optimization** (`src/routes/medicines.ts` & `src/database.ts`)
+  - *Completed*: Replaced `LOWER()` function wrappers with `COLLATE NOCASE` matching and added `idx_medicines_generic_name_nocase` + `idx_medicines_api_ref_nocase`.
+  - *Verification*: Tested NULL handling, empty string guards, case insensitivity, and verified 0ms index scan.
+- [x] **Task 5: Consolidate Repeated Index Declarations** (`src/database.ts`)
+  - *Completed*: Removed intra-block duplicate declarations (lines 2165–2168, 2372–2374, 3631–3632) in favor of their consolidated equivalents. Kept Fast Boot block intact.
+  - *Verification*: Fresh database initialization (`ensureSchema`) and fast boot verified on isolated test DBs.
+- [x] **Task 6: Regression Testing Suite & Guardrails**
+  - *Completed*: Ran all targeted test suites:
+    - `tests/shortTokenSearch.test.ts`: PASS (6/6 tests)
+    - `tests/ftsRepair.test.ts`: PASS (5/5 tests)
+    - `tests/indexingFunctionalFixes.test.ts`: PASS (5/5 tests)
+    - Total: 16/16 tests passing across 3 test suites.
+  - *Guardrails*: `npm run guardrails` passed with Exit Code 0 (`tsc --noEmit` OK, database schema & integrity OK, 0 performance violations).
+  - *Knowledge Graph*: Updated via `node scripts/quick-update.mjs` (1277 nodes, 866 edges).
+
+---
+
+## 4. Verification and Rollback Guidelines
+
+- **Schema Version**: Preserved at v84 (`TARGET_SCHEMA_VERSION = 84`). No destructive migrations or version bumps.
+- **Rollback Procedure**: In the unlikely event of rollback:
+  `git checkout HEAD~1` (or revert commit).
+  Indexes created with `IF NOT EXISTS` are backward-compatible with all earlier versions of the application.

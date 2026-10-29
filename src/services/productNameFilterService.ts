@@ -927,21 +927,23 @@ export class ProductNameFilterService {
       // FTS5 MATCH treats raw OCR text as boolean operators — sanitize by
       // stripping special chars and wrapping in quotes. Use the primary medicine token
       // with length >= 3 to allow trigram matching without exact phrase brittleness.
+      // Short tokens (< 3 chars) safely bypass FTS5 to avoid trigram tokenizer failures.
       const cleanedWords = normalizedOcr.replace(/[^a-z0-9 ]/g, ' ').trim().split(/\s+/).filter(w => w.length >= 3);
-      const fts5SafeQuery = cleanedWords.length > 0
-        ? `"${cleanedWords[0]}"`
-        : `"${normalizedOcr.replace(/[^a-z0-9 ]/g, ' ').trim().replace(/\s+/g, ' ')}"`;
-      const fts5Params: any[] = [fts5SafeQuery];
+      let ftsRows: any[] = [];
+      if (cleanedWords.length > 0) {
+        const fts5SafeQuery = `"${cleanedWords[0]}"`;
+        const fts5Params: any[] = [fts5SafeQuery];
 
-      if (mrp && mrp > 0) {
-        const low = mrp * (1 - mrpTolerance);
-        const high = mrp * (1 + mrpTolerance);
-        fts5Sql += ' AND m.mrp BETWEEN ? AND ?';
-        fts5Params.push(low, high);
+        if (mrp && mrp > 0) {
+          const low = mrp * (1 - mrpTolerance);
+          const high = mrp * (1 + mrpTolerance);
+          fts5Sql += ' AND m.mrp BETWEEN ? AND ?';
+          fts5Params.push(low, high);
+        }
+        fts5Sql += ' LIMIT 30';
+
+        ftsRows = await db.all(fts5Sql, fts5Params);
       }
-      fts5Sql += ' LIMIT 30';
-
-      const ftsRows = await db.all(fts5Sql, fts5Params);
       if (ftsRows && ftsRows.length > 0) {
         fts5Used = true;
         for (const row of ftsRows) {

@@ -1108,6 +1108,9 @@ export async function ensureSchema(dbPath: string) {
         await db.exec(`
           CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
           CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name);
+          CREATE INDEX IF NOT EXISTS idx_customers_name_nocase ON customers (name COLLATE NOCASE);
+          CREATE INDEX IF NOT EXISTS idx_medicines_generic_name_nocase ON medicines (generic_name COLLATE NOCASE);
+          CREATE INDEX IF NOT EXISTS idx_medicines_api_ref_nocase ON medicines (api_reference COLLATE NOCASE);
           CREATE INDEX IF NOT EXISTS idx_sales_invoices_cust_pay ON sales_invoices(customer_id, payment_status, payment_medium);
           CREATE INDEX IF NOT EXISTS idx_sales_date_status ON sales_invoices(date DESC, payment_status);
           CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id);
@@ -2159,10 +2162,7 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY(invoice_id) REFERENCES sales_invoices(id),
       FOREIGN KEY(inventory_id) REFERENCES inventory_master(id)
     );
-    CREATE INDEX IF NOT EXISTS idx_sales_invoices_customer_id ON sales_invoices (customer_id);
-    CREATE INDEX IF NOT EXISTS idx_sales_invoices_date ON sales_invoices (date);
-    CREATE INDEX IF NOT EXISTS idx_sale_items_invoice_id ON sale_items (invoice_id);
-    CREATE INDEX IF NOT EXISTS idx_sale_items_inventory_id ON sale_items (inventory_id);
+    -- Note: idx_sales_invoices_customer_id, idx_sales_invoices_date, idx_sale_items_invoice_id, idx_sale_items_inventory_id consolidated below with doctor composite indexes
     CREATE TABLE IF NOT EXISTS returns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       store_id INTEGER DEFAULT 1,
@@ -2366,9 +2366,7 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name);
     CREATE INDEX IF NOT EXISTS idx_sales_invoices_customer_status ON sales_invoices (customer_id, payment_status, payment_medium);
     CREATE INDEX IF NOT EXISTS idx_sales_invoices_date_status ON sales_invoices (date DESC, payment_status);
-    CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases (date DESC, distributor_id);
-    CREATE INDEX IF NOT EXISTS idx_purchases_dist_invoice ON purchases(distributor_id, invoice_no);
-    CREATE INDEX IF NOT EXISTS idx_medicines_name_mfg ON medicines (name, manufacturer);
+    -- Note: idx_purchases_date_dist, idx_purchases_dist_invoice, idx_medicines_name_mfg consolidated in Composite Performance Indexes block below
     CREATE TABLE IF NOT EXISTS distributor_dispatch_reminders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       distributor_id INTEGER,
@@ -3230,6 +3228,9 @@ export async function ensureSchema(dbPath: string) {
       await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_expiry ON inventory_master (expiry_date);');
       await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_active_stock ON inventory_master (expiry_date, medicine_id) WHERE is_active = 1 AND quantity > 0');
       await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_generic_name ON medicines (generic_name);');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_generic_name_nocase ON medicines (generic_name COLLATE NOCASE);');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_api_ref_nocase ON medicines (api_reference COLLATE NOCASE);');
+      await db.run('CREATE INDEX IF NOT EXISTS idx_customers_name_nocase ON customers (name COLLATE NOCASE);');
       await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_manufacturer ON medicines (manufacturer);');
 
       // Seed default storage locations if table is empty
@@ -3622,8 +3623,7 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY(purchase_id) REFERENCES purchases(id),
       FOREIGN KEY(medicine_id) REFERENCES medicines(id)
     );
-    CREATE INDEX IF NOT EXISTS idx_purchase_items_medicine_id ON purchase_items (medicine_id);
-    CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_id ON purchase_items (purchase_id);
+    -- Note: idx_purchase_items_medicine_id and idx_purchase_items_purchase_id declared above at purchase_items table definition
 
     -- Migration: Return line items
     CREATE TABLE IF NOT EXISTS return_items (

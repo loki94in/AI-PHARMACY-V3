@@ -639,8 +639,8 @@ router.get('/medicines/:id/quick-details', async (req, res) => {
                 COALESCE((SELECT SUM(quantity) FROM inventory_master WHERE medicine_id = m.id), 0) as stock_qty
          FROM medicines m
          WHERE m.id <> ? AND (
-           (LOWER(m.api_reference) = LOWER(?) AND m.api_reference <> '') OR
-           (LOWER(m.generic_name) = LOWER(?) AND m.generic_name <> '')
+           (m.api_reference = ? COLLATE NOCASE AND m.api_reference IS NOT NULL AND m.api_reference <> '') OR
+           (m.generic_name = ? COLLATE NOCASE AND m.generic_name IS NOT NULL AND m.generic_name <> '')
          )
          LIMIT 10`,
         [id, medicine.api_reference || '', medicine.generic_name || '']
