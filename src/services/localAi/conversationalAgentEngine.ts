@@ -28,6 +28,7 @@ import {
 import { classifyClinicalRisk, type ClinicalRiskClassification } from './pharmacyQaEngine.js';
 import { outboundSecurityGateway } from '../outboundSecurityGateway.js';
 import { pharmacyKnowledgeRetriever } from './pharmacyKnowledgeRetriever.js';
+import { pharmacyQaEngine } from './pharmacyQaEngine.js';
 import { isLocalAiEnabled, checkLlamaServerHealth, queryLocalAiIntent } from './llamaServerClient.js';
 import { eventService } from '../eventService.js';
 import { logMutationAudit } from '../auditLoggerService.js';
@@ -422,12 +423,30 @@ export class ConversationalAgentEngine {
       }
 
       default: {
-        // Fallback for general queries
-        replyText = `I understand you are asking about: "${userText.slice(0, 60)}...".\n\n` +
-          `To help you best:\n` +
-          `• Type a *medicine name* to check stock and price\n` +
-          `• Type *Refill* to check your regular prescription\n` +
-          `• Type *Pharmacist* to connect with our medical staff`;
+        // Natural-language fallback: use the existing grounded pharmacy QA engine
+        // instead of forcing the customer to choose a trigger word or menu.
+        // This path is informational only; consequential actions still go through
+        // the explicit proposal/confirmation state machine above.
+        try {
+          const qaResult = await pharmacyQaEngine.processQuery(userText, {
+            language: lang,
+            dbInstance: db,
+            assistantScope: 'customer',
+            conversationHistory: recentTurns
+              .filter((turn) => turn.sender === 'customer' || turn.sender === 'assistant')
+              .map((turn) => ({
+                role: turn.sender === 'customer' ? 'user' as const : 'assistant' as const,
+                content: turn.messageText
+              }))
+          });
+          replyText = String(qaResult?.draftResponse || '').trim();
+        } catch (qaError) {
+          console.warn('[Conversational Agent] Grounded QA fallback unavailable:', qaError instanceof Error ? qaError.message : String(qaError));
+        }
+
+        if (!replyText) {
+          replyText = "I can help with medicine availability, refill requests, store information, or connecting you with the pharmacist. Could you tell me a little more about what you need?";
+        }
         state = 'idle';
         break;
       }

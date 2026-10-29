@@ -670,19 +670,19 @@ async function maybeSendGuidancePrompt(
           `🕐 *${storeName} — दुकानाची वेळ*\n\n` +
           `⏰ उघडे: *${sched.openTime}* ते *${sched.closeTime}*\n` +
           (sched.weeklyOff ? `🗓️ साप्ताहिक सुट्टी: *${sched.weeklyOff}*\n` : '') +
-          `\nऔषध मागवण्यासाठी 1 (एक औषध), 2 (एकापेक्षा जास्त किंवा फोटो 📸), अथवा 3 (रिफिल) पाठवा.`;
+          `\nऔषध किंवा रिफिलबद्दल मदत हवी असल्यास तुमची गरज नेहमीच्या भाषेत लिहा.`;
       } else if (chatLang === 'hi') {
         timingMsg =
           `🕐 *${storeName} — स्टोर का समय*\n\n` +
           `⏰ खुला: *${sched.openTime}* से *${sched.closeTime}*\n` +
           (sched.weeklyOff ? `🗓️ साप्ताहिक अवकाश: *${sched.weeklyOff}*\n` : '') +
-          `\nदवा ऑर्डर करने के लिए 1 (एक दवा), 2 (कई दवाएं या पर्चा 📸), अथवा 3 (रिफिल) लिखकर भेजें।`;
+          `\nदवा या रिफिल के लिए अपनी जरूरत सामान्य भाषा में लिखें।`;
       } else {
         timingMsg =
           `🕐 *${storeName} — Store Hours*\n\n` +
           `⏰ Open: *${sched.openTime}* – *${sched.closeTime}*\n` +
           (sched.weeklyOff ? `🗓️ Closed on: *${sched.weeklyOff}*\n` : '') +
-          `\nTo place an order, reply *1* (single), *2* (multiple or photo 📸), or *3* (refill).`;
+          `\nFor a medicine order or refill, simply describe what you need in your own words.`;
       }
 
       await db.run(
@@ -709,17 +709,17 @@ async function maybeSendGuidancePrompt(
         addrMsg =
           `📍 *${storeName} — पत्ता*\n\n` +
           (addr ? `${addr}\n\n` : '') +
-          `औषध मागवण्यासाठी 1 (एक औषध), 2 (एकापेक्षा जास्त किंवा फोटो 📸), अथवा 3 (रिफिल) पाठवा.`;
+          `औषध किंवा रिफिलबद्दल मदत हवी असल्यास तुमची गरज नेहमीच्या भाषेत लिहा.`;
       } else if (chatLang === 'hi') {
         addrMsg =
           `📍 *${storeName} — पता*\n\n` +
           (addr ? `${addr}\n\n` : '') +
-          `दवा ऑर्डर करने के लिए 1 (एक दवा), 2 (कई दवाएं या पर्चा 📸), अथवा 3 (रिफिल) लिखकर भेजें।`;
+          `दवा या रिफिल के लिए अपनी जरूरत सामान्य भाषा में लिखें।`;
       } else {
         addrMsg =
           `📍 *${storeName} — Address & Location*\n\n` +
           (addr ? `${addr}\n\n` : '') +
-          `To place an order, reply *1* (single), *2* (multiple or photo 📸), or *3* (refill).`;
+          `For a medicine order or refill, simply describe what you need in your own words.`;
       }
 
       await db.run(
@@ -754,19 +754,19 @@ async function maybeSendGuidancePrompt(
           `📞 *${storeName} — संपर्क*\n\n` +
           (storePhone ? `आपण थेट आमच्या फार्मासिस्टशी संपर्क करू शकता:\n📱 *${storePhone}*\n\n` : '') +
           `आम्ही आमच्या टीमला आपल्याला त्वरित संपर्क करण्यासाठी कळवले आहे 🙏\n\n` +
-          `औषध मागवण्यासाठी 1 (एक औषध), 2 (एकापेक्षा जास्त किंवा फोटो 📸), अथवा 3 (रिफिल) पाठवा.`;
+          `औषध किंवा रिफिलबद्दल मदत हवी असल्यास तुमची गरज नेहमीच्या भाषेत लिहा.`;
       } else if (chatLang === 'hi') {
         callMsg =
           `📞 *${storeName} — संपर्क*\n\n` +
           (storePhone ? `आप सीधे हमारे फार्मासिस्ट से संपर्क कर सकते हैं:\n📱 *${storePhone}*\n\n` : '') +
           `हमने अपनी टीम को आपको तुरंत कॉल करने के लिए सूचित कर दिया है 🙏\n\n` +
-          `दवा ऑर्डर करने के लिए 1 (एक दवा), 2 (कई दवाएं या पर्चा 📸), अथवा 3 (रिफिल) लिखकर भेजें।`;
+          `दवा या रिफिल के लिए अपनी जरूरत सामान्य भाषा में लिखें।`;
       } else {
         callMsg =
           `📞 *${storeName} — Contact Pharmacist*\n\n` +
           (storePhone ? `You can reach our pharmacist directly at:\n📱 *${storePhone}*\n\n` : '') +
           `We've also notified our counter team to call you shortly 🙏\n\n` +
-          `To place an order, reply *1* (single), *2* (multiple or photo 📸), or *3* (refill).`;
+          `For a medicine order or refill, simply describe what you need in your own words.`;
       }
 
       await db.run(

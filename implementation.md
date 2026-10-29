@@ -2,7 +2,7 @@
 
 **Repository:** `loki94in/AI-PHARMACY-V3`  
 **Plan file:** `implementation.md`  
-**Status:** Phase 1 Complete (Read-Only Inspection & Evidence-Based Architecture Plan). Awaiting user review/approval to begin implementation.  
+**Status:** Conversational-assistant implementation in progress on `feature/conversational-assistant-no-trigger-dependency` (draft PR #5). Automated verification is pending; changes are not merged into `main`.  
 **Safety Gate:** No application source, database tables, or config files modified during this initial inspection.
 
 ---

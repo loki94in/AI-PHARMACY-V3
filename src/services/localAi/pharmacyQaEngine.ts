@@ -8,7 +8,7 @@
  * - Non-blocking: Deterministic workflows remain authoritative. Zero business state mutations.
  */
 
-import { queryLocalAiIntent, getLocalAiConfig, isLocalAiEnabled, checkLlamaServerHealth } from './llamaServerClient.js';
+import { queryLocalAiIntent, queryLocalAssistantReply, getLocalAiConfig, isLocalAiEnabled, checkLlamaServerHealth, type LocalAssistantConversationTurn } from './llamaServerClient.js';
 import { pharmacyKnowledgeRetriever } from './pharmacyKnowledgeRetriever.js';
 import {
   parseStructuredIntent,
@@ -156,6 +156,13 @@ const REFILL_REGEX = /(?:\b(?:refill|repeat|purani|wahi|previous|last month|pich
  */
 export function extractCandidateMedicineName(text: string): string {
   if (!text) return '';
+  const trimmed = text.trim();
+  // Common conversational/help messages are not medicine names. Without this
+  // guard, a long sentence can be mistaken for a catalogue search and produce
+  // an irrelevant "medicine not found" response.
+  if (/^(?:i am not sure|i'm not sure|what can i ask|what can you do|how can you help|can you help me|help me understand|how are you|thank you|thanks|hello|hi|hey|good morning|good afternoon|good evening|namaste|namaskar|मदत करा|कशी मदत करू शकता|काय मदत करू शकता|धन्यवाद|नमस्कार)\b/i.test(trimmed)) {
+    return '';
+  }
   let cleaned = text
     .replace(/[?.,!;:_()"'`]/g, ' ')
     // English conversational prefixes
@@ -194,6 +201,8 @@ export class PharmacyQaEngine {
       customerName?: string;
       language?: 'en' | 'hi' | 'mr' | 'hinglish';
       dbInstance?: any;
+      conversationHistory?: LocalAssistantConversationTurn[];
+      assistantScope?: 'customer' | 'staff';
     } = {}
   ): Promise<PharmacyQaResponse> {
     const startTime = performance.now();
@@ -263,7 +272,7 @@ export class PharmacyQaEngine {
       }
 
       // 3. Fallback entity extraction if model missed it
-      if (extractedMedicines.length === 0 && !isShopInfo) {
+      if (extractedMedicines.length === 0 && !isShopInfo && modelIntent !== 'CHITCHAT') {
         const candidate = extractCandidateMedicineName(text);
         if (candidate && !isNonMedicineCondition(candidate)) {
           extractedMedicines.push({
@@ -352,13 +361,28 @@ export class PharmacyQaEngine {
         `🔍 We could not find a match for *"${candidateName}"* in our current catalog.\n\n` +
         `📸 Please share a photo of the strip or prescription, or check the spelling so our team can check immediately.`;
     } else {
-      // Unclear or generic greeting
-      draftResponse =
-        `👋 Welcome to AI Pharmacy!\n\n` +
-        `How can we assist you today? You can:\n` +
-        `1️⃣ Check medicine availability or price\n` +
-        `2️⃣ Ask store hours and address\n` +
-        `3️⃣ Place an order or send prescription 📸`;
+      // Generate a natural conversational answer when the grounded structured
+      // response has no matching medicine, shop fact, or policy. The model sees
+      // only verified evidence and recent conversation; it cannot execute tools.
+      if (isLocalAiEnabled() && await checkLlamaServerHealth()) {
+        const conversationalReply = await queryLocalAssistantReply(text, {
+          language: lang,
+          conversationHistory: options.conversationHistory,
+          verifiedEvidence: evidence,
+          assistantScope: options.assistantScope || 'customer'
+        });
+        if (conversationalReply) {
+          draftResponse = conversationalReply;
+        }
+      }
+
+      // Reliable fallback if local inference is unavailable or returns nothing.
+      if (!draftResponse) {
+        draftResponse =
+          `👋 Welcome to AI Pharmacy!\n\n` +
+          `You can ask me naturally about medicine availability, MRP, store hours, refill requests, or help from our pharmacist. Just describe what you need in your own words — no special keywords or menu numbers are required.\n\n` +
+          `If I need more information, I will ask a short follow-up question.`;
+      }
     }
 
     const latencyMs = Math.round(performance.now() - startTime);

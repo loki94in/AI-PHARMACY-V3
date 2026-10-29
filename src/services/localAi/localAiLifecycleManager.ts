@@ -22,7 +22,7 @@ export interface LocalAiSystemStatus {
 }
 
 export class LocalAiLifecycleManager {
-  private isProcessingWhatsAppReady = false;
+  private isProcessingLocalAiLifecycle = false;
 
   /**
    * Returns current full system status.
@@ -128,21 +128,21 @@ export class LocalAiLifecycleManager {
   }
 
   /**
-   * Triggered asynchronously when WhatsApp connects.
-   * Never blocks WhatsApp connection or message routing.
+   * Initializes the local AI runtime asynchronously for in-app and channel assistants.
+   * Never blocks application startup or message routing.
    */
-  public async onWhatsAppConnected(): Promise<void> {
-    if (this.isProcessingWhatsAppReady) return;
-    this.isProcessingWhatsAppReady = true;
+  public async onApplicationStarted(): Promise<void> {
+    if (this.isProcessingLocalAiLifecycle) return;
+    this.isProcessingLocalAiLifecycle = true;
 
     // Run in background without throwing
     try {
       if (!isLocalAiEnabled()) {
-        console.log('[Local AI Lifecycle] WhatsApp connected. Local AI is disabled (default). Skipping asset check.');
+        console.log('[Local AI Lifecycle] Application started. Local AI is disabled because it is not enabled and no verified bundled assets were detected. Skipping asset check.');
         return;
       }
 
-      console.log('[Local AI Lifecycle] WhatsApp connected. Checking local AI asset installation...');
+      console.log('[Local AI Lifecycle] Application started. Checking local AI asset installation...');
       const installed = await this.isInstalledAndVerified();
 
       if (installed) {
@@ -155,7 +155,7 @@ export class LocalAiLifecycleManager {
         });
 
         if (isRunning) {
-          console.log('[Local AI Lifecycle] ✓ Local AI runtime is healthy and ready in shadow mode.');
+          console.log('[Local AI Lifecycle] ✓ Local AI runtime is healthy and ready for conversational intent routing.');
           eventService.broadcast('local_ai_status_changed', { status: 'ready', runtimeHealthy: true });
         } else {
           console.warn('[Local AI Lifecycle] ⚠️ Runtime failed to start or health-check failed. Deterministic chatbot remains fully operational.');
@@ -165,7 +165,8 @@ export class LocalAiLifecycleManager {
       }
 
       // Assets are missing — initiate non-blocking background download if auto-download is enabled
-      const autoDownload = process.env.LOCAL_AI_AUTO_DOWNLOAD !== 'false';
+      // Preserve the fully-offline default: downloading model assets requires explicit opt-in.
+      const autoDownload = ['true', '1'].includes(String(process.env.LOCAL_AI_AUTO_DOWNLOAD || '').trim().toLowerCase());
       if (autoDownload) {
         console.log('[Local AI Lifecycle] Assets missing. Fetching manifest for non-blocking background download...');
         const manifest = await this.fetchRemoteManifest();
@@ -192,11 +193,20 @@ export class LocalAiLifecycleManager {
         console.log('[Local AI Lifecycle] Assets missing. Auto-download is off; user can initiate via Settings/API.');
       }
     } catch (err) {
-      console.warn('[Local AI Lifecycle] Error during WhatsApp connected lifecycle:', err);
+      console.warn('[Local AI Lifecycle] Error during local AI startup lifecycle:', err);
     } finally {
-      this.isProcessingWhatsAppReady = false;
+      this.isProcessingLocalAiLifecycle = false;
     }
   }
+  /**
+   * Backward-compatible hook used by the WhatsApp client. The local model is
+   * now initialized at application startup as well, so the in-app assistant
+   * does not depend on WhatsApp connecting first.
+   */
+  public async onWhatsAppConnected(): Promise<void> {
+    await this.onApplicationStarted();
+  }
+
 }
 
 export const localAiLifecycleManager = new LocalAiLifecycleManager();

@@ -26,6 +26,7 @@ import { ensureSchema } from '../src/database.js';
 import { conversationalAgentEngine } from '../src/services/localAi/conversationalAgentEngine.js';
 import { conversationalMemoryService } from '../src/services/localAi/conversationalMemoryService.js';
 import { pharmacyToolRegistry } from '../src/services/localAi/pharmacyToolRegistry.js';
+import { queryLocalAssistantReply } from '../src/services/localAi/llamaServerClient.js';
 
 describe('Conversational AI Agent Engine Suite', () => {
   let tmpDir: string;
@@ -262,7 +263,20 @@ describe('Conversational AI Agent Engine Suite', () => {
     expect(greeting.replyText).toContain('refills');
   });
 
-  // 14. Database Migration Safety & Table Verification
+  // 14. Free-form questions use grounded QA instead of a trigger menu
+  it('answers an unrecognised natural-language question without demanding a trigger word', async () => {
+    const result = await conversationalAgentEngine.processCustomerMessage({
+      phone: '9876543210',
+      channel: 'portal',
+      message: 'I am not sure what I can ask here. Can you help me understand what you can assist with?'
+    });
+
+    expect(result.intent).toBe('GENERAL_QA');
+    expect(result.replyText).toBeTruthy();
+    expect(result.replyText).not.toMatch(/type a medicine name|type refill|type pharmacist/i);
+  });
+
+  // 15. Database Migration Safety & Table Verification
   it('Criteria 14: conversation session and turns tables exist with required indexes', async () => {
     const tables = await db.all("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'customer_conversation%'");
     const tableNames = tables.map((t: any) => t.name);
@@ -275,5 +289,59 @@ describe('Conversational AI Agent Engine Suite', () => {
 
     expect(indexNames).toContain('idx_cust_conv_phone');
     expect(indexNames).toContain('idx_cust_turns_session');
+  });
+});
+
+// Local reply-generation contract tests (no database or external network required)
+describe('Local conversational reply generation', () => {
+  it('returns natural-language text from the local model with bounded context', async () => {
+    const previousEnabled = process.env.LOCAL_AI_ENABLED;
+    process.env.LOCAL_AI_ENABLED = 'true';
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Of course. Tell me what you need help with, and I will guide you.' } }]
+      })
+    } as Response);
+
+    try {
+      const reply = await queryLocalAssistantReply(
+        'I am not sure what I can ask here.',
+        {
+          language: 'en',
+          assistantScope: 'customer',
+          conversationHistory: [
+            { role: 'user', content: 'Hello' },
+            { role: 'assistant', content: 'Hi, how can I help?' }
+          ],
+          verifiedEvidence: { evidenceFound: false, queryType: 'NONE', medicines: [] }
+        }
+      );
+
+      expect(reply).toMatch(/what you need help with/i);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const requestBody = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body));
+      expect(requestBody.messages.some((message: any) => message.role === 'system')).toBe(true);
+      expect(requestBody.messages.some((message: any) => message.content.includes('verifiedEvidence'))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+      if (previousEnabled === undefined) delete process.env.LOCAL_AI_ENABLED;
+      else process.env.LOCAL_AI_ENABLED = previousEnabled;
+    }
+  });
+
+  it('falls back cleanly when local inference is unavailable', async () => {
+    const previousEnabled = process.env.LOCAL_AI_ENABLED;
+    process.env.LOCAL_AI_ENABLED = 'true';
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'));
+
+    try {
+      const reply = await queryLocalAssistantReply('Can you help me?', { language: 'en' });
+      expect(reply).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+      if (previousEnabled === undefined) delete process.env.LOCAL_AI_ENABLED;
+      else process.env.LOCAL_AI_ENABLED = previousEnabled;
+    }
   });
 });
