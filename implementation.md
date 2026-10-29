@@ -49,3 +49,10 @@ Enable seamless downloading and activation of the offline Local AI model (`qwen3
 - [x] Verified full regression suite: 32 tests passed across local AI and auto-update suites.
 - [x] Ran `npm run guardrails` — clean pass (`tsc --noEmit` OK, zero violations).
 - [x] Updated auto-knowledge graph via `node scripts/quick-update.mjs`.
+
+### Task 6: Production Release `v0.1.174`
+- [x] Auto-bumped version to `0.1.174`.
+- [x] Compiled standalone installer (`AI-Pharmacy-OS-Cloud-Setup-v0.1.174.exe`, 649.8 MB) and update package (`AI-Pharmacy-OS-Update-v0.1.174.zip`, 37.7 MB).
+- [x] Uploaded artifacts and mobile APK to GitHub release `v0.1.174`.
+- [x] Published production metadata to Vercel update server (`rolloutMode: ALL`).
+- [x] Re-verified live server endpoint confirms `latestVersion: 0.1.174`.
