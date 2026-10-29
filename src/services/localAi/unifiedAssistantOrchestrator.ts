@@ -1411,7 +1411,8 @@ export class UnifiedAssistantOrchestrator {
   private async handleGeneralQa(text: string, session: AssistantSessionContext, db: any, startTime: number): Promise<AssistantResponse> {
     const qaResult = await pharmacyQaEngine.processQuery(text, {
       language: session.language || 'en',
-      dbInstance: db
+      dbInstance: db,
+      assistantScope: 'staff'
     });
 
     return {
@@ -1430,7 +1431,8 @@ export class UnifiedAssistantOrchestrator {
   private async handleCustomerQuery(text: string, session: AssistantSessionContext, db: any, startTime: number): Promise<AssistantResponse> {
     const qaResult = await pharmacyQaEngine.processQuery(text, {
       language: session.language || 'en',
-      dbInstance: db
+      dbInstance: db,
+      assistantScope: 'customer'
     });
 
     return {
