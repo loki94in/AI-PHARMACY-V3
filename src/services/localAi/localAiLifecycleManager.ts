@@ -128,8 +128,8 @@ export class LocalAiLifecycleManager {
   }
 
   /**
-   * Triggered asynchronously when WhatsApp connects.
-   * Never blocks WhatsApp connection or message routing.
+   * Initializes the local AI runtime asynchronously for in-app and channel assistants.
+   * Never blocks application startup or message routing.
    */
   public async onApplicationStarted(): Promise<void> {
     if (this.isProcessingLocalAiLifecycle) return;
@@ -155,7 +155,7 @@ export class LocalAiLifecycleManager {
         });
 
         if (isRunning) {
-          console.log('[Local AI Lifecycle] ✓ Local AI runtime is healthy and ready in shadow mode.');
+          console.log('[Local AI Lifecycle] ✓ Local AI runtime is healthy and ready for conversational intent routing.');
           eventService.broadcast('local_ai_status_changed', { status: 'ready', runtimeHealthy: true });
         } else {
           console.warn('[Local AI Lifecycle] ⚠️ Runtime failed to start or health-check failed. Deterministic chatbot remains fully operational.');
