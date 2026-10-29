@@ -50,6 +50,9 @@ export type AssistantActionType =
   | 'VIEW_MARGINS'
   | 'QUERY_SALES_METRICS'
   | 'AUDIT_EXPIRY'
+  | 'STAGE_DISTRIBUTOR_RETURNS'
+  | 'REORDER_LOW_STOCK'
+  | 'QUERY_DELIVERY_STATUS'
   | 'GENERAL_QA';
 
 export interface PageContext {
@@ -208,6 +211,27 @@ export const CAPABILITY_REGISTRY: Record<AssistantActionType, CapabilityDefiniti
     allowedRoles: ['owner', 'staff'],
     requiresConfirmation: false,
     relevantPages: ['/inventory', '/returns']
+  },
+  STAGE_DISTRIBUTOR_RETURNS: {
+    actionType: 'STAGE_DISTRIBUTOR_RETURNS',
+    description: 'Prepare and stage distributor return debit memo for near-expiry inventory',
+    allowedRoles: ['owner'],
+    requiresConfirmation: true,
+    relevantPages: ['/returns', '/inventory']
+  },
+  REORDER_LOW_STOCK: {
+    actionType: 'REORDER_LOW_STOCK',
+    description: 'Draft reorder list for fast-moving low stock medicines',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: true,
+    relevantPages: ['/inventory', '/purchases', '/live-cart']
+  },
+  QUERY_DELIVERY_STATUS: {
+    actionType: 'QUERY_DELIVERY_STATUS',
+    description: 'Query active home delivery runs and pending dispatches',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: false,
+    relevantPages: ['/dispatch', '/pos']
   },
   GENERAL_QA: {
     actionType: 'GENERAL_QA',

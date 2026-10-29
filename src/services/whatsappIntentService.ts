@@ -4582,6 +4582,11 @@ async function proceedWithConfirmedProcurement(
 async function checkIsOwnerPhone(phone: string, db: any): Promise<boolean> {
   const cleanDigits = (phone || '').replace(/\D/g, '').slice(-10);
   if (!cleanDigits) return false;
+  try {
+    const { evaluateSenderIdentity } = await import('./localAi/ownerAuthGateway.js');
+    const ident = await evaluateSenderIdentity(cleanDigits, 'whatsapp', db);
+    if (ident.isOwner) return true;
+  } catch (_) {}
   const adminPhone = await waAdminEscalationService.resolveAdminWhatsappNumber?.(db) || '';
   const cleanAdmin = (adminPhone || '').replace(/\D/g, '').slice(-10);
   return Boolean(cleanAdmin && cleanAdmin === cleanDigits);
@@ -5239,6 +5244,33 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
         return true;
       }
     }
+  }
+
+  // 4. Natural Language Operating Assistant for Store Owner (AI-PHARMACY-V3)
+  try {
+    const { conversationalAgentEngine } = await import('./localAi/conversationalAgentEngine.js');
+    const cleanPhone = (phone || '').replace(/\D/g, '').slice(-10);
+    const agentResult = await conversationalAgentEngine.processMessage({
+      phone: cleanPhone,
+      channel: 'whatsapp',
+      role: 'owner',
+      message: body.trim(),
+      username: 'Store Owner'
+    });
+
+    if (agentResult && agentResult.replyText) {
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.enqueue(
+        phone,
+        agentResult.replyText,
+        'owner_operational_assistant',
+        'Store Owner'
+      );
+      console.log(`[Intent Service] Natural Language Operating Assistant replied to Owner (${agentResult.intent})`);
+      return true;
+    }
+  } catch (err: any) {
+    console.warn('[Intent Service] Owner natural language assistant fallback note:', err?.message || err);
   }
 
   return false;

@@ -376,4 +376,49 @@ describe('Conversational AI Agent Engine Suite', () => {
     expect(stockResult.replyText).toContain('physical shelf count');
     expect(stockResult.replyText).toContain('stock_ledger');
   });
+  // 21. Natural Language Operating Assistant: Distributor Return List Draft (Zero Stock Changes)
+  it('Criteria 21: prepares a distributor return draft for expiring medicines without mutating stock', async () => {
+    const returnMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'owner-session-return-1',
+      role: 'owner',
+      message: 'Check medicines expiring in the next 60 days, tell me which ones need attention, and prepare a distributor return list. Don\'t change stock yet.'
+    });
+
+    expect(returnMsg.intent).toBe('DISTRIBUTOR_RETURN_DRAFT');
+    expect(returnMsg.replyText).toContain('Draft Distributor Return List');
+    expect(returnMsg.replyText).toContain('Zero Stock Changes');
+    expect(returnMsg.proposedAction).toBeDefined();
+    expect(returnMsg.proposedAction?.type).toBe('DISTRIBUTOR_RETURN_DRAFT');
+    expect(returnMsg.requiresConfirmation).toBe(true);
+  });
+
+  // 22. Fast-Moving Low Stock & Reorder Assessment
+  it('Criteria 22: assesses fast-moving low stock and proposes reorder draft', async () => {
+    await db.run("INSERT INTO medicines (name, mrp) VALUES ('Test Low Stock Syringe', 50)");
+    const medRow = await db.get("SELECT id FROM medicines WHERE name = 'Test Low Stock Syringe'");
+    await db.run("INSERT INTO inventory_master (medicine_id, quantity, batch_no) VALUES (?, 2, 'SYR-01')", [medRow.id]);
+    const reorderMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'owner-session-reorder-1',
+      role: 'owner',
+      message: 'Which fast-moving medicines are low stock? Prepare a reorder list.'
+    });
+
+    expect(reorderMsg.intent).toBe('LOW_STOCK_REORDER');
+    expect(reorderMsg.replyText).toContain('Fast-Moving Low Stock');
+    expect(reorderMsg.proposedAction?.type).toBe('LOW_STOCK_REORDER');
+    expect(reorderMsg.requiresConfirmation).toBe(true);
+  });
+
+  // 23. Active Home Delivery Run Status
+  it('Criteria 23: queries active home delivery runs and reports verified status', async () => {
+    const delivMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-session-deliv-1',
+      role: 'staff',
+      message: 'Which deliveries are still pending?'
+    });
+
+    expect(delivMsg.intent).toBe('DELIVERY_STATUS');
+    expect(delivMsg.replyText).toContain('Dispatch');
+    expect(delivMsg.requiresConfirmation).toBe(false);
+  });
 });

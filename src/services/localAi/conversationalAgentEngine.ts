@@ -78,7 +78,9 @@ export interface ProposedAction {
     | 'SCHEDULE_CALL'
     | 'ADJUST_STOCK'
     | 'STAGE_PURCHASE_DRAFT'
-    | 'STAGE_PRESCRIPTION_DRAFT';
+    | 'STAGE_PRESCRIPTION_DRAFT'
+    | 'DISTRIBUTOR_RETURN_DRAFT'
+    | 'LOW_STOCK_REORDER';
   summary: string;
   data: Record<string, any>;
   requiresConfirmation?: boolean;
@@ -506,6 +508,161 @@ export class ConversationalAgentEngine {
           suggestedFollowUps = ['Audit 90-day expiries', 'Check low stock medicines'];
         }
         state = 'idle';
+        break;
+      }
+
+      // ── Capability 5b: Proactive Assistance — Distributor Return Draft ──────
+      case 'DISTRIBUTOR_RETURN_DRAFT': {
+        const days = parseInt((detected.timeframe || '60').replace(/\D/g, ''), 10) || 60;
+        const draft = await pharmacyToolRegistry.generateDistributorReturnDraft(days, undefined, db);
+        toolExecutions.push({ tool: 'generateDistributorReturnDraft', result: draft });
+
+        if (draft.totalBatches > 0) {
+          replyText = `📋 *Draft Distributor Return List (${draft.daysAhead} Days Expiry Risk)*\n\n` +
+            `Identified *${draft.totalBatches} batch(es)* (*${draft.totalUnits} units*) expiring within ${draft.daysAhead} days.\n` +
+            `💰 *Estimated Return Claim Value:* ₹${draft.estimatedValue.toFixed(2)}\n\n` +
+            `📦 *Batches Requiring Return:*\n`;
+
+          draft.batches.slice(0, 8).forEach((b, idx) => {
+            const rack = b.rackLocation ? ` [${b.rackLocation}]` : '';
+            replyText += `${idx + 1}. *${b.medicineName}* (Batch: \`${b.batchNo}\`)\n` +
+              `   • Qty: *${b.quantity}* | Exp: ${b.expiryDate} | Dist: ${b.distributorName}${rack}\n`;
+            cards.push({
+              id: b.inventoryId,
+              title: b.medicineName,
+              subtitle: `Batch: ${b.batchNo} | Qty: ${b.quantity} | Dist: ${b.distributorName}`,
+              badge: `Exp: ${b.expiryDate}`,
+              badgeColor: 'amber'
+            });
+          });
+
+          replyText += `\n🔒 *Zero Stock Changes:* Stock in \`inventory_master\` has NOT been modified.\n` +
+            `👉 *Would you like to stage this distributor return debit memo?*\n` +
+            `Reply *Yes* or *APPROVE ${draft.draftId}* to confirm, or *No* to cancel.`;
+
+          proposedAction = {
+            id: draft.draftId,
+            type: 'DISTRIBUTOR_RETURN_DRAFT',
+            summary: `Draft distributor return memo for ${draft.totalBatches} batches (₹${draft.estimatedValue.toFixed(2)})`,
+            data: draft,
+            requiresConfirmation: true,
+            status: 'PENDING_CONFIRMATION'
+          };
+          state = 'awaiting_confirmation';
+          suggestedFollowUps = [`APPROVE ${draft.draftId}`, 'Audit 30-day expiries', 'Cancel'];
+        } else {
+          replyText = `✅ *Distributor Returns:* No batches in inventory are expiring within ${days} days. No return list needed at this time.`;
+          state = 'idle';
+          suggestedFollowUps = ['Audit 90-day expiries', 'Check low stock medicines'];
+        }
+        break;
+      }
+
+      // ── Capability 5c: Proactive Assistance — Low Stock Reorder Draft ──────
+      case 'LOW_STOCK_REORDER': {
+        const reorderDraft = await pharmacyToolRegistry.calculateLowStockReorderDraft(undefined, db);
+        toolExecutions.push({ tool: 'calculateLowStockReorderDraft', result: reorderDraft });
+
+        if (reorderDraft.totalItems > 0) {
+          replyText = `📦 *Fast-Moving Low Stock & Reorder Assessment*\n\n` +
+            `Found *${reorderDraft.totalItems} fast-moving medicines* at or below minimum safety stock:\n\n`;
+
+          reorderDraft.items.slice(0, 8).forEach((it, idx) => {
+            replyText += `${idx + 1}. *${it.medicineName}*\n` +
+              `   • Stock: *${it.currentStock}* (Min: ${it.minStock}) | 30d Sales: ${it.recentSales30d} | Suggested: *+${it.suggestedReorderQty} units*\n`;
+            cards.push({
+              id: it.medicineId,
+              title: it.medicineName,
+              subtitle: `Stock: ${it.currentStock} | Min: ${it.minStock} | Suggested: +${it.suggestedReorderQty}`,
+              badge: `${it.currentStock} left`,
+              badgeColor: it.currentStock === 0 ? 'red' : 'amber'
+            });
+          });
+
+          replyText += `\n👉 *Would you like to stage these items into the Live Cart / Purchase Order queue?*\n` +
+            `Reply *Yes* or *APPROVE ${reorderDraft.draftId}* to stage, or *No* to dismiss.`;
+
+          proposedAction = {
+            id: reorderDraft.draftId,
+            type: 'LOW_STOCK_REORDER',
+            summary: `Low-stock reorder draft for ${reorderDraft.totalItems} items`,
+            data: reorderDraft,
+            requiresConfirmation: true,
+            status: 'PENDING_CONFIRMATION'
+          };
+          state = 'awaiting_confirmation';
+          suggestedFollowUps = [`APPROVE ${reorderDraft.draftId}`, 'Show sales summary', 'Cancel'];
+        } else {
+          replyText = `✅ *Inventory Stock Healthy:* All fast-moving medicines are currently above minimum safety thresholds.`;
+          state = 'idle';
+          suggestedFollowUps = ['Audit expiring stock', 'Check today sales'];
+        }
+        break;
+      }
+
+      // ── Capability 5d: Dispatch & Delivery Status ──────────────────────────
+      case 'DELIVERY_STATUS': {
+        const deliv = await pharmacyToolRegistry.getDeliveryRunStatus(db);
+        toolExecutions.push({ tool: 'getDeliveryRunStatus', result: deliv });
+
+        if (deliv.totalActive > 0) {
+          replyText = `🛵 *Dispatch & Home Delivery Status*\n\n` +
+            `• *Total Active Orders:* ${deliv.totalActive}\n` +
+            `• *Pending Pickup:* ${deliv.pendingCount}\n` +
+            `• *In Transit:* ${deliv.inTransitCount}\n\n` +
+            `📋 *Active Delivery Runs:*\n`;
+
+          deliv.orders.forEach((o, idx) => {
+            const boy = o.deliveryBoyName ? ` (Rider: ${o.deliveryBoyName})` : ' (Unassigned)';
+            replyText += `${idx + 1}. *Order #${o.orderId}* — ${o.patientName}${boy} [${o.status}]\n`;
+            cards.push({
+              id: o.orderId,
+              title: `Order #${o.orderId} - ${o.patientName}`,
+              subtitle: `${o.status}${boy} | ${o.address || 'Local delivery'}`,
+              badge: o.status,
+              badgeColor: o.status === 'In Transit' ? 'blue' : 'amber'
+            });
+          });
+        } else {
+          replyText = `✅ *Dispatch Clear:* No home delivery orders are currently pending or in transit.`;
+        }
+        state = 'idle';
+        suggestedFollowUps = ['View dispatch board', 'Check today sales'];
+        break;
+      }
+
+      // ── Capability 5e: Purchase Inward & Rate Queries (Strictly Owner) ─────
+      case 'PURCHASE_QUERY': {
+        if (role !== 'owner') {
+          replyText = `🔒 *Access Restricted:* Trade pricing and supplier invoice details are restricted to verified store owners.`;
+          state = 'idle';
+        } else {
+          const medQuery = detected.medicineName || '';
+          const pur = await pharmacyToolRegistry.getPurchaseRateComparison(medQuery, db);
+          toolExecutions.push({ tool: 'getPurchaseRateComparison', result: pur });
+
+          if (pur.records.length > 0) {
+            replyText = `💼 *Purchase Inward & Trade Price Intelligence*\n\n` +
+              `Found *${pur.records.length} purchase record(s)*${medQuery ? ` for *${medQuery}*` : ''}:\n\n`;
+
+            pur.records.slice(0, 6).forEach((p, idx) => {
+              replyText += `${idx + 1}. *${p.medicineName}* (Batch: \`${p.batchNo}\`)\n` +
+                `   • PTR / Cost: *₹${p.costPrice.toFixed(2)}* (MRP: ₹${p.mrp.toFixed(2)}) | Qty: ${p.quantity}\n` +
+                `   • Supplier: *${p.distributorName}* | Invoice: \`${p.invoiceNo}\` (${p.invoiceDate})\n`;
+              cards.push({
+                id: `${p.batchNo}_${idx}`,
+                title: p.medicineName,
+                subtitle: `PTR: ₹${p.costPrice.toFixed(2)} | Dist: ${p.distributorName}`,
+                badge: `Inv: ${p.invoiceNo}`,
+                badgeColor: 'green'
+              });
+            });
+          } else {
+            replyText = `🔍 No purchase invoice records found${medQuery ? ` for *${medQuery}*` : ''}.`;
+          }
+          state = 'idle';
+        }
+        suggestedFollowUps = ['Check sales summary', 'Audit expiring stock'];
         break;
       }
 
@@ -965,6 +1122,43 @@ export class ConversationalAgentEngine {
       return { type: 'ALTERNATIVES_SEARCH', medicineName: med };
     }
 
+    // 2b. Distributor Return List Draft (e.g. "prepare distributor return list", "wapas karne wali dawa")
+    if (
+      /\b(?:distributor return|return list|prepare.*return|draft.*return|return.*distributor)\b/i.test(t) ||
+      (/\b(?:expir|expire|expiring|expiry)\b/i.test(t) && /\b(?:return list|return memo|distributor return|wapas)\b/i.test(t))
+    ) {
+      let timeframe = '60_days';
+      const numMatch = t.match(/\b(\d{1,3})\s*(?:day|days|din|divas)\b/);
+      if (numMatch) timeframe = `${numMatch[1]}_days`;
+      else if (t.includes('30')) timeframe = '30_days';
+      else if (t.includes('90')) timeframe = '90_days';
+      return { type: 'DISTRIBUTOR_RETURN_DRAFT', timeframe };
+    }
+
+    // 2c. Fast-Moving Low Stock & Reorder Draft
+    if (
+      /\b(?:reorder list|reorder draft|low stock.*reorder|fast-moving.*low|shortage list|prepare.*reorder)\b/i.test(t) ||
+      (/\b(?:fast-moving|low stock)\b/i.test(t) && /\b(?:which|show|check|find|list|order)\b/i.test(t))
+    ) {
+      return { type: 'LOW_STOCK_REORDER' };
+    }
+
+    // 2d. Delivery Status Query
+    if (
+      /\b(?:delivery|deliveries|dispatch|delivery boy|rider|pending delivery|deliveries.*pending|pending deliveries)\b/i.test(t)
+    ) {
+      return { type: 'DELIVERY_STATUS' };
+    }
+
+    // 2e. Purchase Rate / Cost Price Query (Strictly Owner)
+    if (
+      /\b(?:purchase rate|cost price|ptr|buying rate|supplier rate|purchase bill|inward rate)\b/i.test(t) ||
+      (/\b(?:last purchase|what did we buy|buying price)\b/i.test(t))
+    ) {
+      const med = this.extractMedicineFromText(text);
+      return { type: 'PURCHASE_QUERY', medicineName: med };
+    }
+
     // 3. Expiry Audit
     if (
       /\b(?:expir|expire|expiring|expiry|near expiry|expired)\b/i.test(t) &&
@@ -1078,6 +1272,31 @@ export class ConversationalAgentEngine {
     // 14. Optional Local AI LLM intent classification if running
     try {
       if (isLocalAiEnabled()) {
+        const { queryOperationalAiIntent } = await import('./llamaServerClient.js');
+        const opIntent = await queryOperationalAiIntent(text);
+        if (opIntent && opIntent.confidence >= 0.6) {
+          if (opIntent.intent === 'DISTRIBUTOR_RETURN_DRAFT') {
+            return { type: 'DISTRIBUTOR_RETURN_DRAFT', timeframe: opIntent.timeframeDays ? `${opIntent.timeframeDays}_days` : '60_days' };
+          }
+          if (opIntent.intent === 'LOW_STOCK_REORDER') {
+            return { type: 'LOW_STOCK_REORDER' };
+          }
+          if (opIntent.intent === 'DELIVERY_STATUS') {
+            return { type: 'DELIVERY_STATUS' };
+          }
+          if (opIntent.intent === 'PURCHASE_QUERY') {
+            return { type: 'PURCHASE_QUERY', medicineName: opIntent.medicineName };
+          }
+          if (opIntent.intent === 'EXPIRY_AUDIT') {
+            return { type: 'EXPIRY_AUDIT', timeframe: opIntent.timeframeDays ? `${opIntent.timeframeDays}_days` : '60_days' };
+          }
+          if (opIntent.intent === 'SALES_SUMMARY') {
+            return { type: 'SALES_COMPARISON' };
+          }
+          if (opIntent.intent === 'REFILL_MANAGEMENT') {
+            return { type: 'REFILL' };
+          }
+        }
         const aiIntent = await queryLocalAiIntent(text);
         if (aiIntent && aiIntent.confidence >= 0.7) {
           if (aiIntent.intent === 'REFILL') return { type: 'REFILL' };
@@ -1097,7 +1316,7 @@ export class ConversationalAgentEngine {
    */
   public isAffirmative(text: string): boolean {
     const clean = text.trim().toLowerCase().replace(/[^\w\s]/g, '');
-    return /\b(yes|haan|ha|ho|confirm|confirmed|ok|okay|bhej do|kar do|proceed|ready|prepare|order|thik hai|theek hai)\b/i.test(clean) || clean === '1';
+    return /\b(yes|haan|ha|ho|confirm|confirmed|ok|okay|bhej do|kar do|proceed|ready|prepare|order|thik hai|theek hai|approve|approved|accept|commit)\b/i.test(clean) || clean === '1';
   }
 
   /**

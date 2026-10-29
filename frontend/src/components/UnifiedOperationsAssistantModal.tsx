@@ -128,9 +128,9 @@ function getPageContextInfo(pathname: string): PageContextInfo {
     return {
       name: 'Dispatch & Delivery',
       suggestions: [
+        'Which deliveries are still pending?',
         'Explain dispatch workflow',
         'Check pending distributor dispatches',
-        'Remind distributor on WhatsApp',
         'Show delivery schedules'
       ]
     };
@@ -149,6 +149,7 @@ function getPageContextInfo(pathname: string): PageContextInfo {
     return {
       name: 'Returns Hub',
       suggestions: [
+        'Prepare 60-day distributor return list',
         'Audit expiring batches',
         'Show pending supplier returns',
         'Explain return policy'

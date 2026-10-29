@@ -945,19 +945,21 @@ export class PharmacyToolRegistry {
   }> {
     const db = dbInstance || (await dbManager.getConnection());
 
+    const threshold = minThreshold != null ? Number(minThreshold) : 10;
     const query = `
-      SELECT m.id as medicineId, m.name as medicineName, COALESCE(m.stock_quantity, 0) as currentStock,
-             COALESCE(m.min_stock_alert, 10) as minStock, COALESCE(m.mrp, 0) as mrp,
-             COALESCE(SUM(si.quantity), 0) as recentSales30d
+      SELECT m.id as medicineId, m.name as medicineName,
+             COALESCE(SUM(im.quantity), 0) as currentStock,
+             10 as minStock, COALESCE(m.mrp, 0) as mrp,
+             0 as recentSales30d
       FROM medicines m
-      LEFT JOIN sale_items si ON si.medicine_id = m.id AND si.created_at >= date('now', '-30 days')
-      WHERE m.stock_quantity <= COALESCE(?, m.min_stock_alert, 10)
+      LEFT JOIN inventory_master im ON im.medicine_id = m.id
       GROUP BY m.id
-      ORDER BY recentSales30d DESC, m.stock_quantity ASC
+      HAVING currentStock <= ?
+      ORDER BY currentStock ASC
       LIMIT 25
     `;
 
-    const rows: any[] = await db.all(query, [minThreshold ?? null]).catch(() => []);
+    const rows: any[] = await db.all(query, [threshold]).catch(() => []);
 
     const items = rows.map(r => {
       const current = Number(r.currentStock) || 0;
