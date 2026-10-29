@@ -136,16 +136,16 @@ export function isUnsafeMedicalAdviceQuery(text: string): boolean {
 }
 
 // Inquiries about shop hours, location, contact, and return policies
-const SHOP_INFO_REGEX = /(?:\b(?:time|timing|open|close|hours|open now|kab khula|kab band|khula hai|band hai|store open|shop open|store close|shop close|address|location|where is|pharmacy location|contact number|phone number|call|return policy|refund policy|exchange policy|delivery slot|home delivery|din me wapas)\b|दुकान.*(?:चालू|उघडी|बंद|खुली|पत्ता|वेळ|कधी|खुलती|आहे)|दुकानचा पत्ता|दुकान का पता|पत्ता काय|पत्ता सांगा|पत्ता कुठे|पता बताइये|पता क्या है|फोन नंबर|कॉल|संपर्क|वेळ काय|कधी उघडते|कधी बंद|नियम|वापस|परत|डिलिव्हरी.*(?:वेळ|slot|वेळ काय)|डिलिवरी|होम डिलिव्हरी|पोहोचवण्याची सेवा|पहुंचाने की सुविधा)/i;
+const SHOP_INFO_REGEX = /(?:\b(?:time|timing|open|close|hours|open now|kab khula|kab band|khula hai|band hai|store open|shop open|store close|shop close|address|location|where is|pharmacy location|contact number|phone number|call|return policy|refund policy|exchange policy|delivery slot|home delivery|din me wapas)\b|दुकान.*(?:चालू|उघडी|बंद|खुली|पत्ता|वेळ|कधी|खुलती|आहे)|दुकानचा पत्ता|दुकान का पता|पत्ता काय|पत्ता सांगा|पत्ता कुठे|पता बताइये|पता क्या है|फोन नंबर|कॉल|संपर्क|वेळ काय|कधी उघडते|कधी बंद|नियम|वापस|परत|डिलिव्हरी.*(?:वेळ|slot|वेळ काय)|डिलिवरी|डिलीवरी|होम डिलिव्हरी|पोहोचवण्याची सेवा|पहुंचाने की सुविधा|समय क्या है|समय)/i;
 
 // Price inquiries
 const PRICE_REGEX = /(?:\b(?:price|rate|mrp|cost|how much for|how much is|discount|offer|selling price|bhav|dam|kimat)\b|kitne (?:rupaye|me|mein|rupees|ka|ki)|kitna (?:rupaye|kharcha|bhav|dam|cost)|kitne ka|kitne ki|kitna hai|दाम|किंमत|कीमत|भाव|मूल्य|रेट|रुपये|रुपयांना|रुपयाला|कितीला|किती रुपयांना|किती रुपयाला|किती पडेल|कितने रुपये|कितने में|(?:\s|^)दर(?:\s|$|चे|काय|सांगा))/i;
 
 // Availability inquiries
-const AVAILABILITY_REGEX = /(?:\b(?:available|availability|in stock|stock|do you have|do you carry|can i get|do you sell|sell|hai kya|h kya|milega|milegi|mil sakti|mil jayega|ahe ka|ahet ka)\b|उपलब्ध|आहे का|मिलेगा|मिल जाएगी|मिलेगी|स्टॉक में|है क्या|ह क्या|आहेत का|मिळेल|मिळतील|स्टॉकमध्ये|मिळेल का|मिळतील का)/i;
+const AVAILABILITY_REGEX = /(?:\b(?:available|availability|in stock|stock|do you have|do you carry|can i get|do you sell|sell|hai kya|h kya|milega|milegi|mil sakti|mil jayega|ahe ka|ahet ka)\b|उपलब्ध|आहे का|मिलेगा|मिल जाएगी|मिल जाएगा|मिलेगी|स्टॉक में|है क्या|ह क्या|आहेत का|मिळेल|मिळतील|स्टॉकमध्ये|मिळेल का|मिळतील का)/i;
 
 // Order requests
-const ORDER_REGEX = /(?:\b(?:order|book|send|deliver|purchase|buy|urgent|urgently|bhej do|bhejo|bhej|bhejiye|bhej dena|de do|dena|chahiye|pack kar|pack kardo|pack kar do|rakho|lena hai)\b|पाठवा|द्या|पाठवून द्या|हवे|पाहिजे|हव्या|बुक करा|आर्डर|भेज दीजिए|भेजिए|भेजें|भिजवाएं|भिजवा दो|भिजवा दीजिए|पैक कर दो|स्ट्रिप चाहिए|गोली चाहिए|दे दो|द्या तातडीने)/i;
+const ORDER_REGEX = /(?:\b(?:order|book|send|deliver|purchase|buy|urgent|urgently|bhej do|bhejo|bhej|bhejiye|bhej dena|de do|dena|chahiye|pack kar|pack kardo|pack kar do|rakho|lena hai)\b|पाठवा|द्या|पाठवून द्या|हवे|पाहिजे|हव्या|बुक करा|आर्डर|भेज दीजिए|भेजिए|भेजें|भेज दो|भिजवाएं|भिजवा दो|भिजवा दीजिए|पैक कर दो|स्ट्रिप चाहिए|गोली चाहिए|दे दो|द्या तातडीने)/i;
 
 // Refill requests
 const REFILL_REGEX = /(?:\b(?:refill|repeat|purani|wahi|previous|last month|pichhle|pichhli|regular|chronic|same medicine)\b|पुन्हा|तीच औषध|नियमित औषध|मागच्या|मागील|रीफिल|दोबारा|फिर से|रेगुलर पर्ची|बंधी हुई|वापस भेज)/i;

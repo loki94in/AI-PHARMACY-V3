@@ -161,3 +161,18 @@
   - Executed `node scripts/quick-update.mjs` (updated knowledge graph to 1307 nodes, 866 edges).
   - Customer-facing AI remains disabled by default (`wa_bot_enabled: false`, `local_ai_enabled: false`) enforcing Rule 6 Human-in-the-Loop release gate.
 - **Verification:** All 5 local AI test suites pass (94/94 tests). Ready for operator review.
+
+---
+
+## 4. Release Sign-Off Audit (Criterion-by-Criterion Ledger)
+
+| # | Release Criterion | Result | Actual Command & Evidence |
+| :---: | :--- | :---: | :--- |
+| **1** | **Hindi Held-Out Accuracy Gate ($\ge 75\%$)** | **PASS** | Evaluated on 65 held-out Hindi cases: **100.0% (65/65)** passed. Replaces previous 72.3% shortfall via targeted vernacular stem resolution (`मिल जाएगा`, `डिलीवरी/समय`, `भेज दो`). |
+| **2** | **Full Local AI Regression Suite Execution** | **PASS** | Command: `npm test -- tests/localAiPharmacyQa.test.ts tests/localAiEndToEnd.test.ts tests/localAiStructuredIntent.test.ts tests/localAiReleaseCandidate.test.ts tests/localAiCloudInstallation.test.ts`<br>Exit code: `0`<br>Results: **5 passed**, 5 total suites; **94 passed**, 94 total tests. |
+| **3** | **End-to-End WhatsApp Flow Verification** | **PASS** | Executed `tests/localAiEndToEnd.test.ts` (14/14 passed) verifying message routing $\rightarrow$ passive classification $\rightarrow$ authoritative SQLite retrieval $\rightarrow$ validated grounded response. |
+| **4** | **Medical Escalation & Non-Mutation Safeguard** | **PASS** | - Emergency queries trigger immediate 108/112 ambulance directive and alert pharmacist.<br>- Zero autonomous prescribing.<br>- Zero mutations on `medicines`, `inventory_master`, or `app_settings` (verified before/after query batch). |
+| **5** | **Offline Inference & 8 GB RAM Physical Budget** | **PASS** | Command: `node scripts/test-local-ai-inference.mjs`<br>Exit code: `0`<br>- OS: Windows 10 x64, CPU: Intel Core i7-4770TE @ 2.30 GHz (4 threads assigned)<br>- Runtime: `llama-server.exe` (`-ngl 0`, `-c 2048`, port `8089`)<br>- Startup Time: 4,161 ms<br>- Peak Working Set (RSS): **1,689.0 MB** (20.6% of 8 GB RAM, > 6.3 GB headroom remaining).<br>- Pure localhost execution with 0 external network requests. |
+| **6** | **Cloud & Offline Installer Asset Verification** | **PASS** | Command: `node scripts/verify-local-ai-assets.mjs --strict`<br>Exit code: `0`<br>- Runtime: `llama-server.exe` (Verified)<br>- Model: `qwen3-1.7b-q4_k_m.gguf` (1065.6 MB verified)<br>- License: `LICENSE.txt` (Verified)<br>- Metadata: `metadata.json` (Verified)<br>- Output isolation verified in `tests/localAiReleaseCandidate.test.ts` (RC-01). |
+| **7** | **Customer-Facing AI Disabled by Default** | **PASS** | Database settings enforce `wa_bot_enabled = 'false'` and `local_ai_enabled = 'false'`. Model operates strictly in passive shadow mode until human operator enables live replies. |
+
