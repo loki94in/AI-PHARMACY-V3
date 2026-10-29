@@ -17,7 +17,9 @@ import {
   ArrowRight,
   ShieldCheck,
   Check,
-  Ban
+  Ban,
+  Paperclip,
+  Image as ImageIcon
 } from 'lucide-react';
 import { apiClient } from '../services/api';
 import { toastEvent } from '../services/events';
@@ -229,9 +231,29 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
   const [sessionId] = useState(() => `staff-${Date.now()}`);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [statusInfo, setStatusInfo] = useState<{ healthy: boolean; localAi: boolean } | null>(null);
+  const [selectedImageBase64, setSelectedImageBase64] = useState<string | null>(null);
+  const [selectedImageName, setSelectedImageName] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSelectedImageBase64(reader.result as string);
+      setSelectedImageName(file.name);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleClearFile = () => {
+    setSelectedImageBase64(null);
+    setSelectedImageName(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -271,24 +293,27 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
 
   const handleSendMessage = useCallback(async (msgText?: string) => {
     const textToSend = (msgText || inputMessage).trim();
-    if (!textToSend || isLoading) return;
+    if ((!textToSend && !selectedImageBase64) || isLoading) return;
 
     const userMsg: AssistantMessage = {
       id: `user-${Date.now()}`,
       sender: 'user',
-      text: textToSend,
+      text: textToSend || (selectedImageName ? `Uploaded ${selectedImageName}` : 'Process uploaded document'),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
     setMessages(prev => [...prev, userMsg]);
     if (!msgText) setInputMessage('');
+    const imagePayload = selectedImageBase64;
+    handleClearFile();
     setIsLoading(true);
 
     try {
       const res = await apiClient.post('/assistant/chat', {
-        message: textToSend,
+        message: textToSend || 'Please process this document and extract the medicine details.',
         sessionId,
         role: 'staff',
+        imageBase64: imagePayload || undefined,
         pageContext: {
           pathname: activePath,
           pageTitle: document.title || pageInfo.name
@@ -322,7 +347,7 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
     } finally {
       setIsLoading(false);
     }
-  }, [inputMessage, isLoading, sessionId, activePath, pageInfo.name]);
+  }, [inputMessage, selectedImageBase64, selectedImageName, isLoading, sessionId, activePath, pageInfo.name]);
 
   const handleConfirmAction = async (proposalId: string) => {
     setConfirmingId(proposalId);
@@ -629,6 +654,23 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
 
         {/* Input Bar */}
         <div className="p-3 sm:p-4 bg-bg border-t border-border shrink-0">
+          {selectedImageBase64 && (
+            <div className="mb-2.5 flex items-center justify-between px-3 py-2 rounded-xl bg-bg2 border border-primary/40 text-xs">
+              <div className="flex items-center gap-2 overflow-hidden">
+                <ImageIcon size={14} className="text-primary shrink-0" />
+                <span className="truncate font-medium text-text">{selectedImageName || 'Document image selected'}</span>
+                <span className="text-[10px] text-muted">Ready for OCR analysis</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleClearFile}
+                className="p-1 rounded-md hover:bg-bg3 text-muted hover:text-text cursor-pointer transition-colors"
+                title="Remove image"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          )}
           <form
             onSubmit={e => {
               e.preventDefault();
@@ -637,17 +679,32 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
             className="flex items-center gap-2"
           >
             <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,.pdf"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="p-2.5 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-muted hover:text-text transition-colors cursor-pointer shrink-0"
+              title="Upload prescription, medicine photo, or invoice"
+            >
+              <Paperclip size={16} />
+            </button>
+            <input
               ref={inputRef}
               type="text"
               value={inputMessage}
               onChange={e => setInputMessage(e.target.value)}
-              placeholder="Type an operations request in English, हिंदी, मराठी, Hinglish..."
+              placeholder="Ask a question, find alternatives, audit expiries, or upload doc..."
               className="flex-1 bg-bg2 border border-border focus:border-primary rounded-xl px-4 py-2.5 text-sm text-text placeholder:text-muted focus:outline-none transition-colors"
               disabled={isLoading}
             />
             <button
               type="submit"
-              disabled={!inputMessage.trim() || isLoading}
+              disabled={(!inputMessage.trim() && !selectedImageBase64) || isLoading}
               className="px-4 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-semibold text-sm flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
             >
               <Send size={15} />

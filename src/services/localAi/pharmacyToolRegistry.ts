@@ -4,8 +4,13 @@
  * Exposes strictly bounded, typed tool functions over existing canonical application services:
  * - Refill lookup and execution (patient_refills, refillCartService)
  * - Catalog stock & public price verification (medicines, pharmacyKnowledgeRetriever)
+ * - Medicine alternatives & salt comparison (medicineAvailabilityEngine, substitutes)
+ * - Expiry audit & stock breakdown (inventory_master, inventoryCache)
+ * - Sales reporting & comparative analytics (sales_invoices, sale_items)
+ * - Document OCR for prescriptions and invoices (prescriptionOrchestratorService, invoiceVisionService)
  * - Customer enquiries (medicine_enquiries)
  * - Call tasks & follow-ups (patient_call_tasks)
+ * - Application screen & workflow assistance
  * - Pharmacist escalation and takeover
  *
  * Safety & Privacy Controls:
@@ -19,6 +24,9 @@ import { dbManager } from '../../database/connection.js';
 import { logMutationAudit } from '../auditLoggerService.js';
 import { pharmacyKnowledgeRetriever } from './pharmacyKnowledgeRetriever.js';
 import { eventService } from '../eventService.js';
+import { medicineAvailabilityEngine } from '../medicineAvailabilityEngine.js';
+import { prescriptionOrchestratorService } from '../prescriptionOrchestratorService.js';
+import { invoiceVisionService } from '../invoiceVisionService.js';
 
 export interface RefillRecordItem {
   id: number;
@@ -44,6 +52,56 @@ export interface MedicineAvailabilityItem {
   inStock: boolean;
   stockQuantity: number;
   rackLocation?: string;
+}
+
+export interface AlternativeCandidateItem {
+  id: number;
+  name: string;
+  genericName?: string;
+  dosageForm?: string;
+  strength?: string;
+  packSize?: string;
+  mrp: number;
+  sellingPrice: number;
+  inStock: boolean;
+  stockQuantity: number;
+  manufacturer?: string;
+  differenceNote?: string;
+}
+
+export interface AlternativesResult {
+  sourceMedicine: string;
+  sourceSalt?: string;
+  sourceInStock: boolean;
+  candidates: AlternativeCandidateItem[];
+  clinicalNotice: string;
+}
+
+export interface ExpiringBatchItem {
+  id: number;
+  medicineId: number;
+  medicineName: string;
+  batchNo: string;
+  quantity: number;
+  expiryDate: string;
+  rackLocation?: string;
+  mrp: number;
+}
+
+export interface SalesComparisonResult {
+  role: string;
+  period: string;
+  todayRevenue: number;
+  yesterdayRevenue: number;
+  deltaRevenue: number;
+  percentChange: number;
+  todayBillCount: number;
+  yesterdayBillCount: number;
+  todayAverageTicket: number;
+  yesterdayAverageTicket: number;
+  analysisExplanation: string;
+  topSellersToday: string[];
+  topSellersYesterday: string[];
 }
 
 export class PharmacyToolRegistry {
@@ -115,6 +173,495 @@ export class PharmacyToolRegistry {
       stockQuantity: m.stockQuantity,
       rackLocation: m.rackLocation
     }));
+  }
+
+  /**
+   * Compares formulations and finds same-salt alternatives for a given medicine
+   */
+  public async findAlternatives(
+    medicineQuery: string,
+    dbInstance?: any
+  ): Promise<AlternativesResult> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const cleanQuery = medicineQuery.trim();
+
+    // 1. Locate the source medicine
+    let sourceRow = await db.get(
+      `SELECT id, name, generic_name, dosage_form, mrp, sell_price, total_stock, manufacturer
+       FROM medicines
+       WHERE name = ? COLLATE NOCASE LIMIT 1`,
+      [cleanQuery]
+    ).catch(() => null);
+
+    if (!sourceRow) {
+      sourceRow = await db.get(
+        `SELECT id, name, generic_name, dosage_form, mrp, sell_price, total_stock, manufacturer
+         FROM medicines
+         WHERE name LIKE ? COLLATE NOCASE
+         ORDER BY total_stock DESC LIMIT 1`,
+        [`%${cleanQuery}%`]
+      ).catch(() => null);
+    }
+
+    const sourceName = sourceRow?.name || cleanQuery;
+    const sourceSalt = sourceRow?.generic_name || '';
+    const sourceInStock = Number(sourceRow?.total_stock || 0) > 0;
+    const sourceId = sourceRow?.id || 0;
+
+    let candidates: AlternativeCandidateItem[] = [];
+
+    // 2. Find exact generic_name matches
+    if (sourceSalt && sourceSalt.length >= 3) {
+      const matchRows = await db.all(
+        `SELECT id, name, generic_name, dosage_form, pack_size, mrp, sell_price, total_stock, manufacturer, rack
+         FROM medicines
+         WHERE generic_name = ? COLLATE NOCASE AND id != ?
+         ORDER BY total_stock DESC, name ASC LIMIT 10`,
+        [sourceSalt, sourceId]
+      ).catch(() => []);
+
+      candidates = matchRows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        genericName: r.generic_name || sourceSalt,
+        dosageForm: r.dosage_form,
+        packSize: r.pack_size,
+        mrp: Number(r.mrp || 0),
+        sellingPrice: Number(r.sell_price || r.mrp || 0),
+        inStock: Number(r.total_stock || 0) > 0,
+        stockQuantity: Number(r.total_stock || 0),
+        manufacturer: r.manufacturer,
+        differenceNote: `Same composition (${sourceSalt}). ${Number(r.total_stock || 0) > 0 ? `Available in stock: ${r.total_stock} units` : 'Currently out of stock'}.`
+      }));
+    }
+
+    // 3. Fallback: use medicineAvailabilityEngine if generic_name search returned empty
+    if (candidates.length === 0 && cleanQuery.length >= 3) {
+      try {
+        const altRows = await medicineAvailabilityEngine.getAvailableMedicinesOrAlternatives(cleanQuery, {
+          mode: 'POS',
+          includeOutOfStock: true,
+          limit: 10
+        });
+
+        const items = [...(altRows.results || []), ...(altRows.suggestions || [])];
+        for (const item of items) {
+          const m = item.medicine;
+          if (m && m.id !== sourceId && !candidates.some(c => c.id === m.id)) {
+            candidates.push({
+              id: m.id,
+              name: m.name,
+              genericName: m.generic_name,
+              dosageForm: m.dosage_form,
+              packSize: m.pack_size,
+              mrp: Number(m.mrp || 0),
+              sellingPrice: Number(m.sell_price || m.mrp || 0),
+              inStock: item.inStock,
+              stockQuantity: item.currentStock || Number(m.total_stock || 0),
+              manufacturer: m.manufacturer,
+              differenceNote: item.matchType ? `Matched by ${item.matchType} similarity.` : undefined
+            });
+          }
+        }
+      } catch (_) {}
+    }
+
+    return {
+      sourceMedicine: sourceName,
+      sourceSalt: sourceSalt || undefined,
+      sourceInStock,
+      candidates,
+      clinicalNotice: '⚠️ Pharmacist Verification Required: All medicine substitutions must be clinically verified and approved by a registered pharmacist before dispensing.'
+    };
+  }
+
+  /**
+   * Audits near-expiry and expired batches across inventory
+   */
+  public async auditExpiringStock(
+    timeframe: string = 'next_month',
+    dbInstance?: any
+  ): Promise<ExpiringBatchItem[]> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const tf = timeframe.toLowerCase();
+
+    let dateCondition = `im.expiry_date <= date('now', '+60 days') AND im.expiry_date >= date('now')`;
+
+    if (tf.includes('next_month') || tf.includes('next month')) {
+      dateCondition = `(
+        (im.expiry_date >= date('now', 'start of month', '+1 month') AND im.expiry_date < date('now', 'start of month', '+2 months'))
+        OR im.expiry_month = strftime('%Y-%m', date('now', '+1 month'))
+        OR (im.expiry_date <= date('now', '+60 days') AND im.expiry_date >= date('now'))
+      )`;
+    } else if (tf.includes('30') || tf.includes('month')) {
+      dateCondition = `im.expiry_date <= date('now', '+30 days') AND im.expiry_date >= date('now')`;
+    } else if (tf.includes('90')) {
+      dateCondition = `im.expiry_date <= date('now', '+90 days') AND im.expiry_date >= date('now')`;
+    } else if (tf.includes('expired')) {
+      dateCondition = `im.expiry_date < date('now')`;
+    }
+
+    const rows = await db.all(
+      `SELECT im.id, im.batch_no, im.quantity, im.expiry_date, im.rack_location,
+              m.id as medicine_id, m.name as medicine_name, m.mrp
+       FROM inventory_master im
+       JOIN medicines m ON im.medicine_id = m.id
+       WHERE im.quantity > 0 AND ${dateCondition}
+       ORDER BY im.expiry_date ASC LIMIT 25`
+    ).catch(() => []);
+
+    return rows.map((r: any) => ({
+      id: r.id,
+      medicineId: r.medicine_id,
+      medicineName: r.medicine_name,
+      batchNo: r.batch_no || 'UNKNOWN',
+      quantity: Number(r.quantity || 0),
+      expiryDate: r.expiry_date ? String(r.expiry_date).slice(0, 10) : 'Near Expiry',
+      rackLocation: r.rack_location || undefined,
+      mrp: Number(r.mrp || 0)
+    }));
+  }
+
+  /**
+   * Retrieves sales metrics and comparative explanation (today vs yesterday)
+   */
+  public async getSalesSummary(
+    options: { role?: string; dbInstance?: any } = {}
+  ): Promise<SalesComparisonResult> {
+    const role = options.role || 'staff';
+    const db = options.dbInstance || (await dbManager.getConnection());
+
+    if (role === 'customer') {
+      return {
+        role: 'customer',
+        period: 'today',
+        todayRevenue: 0,
+        yesterdayRevenue: 0,
+        deltaRevenue: 0,
+        percentChange: 0,
+        todayBillCount: 0,
+        yesterdayBillCount: 0,
+        todayAverageTicket: 0,
+        yesterdayAverageTicket: 0,
+        analysisExplanation: '🔒 Store financial sales summaries are confidential and restricted to pharmacy staff and store owners.',
+        topSellersToday: [],
+        topSellersYesterday: []
+      };
+    }
+
+    // Today's numbers
+    const todayStats = await db.get(
+      `SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total, COALESCE(AVG(total_amount), 0) as avg
+       FROM sales_invoices
+       WHERE DATE(COALESCE(date, updated_at)) = DATE('now', 'localtime')`
+    ).catch(() => ({ count: 0, total: 0, avg: 0 }));
+
+    // Yesterday's numbers
+    const yesterdayStats = await db.get(
+      `SELECT COUNT(*) as count, COALESCE(SUM(total_amount), 0) as total, COALESCE(AVG(total_amount), 0) as avg
+       FROM sales_invoices
+       WHERE DATE(COALESCE(date, updated_at)) = DATE('now', 'localtime', '-1 day')`
+    ).catch(() => ({ count: 0, total: 0, avg: 0 }));
+
+    const todayRev = Number(todayStats?.total || 0);
+    const yestRev = Number(yesterdayStats?.total || 0);
+    const todayCount = Number(todayStats?.count || 0);
+    const yestCount = Number(yesterdayStats?.count || 0);
+    const todayAvg = Number(todayStats?.avg || 0);
+    const yestAvg = Number(yesterdayStats?.avg || 0);
+
+    const deltaRevenue = todayRev - yestRev;
+    const percentChange = yestRev > 0 ? Math.round(((todayRev - yestRev) / yestRev) * 100) : 0;
+
+    // Top sellers today
+    const topTodayRows = await db.all(
+      `SELECT m.name, SUM(si.quantity) as qty
+       FROM sale_items si
+       JOIN sales_invoices inv ON si.invoice_id = inv.id
+       JOIN inventory_master im ON si.inventory_id = im.id
+       JOIN medicines m ON im.medicine_id = m.id
+       WHERE DATE(COALESCE(inv.date, inv.updated_at)) = DATE('now', 'localtime')
+       GROUP BY m.name ORDER BY qty DESC LIMIT 3`
+    ).catch(() => []);
+
+    // Top sellers yesterday
+    const topYestRows = await db.all(
+      `SELECT m.name, SUM(si.quantity) as qty
+       FROM sale_items si
+       JOIN sales_invoices inv ON si.invoice_id = inv.id
+       JOIN inventory_master im ON si.inventory_id = im.id
+       JOIN medicines m ON im.medicine_id = m.id
+       WHERE DATE(COALESCE(inv.date, inv.updated_at)) = DATE('now', 'localtime', '-1 day')
+       GROUP BY m.name ORDER BY qty DESC LIMIT 3`
+    ).catch(() => []);
+
+    const topSellersToday = topTodayRows.map((r: any) => `${r.name} (${r.qty})`);
+    const topSellersYesterday = topYestRows.map((r: any) => `${r.name} (${r.qty})`);
+
+    // Comparative explanation
+    let analysisExplanation = '';
+    if (deltaRevenue < 0) {
+      if (todayCount < yestCount) {
+        analysisExplanation = `Today's revenue is lower than yesterday by ₹${Math.abs(deltaRevenue).toFixed(2)} (${Math.abs(percentChange)}% decrease). The primary factor is customer footfall: ${todayCount} bills billed today compared to ${yestCount} yesterday.`;
+      } else {
+        analysisExplanation = `Today's revenue is lower by ₹${Math.abs(deltaRevenue).toFixed(2)} despite similar bill volume (${todayCount} vs ${yestCount}). The average bill ticket was ₹${todayAvg.toFixed(2)} today compared to ₹${yestAvg.toFixed(2)} yesterday, indicating fewer high-value prescription sales.`;
+      }
+    } else if (deltaRevenue > 0) {
+      analysisExplanation = `Today's sales are higher by ₹${deltaRevenue.toFixed(2)} (+${percentChange}%) compared to yesterday (₹${todayRev.toFixed(2)} vs ₹${yestRev.toFixed(2)} across ${todayCount} invoices).`;
+    } else {
+      analysisExplanation = `Sales today are equal to yesterday at ₹${todayRev.toFixed(2)} across ${todayCount} invoices.`;
+    }
+
+    return {
+      role,
+      period: 'today_vs_yesterday',
+      todayRevenue: todayRev,
+      yesterdayRevenue: yestRev,
+      deltaRevenue,
+      percentChange,
+      todayBillCount: todayCount,
+      yesterdayBillCount: yestCount,
+      todayAverageTicket: todayAvg,
+      yesterdayAverageTicket: yestAvg,
+      analysisExplanation,
+      topSellersToday,
+      topSellersYesterday
+    };
+  }
+
+  /**
+   * Provides practical operational guidance for application screens and workflows
+   */
+  public explainApplicationScreen(pageOrTopic: string): {
+    title: string;
+    guidance: string;
+    shortcuts?: string[];
+    tips?: string[];
+  } {
+    const lower = pageOrTopic.toLowerCase();
+
+    if (lower.includes('purchase') || lower.includes('bill entry') || lower.includes('/purchases')) {
+      return {
+        title: 'Purchase Bill Entry Screen Guidance',
+        guidance: 'The Purchase Entry screen allows recording new stock invoices from registered distributors. You select the distributor, enter the invoice number and date, and add line items with batch, expiry, quantity, PTR, and GST.',
+        shortcuts: ['F3: Select Distributor', 'Ctrl+S: Save Draft', 'Tab: Move across fields', 'Enter: Add medicine row'],
+        tips: [
+          'Verify that the PTR and MRP match the physical paper invoice before final commit.',
+          'Always check expiry dates to prevent registering expired or near-expiry batches.',
+          'Consequential purchase finalization automatically updates inventory_master and stock_ledger.'
+        ]
+      };
+    }
+
+    if (lower.includes('pos') || lower.includes('billing') || lower.includes('/pos')) {
+      return {
+        title: 'POS Billing Screen Guidance',
+        guidance: 'The Point of Sale (POS) screen is designed for fast barcode or search-assisted medicine dispensing to walk-in and registered patients.',
+        shortcuts: ['F2: Focus Medicine Search', 'Ctrl+P: Print & Settle Bill', 'Alt+N: New Customer', 'Escape: Clear Search'],
+        tips: [
+          'Scan barcodes or type 3+ characters of the brand or salt name.',
+          'Schedule H & H1 drugs trigger mandatory doctor name prompt for compliance.',
+          'Check stock availability chips before finalizing the sale.'
+        ]
+      };
+    }
+
+    if (lower.includes('inventory') || lower.includes('stock') || lower.includes('/inventory')) {
+      return {
+        title: 'Inventory & Batch Management Guidance',
+        guidance: 'The Inventory screen displays active batches, physical rack locations, expiry dates, and real-time quantities in stock.',
+        shortcuts: ['Ctrl+F: Filter batches', 'Alt+E: Audit Near-Expiry'],
+        tips: [
+          'To correct stock quantities, perform a physical audit count and record a stock adjustment.',
+          'Batches within 60 days of expiry are highlighted in amber; expired batches in red.'
+        ]
+      };
+    }
+
+    if (lower.includes('crm') || lower.includes('refill') || lower.includes('/crm')) {
+      return {
+        title: 'CRM & Patient Refills Guidance',
+        guidance: 'The CRM screen manages chronic patient profiles, repeat refill schedules, follow-up call tasks, and inbound WhatsApp messages.',
+        shortcuts: ['Alt+R: Open Refills Due', 'Alt+T: New Call Task'],
+        tips: [
+          'When a patient approves a refill on WhatsApp or chat, stage it as Ready to notify the POS counter.',
+          'Never disclose confidential distributor purchase rates to patients.'
+        ]
+      };
+    }
+
+    if (lower.includes('dispatch') || lower.includes('delivery') || lower.includes('/dispatch')) {
+      return {
+        title: 'Dispatch & Delivery Operations Guidance',
+        guidance: 'The Dispatch screen assigns packed orders to delivery personnel, prints dispatch challans, and tracks delivery status.',
+        shortcuts: ['Alt+D: Assign Delivery Agent', 'Ctrl+P: Print Challan'],
+        tips: ['Ensure customer address and phone digits are verified before dispatching.']
+      };
+    }
+
+    return {
+      title: 'Pharmacy Application Guidance',
+      guidance: `AI-PHARMACY-V3 integrates POS billing, inventory batches, purchase invoices, distributor Live Cart, and CRM refills. You can ask for assistance on any screen by typing "Explain this page" or asking how to perform specific workflows.`,
+      shortcuts: ['F2: POS Search', 'F3: Purchases', 'Ctrl+K: Assistant Command Palette'],
+      tips: ['All consequential stock and billing adjustments require explicit operator confirmation (Rule 6).']
+    };
+  }
+
+  /**
+   * Guides staff on stock quantity corrections and stages an adjustment proposal
+   */
+  public async correctStockQuantity(options: {
+    medicineName?: string;
+    medicineId?: number;
+    batchNo?: string;
+    newQuantity?: number;
+    reason?: string;
+    dbInstance?: any;
+  }): Promise<{ guidance: string; stagedProposal?: any }> {
+    const guidance =
+      `To correct stock quantities in AI-PHARMACY-V3:\n\n` +
+      `1. Perform a physical shelf count of the medicine and note the batch number.\n` +
+      `2. Navigate to *Inventory* or *POS*, find the medicine record, and select *Adjust Stock*.\n` +
+      `3. Enter the audited quantity and state the reason (e.g. "Physical count discrepancy", "Damaged goods", "Return").\n` +
+      `4. Confirm the adjustment to record an audit entry in the \`stock_ledger\`.\n\n` +
+      `⚠️ *Accounting Rule:* Stock adjustments should never be made without physical verification.`;
+
+    let stagedProposal: any = null;
+    if (options.medicineId && options.batchNo && typeof options.newQuantity === 'number') {
+      stagedProposal = {
+        type: 'ADJUST_STOCK',
+        summary: `Adjust stock for medicine #${options.medicineId} (Batch: ${options.batchNo}) to ${options.newQuantity} units`,
+        data: {
+          medicineId: options.medicineId,
+          medicineName: options.medicineName,
+          batchNo: options.batchNo,
+          newQuantity: options.newQuantity,
+          reason: options.reason || 'Physical count adjustment'
+        }
+      };
+    }
+
+    return { guidance, stagedProposal };
+  }
+
+  /**
+   * Processes uploaded prescription or purchase invoice document images using OCR
+   */
+  public async processDocumentImage(options: {
+    buffer?: Buffer;
+    imagePath?: string;
+    docType?: 'prescription' | 'invoice' | 'packaging';
+    storeId?: number;
+    dbInstance?: any;
+  }): Promise<{
+    docType: string;
+    success: boolean;
+    extractedItems: any[];
+    headerInfo?: Record<string, any>;
+    stagedDraft?: any;
+    message: string;
+  }> {
+    const docType = options.docType || 'prescription';
+
+    if (docType === 'invoice' && options.buffer) {
+      try {
+        const parsedInvoice = await invoiceVisionService.parseInvoiceImage(
+          options.buffer,
+          'image/jpeg',
+          options.imagePath || 'invoice.jpg'
+        );
+
+        return {
+          docType: 'invoice',
+          success: Boolean(parsedInvoice.success),
+          extractedItems: (parsedInvoice.items || []).map(item => ({
+            name: item.name,
+            matchedDbName: item.matched_db_name,
+            batchNo: item.batch_no,
+            expiryDate: item.expiry_date,
+            quantity: item.quantity,
+            freeQty: item.free_qty,
+            costPrice: item.cost_price,
+            mrp: item.mrp
+          })),
+          headerInfo: {
+            distributor: parsedInvoice.distributor_name,
+            invoiceNo: parsedInvoice.invoice_no,
+            invoiceDate: parsedInvoice.invoice_date,
+            totalAmount: parsedInvoice.total_amount
+          },
+          stagedDraft: {
+            type: 'PURCHASE_ENTRY_DRAFT',
+            distributor: parsedInvoice.distributor_name,
+            invoiceNo: parsedInvoice.invoice_no,
+            itemCount: parsedInvoice.items?.length || 0
+          },
+          message: `Successfully parsed invoice with ${parsedInvoice.items?.length || 0} line items from ${parsedInvoice.distributor_name || 'distributor'}. Staged for review.`
+        };
+      } catch (err: any) {
+        return {
+          docType: 'invoice',
+          success: false,
+          extractedItems: [],
+          message: `Invoice OCR processing encountered an issue: ${err.message || err}`
+        };
+      }
+    }
+
+    // Prescription OCR workflow
+    if (options.buffer) {
+      try {
+        const scanRes = await prescriptionOrchestratorService.scanPrescriptionImage({
+          buffer: options.buffer,
+          source: 'pos',
+          storeId: options.storeId || 1
+        });
+
+        const items = (scanRes.items || []).map((i: any) => ({
+          rawText: i.rawText,
+          brandHint: i.brandHint,
+          dosageForm: i.dosageForm,
+          strength: i.strength,
+          prescribedQty: i.prescribedQuantity,
+          topMatch: i.matches?.[0]?.name,
+          matchScore: i.topScore,
+          availability: i.availability,
+          inventoryQty: i.inventoryQty
+        }));
+
+        return {
+          docType: 'prescription',
+          success: true,
+          extractedItems: items,
+          headerInfo: {
+            doctorName: scanRes.doctorName,
+            clinicName: scanRes.clinicName,
+            patientName: scanRes.patientName,
+            isPrescription: scanRes.isPrescription
+          },
+          stagedDraft: {
+            type: 'PRESCRIPTION_WORKFLOW_DRAFT',
+            scanId: scanRes.scanId,
+            itemCount: items.length
+          },
+          message: `Prescription OCR identified ${items.length} prescribed medicines. Staged for pharmacist verification.`
+        };
+      } catch (err: any) {
+        return {
+          docType: 'prescription',
+          success: false,
+          extractedItems: [],
+          message: `Prescription OCR processing error: ${err.message || err}`
+        };
+      }
+    }
+
+    return {
+      docType,
+      success: false,
+      extractedItems: [],
+      message: 'No image buffer or document payload provided.'
+    };
   }
 
   /**
@@ -245,15 +792,26 @@ export class PharmacyToolRegistry {
     patientPhone: string,
     details: string,
     priority: 'normal' | 'high' = 'normal',
+    dueDateOrDb?: string | any,
     dbInstance?: any
   ): Promise<{ success: boolean; taskId: number; message: string }> {
-    const db = dbInstance || (await dbManager.getConnection());
+    let dueDate: string | undefined;
+    let db: any;
+    if (dueDateOrDb && typeof dueDateOrDb === 'object') {
+      db = dueDateOrDb;
+    } else if (typeof dueDateOrDb === 'string') {
+      dueDate = dueDateOrDb;
+      db = dbInstance;
+    } else {
+      db = dbInstance;
+    }
+    if (!db) db = await dbManager.getConnection();
 
     const result = await db.run(
       `INSERT INTO patient_call_tasks
-         (task_type, patient_name, patient_phone, details_json, priority, status)
-       VALUES ('callback', ?, ?, ?, ?, 'pending')`,
-      [patientName || 'Customer', patientPhone, JSON.stringify({ details }), priority]
+         (task_type, patient_name, patient_phone, details_json, priority, due_date, status)
+       VALUES ('callback', ?, ?, ?, ?, ?, 'pending')`,
+      [patientName || 'Customer', patientPhone, JSON.stringify({ details }), priority, dueDate || null]
     );
 
     const taskId = Number(result.lastID);
@@ -273,7 +831,7 @@ export class PharmacyToolRegistry {
     return {
       success: true,
       taskId,
-      message: `A staff callback task has been scheduled for ${patientName}.`
+      message: `A staff reminder task #${taskId} has been scheduled for ${patientName}.`
     };
   }
 
@@ -304,6 +862,7 @@ export class PharmacyToolRegistry {
       cleanPhone,
       `Handover reason: ${reason}`,
       'high',
+      undefined,
       db
     ).catch(() => {});
 

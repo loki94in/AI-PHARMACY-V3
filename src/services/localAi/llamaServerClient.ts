@@ -169,6 +169,94 @@ export function stopLlamaServer(): void {
   }
 }
 
+export interface LlamaChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface LlamaChatCompletionOptions extends Partial<LlamaServerConfig> {
+  temperature?: number;
+  maxTokens?: number;
+  responseFormat?: { type: 'json_object' | 'text' };
+}
+
+export interface LlamaChatCompletionResult {
+  content: string;
+  parsedJson?: any;
+  success: boolean;
+  latencyMs: number;
+}
+
+/**
+ * General chat completion query to local llama-server.
+ * Non-blocking guarantee: strict timeout, catches all network faults, never throws.
+ */
+export async function queryLocalAiChat(
+  messages: LlamaChatMessage[],
+  options: LlamaChatCompletionOptions = {}
+): Promise<LlamaChatCompletionResult> {
+  const start = performance.now();
+  const cfg = getLocalAiConfig(options);
+  const endpoint = `${getLocalAiBaseUrl(cfg)}/v1/chat/completions`;
+  const timeoutMs = options.timeoutMs || cfg.timeoutMs || 4000;
+
+  const payload: any = {
+    model: 'qwen3-1.7b',
+    messages,
+    temperature: options.temperature ?? 0.1,
+    max_tokens: options.maxTokens ?? 256
+  };
+  if (options.responseFormat) {
+    payload.response_format = options.responseFormat;
+  }
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+
+    if (!response.ok) {
+      return {
+        content: '',
+        success: false,
+        latencyMs: Math.round(performance.now() - start)
+      };
+    }
+
+    const data = await response.json() as any;
+    const rawContent = data?.choices?.[0]?.message?.content || '';
+    let parsedJson: any = null;
+    if (options.responseFormat?.type === 'json_object' && rawContent) {
+      try {
+        parsedJson = JSON.parse(rawContent);
+      } catch {
+        const match = rawContent.match(/\{[\s\S]*\}/);
+        if (match) {
+          try {
+            parsedJson = JSON.parse(match[0]);
+          } catch (_) {}
+        }
+      }
+    }
+
+    return {
+      content: rawContent,
+      parsedJson,
+      success: true,
+      latencyMs: Math.round(performance.now() - start)
+    };
+  } catch {
+    return {
+      content: '',
+      success: false,
+      latencyMs: Math.round(performance.now() - start)
+    };
+  }
+}
+
 /**
  * Builds standard system prompt for Qwen3-1.7B structured intent classification.
  */

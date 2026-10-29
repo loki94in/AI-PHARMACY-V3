@@ -59,7 +59,8 @@ describe('Conversational AI Agent Engine Suite', () => {
       INSERT OR REPLACE INTO medicines (id, name, canonical_name, generic_name, dosage_form, strength, mrp, sell_price, total_stock)
       VALUES (101, 'Telma 40', 'Telma 40', 'Telmisartan 40mg', 'Tablet', '40mg', 145.00, 135.00, 40),
              (102, 'Dolo 650', 'Dolo 650', 'Paracetamol 650mg', 'Tablet', '650mg', 33.50, 30.00, 100),
-             (103, 'Augmentin 625 Duo', 'Augmentin 625 Duo', 'Amoxicillin and Potassium Clavulanate', 'Tablet', '625mg', 220.00, 200.00, 0)
+             (103, 'Augmentin 625 Duo', 'Augmentin 625 Duo', 'Amoxicillin and Potassium Clavulanate', 'Tablet', '625mg', 220.00, 200.00, 0),
+             (104, 'Telmikem 40', 'Telmikem 40', 'Telmisartan 40mg', 'Tablet', '40mg', 130.00, 120.00, 50)
     `);
 
     // 4. Seed patient refills
@@ -69,6 +70,21 @@ describe('Conversational AI Agent Engine Suite', () => {
       ) VALUES
       (1, 1, 'Rajesh Sharma', '9876543210', 1, 101, 'Telma 40', 1, DATE('now', '+2 days'), 'pending', 0, 1),
       (2, 1, 'Anjali Patil', '9123456780', 2, 102, 'Dolo 650', 2, DATE('now'), 'pending', 0, 1)
+    `);
+
+    // 5. Seed expiring inventory batches
+    await db.run(`
+      INSERT OR REPLACE INTO inventory_master (id, store_id, medicine_id, quantity, batch_no, expiry_date, rack_location)
+      VALUES (1, 1, 101, 25, 'B-TEL40', DATE('now', '+25 days'), 'RACK-A1'),
+             (2, 1, 102, 50, 'B-DOLO65', DATE('now', '+20 days'), 'RACK-B2')
+    `);
+
+    // 6. Seed sales invoices for today and yesterday
+    await db.run(`
+      INSERT OR REPLACE INTO sales_invoices (id, store_id, invoice_no, customer_id, date, total_amount)
+      VALUES (1, 1, 'INV-TODAY', 1, DATETIME('now', 'localtime'), 150.00),
+             (2, 1, 'INV-YEST-1', 1, DATETIME('now', 'localtime', '-1 day'), 200.00),
+             (3, 1, 'INV-YEST-2', 2, DATETIME('now', 'localtime', '-1 day'), 300.00)
     `);
   });
 
@@ -275,5 +291,89 @@ describe('Conversational AI Agent Engine Suite', () => {
 
     expect(indexNames).toContain('idx_cust_conv_phone');
     expect(indexNames).toContain('idx_cust_turns_session');
+  });
+
+  // 15. Medicine Intelligence & Alternatives Comparison
+  it('Criteria 15: finds same-salt alternatives with composition matching and clinical disclaimer', async () => {
+    const altResult = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-test-alt-1',
+      role: 'staff',
+      message: 'This medicine is unavailable. Find an alternative for Telma 40.'
+    });
+
+    expect(altResult.intent).toBe('ALTERNATIVES_SEARCH');
+    expect(altResult.replyText).toContain('Telmisartan 40mg');
+    expect(altResult.replyText).toContain('Telmikem 40');
+    expect(altResult.replyText).toContain('Pharmacist Verification Required');
+    expect(altResult.cards && altResult.cards.length).toBeGreaterThan(0);
+  });
+
+  // 16. Contextual Follow-up Memory ("show me the first one")
+  it('Criteria 16: understands contextual follow-ups without repeating the full prompt', async () => {
+    const followUpResult = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-test-alt-1',
+      role: 'staff',
+      message: 'Show me the first one'
+    });
+
+    expect(followUpResult.intent).toBe('CONTEXTUAL_FOLLOW_UP');
+    expect(followUpResult.replyText).toContain('Selected Alternative');
+    expect(followUpResult.replyText).toContain('Telmikem 40');
+  });
+
+  // 17. Expiry Audit across inventory
+  it('Criteria 17: audits near-expiry batches across inventory without rigid triggers', async () => {
+    const expiryResult = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-test-exp-1',
+      role: 'staff',
+      message: 'Find medicines that are expiring next month'
+    });
+
+    expect(expiryResult.intent).toBe('EXPIRY_AUDIT');
+    expect(expiryResult.replyText).toContain('Near-Expiry Batch Audit Report');
+    expect(expiryResult.replyText).toContain('B-TEL40');
+    expect(expiryResult.replyText).toContain('RACK-A1');
+  });
+
+  // 18. Sales Analytics & Delta Explanation (Today vs Yesterday)
+  it('Criteria 18: shows today sales and explains why they are lower than yesterday', async () => {
+    const salesResult = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-test-sales-1',
+      role: 'staff',
+      message: 'Show me today sales and explain why they are lower than yesterday'
+    });
+
+    expect(salesResult.intent).toBe('SALES_COMPARISON');
+    expect(salesResult.replyText).toContain('Daily Sales Comparison (Today vs Yesterday)');
+    expect(salesResult.replyText).toContain('150.00'); // Today's revenue
+    expect(salesResult.replyText).toContain('500.00'); // Yesterday's revenue (200 + 300)
+    expect(salesResult.replyText).toContain('Why is it different?');
+  });
+
+  // 19. Application Screen & Workflow Assistance
+  it('Criteria 19: explains screen usage and keyboard shortcuts clearly', async () => {
+    const screenResult = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-test-screen-1',
+      role: 'staff',
+      message: 'Explain how to use the purchase entry screen'
+    });
+
+    expect(screenResult.intent).toBe('APPLICATION_GUIDE');
+    expect(screenResult.replyText).toContain('Purchase Bill Entry Screen Guidance');
+    expect(screenResult.replyText).toContain('F3: Select Distributor');
+    expect(screenResult.replyText).toContain('Ctrl+S: Save Draft');
+  });
+
+  // 20. Stock Correction Guidance
+  it('Criteria 20: explains how to correct stock quantity and enforces physical audit rule', async () => {
+    const stockResult = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-test-stock-1',
+      role: 'staff',
+      message: 'How can I correct the stock quantity?'
+    });
+
+    expect(stockResult.intent).toBe('STOCK_CORRECTION');
+    expect(stockResult.replyText).toContain('physical shelf count');
+    expect(stockResult.replyText).toContain('stock_ledger');
   });
 });

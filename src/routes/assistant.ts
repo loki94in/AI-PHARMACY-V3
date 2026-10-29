@@ -10,6 +10,7 @@
 
 import express, { Request, Response } from 'express';
 import { unifiedAssistantOrchestrator, AssistantRole } from '../services/localAi/unifiedAssistantOrchestrator.js';
+import { conversationalAgentEngine } from '../services/localAi/conversationalAgentEngine.js';
 import { isLocalAiEnabled, checkLlamaServerHealth } from '../services/localAi/llamaServerClient.js';
 
 const router = express.Router();
@@ -28,13 +29,23 @@ router.post('/chat', async (req: Request, res: Response) => {
       userId,
       username,
       storeId,
-      pageContext
+      pageContext,
+      imageBase64,
+      docType
     } = req.body || {};
 
-    if (!message || typeof message !== 'string' || !message.trim()) {
+    let imageBuffer: Buffer | undefined;
+    if (imageBase64 && typeof imageBase64 === 'string') {
+      try {
+        const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+        imageBuffer = Buffer.from(cleanBase64, 'base64');
+      } catch (_) {}
+    }
+
+    if ((!message || typeof message !== 'string' || !message.trim()) && !imageBuffer) {
       return res.status(400).json({
         success: false,
-        error: 'Message parameter is required and cannot be empty.'
+        error: 'Message parameter or image payload is required.'
       });
     }
 
@@ -72,28 +83,38 @@ router.post('/chat', async (req: Request, res: Response) => {
       resolvedRole = isVerifiedOwner ? 'owner' : 'staff';
     }
 
-    const sessionContext = unifiedAssistantOrchestrator.getSessionContext(
+    const agentResult = await conversationalAgentEngine.processMessage({
+      message: (message || '').trim(),
       sessionId,
-      resolvedRole,
-      language
-    );
-
-    if (userId) sessionContext.userId = Number(userId);
-    if (username) sessionContext.username = String(username);
-    if (storeId) sessionContext.storeId = Number(storeId);
-    if (pageContext) {
-      sessionContext.pageContext = pageContext;
-      sessionContext.currentPage = pageContext.pathname;
-    }
-
-    const response = await unifiedAssistantOrchestrator.processCommand(message.trim(), sessionContext, {
       role: resolvedRole,
       userId: userId ? Number(userId) : undefined,
       username: username ? String(username) : undefined,
       storeId: storeId ? Number(storeId) : undefined,
       language,
-      pageContext
+      pageContext,
+      imageBuffer,
+      docType
     });
+
+    const response = {
+      sessionId: agentResult.sessionId,
+      query: (message || '').trim() || '[Document Image]',
+      reply: agentResult.replyText,
+      actionType: agentResult.intent,
+      proposedAction: agentResult.proposedAction ? {
+        id: agentResult.proposedAction.id || `prop_${Date.now()}`,
+        actionType: agentResult.proposedAction.type,
+        description: agentResult.proposedAction.summary,
+        payload: agentResult.proposedAction.data,
+        requiresConfirmation: agentResult.requiresConfirmation,
+        status: agentResult.proposedAction.status || 'PENDING_CONFIRMATION',
+        createdAt: new Date().toISOString()
+      } : undefined,
+      cards: agentResult.cards || [],
+      suggestedFollowUps: agentResult.suggestedFollowUps || [],
+      requiresConfirmation: agentResult.requiresConfirmation,
+      latencyMs: agentResult.latencyMs || 0
+    };
 
     return res.json({
       success: true,
@@ -135,6 +156,24 @@ router.post('/confirm', async (req: Request, res: Response) => {
       storeId: storeId ? Number(storeId) : 1
     };
 
+    // 1. Check conversational agent engine confirmation
+    const agentConfirm = await conversationalAgentEngine.processMessage({
+      sessionId,
+      message: 'yes',
+      userId: userId ? Number(userId) : undefined,
+      username: username ? String(username) : 'staff',
+      storeId: storeId ? Number(storeId) : 1
+    });
+
+    if (agentConfirm.actionTaken) {
+      return res.json({
+        success: true,
+        message: agentConfirm.replyText,
+        data: agentConfirm.proposedAction || { id: proposalId, status: 'EXECUTED' }
+      });
+    }
+
+    // 2. Fall back to unifiedAssistantOrchestrator
     const result = await unifiedAssistantOrchestrator.confirmProposal(proposalId, sessionId, operator);
 
     if (!result.success) {
@@ -206,6 +245,59 @@ router.post('/clear-session', (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: err.message || 'Failed to clear session.'
+    });
+  }
+});
+
+/**
+ * POST /api/assistant/upload-document
+ * Uploads prescription, invoice, or medicine packaging image for OCR intelligence
+ */
+router.post('/upload-document', async (req: Request, res: Response) => {
+  try {
+    const {
+      imageBase64,
+      docType = 'prescription',
+      sessionId = 'default-staff-session',
+      role = 'staff',
+      storeId = 1
+    } = req.body || {};
+
+    if (!imageBase64 || typeof imageBase64 !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'imageBase64 parameter is required.'
+      });
+    }
+
+    const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(cleanBase64, 'base64');
+
+    const agentResult = await conversationalAgentEngine.processMessage({
+      message: `Process uploaded ${docType} document`,
+      sessionId,
+      role: role === 'owner' ? 'owner' : (role === 'customer' ? 'customer' : 'staff'),
+      storeId: Number(storeId),
+      imageBuffer: buffer,
+      docType: docType as any
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        sessionId: agentResult.sessionId,
+        reply: agentResult.replyText,
+        actionType: agentResult.intent,
+        proposedAction: agentResult.proposedAction,
+        cards: agentResult.cards || [],
+        suggestedFollowUps: agentResult.suggestedFollowUps || []
+      }
+    });
+  } catch (err: any) {
+    console.error('[Assistant Route] Upload error:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Failed to process document upload.'
     });
   }
 });

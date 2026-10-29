@@ -64,12 +64,13 @@ export class ConversationalMemoryService {
     channel: 'whatsapp' | 'portal' | 'in_app',
     phone: string,
     customerId?: number | null,
-    dbInstance?: any
+    dbInstance?: any,
+    customSessionId?: string
   ): Promise<CustomerConversationSession> {
     const db = dbInstance || (await dbManager.getConnection());
     const rawDigits = String(phone || '').replace(/\D/g, '');
     const cleanPhone = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
-    const sessionId = this.generateSessionId(channel, cleanPhone || String(customerId || 'unknown'));
+    const sessionId = customSessionId || this.generateSessionId(channel, cleanPhone || String(customerId || 'unknown'));
 
     // 1. Try to find existing session
     const row = await db.get(
