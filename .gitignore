@@ -69,6 +69,12 @@ web-build/
 data/models/
 eng.traineddata
 
+# ─── Local AI Offline Runtime & Models (large binaries — provision separately) ───
+models/local-ai/*.gguf
+models/local-ai/*.bin
+models/local-ai/*.exe
+models/local-ai/*.dll
+
 # ─── SQL Dumps ───────────────────────────────────────────────────────────────
 *.sql
 

@@ -114,6 +114,39 @@ fs.copyFileSync(path.join(electronDistDir, 'main.cjs'), path.join(appResourcesDi
 fs.copyFileSync(path.join(electronDistDir, 'preload.cjs'), path.join(appResourcesDir, 'preload.cjs'));
 console.log('[build-sea] ✓ Electron app and resources staged in dist/resources/app');
 
+// Local AI offline assets staging & BUNDLE_LOCAL_AI gate
+const bundleLocalAi = process.env.BUNDLE_LOCAL_AI === '1' || process.env.BUNDLE_LOCAL_AI === 'true';
+const localAiDir = path.join(root, 'models', 'local-ai');
+const stagedLocalAiDir = path.join(distDir, 'resources', 'local-ai');
+
+if (bundleLocalAi || (fs.existsSync(localAiDir) && fs.readdirSync(localAiDir).length > 0)) {
+  console.log('[build-sea] Validating offline Local AI assets...');
+  try {
+    execFileSync(process.execPath, [path.join(root, 'scripts', 'verify-local-ai-assets.mjs'), ...(bundleLocalAi ? ['--strict'] : [])], {
+      cwd: root,
+      stdio: 'inherit'
+    });
+  } catch (err) {
+    console.error('[build-sea] ❌ Local AI asset verification failed! BUNDLE_LOCAL_AI=1 requires model, runtime, license, and metadata.');
+    process.exit(1);
+  }
+
+  if (fs.existsSync(localAiDir)) {
+    fs.mkdirSync(stagedLocalAiDir, { recursive: true });
+    console.log('[build-sea] Staging provisioned Local AI assets into dist/resources/local-ai...');
+    for (const file of fs.readdirSync(localAiDir)) {
+      const srcFile = path.join(localAiDir, file);
+      const destFile = path.join(stagedLocalAiDir, file);
+      if (fs.statSync(srcFile).isFile()) {
+        fs.copyFileSync(srcFile, destFile);
+      }
+    }
+    console.log('[build-sea] ✓ Local AI assets successfully staged for offline installer.');
+  }
+} else {
+  console.log('[build-sea] Local AI offline assets not bundled (BUNDLE_LOCAL_AI is not set).');
+}
+
 // Automatically check for Inno Setup compiler (ISCC.exe) and compile installer if installed
 const isccCandidates = [
   'iscc',

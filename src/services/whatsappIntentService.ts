@@ -6331,6 +6331,24 @@ export async function handleInbound(msg: any): Promise<void> {
       pushCandidate(chem, undefined, undefined, true);
     }
 
+    // Non-blocking shadow classifier for ambiguous text (strictly passive, zero business actions)
+    try {
+      const { triggerShadowClassificationNonBlocking } = await import('./localAi/shadowIntentClassifier.js');
+      triggerShadowClassificationNonBlocking(
+        {
+          phone: phone || '',
+          body,
+          hasMedia: Boolean(hasMedia),
+          isRepeat: Boolean(isRepeatRequest(body)),
+          isExplicitId: Boolean(resolvedMedFromId)
+        },
+        {
+          isMedicineRequest: Boolean(parsed.isMedicineRequest || candidates.length > 0),
+          candidateNames: candidates.map(c => c.name)
+        }
+      );
+    } catch (_) {}
+
     if (candidates.length > 0) {
       // Guided Workflow Pre-Flight Gate:
       // If the customer sent random text that is NOT in an active medicine step ("awaiting_medicine"),

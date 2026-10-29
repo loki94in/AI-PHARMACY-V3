@@ -377,6 +377,27 @@ To prevent orphan headless Chromium processes from exhausting RAM and thrashing 
 
 ---
 
+## Local AI Offline Runtime & Shadow Classifier Contract (added 2026-10-29)
+
+To support optional on-premise intent parsing for ambiguous customer WhatsApp text without external API dependencies:
+1. **Local-Only Runtime**: Driven by llama.cpp server (llama-server.exe) and Qwen3-1.7B Q4_K_M GGUF. Strictly binds to 127.0.0.1:8080.
+2. **No-GPU Desktop Contract Compliance**: The model runtime executes strictly on CPU threads (-ngl 0). GPU rasterization, CUDA, or Vulkan acceleration must never be required or enabled.
+3. **Passive Shadow Mode Only**:
+   - Disabled by default (LOCAL_AI_ENABLED=false).
+   - Runs exclusively as a non-blocking background observer for ambiguous text (triggerShadowClassificationNonBlocking).
+   - Immediately bypasses confirmations (YES, haan, NO, cancel), media messages (hasMedia=true), repeat requests (same, wahi, refill), and explicit IDs (#4512).
+   - **Zero Business Impact**: Existing deterministic parser and business workflows remain 100% authoritative. No order, cart, inventory, pricing, CRM, POS, OCR, or distributor action is driven by model output.
+4. **Offline Asset Provisioning & Build Gate**:
+   - The large GGUF model and llama-server.exe are NOT stored in Git.
+   - When building with BUNDLE_LOCAL_AI=1, the build strictly aborts unless model, runtime, license notices, and metadata are present under models/local-ai/.
+5. **Cloud-Hosted Model Download & WhatsApp Lifecycle**:
+   - When WhatsApp connects, if Local AI is enabled and assets are missing, initiates non-blocking background download from verified cloud release manifest.
+   - WhatsApp message handling and deterministic operations are never blocked.
+   - Downloads stream to per-user AppData storage, support byte-range resume, verify SHA-256 checksums, and atomically activate.
+   - Rest API (/api/local-ai) and SSE events stream progress, cancellation, and retry states.
+
+---
+
 ## SPA Performance & Database Search Contract
 
 To prevent sluggish page switching, high network/CPU utilization, and laggy autocomplete dropdowns:

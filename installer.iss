@@ -138,6 +138,9 @@ Source: "data\pharmacy-mobile.apk"; DestDir: "{app}\data"; Flags: ignoreversion 
 ; Optional Tesseract OCR data
 Source: "eng.traineddata"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
+; Optional Local AI models & llama-server runtime (strictly offline, disabled by default)
+Source: "models\local-ai\*"; DestDir: "{app}\models\local-ai"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+
 ; Application Blue Cross Icon
 Source: "packaging\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 

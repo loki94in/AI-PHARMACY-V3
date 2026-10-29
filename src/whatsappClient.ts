@@ -1333,6 +1333,13 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
         eventService.broadcast('wa_status_changed', { status: 'ready', service: 'whatsapp' });
       } catch (_) {}
 
+      // Non-blocking Local AI verification & lifecycle hook on WhatsApp connection
+      try {
+        import('./services/localAi/localAiLifecycleManager.js')
+          .then(({ localAiLifecycleManager }) => localAiLifecycleManager.onWhatsAppConnected())
+          .catch((err) => console.warn('[WhatsApp] Local AI lifecycle check skipped:', err));
+      } catch (_) {}
+
       // Persist authenticated status and connected phone number to app_settings
       try {
         const db = await dbManager.getConnection();
