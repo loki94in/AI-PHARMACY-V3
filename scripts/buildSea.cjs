@@ -202,8 +202,37 @@ if (isccExe && fs.existsSync(issPath)) {
   try {
     // Pass version via /DMyAppVersion=, compression via /DCompression=, and stamp via /DNodeModulesStamp=
     const bundleLocalAiFlag = bundleLocalAi ? '/DBundleLocalAi=1' : '';
-    execSync(`"${isccExe}" /DMyAppVersion=${APP_VERSION} /DCompression=${compression} /DNodeModulesStamp=${nodeModulesStamp} ${bundleLocalAiFlag} "${issPath}"`, { cwd: root, stdio: 'inherit' });
-    console.log(`[build-sea] 🎉 Standalone Installer created at: dist\\installer\\AI-Pharmacy-OS-Portable-Setup-v${APP_VERSION}.exe`);
+    const outBaseName = bundleLocalAi
+      ? `AI-Pharmacy-OS-Offline-Setup-v${APP_VERSION}`
+      : `AI-Pharmacy-OS-Cloud-Setup-v${APP_VERSION}`;
+    execSync(
+      `"${isccExe}" /DMyAppVersion=${APP_VERSION} /DCompression=${compression} /DNodeModulesStamp=${nodeModulesStamp} /DOutputBaseFilename=${outBaseName} ${bundleLocalAiFlag} "${issPath}"`,
+      { cwd: root, stdio: 'inherit' }
+    );
+
+    const installerExeName = `${outBaseName}.exe`;
+    const installerExePath = path.join(root, 'dist', 'installer', installerExeName);
+    console.log(`[build-sea] 🎉 Standalone Installer created at: dist\\installer\\${installerExeName}`);
+
+    // Generate isolated build manifest with SHA-256 and size
+    if (fs.existsSync(installerExePath)) {
+      const stats = fs.statSync(installerExePath);
+      const hash = crypto.createHash('sha256').update(fs.readFileSync(installerExePath)).digest('hex');
+      const manifestName = bundleLocalAi ? 'build-manifest-offline.json' : 'build-manifest-cloud.json';
+      const manifestPath = path.join(root, 'dist', 'installer', manifestName);
+      const manifestData = {
+        buildMode: bundleLocalAi ? 'OFFLINE_BUNDLED' : 'CLOUD_DOWNLOAD',
+        version: APP_VERSION,
+        installerFilename: installerExeName,
+        sizeBytes: stats.size,
+        sizeMb: parseFloat((stats.size / (1024 * 1024)).toFixed(2)),
+        sha256: hash,
+        bundledModel: bundleLocalAi,
+        builtAt: new Date().toISOString()
+      };
+      fs.writeFileSync(manifestPath, JSON.stringify(manifestData, null, 2), 'utf8');
+      console.log(`[build-sea] ✓ Build manifest written: dist/installer/${manifestName} (SHA-256: ${hash})`);
+    }
   } catch (e) {
     console.error('[build-sea] Inno Setup compilation failed:', e.message);
   }

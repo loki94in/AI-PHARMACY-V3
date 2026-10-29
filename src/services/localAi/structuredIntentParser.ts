@@ -1,6 +1,8 @@
 /**
  * Structured Intent Parser for Qwen3-1.7B Q4_K_M
  * Extracts and strictly validates bounded intent schemas from raw model output.
+ * Guarantees domain safety: filters out non-medicine health conditions (e.g. "BP")
+ * and strictly prevents invented medicines, packaging, or quantities.
  */
 
 import type { LocalAiIntentType, MedicineItem, StructuredIntentResult } from './types.js';
@@ -13,6 +15,76 @@ export const MIN_QUANTITY = 1;
 export const MAX_QUANTITY = 100;
 
 const VALID_INTENTS: Set<LocalAiIntentType> = new Set(['ORDER', 'REFILL', 'INQUIRY', 'CHITCHAT', 'UNKNOWN']);
+
+/**
+ * Catalog of health conditions, symptoms, and generic medicine placeholders.
+ * These are NOT specific pharmaceutical products and must NEVER be extracted as medicine items.
+ */
+export const NON_MEDICINE_TERMS: Set<string> = new Set([
+  'bp',
+  'blood pressure',
+  'high bp',
+  'low bp',
+  'sugar',
+  'diabetes',
+  'fever',
+  'bukhar',
+  'bukhar ki dawai',
+  'cold',
+  'sardi',
+  'cough',
+  'khansi',
+  'headache',
+  'sar dard',
+  'sir dard',
+  'pain',
+  'dard',
+  'body pain',
+  'bodyache',
+  'pet dard',
+  'stomach ache',
+  'stomach pain',
+  'chest pain',
+  'acidity',
+  'gas',
+  'loose motion',
+  'diarrhea',
+  'vomiting',
+  'ultee',
+  'ulti',
+  'allergy',
+  'infection',
+  'asthma',
+  'thyroid',
+  'cholesterol',
+  'cancer',
+  'heart',
+  'dawai',
+  'dawa',
+  'dawayi',
+  'medicine',
+  'medicines',
+  'med',
+  'meds',
+  'goli',
+  'tablet',
+  'tablets',
+  'capsule',
+  'capsules',
+  'syrup',
+  'injection',
+  'regular dawai',
+  'purani dawai',
+  'same medicine',
+  'regular medicine',
+  'regular dawa',
+  'prescription'
+]);
+
+/**
+ * Known command / script / SQL injection patterns to strictly reject.
+ */
+const FORBIDDEN_SYNTAX_REGEX = /<script\b|javascript:|cmd\.exe|powershell\b|rm\s+-rf|DROP\s+TABLE|UNION\s+SELECT|exec\s*\(|eval\s*\(/i;
 
 /**
  * Normalizes and clamps intent to valid enum.
@@ -38,7 +110,7 @@ export function normalizeConfidence(rawConfidence: unknown): number {
     const parsed = parseFloat(rawConfidence);
     return normalizeConfidence(parsed);
   }
-  if (typeof rawConfidence !== 'number' || !Number.isFinite(rawConfidence)) {
+  if (typeof rawConfidence !== 'number' || !Number.isFinite(rawConfidence) || Number.isNaN(rawConfidence)) {
     return 0.0;
   }
   let val = rawConfidence;
@@ -57,19 +129,53 @@ export function sanitizeString(raw: unknown, maxLength: number): string {
   return raw
     .replace(/<[^>]*>/g, '') // strip HTML
     .replace(/[\r\n\t]+/g, ' ') // collapse control chars
+    .replace(/[;&|`$]+/g, ' ') // neutralize shell operators
     .trim()
     .slice(0, maxLength);
 }
 
 /**
+ * Checks if a string represents a generic condition, symptom, or non-medicine word.
+ */
+export function isNonMedicineCondition(rawName: string): boolean {
+  if (!rawName) return true;
+  const cleaned = rawName.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '');
+  if (NON_MEDICINE_TERMS.has(cleaned)) return true;
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+  if (tokens.length <= 2 && tokens.every(t => NON_MEDICINE_TERMS.has(t))) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Validates and bounds a single medicine item.
+ * Strictly filters out health conditions, symptoms, and code injection attempts.
  */
 export function normalizeMedicineItem(rawItem: unknown): MedicineItem | null {
   if (!rawItem || typeof rawItem !== 'object') return null;
   const item = rawItem as Record<string, unknown>;
 
-  const name = sanitizeString(item.name || item.medicine || item.medicineName, MAX_NAME_LENGTH);
+  const rawName = item.name || item.medicine || item.medicineName;
+  if (typeof rawName !== 'string') return null;
+
+  // Security check: reject code execution / command injection syntax
+  if (FORBIDDEN_SYNTAX_REGEX.test(rawName)) {
+    return null;
+  }
+
+  const name = sanitizeString(rawName, MAX_NAME_LENGTH);
   if (!name || name.length < 2) return null;
+
+  // Domain gate: reject medical conditions, symptoms, and generic terms
+  if (isNonMedicineCondition(name)) {
+    return null;
+  }
+
+  // Must contain valid alphanumeric medicine characters
+  if (!/^[a-zA-Z0-9\s\-\+\/\.\(\)%]{2,}$/.test(name)) {
+    return null;
+  }
 
   let qty = 1;
   const rawQty = item.quantity ?? item.qty;
@@ -83,7 +189,9 @@ export function normalizeMedicineItem(rawItem: unknown): MedicineItem | null {
   const boundedQty = Math.max(MIN_QUANTITY, Math.min(MAX_QUANTITY, qty));
 
   let unit = sanitizeString(item.unit || item.packaging, MAX_UNIT_LENGTH).toLowerCase();
-  if (!unit) unit = 'strip';
+  if (FORBIDDEN_SYNTAX_REGEX.test(unit) || !unit) {
+    unit = 'strip';
+  }
 
   return {
     name,
@@ -97,7 +205,6 @@ export function normalizeMedicineItem(rawItem: unknown): MedicineItem | null {
  */
 export function extractJsonString(rawOutput: string): string | null {
   if (!rawOutput || typeof rawOutput !== 'string') return null;
-
   const trimmed = rawOutput.trim();
 
   // Case 1: Markdown code block (```json ... ``` or ``` ...)

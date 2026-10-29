@@ -35,6 +35,13 @@
 #ifndef NodeModulesStamp
   #define NodeModulesStamp "default"
 #endif
+#ifndef OutputBaseFilename
+  #ifdef BundleLocalAi
+    #define OutputBaseFilename "AI-Pharmacy-OS-Offline-Setup-v" + MyAppVersion
+  #else
+    #define OutputBaseFilename "AI-Pharmacy-OS-Cloud-Setup-v" + MyAppVersion
+  #endif
+#endif
 #define MyAppPublisher "AI Pharmacy Team"
 #define MyAppURL       ""
 #define MyAppExeName   "PharmacyOS.exe"
@@ -56,7 +63,7 @@ AllowNoIcons=yes
 DisableDirPage=no
 
 OutputDir=dist\installer
-OutputBaseFilename=AI-Pharmacy-OS-Portable-Setup-v{#MyAppVersion}
+OutputBaseFilename={#OutputBaseFilename}
 
 Compression={#Compression}
 ; SolidCompression is disabled to allow per-file extraction and instant skipping of unchanged node_modules

@@ -202,7 +202,12 @@ if (!skipBuild) {
 // ── Step 2: Locate installer — must contain the bumped version ──────────────
 const step2Start = performance.now();
 console.log('\n🔍 Step 2: Locating versioned installer...');
-const expectedInstallerName = `AI-Pharmacy-OS-Portable-Setup-${tagName}.exe`;
+const bundleLocalAi = process.env.BUNDLE_LOCAL_AI === '1' || process.env.BUNDLE_LOCAL_AI === 'true';
+const candidateNames = bundleLocalAi
+  ? [`AI-Pharmacy-OS-Offline-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Cloud-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Portable-Setup-${tagName}.exe`]
+  : [`AI-Pharmacy-OS-Cloud-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Offline-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Portable-Setup-${tagName}.exe`];
+
+let expectedInstallerName = candidateNames.find(name => fs.existsSync(path.join(installerDir, name))) || candidateNames[0];
 const installerExe = path.join(installerDir, expectedInstallerName);
 
 if (!fs.existsSync(installerExe)) {

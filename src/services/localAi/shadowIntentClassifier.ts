@@ -51,6 +51,15 @@ export function evaluateShadowEligibility(ctx: ShadowEvaluationContext): ShadowB
   }
 
   const rawText = (ctx.body || '').trim();
+  if (!rawText) {
+    return { shouldRun: false, reason: 'EMPTY_TEXT' };
+  }
+
+  // Explicit confirmation flag or single-digit menu choice ("1", "2", "y", "n")
+  if (ctx.isConfirmation || /^(?:1|2|y|n)$/i.test(rawText)) {
+    return { shouldRun: false, reason: 'CONFIRMATION_BYPASS' };
+  }
+
   if (rawText.length < 2) {
     return { shouldRun: false, reason: 'EMPTY_TEXT' };
   }
