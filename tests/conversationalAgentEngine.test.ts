@@ -262,7 +262,20 @@ describe('Conversational AI Agent Engine Suite', () => {
     expect(greeting.replyText).toContain('refills');
   });
 
-  // 14. Database Migration Safety & Table Verification
+  // 14. Free-form questions use grounded QA instead of a trigger menu
+  it('answers an unrecognised natural-language question without demanding a trigger word', async () => {
+    const result = await conversationalAgentEngine.processCustomerMessage({
+      phone: '9876543210',
+      channel: 'portal',
+      message: 'I am not sure what I can ask here. Can you help me understand what you can assist with?'
+    });
+
+    expect(result.intent).toBe('GENERAL_QA');
+    expect(result.replyText).toBeTruthy();
+    expect(result.replyText).not.toMatch(/type a medicine name|type refill|type pharmacist/i);
+  });
+
+  // 15. Database Migration Safety & Table Verification
   it('Criteria 14: conversation session and turns tables exist with required indexes', async () => {
     const tables = await db.all("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'customer_conversation%'");
     const tableNames = tables.map((t: any) => t.name);
