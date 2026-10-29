@@ -43,6 +43,17 @@ async function main() {
     return;
   }
 
+  // Start the bundled local AI runtime independently of WhatsApp so the
+  // in-app operations assistant can use natural-language routing immediately.
+  // Startup is intentionally non-blocking; the deterministic assistant remains
+  // available if local model assets are absent or the runtime fails.
+  try {
+    const { localAiLifecycleManager } = await import('./services/localAi/localAiLifecycleManager.js');
+    void localAiLifecycleManager.onApplicationStarted();
+  } catch (aiStartupErr) {
+    console.warn('[Bootstrap] Local AI startup hook could not be initialized:', aiStartupErr);
+  }
+
   try {
     await import('./server.js');
   } catch (serverErr) {
