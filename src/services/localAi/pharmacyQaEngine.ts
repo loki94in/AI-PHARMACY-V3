@@ -8,7 +8,7 @@
  * - Non-blocking: Deterministic workflows remain authoritative. Zero business state mutations.
  */
 
-import { queryLocalAiIntent, getLocalAiConfig, isLocalAiEnabled, checkLlamaServerHealth } from './llamaServerClient.js';
+import { queryLocalAiIntent, queryLocalAssistantReply, getLocalAiConfig, isLocalAiEnabled, checkLlamaServerHealth, type LocalAssistantConversationTurn } from './llamaServerClient.js';
 import { pharmacyKnowledgeRetriever } from './pharmacyKnowledgeRetriever.js';
 import {
   parseStructuredIntent,
@@ -194,6 +194,8 @@ export class PharmacyQaEngine {
       customerName?: string;
       language?: 'en' | 'hi' | 'mr' | 'hinglish';
       dbInstance?: any;
+      conversationHistory?: LocalAssistantConversationTurn[];
+      assistantScope?: 'customer' | 'staff';
     } = {}
   ): Promise<PharmacyQaResponse> {
     const startTime = performance.now();
@@ -352,11 +354,28 @@ export class PharmacyQaEngine {
         `🔍 We could not find a match for *"${candidateName}"* in our current catalog.\n\n` +
         `📸 Please share a photo of the strip or prescription, or check the spelling so our team can check immediately.`;
     } else {
-      // Open-ended conversational fallback: do not force the user into a numbered menu.
-      draftResponse =
-        `👋 Welcome to AI Pharmacy!\n\n` +
-        `You can ask me naturally about medicine availability, MRP, store hours, refill requests, or help from our pharmacist. Just describe what you need in your own words — no special keywords or menu numbers are required.\n\n` +
-        `If I need more information, I will ask a short follow-up question.`;
+      // Generate a natural conversational answer when the grounded structured
+      // response has no matching medicine, shop fact, or policy. The model sees
+      // only verified evidence and recent conversation; it cannot execute tools.
+      if (localAiActive) {
+        const conversationalReply = await queryLocalAssistantReply(text, {
+          language: lang,
+          conversationHistory: options.conversationHistory,
+          verifiedEvidence: evidence,
+          assistantScope: options.assistantScope || 'customer'
+        });
+        if (conversationalReply) {
+          draftResponse = conversationalReply;
+        }
+      }
+
+      // Reliable fallback if local inference is unavailable or returns nothing.
+      if (!draftResponse) {
+        draftResponse =
+          `👋 Welcome to AI Pharmacy!\n\n` +
+          `You can ask me naturally about medicine availability, MRP, store hours, refill requests, or help from our pharmacist. Just describe what you need in your own words — no special keywords or menu numbers are required.\n\n` +
+          `If I need more information, I will ask a short follow-up question.`;
+      }
     }
 
     const latencyMs = Math.round(performance.now() - startTime);
