@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   X,
   Send,
@@ -55,27 +56,171 @@ interface AssistantMessage {
 interface UnifiedOperationsAssistantModalProps {
   isOpen: boolean;
   onClose: () => void;
+  currentPath?: string;
 }
 
-const QUICK_SUGGESTIONS = [
-  'Show due refills',
-  'List pending call tasks',
-  'What WhatsApp messages need replies?',
-  'Check customer enquiries',
-  'Review recent OCR scans',
-  'Stock check for Paracetamol 650'
-];
+interface PageContextInfo {
+  name: string;
+  suggestions: string[];
+}
+
+function getPageContextInfo(pathname: string): PageContextInfo {
+  const clean = (pathname || '/dashboard').split('?')[0].toLowerCase();
+  if (clean === '/pos') {
+    return {
+      name: 'POS Billing',
+      suggestions: [
+        'Explain POS shortcuts',
+        'Stock check for Dolo 650',
+        'Show due refills',
+        'Check customer enquiries',
+        'Query today sales turnover'
+      ]
+    };
+  }
+  if (clean === '/inventory') {
+    return {
+      name: 'Inventory & Batches',
+      suggestions: [
+        'Find low stock medicines',
+        'Audit expiring batches',
+        'Search Paracetamol 650',
+        'Explain this page'
+      ]
+    };
+  }
+  if (clean === '/crm') {
+    return {
+      name: 'CRM & Patients',
+      suggestions: [
+        'Show due refills',
+        'List pending call tasks',
+        'What WhatsApp messages need replies?',
+        'Check customer enquiries'
+      ]
+    };
+  }
+  if (clean === '/pharmarack-cart' || clean === '/live-cart') {
+    return {
+      name: 'Distributor Live Cart',
+      suggestions: [
+        'Explain this page',
+        'Show due refills',
+        'Add refill to live cart',
+        'Place distributor orders'
+      ]
+    };
+  }
+  if (clean === '/purchases' || clean === '/purchase-history' || clean === '/manual-purchase') {
+    return {
+      name: 'Purchase Entry',
+      suggestions: [
+        'Explain this page',
+        'View latest purchase rates',
+        'Check profit margins',
+        'Audit expiring batches'
+      ]
+    };
+  }
+  if (clean === '/dispatch') {
+    return {
+      name: 'Dispatch & Delivery',
+      suggestions: [
+        'Explain dispatch workflow',
+        'Check pending distributor dispatches',
+        'Remind distributor on WhatsApp',
+        'Show delivery schedules'
+      ]
+    };
+  }
+  if (clean === '/sells') {
+    return {
+      name: 'Sales History',
+      suggestions: [
+        'Query today sales turnover',
+        'Explain this page',
+        'Search medicine in stock'
+      ]
+    };
+  }
+  if (clean === '/returns') {
+    return {
+      name: 'Returns Hub',
+      suggestions: [
+        'Audit expiring batches',
+        'Show pending supplier returns',
+        'Explain return policy'
+      ]
+    };
+  }
+  if (clean === '/audit' || clean === '/investigation') {
+    return {
+      name: 'Audit Center',
+      suggestions: [
+        'Explain audit log security',
+        'Show recent system activity',
+        'Audit near-expiry batches'
+      ]
+    };
+  }
+  if (clean === '/settings') {
+    return {
+      name: 'Settings',
+      suggestions: [
+        'Explain this page',
+        'Check store profile',
+        'Check local AI status'
+      ]
+    };
+  }
+  if (clean === '/ai-engineering') {
+    return {
+      name: 'AI Hub',
+      suggestions: [
+        'Review recent OCR scans',
+        'Check schedule drug compliance',
+        'Explain this page'
+      ]
+    };
+  }
+  if (clean === '/portal' || clean === '/customer-login' || clean === '/my-bills') {
+    return {
+      name: 'Customer Portal',
+      suggestions: [
+        'How to request a refill',
+        'Ask a medicine question',
+        'Check store timings'
+      ]
+    };
+  }
+  return {
+    name: 'Dashboard Overview',
+    suggestions: [
+      'Show due refills',
+      'List pending call tasks',
+      'Stock check for Paracetamol 650',
+      'Explain this page',
+      'Check customer enquiries'
+    ]
+  };
+}
 
 export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistantModalProps> = ({
   isOpen,
-  onClose
+  onClose,
+  currentPath
 }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activePath = currentPath || location.pathname || '/dashboard';
+  const pageInfo = useMemo(() => getPageContextInfo(activePath), [activePath]);
+
   const [messages, setMessages] = useState<AssistantMessage[]>([
     {
       id: 'welcome',
       sender: 'assistant',
-      text: 'Namaste! I am your Unified Pharmacy Operations Assistant. I can assist with refills, call tasks, enquiries, WhatsApp communications, OCR checks, and inventory lookup in English, Hindi, Marathi, or Hinglish. How can I help you today?',
-      suggestedFollowUps: QUICK_SUGGESTIONS,
+      text: `Namaste! I am your Unified Pharmacy Operations Assistant. You are currently on ${pageInfo.name}. I can assist with refills, call tasks, enquiries, WhatsApp communications, OCR checks, and inventory lookup across all pages. How can I help you?`,
+      suggestedFollowUps: pageInfo.suggestions,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -143,7 +288,11 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
       const res = await apiClient.post('/assistant/chat', {
         message: textToSend,
         sessionId,
-        role: 'staff'
+        role: 'staff',
+        pageContext: {
+          pathname: activePath,
+          pageTitle: document.title || pageInfo.name
+        }
       });
 
       if (res.data?.success && res.data.data) {
@@ -173,7 +322,7 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
     } finally {
       setIsLoading(false);
     }
-  }, [inputMessage, isLoading, sessionId]);
+  }, [inputMessage, isLoading, sessionId, activePath, pageInfo.name]);
 
   const handleConfirmAction = async (proposalId: string) => {
     setConfirmingId(proposalId);
@@ -252,8 +401,8 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
         {
           id: `welcome-${Date.now()}`,
           sender: 'assistant',
-          text: 'Conversation history reset. All operational services are ready. How can I assist you?',
-          suggestedFollowUps: QUICK_SUGGESTIONS,
+          text: `Conversation history reset. You are on ${pageInfo.name}. All operational services are ready. How can I assist you?`,
+          suggestedFollowUps: pageInfo.suggestions,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -277,7 +426,7 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-bold text-text">Pharmacy Operations Assistant</h2>
                 <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-primary/15 text-primary border border-primary/20 uppercase tracking-wider">
-                  Unified AI
+                  {pageInfo.name}
                 </span>
               </div>
               <div className="flex items-center gap-2 text-xs text-muted">
@@ -286,7 +435,7 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
                   Grounded & Safe
                 </span>
                 <span>•</span>
-                <span>Role: Staff Operations</span>
+                <span>Context: {pageInfo.name}</span>
                 <span>•</span>
                 <span className="flex items-center gap-1">
                   <span className={`w-1.5 h-1.5 rounded-full ${statusInfo?.healthy ? 'bg-emerald-500' : 'bg-amber-500'}`} />
@@ -381,12 +530,18 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
                             )}
                           </div>
                           {card.actionUrl && (
-                            <a
-                              href={card.actionUrl}
-                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline mt-1"
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (typeof card.actionUrl === 'string') {
+                                  navigate(card.actionUrl);
+                                  onClose();
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline mt-1 cursor-pointer bg-transparent border-none p-0 text-left"
                             >
                               Open record <ArrowRight size={10} />
-                            </a>
+                            </button>
                           )}
                         </div>
                       );

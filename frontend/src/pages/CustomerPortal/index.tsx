@@ -16,6 +16,7 @@ import { PrescriptionUploadModal } from '../../components/PrescriptionUploadModa
 import { PaymentQrModal } from './PaymentQrModal';
 import { ChangePinModal } from './ChangePinModal';
 import { CustomerPortalAuth } from './CustomerPortalAuth';
+import { CustomerChatWidget } from './CustomerChatWidget';
 import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 
 interface CustomerSession {
@@ -138,6 +139,7 @@ export default function CustomerPortal() {
   }, [location]);
 
   // ─── Authentication States ──────────────────────────────────────────────────
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const [session, setSession] = useState<CustomerSession | null>(() => {
     try {
       const saved = localStorage.getItem('customer_portal_session');
@@ -2560,6 +2562,25 @@ export default function CustomerPortal() {
         activeStore={activeStore}
         stores={stores}
         onSelectStoreId={handleStoreChange}
+      />
+
+      {/* Floating Conversational AI Assistant Button */}
+      <button
+        onClick={() => setIsChatOpen(prev => !prev)}
+        className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-40 px-4 py-2.5 rounded-full bg-primary text-white shadow-xl hover:opacity-95 transition-all flex items-center gap-2 text-xs font-bold"
+        title="Chat with Pharmacy AI Assistant"
+      >
+        <MessageSquare className="w-4 h-4" />
+        <span>Chat with AI</span>
+      </button>
+
+      <CustomerChatWidget
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        phone={session?.phone || ''}
+        customerId={session?.id}
+        customerName={session?.name}
+        token={localStorage.getItem('customer_portal_token') || undefined}
       />
     </div>
   );

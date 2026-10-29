@@ -1387,6 +1387,90 @@ router.put('/customer/phone', async (req, res) => {
 });
 
 
+// POST /api/website/customer/chat & /api/customer-portal/customer/chat — Conversational AI Assistant
+router.post('/customer/chat', async (req, res) => {
+  try {
+    const { message, language } = req.body;
+    let { phone, customer_id } = req.body;
+
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const verified = verifyCustomerToken(authHeader || (req.body.token as string));
+
+    if (verified) {
+      phone = verified.phone;
+      customer_id = verified.customerId;
+    }
+
+    let cleanPhone = normalizePhone(phone);
+    if (!cleanPhone && !customer_id) {
+      return res.status(400).json({ error: 'Verified phone or customer authentication required' });
+    }
+
+    const db = await dbManager.getConnection();
+    let customerName: string | undefined = undefined;
+    if (customer_id || cleanPhone) {
+      const cust = await db.get(
+        `SELECT name, phone FROM customers WHERE id = ? OR phone LIKE ? LIMIT 1`,
+        [customer_id || 0, `%${cleanPhone.slice(-10)}`]
+      );
+      if (cust) {
+        customerName = cust.name;
+        if (!cleanPhone) cleanPhone = normalizePhone(cust.phone);
+      }
+    }
+
+    const { conversationalAgentEngine } = await import('../services/localAi/conversationalAgentEngine.js');
+    const result = await conversationalAgentEngine.processCustomerMessage({
+      phone: cleanPhone,
+      channel: 'portal',
+      customerId: customer_id ? Number(customer_id) : undefined,
+      customerName,
+      language: language === 'hi' || language === 'mr' ? language : 'en',
+      message: message.trim()
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Chat error:', err);
+    res.status(500).json({ error: 'Failed to process chat message' });
+  }
+});
+
+// GET /api/website/customer/chat/history & /api/customer-portal/customer/chat/history — Fetch conversational history
+router.get('/customer/chat/history', async (req, res) => {
+  try {
+    const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const verified = verifyCustomerToken(authHeader || (req.query.token as string));
+
+    let phone = (verified?.phone || req.query.phone || '') as string;
+    const cleanPhone = normalizePhone(phone);
+
+    if (!cleanPhone) {
+      return res.status(400).json({ error: 'Phone number or auth token required' });
+    }
+
+    const { conversationalMemoryService } = await import('../services/localAi/conversationalMemoryService.js');
+    const sessionId = conversationalMemoryService.generateSessionId('portal', cleanPhone);
+    const turns = await conversationalMemoryService.getRecentTurns(sessionId, 20);
+    const session = await conversationalMemoryService.getSession(sessionId);
+
+    res.json({
+      success: true,
+      sessionId,
+      session,
+      turns
+    });
+  } catch (err: any) {
+    console.error('[CustomerPortal] Chat history error:', err);
+    res.status(500).json({ error: 'Failed to retrieve chat history' });
+  }
+});
+
+
 // POST /api/website/customer/refill-order — Place customized in-store pickup or home delivery refill order
 router.post('/customer/refill-order', async (req, res) => {
   const {

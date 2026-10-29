@@ -3844,6 +3844,36 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_whatsapp_messages_chat_id ON whatsapp_messages (chat_id);
     CREATE INDEX IF NOT EXISTS idx_wa_msgs_ack ON whatsapp_messages (chat_id, from_me, ack_status);
 
+    -- Customer Conversational Sessions & Persistent Memory
+    CREATE TABLE IF NOT EXISTS customer_conversation_sessions (
+      id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL DEFAULT 'whatsapp',
+      customer_id INTEGER,
+      phone TEXT NOT NULL,
+      language TEXT DEFAULT 'en',
+      session_state TEXT DEFAULT 'idle',
+      active_intent TEXT,
+      context_data_json TEXT,
+      last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (customer_id) REFERENCES customers(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cust_conv_phone ON customer_conversation_sessions(phone);
+    CREATE INDEX IF NOT EXISTS idx_cust_conv_cust_id ON customer_conversation_sessions(customer_id);
+
+    -- Customer Conversation Message Turns
+    CREATE TABLE IF NOT EXISTS customer_conversation_turns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      sender TEXT CHECK(sender IN ('customer', 'assistant', 'pharmacist', 'system')),
+      message_text TEXT NOT NULL,
+      tool_calls_json TEXT,
+      tokens_used INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (session_id) REFERENCES customer_conversation_sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cust_turns_session ON customer_conversation_turns(session_id, id DESC);
+
     -- Crash telemetry: written by processGuardian on uncaught exceptions
     CREATE TABLE IF NOT EXISTS crash_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

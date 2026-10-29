@@ -27,7 +27,8 @@ router.post('/chat', async (req: Request, res: Response) => {
       language,
       userId,
       username,
-      storeId
+      storeId,
+      pageContext
     } = req.body || {};
 
     if (!message || typeof message !== 'string' || !message.trim()) {
@@ -80,8 +81,19 @@ router.post('/chat', async (req: Request, res: Response) => {
     if (userId) sessionContext.userId = Number(userId);
     if (username) sessionContext.username = String(username);
     if (storeId) sessionContext.storeId = Number(storeId);
+    if (pageContext) {
+      sessionContext.pageContext = pageContext;
+      sessionContext.currentPage = pageContext.pathname;
+    }
 
-    const response = await unifiedAssistantOrchestrator.processCommand(message.trim(), sessionContext);
+    const response = await unifiedAssistantOrchestrator.processCommand(message.trim(), sessionContext, {
+      role: resolvedRole,
+      userId: userId ? Number(userId) : undefined,
+      username: username ? String(username) : undefined,
+      storeId: storeId ? Number(storeId) : undefined,
+      language,
+      pageContext
+    });
 
     return res.json({
       success: true,
@@ -229,6 +241,25 @@ router.get('/status', async (_req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: err.message || 'Failed to retrieve assistant status.'
+    });
+  }
+});
+
+/**
+ * GET /api/assistant/capabilities
+ * Reports the full capabilities registry, supported roles, and confirmation gates
+ */
+router.get('/capabilities', (_req: Request, res: Response) => {
+  try {
+    const registry = unifiedAssistantOrchestrator.getCapabilityRegistry();
+    return res.json({
+      success: true,
+      data: registry
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Failed to retrieve capability registry.'
     });
   }
 });

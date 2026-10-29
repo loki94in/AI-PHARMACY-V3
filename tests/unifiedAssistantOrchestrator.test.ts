@@ -335,4 +335,93 @@ describe('Unified Pharmacy Operations Assistant Orchestrator Suite', () => {
       expect(res.reply).toMatch(/emergency|urgent|hospital|doctor|108/i);
     });
   });
+
+  describe('6. Page Context & Capability Registry (Unified Across All Pages)', () => {
+    it('exposes the typed capability registry with all supported action types and policies', () => {
+      const registry = unifiedAssistantOrchestrator.getCapabilityRegistry();
+      expect(registry).toBeDefined();
+      expect(registry.EXPLAIN_PAGE).toBeDefined();
+      expect(registry.ADD_TO_LIVE_CART).toBeDefined();
+      expect(registry.PLACE_DISTRIBUTOR_ORDER).toBeDefined();
+      expect(registry.ADD_TO_LIVE_CART.requiresConfirmation).toBe(true);
+      expect(registry.PLACE_DISTRIBUTOR_ORDER.requiresConfirmation).toBe(true);
+      expect(registry.VIEW_PURCHASE_RATES.allowedRoles).toEqual(['owner']);
+    });
+
+    it('handles EXPLAIN_PAGE for /pos with keyboard shortcuts and pending refills count', async () => {
+      const session = unifiedAssistantOrchestrator.getSessionContext('test-staff-session', 'staff');
+      session.pageContext = { pathname: '/pos', pageTitle: 'POS Billing' };
+
+      const res = await unifiedAssistantOrchestrator.processCommand('Explain this page', session, { dbInstance: db });
+      expect(res.actionType).toBe('EXPLAIN_PAGE');
+      expect(res.reply).toContain('Point of Sale (POS) Billing');
+      expect(res.reply).toContain('F2');
+      expect(res.cards).toBeDefined();
+      expect(res.cards![0].title).toContain('/pos');
+    });
+
+    it('handles EXPLAIN_PAGE for /inventory with stock counts', async () => {
+      const session = unifiedAssistantOrchestrator.getSessionContext('test-staff-session', 'staff');
+      session.pageContext = { pathname: '/inventory', pageTitle: 'Inventory' };
+
+      const res = await unifiedAssistantOrchestrator.processCommand('What can I do here?', session, { dbInstance: db });
+      expect(res.actionType).toBe('EXPLAIN_PAGE');
+      expect(res.reply).toContain('Inventory & Batch Management');
+      expect(res.reply).toContain('Catalog');
+    });
+
+    it('handles EXPLAIN_PAGE for /crm with live queue counts', async () => {
+      const session = unifiedAssistantOrchestrator.getSessionContext('test-staff-session', 'staff');
+      session.pageContext = { pathname: '/crm', pageTitle: 'CRM' };
+
+      const res = await unifiedAssistantOrchestrator.processCommand('Tell me about this page', session, { dbInstance: db });
+      expect(res.actionType).toBe('EXPLAIN_PAGE');
+      expect(res.reply).toContain('Customer Relationship Management (CRM)');
+    });
+
+    it('proposes ADD_TO_LIVE_CART with confirmation gate', async () => {
+      const session = unifiedAssistantOrchestrator.getSessionContext('test-staff-session', 'staff');
+
+      const res = await unifiedAssistantOrchestrator.processCommand('Add refill 1 to live cart', session, { dbInstance: db });
+      expect(res.actionType).toBe('ADD_TO_LIVE_CART');
+      expect(res.requiresConfirmation).toBe(true);
+      expect(res.proposedAction).toBeDefined();
+      expect(res.proposedAction?.actionType).toBe('ADD_TO_LIVE_CART');
+      expect(res.proposedAction?.status).toBe('PENDING_CONFIRMATION');
+      expect(res.proposedAction?.payload.refillId).toBe(1);
+    });
+
+    it('proposes PLACE_DISTRIBUTOR_ORDER with confirmation gate', async () => {
+      const session = unifiedAssistantOrchestrator.getSessionContext('test-staff-session', 'staff');
+
+      const res = await unifiedAssistantOrchestrator.processCommand('Place distributor order for cart', session, { dbInstance: db });
+      expect(res.actionType).toBe('PLACE_DISTRIBUTOR_ORDER');
+      expect(res.requiresConfirmation).toBe(true);
+      expect(res.proposedAction).toBeDefined();
+      expect(res.proposedAction?.actionType).toBe('PLACE_DISTRIBUTOR_ORDER');
+    });
+
+    it('enforces single-use proposal idempotency preventing double execution', async () => {
+      const session = unifiedAssistantOrchestrator.getSessionContext('test-staff-session', 'staff');
+
+      // Create a task proposal
+      const resProp = await unifiedAssistantOrchestrator.processCommand(
+        'Create call task for Deepak phone 9822334455 about refill',
+        session,
+        { dbInstance: db }
+      );
+      expect(resProp.proposedAction).toBeDefined();
+      const propId = resProp.proposedAction!.id;
+
+      // First confirmation succeeds
+      const confirm1 = await unifiedAssistantOrchestrator.confirmProposal(propId, session.sessionId, { dbInstance: db });
+      expect(confirm1.success).toBe(true);
+      expect(confirm1.proposal?.status).toBe('EXECUTED');
+
+      // Second confirmation fails immediately because proposal token was already consumed
+      const confirm2 = await unifiedAssistantOrchestrator.confirmProposal(propId, session.sessionId, { dbInstance: db });
+      expect(confirm2.success).toBe(false);
+      expect(confirm2.message).toMatch(/expired|not found|already executed/i);
+    });
+  });
 });

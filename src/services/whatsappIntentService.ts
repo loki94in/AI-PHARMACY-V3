@@ -629,6 +629,34 @@ async function maybeSendGuidancePrompt(
 
     if (!(await allowBotPrompt(db, cleanDigits, targetRecipient))) return;
 
+    // 0. Primary Conversational AI Engine (context-aware natural language dialogues)
+    if (trimmedOriginal) {
+      try {
+        const { conversationalAgentEngine } = await import('./localAi/conversationalAgentEngine.js');
+        const agentResult = await conversationalAgentEngine.processCustomerMessage({
+          phone: cleanDigits,
+          channel: 'whatsapp',
+          customerName: customerName || 'Customer',
+          message: trimmedOriginal,
+          language: (chatLang === 'hi' || chatLang === 'mr') ? chatLang : 'en'
+        });
+
+        if (agentResult && agentResult.replyText) {
+          const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+          await whatsappQueueWorker.enqueue(
+            targetRecipient,
+            agentResult.replyText,
+            'conversational_ai_reply',
+            customerName || 'Customer'
+          );
+          console.log(`[Intent Service] Conversational AI replied to ${cleanDigits} (intent: ${agentResult.intent}, state: ${agentResult.state})`);
+          return;
+        }
+      } catch (agentErr) {
+        console.warn('[Intent Service] Conversational Agent fallback to deterministic guidance:', agentErr);
+      }
+    }
+
     // Check for General Inquiries first (Timing, Address, Pharmacist Callback)
     const isTimingQuery  = /\b(time|timing|open|close|hours|kab|khula|band|baje|schedule|available|वेळ|केव्हा|उघडे|कधी)\b/i.test(lower);
     const isAddressQuery = /\b(address|location|where|kahan|shop|store|map|area|near|galli|road|street|पत्ता|कुठे|ठिकाण)\b/i.test(lower);

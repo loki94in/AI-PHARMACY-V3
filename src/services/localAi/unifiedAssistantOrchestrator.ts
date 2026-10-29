@@ -32,6 +32,9 @@ export type AssistantRole = 'owner' | 'staff' | 'customer';
 export type AssistantActionType =
   | 'LIST_REFILLS'
   | 'PREPARE_REFILL'
+  | 'ADD_TO_LIVE_CART'
+  | 'PLACE_DISTRIBUTOR_ORDER'
+  | 'EXPLAIN_PAGE'
   | 'LIST_TASKS'
   | 'CREATE_TASK'
   | 'COMPLETE_TASK'
@@ -48,6 +51,172 @@ export type AssistantActionType =
   | 'QUERY_SALES_METRICS'
   | 'AUDIT_EXPIRY'
   | 'GENERAL_QA';
+
+export interface PageContext {
+  pathname: string;
+  pageTitle?: string;
+  selectedRecordId?: string | number;
+  selectedRecordType?: 'customer' | 'medicine' | 'refill' | 'task' | 'enquiry' | 'distributor' | 'order' | 'bill';
+  selectedRecordData?: Record<string, any>;
+}
+
+export interface CapabilityDefinition {
+  actionType: AssistantActionType;
+  description: string;
+  allowedRoles: AssistantRole[];
+  requiresConfirmation: boolean;
+  relevantPages: string[];
+}
+
+export const CAPABILITY_REGISTRY: Record<AssistantActionType, CapabilityDefinition> = {
+  LIST_REFILLS: {
+    actionType: 'LIST_REFILLS',
+    description: 'List due and upcoming patient refills',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: false,
+    relevantPages: ['/crm', '/dashboard', '/live-cart']
+  },
+  PREPARE_REFILL: {
+    actionType: 'PREPARE_REFILL',
+    description: 'Stage and mark a patient refill as ready for dispensing',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: true,
+    relevantPages: ['/crm', '/live-cart']
+  },
+  ADD_TO_LIVE_CART: {
+    actionType: 'ADD_TO_LIVE_CART',
+    description: 'Add a verified refill item to the distributor Live Cart',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: true,
+    relevantPages: ['/pharmarack-cart', '/live-cart', '/crm']
+  },
+  PLACE_DISTRIBUTOR_ORDER: {
+    actionType: 'PLACE_DISTRIBUTOR_ORDER',
+    description: 'Propose and execute distributor order placement through official gateway',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: true,
+    relevantPages: ['/pharmarack-cart', '/dispatch']
+  },
+  EXPLAIN_PAGE: {
+    actionType: 'EXPLAIN_PAGE',
+    description: 'Provide contextual guidance, status summary, and operational instructions for current page',
+    allowedRoles: ['owner', 'staff', 'customer'],
+    requiresConfirmation: false,
+    relevantPages: ['*']
+  },
+  LIST_TASKS: {
+    actionType: 'LIST_TASKS',
+    description: 'List pending and overdue patient call tasks',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: false,
+    relevantPages: ['/crm', '/dashboard']
+  },
+  CREATE_TASK: {
+    actionType: 'CREATE_TASK',
+    description: 'Create a new patient call or follow-up task',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: true,
+    relevantPages: ['/crm', '/dashboard']
+  },
+  COMPLETE_TASK: {
+    actionType: 'COMPLETE_TASK',
+    description: 'Mark a patient call task as completed',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: true,
+    relevantPages: ['/crm', '/dashboard']
+  },
+  RESCHEDULE_TASK: {
+    actionType: 'RESCHEDULE_TASK',
+    description: 'Reschedule a patient call task',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: true,
+    relevantPages: ['/crm']
+  },
+  LIST_ENQUIRIES: {
+    actionType: 'LIST_ENQUIRIES',
+    description: 'List open customer medicine enquiries',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: false,
+    relevantPages: ['/crm', '/pos']
+  },
+  CREATE_ENQUIRY: {
+    actionType: 'CREATE_ENQUIRY',
+    description: 'Record a new medicine enquiry for a patient',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: true,
+    relevantPages: ['/crm', '/pos']
+  },
+  LIST_WHATSAPP_CHATS: {
+    actionType: 'LIST_WHATSAPP_CHATS',
+    description: 'List recent inbound and unread WhatsApp customer chats',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: false,
+    relevantPages: ['/crm', '/mail']
+  },
+  DRAFT_WHATSAPP_REPLY: {
+    actionType: 'DRAFT_WHATSAPP_REPLY',
+    description: 'Draft a professional customer response for WhatsApp',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: false,
+    relevantPages: ['/crm', '/mail']
+  },
+  SEND_WHATSAPP_MESSAGE: {
+    actionType: 'SEND_WHATSAPP_MESSAGE',
+    description: 'Queue a verified WhatsApp message via Outbound Security Gateway',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: true,
+    relevantPages: ['/crm', '/mail', '/dispatch']
+  },
+  INSPECT_OCR: {
+    actionType: 'INSPECT_OCR',
+    description: 'Inspect recent prescription scans and extract medicine details',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: false,
+    relevantPages: ['/ai-engineering', '/database']
+  },
+  SEARCH_INVENTORY: {
+    actionType: 'SEARCH_INVENTORY',
+    description: 'Search catalog, check stock, pricing, and packaging',
+    allowedRoles: ['owner', 'staff', 'customer'],
+    requiresConfirmation: false,
+    relevantPages: ['/inventory', '/pos', '/database']
+  },
+  VIEW_PURCHASE_RATES: {
+    actionType: 'VIEW_PURCHASE_RATES',
+    description: 'Query purchase bills, supplier PTR and rates (Strictly Owner)',
+    allowedRoles: ['owner'],
+    requiresConfirmation: false,
+    relevantPages: ['/purchases', '/purchase-history']
+  },
+  VIEW_MARGINS: {
+    actionType: 'VIEW_MARGINS',
+    description: 'Query profit margins and PTR vs MRP spreads (Strictly Owner)',
+    allowedRoles: ['owner'],
+    requiresConfirmation: false,
+    relevantPages: ['/purchases', '/reports']
+  },
+  QUERY_SALES_METRICS: {
+    actionType: 'QUERY_SALES_METRICS',
+    description: 'Query daily and monthly sales totals, bill volume',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: false,
+    relevantPages: ['/dashboard', '/reports', '/sells']
+  },
+  AUDIT_EXPIRY: {
+    actionType: 'AUDIT_EXPIRY',
+    description: 'Audit near-expiry and expired batches across inventory',
+    allowedRoles: ['owner', 'staff'],
+    requiresConfirmation: false,
+    relevantPages: ['/inventory', '/returns']
+  },
+  GENERAL_QA: {
+    actionType: 'GENERAL_QA',
+    description: 'Answer pharmacy operations, dosage guidelines, and system questions',
+    allowedRoles: ['owner', 'staff', 'customer'],
+    requiresConfirmation: false,
+    relevantPages: ['*']
+  }
+};
 
 export type ActionStatus = 'NONE' | 'PENDING_CONFIRMATION' | 'EXECUTED' | 'CANCELLED' | 'FAILED';
 
@@ -90,6 +259,8 @@ export interface AssistantSessionContext {
   username?: string;
   storeId?: number;
   language?: 'en' | 'hi' | 'mr' | 'hinglish';
+  currentPage?: string;
+  pageContext?: PageContext;
   lastAction?: AssistantActionType;
   lastEntityId?: string | number;
   lastEntityName?: string;
@@ -144,6 +315,7 @@ export class UnifiedAssistantOrchestrator {
       username?: string;
       storeId?: number;
       language?: 'en' | 'hi' | 'mr' | 'hinglish';
+      pageContext?: PageContext;
       dbInstance?: any;
     } = {}
   ): Promise<AssistantResponse> {
@@ -159,6 +331,11 @@ export class UnifiedAssistantOrchestrator {
       sessionId = sessionOrId;
       const role = options.role || 'staff';
       session = this.getOrCreateSession(sessionId, role, options);
+    }
+
+    if (options.pageContext) {
+      session.pageContext = options.pageContext;
+      session.currentPage = options.pageContext.pathname;
     }
 
     const db = options.dbInstance || (await dbManager.getConnection());
@@ -185,6 +362,15 @@ export class UnifiedAssistantOrchestrator {
     // 3. Dispatch to deterministic service handlers
     let result: AssistantResponse;
     switch (actionType) {
+      case 'EXPLAIN_PAGE':
+        result = await this.handleExplainPage(text, session, db, startTime);
+        break;
+      case 'ADD_TO_LIVE_CART':
+        result = await this.handleAddToLiveCart(text, session, db, startTime);
+        break;
+      case 'PLACE_DISTRIBUTOR_ORDER':
+        result = await this.handlePlaceDistributorOrder(text, session, db, startTime);
+        break;
       case 'LIST_REFILLS':
         result = await this.handleListRefills(text, session, db, startTime);
         break;
@@ -248,6 +434,31 @@ export class UnifiedAssistantOrchestrator {
    * Classifies staff operational intent across English, Hindi, Marathi, Hinglish
    */
   private classifyStaffIntent(lower: string, session: AssistantSessionContext): AssistantActionType {
+    // 0. Page Guidance & Explanation (works across all 25+ pages)
+    if (
+      /(?:explain|help with|what is|how to use|kya hai|kaise|सांगा|माहिती).*(?:this page|page|screen|window|ये पेज|या पानावर)/i.test(lower) ||
+      /(?:what can i do here|page help|page summary|explain this screen|tell me about this page|about this page)/i.test(lower) ||
+      /^(?:explain|page info|page summary|help)$/i.test(lower.trim())
+    ) {
+      return 'EXPLAIN_PAGE';
+    }
+
+    // 0b. Live Cart Operations
+    if (
+      /(?:add|put|stage).*(?:refill|medicine|item|order).*(?:to|in|into).*(?:live\s*cart|cart|कार्ट)/i.test(lower) ||
+      /(?:live\s*cart|cart|कार्ट).*(?:add|put|stage)/i.test(lower)
+    ) {
+      return 'ADD_TO_LIVE_CART';
+    }
+
+    // 0c. Distributor Order Placement
+    if (
+      /(?:place|checkout|send).*(?:distributor|official|pharmarack).*(?:order|orders|cart)/i.test(lower) ||
+      /(?:distributor|official|pharmarack).*(?:order|orders|cart).*(?:place|checkout|send)/i.test(lower)
+    ) {
+      return 'PLACE_DISTRIBUTOR_ORDER';
+    }
+
     // 1. Task Completion
     if (
       /(?:complete|finish|mark done|done|khatam|झाले|पूर्ण करा).*(?:task|call|reminder|टास्क)/i.test(lower) ||
@@ -361,6 +572,239 @@ export class UnifiedAssistantOrchestrator {
     }
 
     return 'GENERAL_QA';
+  }
+
+  /**
+   * Page Guidance & Operational Overview Handler
+   * Provides live, context-aware operational summaries across all 25+ pages
+   */
+  private async handleExplainPage(text: string, session: AssistantSessionContext, db: any, startTime: number): Promise<AssistantResponse> {
+    const rawPath = (session.pageContext?.pathname || session.currentPage || '/dashboard').split('?')[0].toLowerCase();
+    const pageTitle = session.pageContext?.pageTitle;
+
+    let reply = '';
+    let cards: AssistantCardItem[] = [];
+    let suggestedFollowUps: string[] = [];
+
+    if (rawPath === '/pos') {
+      const pendingRefills = await db.get("SELECT COUNT(*) as c FROM patient_refills WHERE status = 'pending'").catch(() => ({ c: 0 }));
+      reply = `**Point of Sale (POS) Billing**\n` +
+        `• Direct medicine dispensing and GST invoicing\n` +
+        `• **Keyboard Shortcuts:** Press **F2** to search medicines, **Enter** to add quantity, **Ctrl+Enter** to complete billing\n` +
+        `• Real records only: Stock and MRP are verified in real time\n` +
+        `• Note: ${pendingRefills?.c || 0} chronic refill(s) pending in CRM that can be dispensed here`;
+      suggestedFollowUps = ['Search inventory for Dolo 650', 'Show due refills', 'Query today sales turnover'];
+    } else if (rawPath === '/inventory') {
+      const stockSummary = await db.get(`
+        SELECT COUNT(*) as total,
+               SUM(CASE WHEN total_stock <= 5 THEN 1 ELSE 0 END) as low_stock,
+               SUM(CASE WHEN expiry_date IS NOT NULL AND expiry_date <= DATE('now', '+90 days') THEN 1 ELSE 0 END) as near_expiry
+        FROM medicines
+      `).catch(() => ({ total: 0, low_stock: 0, near_expiry: 0 }));
+      reply = `**Inventory & Batch Management**\n` +
+        `• Total Medicines in Catalog: **${stockSummary?.total || 0}**\n` +
+        `• Low Stock Alert (<= 5 units): **${stockSummary?.low_stock || 0}**\n` +
+        `• Near Expiry (< 90 days): **${stockSummary?.near_expiry || 0}**\n` +
+        `• Use this page to audit stock levels, verify batch barcodes, and check shelf rack locations.`;
+      suggestedFollowUps = ['Find low stock medicines', 'Audit expiring batches', 'Search medicine in stock'];
+    } else if (rawPath === '/crm') {
+      const crmSummary = await db.get(`
+        SELECT (SELECT COUNT(*) FROM patient_refills WHERE status = 'pending' AND (is_active = 1 OR is_active IS NULL)) as refills,
+               (SELECT COUNT(*) FROM patient_call_tasks WHERE status = 'pending') as tasks,
+               (SELECT COUNT(*) FROM medicine_enquiries WHERE status = 'open') as enquiries
+      `).catch(() => ({ refills: 0, tasks: 0, enquiries: 0 }));
+      reply = `**Customer Relationship Management (CRM)**\n` +
+        `• Pending Refills: **${crmSummary?.refills || 0}**\n` +
+        `• Open Call Tasks: **${crmSummary?.tasks || 0}**\n` +
+        `• Active Enquiries: **${crmSummary?.enquiries || 0}**\n` +
+        `• You can stage refills, record customer enquiries, and coordinate patient reminders directly from this hub.`;
+      suggestedFollowUps = ['Show due refills', 'List pending call tasks', 'Check customer enquiries'];
+    } else if (rawPath === '/pharmarack-cart' || rawPath === '/live-cart') {
+      reply = `**Distributor Live Cart & Reorder Hub**\n` +
+        `• Real-time synchronization with distributor ordering catalogs\n` +
+        `• Aggregates shortage items, special orders, and chronic refills\n` +
+        `• Checks distributor minimum order values (MOV) and scheme discounts\n` +
+        `• Placing orders requires explicit operator confirmation (Rule 6).`;
+      suggestedFollowUps = ['Show due refills', 'Add refill to cart', 'Place distributor order'];
+    } else if (rawPath === '/dispatch') {
+      const dispatchSummary = await db.get(`
+        SELECT (SELECT COUNT(*) FROM distributor_dispatch_reminders WHERE date = DATE('now')) as reminders,
+               (SELECT COUNT(*) FROM delivery_boys WHERE is_active = 1) as boys
+      `).catch(() => ({ reminders: 0, boys: 0 }));
+      reply = `**Dispatch & Order Delivery Management**\n` +
+        `• Scheduled Dispatch Reminders (Today): **${dispatchSummary?.reminders || 0}**\n` +
+        `• Active Delivery Boys: **${dispatchSummary?.boys || 0}**\n` +
+        `• Tracks distributor ordering cutoff windows and coordinates consolidated daily WhatsApp pickup dispatches.`;
+      suggestedFollowUps = ['Remind distributor on WhatsApp', 'Show pending orders', 'List WhatsApp chats'];
+    } else if (rawPath === '/purchases' || rawPath === '/manual-purchase' || rawPath === '/purchase-history') {
+      const purchaseCount = await db.get("SELECT COUNT(*) as c FROM purchase_invoices WHERE invoice_date >= DATE('now', '-7 days')").catch(() => ({ c: 0 }));
+      reply = `**Purchase Bills & Distributor History**\n` +
+        `• Recent Invoices (Last 7 Days): **${purchaseCount?.c || 0}**\n` +
+        `• Logs purchase bills, updates inventory stock batches, and reconciles purchase rates (PTR)\n` +
+        `• Confidential rates & margins are restricted strictly to authorized owner sessions.`;
+      suggestedFollowUps = ['View latest purchase rates', 'Check profit margins', 'Audit expiring batches'];
+    } else if (rawPath === '/sells') {
+      const salesToday = await db.get("SELECT COUNT(*) as bills, COALESCE(SUM(total_amount), 0) as total FROM sales_invoices WHERE DATE(created_at) = DATE('now')").catch(() => ({ bills: 0, total: 0 }));
+      reply = `**Sales Archive & Invoices**\n` +
+        `• Today's Completed Bills: **${salesToday?.bills || 0}**\n` +
+        `• Today's Total Turnover: **₹${Number(salesToday?.total || 0).toFixed(2)}**\n` +
+        `• View invoice receipts, print duplicates, and review customer payment methods.`;
+      suggestedFollowUps = ['Query today sales turnover', 'Search inventory', 'Show due refills'];
+    } else if (rawPath === '/returns') {
+      reply = `**Supplier & Customer Returns**\n` +
+        `• Manages damaged, near-expiry, and non-moving medicine returns to suppliers\n` +
+        `• Generates return credit notes and debit notes for distributor reconciliation.`;
+      suggestedFollowUps = ['Audit expiring batches', 'Show due refills', 'Find low stock'];
+    } else if (rawPath === '/audit') {
+      const logCount = await db.get("SELECT COUNT(*) as c FROM action_logs WHERE timestamp >= DATE('now', '-1 day')").catch(() => ({ c: 0 }));
+      reply = `**Audit Center & Mutation Trail**\n` +
+        `• Immutable Action Logs (Last 24h): **${logCount?.c || 0}**\n` +
+        `• Records every operational mutation, assistant execution, and security access\n` +
+        `• Outbound Security Gateway prevents unauthorized disclosure of sensitive records.`;
+      suggestedFollowUps = ['Audit expiring batches', 'Check customer enquiries', 'Show due refills'];
+    } else if (rawPath === '/portal') {
+      reply = `**Customer Self-Service Portal**\n` +
+        `• Secure patient self-service for looking up chronic repeat prescriptions\n` +
+        `• Verified phone access only; patients cannot view pharmacy operational tools or confidential margins.`;
+      suggestedFollowUps = ['Ask a medicine question', 'Check store timings', 'How to request a refill'];
+    } else {
+      const refills = await db.get("SELECT COUNT(*) as c FROM patient_refills WHERE status = 'pending'").catch(() => ({ c: 0 }));
+      const tasks = await db.get("SELECT COUNT(*) as c FROM patient_call_tasks WHERE status = 'pending'").catch(() => ({ c: 0 }));
+      reply = `**Pharmacy Operations Assistant (${pageTitle || rawPath})**\n` +
+        `• Pending Refills in Pharmacy: **${refills?.c || 0}**\n` +
+        `• Pending Call Tasks: **${tasks?.c || 0}**\n` +
+        `• I can assist with medicine search, refill staging, customer WhatsApp drafts, task tracking, and distributor cart updates.`;
+      suggestedFollowUps = ['Show due refills', 'List pending call tasks', 'Stock check for Dolo 650'];
+    }
+
+    cards.push({
+      id: `page_${rawPath}`,
+      title: `Page Context: ${rawPath}`,
+      subtitle: pageTitle || 'Unified Pharmacy Operations',
+      badge: 'Active Route',
+      badgeColor: 'blue',
+      actionUrl: rawPath
+    });
+
+    return {
+      sessionId: session.sessionId,
+      query: text,
+      reply,
+      actionType: 'EXPLAIN_PAGE',
+      cards,
+      latencyMs: Math.round(performance.now() - startTime),
+      suggestedFollowUps
+    };
+  }
+
+  /**
+   * Refill Live Cart Insertion Handler (Rule 6 Two-Stage Gate)
+   */
+  private async handleAddToLiveCart(text: string, session: AssistantSessionContext, db: any, startTime: number): Promise<AssistantResponse> {
+    const refillId = this.extractNumericId(text) || session.lastEntityId;
+    if (!refillId) {
+      return {
+        sessionId: session.sessionId,
+        query: text,
+        reply: 'Which refill would you like to add to Live Cart? Please specify the refill ID (e.g., "Add refill 1 to cart").',
+        actionType: 'ADD_TO_LIVE_CART',
+        latencyMs: Math.round(performance.now() - startTime),
+        suggestedFollowUps: ['Show due refills']
+      };
+    }
+
+    const refill = await db.get(`
+      SELECT pr.*, m.name as catalog_med, m.sell_price, m.total_stock
+      FROM patient_refills pr
+      LEFT JOIN medicines m ON pr.medicine_id = m.id
+      WHERE pr.id = ? LIMIT 1
+    `, [refillId]).catch(() => null);
+
+    if (!refill) {
+      return {
+        sessionId: session.sessionId,
+        query: text,
+        reply: `Could not find refill #${refillId}. Please verify the refill ID.`,
+        actionType: 'ADD_TO_LIVE_CART',
+        latencyMs: Math.round(performance.now() - startTime)
+      };
+    }
+
+    const medName = refill.medicine_name || refill.catalog_med || 'Medicine';
+    const qty = refill.quantity_needed || 1;
+    const proposal: ProposedAction = {
+      id: `prop_livecart_${refill.id}_${Date.now()}`,
+      actionType: 'ADD_TO_LIVE_CART',
+      description: `Add Refill #${refill.id} for ${refill.patient_name} (${medName}, Qty: ${qty}) into the distributor Live Cart`,
+      payload: {
+        refillId: refill.id,
+        patientName: refill.patient_name,
+        patientPhone: refill.patient_phone,
+        medicineId: refill.medicine_id,
+        medicineName: medName,
+        quantity: qty
+      },
+      requiresConfirmation: true,
+      status: 'PENDING_CONFIRMATION',
+      createdAt: new Date().toISOString()
+    };
+
+    session.pendingProposals?.set(proposal.id, proposal);
+
+    return {
+      sessionId: session.sessionId,
+      query: text,
+      reply: `⚠️ *Confirmation Required (Rule 6):*\nWould you like to add Refill #${refill.id} for **${refill.patient_name}** (${medName}, Qty: ${qty}) directly into the distributor Live Cart?\nCurrent stock: ${refill.total_stock || 0} unit(s).`,
+      actionType: 'ADD_TO_LIVE_CART',
+      proposedAction: proposal,
+      requiresConfirmation: true,
+      cards: [{
+        id: refill.id,
+        title: `${refill.patient_name} — Refill #${refill.id}`,
+        subtitle: `Add to Live Cart: ${medName} × ${qty} | Phone: ${refill.patient_phone}`,
+        badge: 'Requires Operator Confirmation',
+        badgeColor: 'amber',
+        actionUrl: '/live-cart'
+      }],
+      latencyMs: Math.round(performance.now() - startTime),
+      suggestedFollowUps: ['Cancel']
+    };
+  }
+
+  /**
+   * Distributor Order Placement Proposal Handler (Rule 6 Two-Stage Gate)
+   */
+  private async handlePlaceDistributorOrder(text: string, session: AssistantSessionContext, db: any, startTime: number): Promise<AssistantResponse> {
+    const proposal: ProposedAction = {
+      id: `prop_checkout_${Date.now()}`,
+      actionType: 'PLACE_DISTRIBUTOR_ORDER',
+      description: 'Transmit and place official distributor orders for all active items in the Live Cart',
+      payload: {},
+      requiresConfirmation: true,
+      status: 'PENDING_CONFIRMATION',
+      createdAt: new Date().toISOString()
+    };
+
+    session.pendingProposals?.set(proposal.id, proposal);
+
+    return {
+      sessionId: session.sessionId,
+      query: text,
+      reply: `⚠️ *High-Consequence Action Confirmation (Rule 6):*\nAre you sure you want to transmit and place official distributor orders for all pending Live Cart items?\nThis will submit orders to mapped distributors via the official gateway.`,
+      actionType: 'PLACE_DISTRIBUTOR_ORDER',
+      proposedAction: proposal,
+      requiresConfirmation: true,
+      cards: [{
+        id: 'distributor_checkout',
+        title: 'Official Distributor Checkout',
+        subtitle: 'Submits verified cart lines to distributor portals',
+        badge: 'Awaiting Operator Approval',
+        badgeColor: 'amber',
+        actionUrl: '/pharmarack-cart'
+      }],
+      latencyMs: Math.round(performance.now() - startTime),
+      suggestedFollowUps: ['Cancel']
+    };
   }
 
   /**
@@ -984,10 +1428,82 @@ export class UnifiedAssistantOrchestrator {
     }
 
     const proposal = session.pendingProposals.get(proposalId)!;
+    if (proposal.status === 'EXECUTED') {
+      return { success: false, message: 'This proposal has already been executed.' };
+    }
+
+    // Immediately consume from session map to prevent double-execution race conditions
+    session.pendingProposals.delete(proposalId);
     const db = operator.dbInstance || (await dbManager.getConnection());
 
     try {
       switch (proposal.actionType) {
+        case 'ADD_TO_LIVE_CART': {
+          const { refillId, patientName, medicineName, quantity } = proposal.payload;
+          const { processRefillCartItem } = await import('../refillCartService.js');
+          const cartResult = await processRefillCartItem(refillId, { qty: quantity, dryRun: false });
+
+          if (cartResult.status === 'added' || cartResult.status === 'in_cart') {
+            await logMutationAudit({
+              storeId: operator.storeId || 1,
+              userId: operator.userId,
+              username: operator.username || 'staff',
+              action: 'ADD_TO_LIVE_CART',
+              entity: 'patient_refills',
+              entityId: refillId,
+              description: `Assistant added Refill #${refillId} (${medicineName}, Qty: ${quantity}) to Live Cart: ${cartResult.message}`
+            });
+
+            eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
+            proposal.status = 'EXECUTED';
+            return {
+              success: true,
+              message: `Refill #${refillId} (${medicineName}) successfully added to Live Cart: ${cartResult.message}`,
+              proposal
+            };
+          } else {
+            proposal.status = 'FAILED';
+            return {
+              success: false,
+              message: `Could not add refill to Live Cart: ${cartResult.message} (status: ${cartResult.status})`,
+              proposal
+            };
+          }
+        }
+
+        case 'PLACE_DISTRIBUTOR_ORDER': {
+          const { PharmarackCheckoutService } = await import('../pharmarackCheckoutService.js');
+          const checkoutResult = await PharmarackCheckoutService.getInstance().executeCartCheckout();
+
+          if (checkoutResult.ok && checkoutResult.placedCount > 0) {
+            await logMutationAudit({
+              storeId: operator.storeId || 1,
+              userId: operator.userId,
+              username: operator.username || 'staff',
+              action: 'PLACE_DISTRIBUTOR_ORDER',
+              entity: 'distributor_orders',
+              entityId: 0,
+              description: `Assistant executed official distributor checkout: ${checkoutResult.placedCount} orders placed, ${checkoutResult.failedCount} failed`
+            });
+
+            eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
+            eventService.broadcast('dispatch_updated', { at: Date.now() });
+            proposal.status = 'EXECUTED';
+            return {
+              success: true,
+              message: `Official distributor orders placed successfully! ${checkoutResult.placedCount} order(s) transmitted.`,
+              proposal
+            };
+          } else {
+            proposal.status = 'FAILED';
+            return {
+              success: false,
+              message: checkoutResult.error || `Checkout failed: ${checkoutResult.failedCount} orders could not be placed.`,
+              proposal
+            };
+          }
+        }
+
         case 'CREATE_TASK': {
           const { task_type, patient_name, patient_phone, details, priority } = proposal.payload;
           const result = await db.run(`
@@ -1008,7 +1524,6 @@ export class UnifiedAssistantOrchestrator {
 
           eventService.broadcast('call_tasks_updated', { taskId: result.lastID, taskType: task_type });
           proposal.status = 'EXECUTED';
-          session.pendingProposals.delete(proposalId);
           return { success: true, message: `Task #${result.lastID} created successfully for ${patient_name}.`, proposal };
         }
 
@@ -1032,7 +1547,6 @@ export class UnifiedAssistantOrchestrator {
 
           eventService.broadcast('call_tasks_updated', { taskId, status: 'completed' });
           proposal.status = 'EXECUTED';
-          session.pendingProposals.delete(proposalId);
           return { success: true, message: `Task #${taskId} marked as completed.`, proposal };
         }
 
@@ -1056,7 +1570,6 @@ export class UnifiedAssistantOrchestrator {
 
           eventService.broadcast('refill_updated', { refillId, is_ready: 1 });
           proposal.status = 'EXECUTED';
-          session.pendingProposals.delete(proposalId);
           return { success: true, message: `Refill #${refillId} for ${patientName} is now marked as Ready.`, proposal };
         }
 
@@ -1079,7 +1592,6 @@ export class UnifiedAssistantOrchestrator {
           });
 
           proposal.status = 'EXECUTED';
-          session.pendingProposals.delete(proposalId);
           return { success: true, message: `Customer enquiry #${result.lastID} recorded successfully.`, proposal };
         }
 
@@ -1126,7 +1638,6 @@ export class UnifiedAssistantOrchestrator {
           });
 
           proposal.status = 'EXECUTED';
-          session.pendingProposals.delete(proposalId);
           return { success: true, message: `WhatsApp message queued for dispatch to ${phone} (Queue #${queueId}).`, proposal };
         }
 
@@ -1138,6 +1649,13 @@ export class UnifiedAssistantOrchestrator {
       proposal.status = 'FAILED';
       return { success: false, message: `Action failed: ${err.message}` };
     }
+  }
+
+  /**
+   * Returns the capability registry describing all supported actions and security policies
+   */
+  public getCapabilityRegistry(): Record<AssistantActionType, CapabilityDefinition> {
+    return CAPABILITY_REGISTRY;
   }
 
   /**
