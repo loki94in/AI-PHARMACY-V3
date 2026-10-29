@@ -40,11 +40,31 @@ let serverProcess: ChildProcess | null = null;
 let isStartingServer = false;
 
 /**
- * Checks if Local AI is explicitly enabled in environment.
- * Default is FALSE (disabled by default).
+ * Checks whether the local conversational model should be used.
+ * Explicit LOCAL_AI_ENABLED=true/1 enables it; false/0 disables it.
+ * When unset, enable automatically only if verified offline runtime/model assets
+ * are present. This keeps clean installs deterministic while making bundled
+ * offline AI work without requiring a manual environment variable.
  */
 export function isLocalAiEnabled(): boolean {
-  return process.env.LOCAL_AI_ENABLED === 'true' || process.env.LOCAL_AI_ENABLED === '1';
+  const configured = String(process.env.LOCAL_AI_ENABLED || '').trim().toLowerCase();
+  if (configured === 'false' || configured === '0') return false;
+  if (configured === 'true' || configured === '1') return true;
+
+  const candidateDirs = [
+    DEFAULT_LOCAL_AI_DIR,
+    process.env.LOCAL_AI_STORAGE_DIR,
+    process.env.LOCAL_AI_MODELS_DIR,
+    getLocalAiStorageDir()
+  ].filter((dir): dir is string => Boolean(dir));
+
+  return candidateDirs.some((dir) => {
+    try {
+      return validateLocalAiAssets(dir).valid;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /**
