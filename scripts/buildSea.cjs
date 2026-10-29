@@ -112,6 +112,26 @@ fs.writeFileSync(
 );
 fs.copyFileSync(path.join(electronDistDir, 'main.cjs'), path.join(appResourcesDir, 'main.cjs'));
 fs.copyFileSync(path.join(electronDistDir, 'preload.cjs'), path.join(appResourcesDir, 'preload.cjs'));
+// Bundle the local AI runtime/model as installer resources. The model is deliberately
+// kept out of Git because it is a large binary; release builders provision and verify it.
+const localAiSourceDir = path.join(root, 'models', 'local-ai');
+const localAiTargetDir = path.join(root, 'dist', 'resources', 'local-ai');
+const requireLocalAi = process.env.BUNDLE_LOCAL_AI === '1';
+const requiredLocalAiFiles = ['llama-server.exe', 'Qwen_Qwen3-1.7B-Q4_K_M.gguf', 'LICENSE-llama.cpp.txt', 'LICENSE-Qwen3.txt', 'MODEL-METADATA.txt'];
+const missingLocalAiFiles = requiredLocalAiFiles.filter(name => !fs.existsSync(path.join(localAiSourceDir, name)));
+if (requireLocalAi && missingLocalAiFiles.length) {
+  throw new Error('[build-sea] BUNDLE_LOCAL_AI=1 but required offline assets are missing: ' + missingLocalAiFiles.join(', ') + '. Provision verified assets under models/local-ai before building.');
+}
+if (fs.existsSync(localAiSourceDir)) {
+  const localAiFiles = fs.readdirSync(localAiSourceDir);
+  if (localAiFiles.length) {
+    fs.mkdirSync(localAiTargetDir, { recursive: true });
+    fs.cpSync(localAiSourceDir, localAiTargetDir, { recursive: true });
+    console.log('[build-sea] Bundled local AI assets:', localAiFiles.join(', '));
+  }
+} else if (requireLocalAi) {
+  throw new Error('[build-sea] models/local-ai directory is missing.');
+}
 console.log('[build-sea] ✓ Electron app and resources staged in dist/resources/app');
 
 // Automatically check for Inno Setup compiler (ISCC.exe) and compile installer if installed
