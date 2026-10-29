@@ -22,7 +22,7 @@ export interface LocalAiSystemStatus {
 }
 
 export class LocalAiLifecycleManager {
-  private isProcessingWhatsAppReady = false;
+  private isProcessingLocalAiLifecycle = false;
 
   /**
    * Returns current full system status.
@@ -131,18 +131,18 @@ export class LocalAiLifecycleManager {
    * Triggered asynchronously when WhatsApp connects.
    * Never blocks WhatsApp connection or message routing.
    */
-  public async onWhatsAppConnected(): Promise<void> {
-    if (this.isProcessingWhatsAppReady) return;
-    this.isProcessingWhatsAppReady = true;
+  public async onApplicationStarted(): Promise<void> {
+    if (this.isProcessingLocalAiLifecycle) return;
+    this.isProcessingLocalAiLifecycle = true;
 
     // Run in background without throwing
     try {
       if (!isLocalAiEnabled()) {
-        console.log('[Local AI Lifecycle] WhatsApp connected. Local AI is disabled (default). Skipping asset check.');
+        console.log('[Local AI Lifecycle] Application started. Local AI is disabled because it is not enabled and no verified bundled assets were detected. Skipping asset check.');
         return;
       }
 
-      console.log('[Local AI Lifecycle] WhatsApp connected. Checking local AI asset installation...');
+      console.log('[Local AI Lifecycle] Application started. Checking local AI asset installation...');
       const installed = await this.isInstalledAndVerified();
 
       if (installed) {
@@ -192,11 +192,20 @@ export class LocalAiLifecycleManager {
         console.log('[Local AI Lifecycle] Assets missing. Auto-download is off; user can initiate via Settings/API.');
       }
     } catch (err) {
-      console.warn('[Local AI Lifecycle] Error during WhatsApp connected lifecycle:', err);
+      console.warn('[Local AI Lifecycle] Error during local AI startup lifecycle:', err);
     } finally {
-      this.isProcessingWhatsAppReady = false;
+      this.isProcessingLocalAiLifecycle = false;
     }
   }
+  /**
+   * Backward-compatible hook used by the WhatsApp client. The local model is
+   * now initialized at application startup as well, so the in-app assistant
+   * does not depend on WhatsApp connecting first.
+   */
+  public async onWhatsAppConnected(): Promise<void> {
+    await this.onApplicationStarted();
+  }
+
 }
 
 export const localAiLifecycleManager = new LocalAiLifecycleManager();
