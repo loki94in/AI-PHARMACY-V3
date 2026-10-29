@@ -379,6 +379,7 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
         setMessages(prev => [...prev, confirmMsg]);
+        toastEvent.trigger(res.data.message || 'Action executed successfully.', 'success');
       } else {
         throw new Error(res.data?.error || 'Execution failed');
       }

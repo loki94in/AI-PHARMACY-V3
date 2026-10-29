@@ -17,7 +17,7 @@ import {
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 84;
+const CURRENT_SCHEMA_VERSION = 85;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -1028,6 +1028,42 @@ async function ensureMultiPharmacyAndSnapshotSchema(db: any) {
  * Schema v81: Cloud execution ledger for durable at-least-once online cart additions & cloud sync.
  * Governed by OWNER_WEB_PORTAL_IMPLEMENTATION_PLAN.md & BACKEND SCHEMA SAFETY.md.
  */
+/**
+ * Schema v85: Conversational AI persistent sessions and turns memory.
+ * Fast-boot safe guarantee for customer_conversation_sessions and customer_conversation_turns.
+ */
+async function ensureConversationalAiSchema(db: any) {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS customer_conversation_sessions (
+      id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL DEFAULT 'whatsapp',
+      customer_id INTEGER,
+      phone TEXT NOT NULL,
+      language TEXT DEFAULT 'en',
+      session_state TEXT DEFAULT 'idle',
+      active_intent TEXT,
+      context_data_json TEXT,
+      last_activity_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (customer_id) REFERENCES customers(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cust_conv_phone ON customer_conversation_sessions(phone);
+    CREATE INDEX IF NOT EXISTS idx_cust_conv_cust_id ON customer_conversation_sessions(customer_id);
+
+    CREATE TABLE IF NOT EXISTS customer_conversation_turns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      sender TEXT CHECK(sender IN ('customer', 'assistant', 'pharmacist', 'system')),
+      message_text TEXT NOT NULL,
+      tool_calls_json TEXT,
+      tokens_used INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (session_id) REFERENCES customer_conversation_sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_cust_turns_session ON customer_conversation_turns(session_id, id DESC);
+  `);
+}
+
 async function ensureCloudExecLedgerSchema(db: any) {
   await db.exec(`
     CREATE TABLE IF NOT EXISTS cloud_exec_ledger (
@@ -1187,6 +1223,7 @@ export async function ensureSchema(dbPath: string) {
         // Ensure cloud_exec_ledger exists on fast-boot (v81)
         try {
           await ensureCloudExecLedgerSchema(db);
+          await ensureConversationalAiSchema(db);
         } catch (_) { }
 
         // Ensure multi-device & velocity metrics tables exist on fast-boot

@@ -160,6 +160,7 @@ router.post('/confirm', async (req: Request, res: Response) => {
     const agentConfirm = await conversationalAgentEngine.processMessage({
       sessionId,
       message: 'yes',
+      role: 'staff',
       userId: userId ? Number(userId) : undefined,
       username: username ? String(username) : 'staff',
       storeId: storeId ? Number(storeId) : 1
@@ -173,10 +174,31 @@ router.post('/confirm', async (req: Request, res: Response) => {
       });
     }
 
-    // 2. Fall back to unifiedAssistantOrchestrator
+    // 2. Check if proposal was already executed in persistent session (idempotency guard)
+    try {
+      const { conversationalMemoryService } = await import('../services/localAi/conversationalMemoryService.js');
+      const session = await conversationalMemoryService.getSession(sessionId);
+      if (session && session.sessionState === 'completed' && session.activeIntent === 'CONFIRMATION_EXECUTED') {
+        return res.json({
+          success: true,
+          message: 'This proposal was already approved and executed successfully.',
+          data: { id: proposalId, status: 'EXECUTED' }
+        });
+      }
+    } catch (_) {}
+
+    // 3. Fall back to unifiedAssistantOrchestrator
     const result = await unifiedAssistantOrchestrator.confirmProposal(proposalId, sessionId, operator);
 
     if (!result.success) {
+      if (result.message && (result.message.includes('already been executed') || result.message.includes('already executed'))) {
+        return res.json({
+          success: true,
+          message: 'This proposal has already been executed.',
+          data: { id: proposalId, status: 'EXECUTED' }
+        });
+      }
+
       return res.status(400).json({
         success: false,
         error: result.message
@@ -308,15 +330,18 @@ router.post('/upload-document', async (req: Request, res: Response) => {
  */
 router.get('/status', async (_req: Request, res: Response) => {
   try {
-    const localAiConfigured = isLocalAiEnabled();
-    const serverHealthy = localAiConfigured ? await checkLlamaServerHealth() : false;
+    const { qwenReadinessService } = await import('../services/localAi/qwenReadinessService.js');
+    const readiness = await qwenReadinessService.getStatus();
 
     return res.json({
       success: true,
       data: {
-        status: 'ready',
-        localAiConfigured,
-        localAiServerHealthy: serverHealthy,
+        status: readiness.state,
+        localAiConfigured: readiness.enabled,
+        localAiServerHealthy: readiness.inferenceReady,
+        readinessState: readiness.state,
+        automationGate: readiness.automationGate,
+        latencyMs: readiness.latencyMs,
         capabilities: [
           'refills',
           'tasks',

@@ -42,10 +42,14 @@ const SSE_QUERY_MAP: Record<string, string[][]> = {
   prescription_scan_complete: [['prescription-scans'], ['prescription-detail']],
   enquiry_updated: [['enquiries'], ['enquiry-panel'], ['medicine-enquiries']],
   call_tasks_updated: [['call-tasks'], ['call-tasks-count']],
+  local_ai_status_changed: [['local-ai-status']],
+  ai_gate_status_changed: [['local-ai-status'], ['ai-gate-status']],
 };
 
 // SSE event type -> DOM CustomEvents dispatched for non-react-query consumers
 const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
+  local_ai_status_changed: ['sse-local-ai-status'],
+  ai_gate_status_changed: ['sse-ai-gate-status', 'sse-local-ai-status'],
   activity_logged: ['sse-activity-logged'],
   order_updated: ['refresh-special-orders'],
   order_delta: ['app-order-delta', 'refresh-special-orders'],

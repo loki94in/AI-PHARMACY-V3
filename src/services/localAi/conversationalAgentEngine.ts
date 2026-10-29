@@ -79,6 +79,7 @@ export interface ProposedAction {
     | 'ADJUST_STOCK'
     | 'STAGE_PURCHASE_DRAFT'
     | 'STAGE_PRESCRIPTION_DRAFT'
+    | 'STAGE_POS_ITEM'
     | 'DISTRIBUTOR_RETURN_DRAFT'
     | 'LOW_STOCK_REORDER';
   summary: string;
@@ -285,6 +286,15 @@ export class ConversationalAgentEngine {
         } else if (proposal.type === 'STAGE_PRESCRIPTION_DRAFT') {
           replyText = `✅ *Prescription Workflow Staged!*\n\nThe identified medicines have been linked to the prescription dispensing queue for pharmacist verification.`;
           executionResult = { success: true };
+        } else if (proposal.type === 'STAGE_POS_ITEM') {
+          replyText = `✅ *Added to Cart!* *${proposal.data.medicineName}* (${proposal.data.quantity || 1} units) is ready on your billing screen.`;
+          executionResult = { success: true, item: proposal.data };
+        } else if (proposal.type === 'DISTRIBUTOR_RETURN_DRAFT') {
+          replyText = `✅ *Distributor Return Draft Confirmed!* Staged for supplier return processing.`;
+          executionResult = { success: true, draft: proposal.data };
+        } else if (proposal.type === 'LOW_STOCK_REORDER') {
+          replyText = `✅ *Reorder Draft Confirmed!* Staged into procurement queue.`;
+          executionResult = { success: true, draft: proposal.data };
         }
 
         // Clean up proposal context
@@ -858,7 +868,33 @@ export class ConversationalAgentEngine {
             `${stockStatus}\n\n`;
 
           if (topItem.inStock) {
-            replyText += `Would you like us to stage this medicine for dispensing?`;
+            const isAddRequest = /\b(?:add|bill|dispense|put|cart|stage|dalo|lagao)\b/i.test(userText);
+            const isPosPage = input.pageContext?.pathname === '/pos' || input.pageContext?.pathname === '/sales';
+            if (isAddRequest || isPosPage) {
+              replyText += `👉 *Ready to add to bill:* Click *Stage to Cart* or reply *Yes* to stage *${topItem.name}* into the POS cart.`;
+              proposedAction = {
+                id: `pos_stage_${Date.now()}`,
+                type: 'STAGE_POS_ITEM',
+                summary: `Add ${topItem.name} to POS billing cart`,
+                data: {
+                  medicineId: topItem.id,
+                  medicineName: topItem.name,
+                  mrp: topItem.mrp,
+                  price: topItem.sellingPrice,
+                  dosageForm: topItem.dosageForm,
+                  inStock: topItem.inStock,
+                  stockQuantity: topItem.stockQuantity,
+                  quantity: detected.quantity || 1
+                },
+                requiresConfirmation: true,
+                status: 'PENDING_CONFIRMATION'
+              };
+              state = 'awaiting_confirmation';
+              suggestedFollowUps = ['Stage to Cart', 'Find alternative', 'Cancel'];
+            } else {
+              replyText += `Would you like us to stage this medicine for dispensing?`;
+              suggestedFollowUps = [`Add ${topItem.name} to cart`, 'Check alternatives'];
+            }
           } else {
             replyText += `Would you like to find an alternative medicine, or order it from the distributor?`;
             proposedAction = {
@@ -885,7 +921,9 @@ export class ConversationalAgentEngine {
             ...(session.contextData || {}),
             lastMedicine: topItem.name
           };
-          state = 'idle';
+          if (!proposedAction) {
+            state = 'idle';
+          }
         } else {
           replyText = `🔍 We could not find *${medName}* in our current store catalog.\n\nWould you like to find substitutes with the same active salt, or log a procurement request?`;
           proposedAction = {
@@ -1316,7 +1354,7 @@ export class ConversationalAgentEngine {
    */
   public isAffirmative(text: string): boolean {
     const clean = text.trim().toLowerCase().replace(/[^\w\s]/g, '');
-    return /\b(yes|haan|ha|ho|confirm|confirmed|ok|okay|bhej do|kar do|proceed|ready|prepare|order|thik hai|theek hai|approve|approved|accept|commit)\b/i.test(clean) || clean === '1';
+    return /\b(yes|haan|ha|ho|confirm|confirmed|ok|okay|bhej do|kar do|proceed|ready|prepare|order|thik hai|theek hai|approve|approved|accept|commit|stage)\b/i.test(clean) || clean === '1';
   }
 
   /**
@@ -1332,16 +1370,19 @@ export class ConversationalAgentEngine {
    */
   public extractMedicineFromText(text: string): string | undefined {
     const lower = text.toLowerCase().trim();
-    if (!/\b(?:have|got|stock|available|price|cost|mrp|chahiye|milegi|mil sakti|aahe ka|tablet|strip|capsule|syrup|gel|ointment|mg|ml|gm|dolo|telma|paracetamol|augmentin|azithral|pan|pantocid|metformin|glycomet|atorva|for)\b/i.test(lower)) {
+    if (!/\b(?:have|got|stock|available|price|cost|mrp|chahiye|milegi|mil sakti|aahe ka|tablet|strip|capsule|syrup|gel|ointment|mg|ml|gm|dolo|telma|paracetamol|augmentin|azithral|pan|pantocid|metformin|glycomet|atorva|for|add|bill|cart|give|dispense|dalo|lagao|bhejo)\b/i.test(lower)) {
       return undefined;
     }
 
     let clean = text
       .replace(/\b(?:this medicine is unavailable|this medicine is out of stock|this medicine is not available|this medicine|this)\b/gi, ' ')
-      .replace(/\b(?:do you have|can you check|is|in stock|available|unavailable|right now|today|price of|cost of|chahiye|milegi|kya|bhejo|please|for me|tablet|strip|box|find an alternative for|find alternatives for|find substitute for|alternative for|substitute for)\b/gi, ' ')
+      .replace(/\b(?:add to bill|add to cart|add to pos|add|give|put|bill|dispense|take|dalo|lagao|bhejo|do you have|can you check|is|in stock|available|unavailable|right now|today|price of|cost of|chahiye|milegi|kya|please|for me|tablet|strip|box|find an alternative for|find alternatives for|find substitute for|alternative for|substitute for)\b/gi, ' ')
       .replace(/[?!,.]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+
+    // Strip optional leading numbers (e.g. "2 Dolo 650" -> "Dolo 650")
+    clean = clean.replace(/^\d{1,3}\s+/, '').trim();
 
     if (clean.length >= 3 && !/^(hi|hello|yes|no|ok|refill|call|timing|shop|store|address|hours|this medicine|medicine)$/i.test(clean)) {
       return clean;

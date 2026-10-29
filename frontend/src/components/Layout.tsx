@@ -85,6 +85,7 @@ const StagedReviewModal = lazy(() => import('./StagedReviewModal').then(m => ({ 
 const MobileConnectionModal = lazy(() => import('./MobileConnectionModal').then(m => ({ default: m.MobileConnectionModal })));
 const BackupCenterModal = lazy(() => import('./BackupCenterModal'));
 const UnifiedOperationsAssistantModal = lazy(() => import('./UnifiedOperationsAssistantModal').then(m => ({ default: m.UnifiedOperationsAssistantModal })));
+import { MovableQwenStatusIcon } from './MovableQwenStatusIcon';
 
 import { ConnectedDevicesFooterBar } from './ConnectedDevicesFooterBar';
 import { QuickAssistSidebar } from './QuickAssistSidebar';
@@ -3872,6 +3873,9 @@ export const Layout = ({
         )}
 
         {/* Unified Operations Assistant Modal */}
+        {/* Movable Qwen Status Icon & Quick Automation Gate */}
+        <MovableQwenStatusIcon onOpenAssistant={() => setShowAssistantModal(true)} />
+
         {showAssistantModal && (
           <Suspense fallback={null}>
             <UnifiedOperationsAssistantModal

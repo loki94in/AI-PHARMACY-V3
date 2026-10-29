@@ -7,6 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import { isLocalAiEnabled, checkLlamaServerHealth, ensureLlamaServerRunning } from './llamaServerClient.js';
+import { qwenReadinessService, type QwenReadinessState } from './qwenReadinessService.js';
 import { getLocalAiStorageDir, verifyArtifactIntegrity } from './localAiStorage.js';
 import { validateManifestStructure, verifyManifestAuthenticity, type LocalAiReleaseManifest } from './manifestSchema.js';
 import { modelDownloadManager, type DownloadProgressState } from './modelDownloadManager.js';
@@ -17,6 +18,10 @@ export interface LocalAiSystemStatus {
   installed: boolean;
   runtimeRunning: boolean;
   runtimeHealthy: boolean;
+  state?: QwenReadinessState;
+  inferenceReady?: boolean;
+  latencyMs?: number;
+  automationGate?: 'open' | 'paused' | 'blocked';
   downloadState: DownloadProgressState;
   storageDir: string;
 }
@@ -28,15 +33,17 @@ export class LocalAiLifecycleManager {
    * Returns current full system status.
    */
   public async getStatus(): Promise<LocalAiSystemStatus> {
-    const enabled = isLocalAiEnabled();
-    const installed = await this.isInstalledAndVerified();
-    const healthy = await checkLlamaServerHealth();
+    const readiness = await qwenReadinessService.getStatus();
 
     return {
-      enabled,
-      installed,
-      runtimeRunning: healthy,
-      runtimeHealthy: healthy,
+      enabled: readiness.enabled,
+      installed: readiness.installed,
+      runtimeRunning: readiness.runtimeRunning,
+      runtimeHealthy: readiness.runtimeHealthy,
+      state: readiness.state,
+      inferenceReady: readiness.inferenceReady,
+      latencyMs: readiness.latencyMs,
+      automationGate: readiness.automationGate,
       downloadState: modelDownloadManager.getState(),
       storageDir: getLocalAiStorageDir()
     };

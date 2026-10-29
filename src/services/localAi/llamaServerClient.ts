@@ -6,6 +6,7 @@
 
 import { spawn, type ChildProcess, execSync } from 'child_process';
 import os from 'os';
+import net from 'net';
 import { validateLocalAiAssets, DEFAULT_LOCAL_AI_DIR } from './localAiAssetValidator.js';
 import { getLocalAiStorageDir } from './localAiStorage.js';
 import { parseStructuredIntent } from './structuredIntentParser.js';
@@ -19,6 +20,39 @@ export interface LlamaServerConfig {
   modelsDir: string;
 }
 
+let activeLlamaPort: number | null = null;
+
+/**
+ * Probes whether a port is currently available for binding.
+ */
+export async function isPortAvailable(port: number, host = '127.0.0.1'): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = net.createServer()
+      .once('error', (err: any) => {
+        resolve(false);
+      })
+      .once('listening', () => {
+        tester.once('close', () => resolve(true)).close();
+      })
+      .listen(port, host);
+  });
+}
+
+/**
+ * Hunts for the first free port starting from preferredPort up to maxAttempts.
+ * Shifts away from 8080 to prevent conflicts with third-party pharmacy software.
+ */
+export async function findAvailablePort(startPort: number, host = '127.0.0.1', maxAttempts = 15): Promise<number> {
+  let candidate = (startPort === 8080) ? 8089 : startPort;
+  for (let i = 0; i < maxAttempts; i++) {
+    if (await isPortAvailable(candidate, host)) {
+      return candidate;
+    }
+    candidate++;
+  }
+  return candidate;
+}
+
 export function getLocalAiConfig(overrides: Partial<LlamaServerConfig> = {}): LlamaServerConfig {
   let resolvedModelsDir = overrides.modelsDir || process.env.LOCAL_AI_STORAGE_DIR || process.env.LOCAL_AI_MODELS_DIR;
   if (!resolvedModelsDir) {
@@ -29,9 +63,12 @@ export function getLocalAiConfig(overrides: Partial<LlamaServerConfig> = {}): Ll
     }
   }
 
+  const rawEnvPort = parseInt(process.env.LOCAL_AI_PORT || '8089', 10);
+  const preferredPort = (rawEnvPort === 8080) ? 8089 : rawEnvPort;
+
   return {
     host: overrides.host || process.env.LOCAL_AI_HOST || '127.0.0.1',
-    port: overrides.port || parseInt(process.env.LOCAL_AI_PORT || '8089', 10),
+    port: overrides.port || activeLlamaPort || preferredPort,
     timeoutMs: overrides.timeoutMs || parseInt(process.env.LOCAL_AI_TIMEOUT_MS || '4000', 10),
     modelsDir: resolvedModelsDir
   };
@@ -120,7 +157,7 @@ export async function checkLlamaServerHealth(config?: Partial<LlamaServerConfig>
  * Enforces No-GPU contract (--n-gpu-layers 0).
  */
 export async function ensureLlamaServerRunning(config?: Partial<LlamaServerConfig>): Promise<boolean> {
-  const cfg = getLocalAiConfig(config);
+  let cfg = getLocalAiConfig(config);
   if (!isLocalAiEnabled()) return false;
   if (await checkLlamaServerHealth(cfg)) return true;
   if (serverProcess || isStartingServer) return false;
@@ -133,6 +170,17 @@ export async function ensureLlamaServerRunning(config?: Partial<LlamaServerConfi
 
   isStartingServer = true;
   try {
+    // Dynamic Port Hunting: probe and resolve free port before spawning
+    const targetPort = await findAvailablePort(cfg.port, cfg.host);
+    activeLlamaPort = targetPort;
+    cfg = getLocalAiConfig({ ...config, port: targetPort });
+
+    // Re-verify if an existing instance is already running on the resolved port
+    if (await checkLlamaServerHealth(cfg)) {
+      console.log(`[Local AI] Found existing active llama-server at ${getLocalAiBaseUrl(cfg)}`);
+      return true;
+    }
+
     const cpuThreads = Math.max(1, Math.min(4, os.cpus().length - 1));
     const args = [
       '-m', assetCheck.details.modelPath,
@@ -144,7 +192,7 @@ export async function ensureLlamaServerRunning(config?: Partial<LlamaServerConfi
       '--log-disable'
     ];
 
-    console.log(`[Local AI] Spawning llama-server (${assetCheck.details.runtimePath}) on CPU with ${cpuThreads} threads...`);
+    console.log(`[Local AI] Spawning llama-server (${assetCheck.details.runtimePath}) on CPU with ${cpuThreads} threads on port ${cfg.port}...`);
     serverProcess = spawn(assetCheck.details.runtimePath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
@@ -153,11 +201,13 @@ export async function ensureLlamaServerRunning(config?: Partial<LlamaServerConfi
     serverProcess.on('exit', (code) => {
       console.log(`[Local AI] llama-server exited with code ${code}`);
       serverProcess = null;
+      activeLlamaPort = null;
     });
 
     serverProcess.on('error', (err) => {
       console.warn('[Local AI] llama-server spawn error:', err.message);
       serverProcess = null;
+      activeLlamaPort = null;
     });
 
     // Wait briefly for server readiness
