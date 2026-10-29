@@ -23,7 +23,7 @@ import { dbManager } from '../../database/connection.js';
 import { logMutationAudit } from '../auditLoggerService.js';
 import { pharmacyKnowledgeRetriever } from './pharmacyKnowledgeRetriever.js';
 import { pharmacyQaEngine } from './pharmacyQaEngine.js';
-import { queryLocalAiIntent, isLocalAiEnabled, checkLlamaServerHealth } from './llamaServerClient.js';
+import { queryLocalAiIntent, queryLocalAssistantAction, isLocalAiEnabled, checkLlamaServerHealth } from './llamaServerClient.js';
 import { eventService } from '../eventService.js';
 import { validate10DigitPhone } from '../../utils/phoneValidation.js';
 
@@ -357,7 +357,7 @@ export class UnifiedAssistantOrchestrator {
 
     // 2. Staff Command Intent Classification (Multi-lingual)
     const lower = text.toLowerCase();
-    const actionType = this.classifyStaffIntent(lower, session);
+    const actionType = await this.resolveStaffIntent(text, session);
 
     // 3. Dispatch to deterministic service handlers
     let result: AssistantResponse;
@@ -428,6 +428,28 @@ export class UnifiedAssistantOrchestrator {
     // Update conversation context memory
     session.lastAction = result.actionType;
     return result;
+  }
+
+  /**
+   * Resolve natural-language staff requests with the bundled local model first.
+   * The model can only select an allow-listed capability; it cannot execute tools.
+   * If confidence is low or the local model is unavailable, retain the existing
+   * deterministic classifier as a compatibility fallback.
+   */
+  private async resolveStaffIntent(text: string, session: AssistantSessionContext): Promise<AssistantActionType> {
+    if (isLocalAiEnabled()) {
+      const aiResult = await queryLocalAssistantAction(text, {
+        currentPage: session.pageContext?.pathname || session.currentPage,
+        lastAction: session.lastAction,
+        language: session.language
+      });
+
+      if (aiResult && aiResult.confidence >= 0.82) {
+        return aiResult.actionType as AssistantActionType;
+      }
+    }
+
+    return this.classifyStaffIntent(text.toLowerCase(), session);
   }
 
   /**
