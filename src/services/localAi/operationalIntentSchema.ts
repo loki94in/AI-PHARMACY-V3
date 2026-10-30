@@ -18,6 +18,10 @@ export type OperationalIntent =
   | 'STOCK_ADJUSTMENT'
   | 'GENERAL_PHARMACY_QA'
   | 'CUSTOMER_ENQUIRY'
+  | 'CUSTOMER_DUE_QUERY'
+  | 'SPECIAL_ORDER_BOOKING'
+  | 'REFILL_ONBOARDING'
+  | 'TRIGGER_AUTOMATION'
   | 'PAGE_GUIDANCE'
   | 'CHITCHAT'
   | 'UNKNOWN';
@@ -34,6 +38,7 @@ export interface OperationalModelOutput {
   destination?: 'live_cart' | 'pos_cart';
   targetPage?: string;
   targetTab?: string;
+  automationId?: string;
   actionRequested?: 'QUERY' | 'DRAFT' | 'CONFIRM' | 'CANCEL';
   targetId?: string | number;
   explanation: string;
@@ -52,6 +57,10 @@ const VALID_INTENTS = new Set<OperationalIntent>([
   'STOCK_ADJUSTMENT',
   'GENERAL_PHARMACY_QA',
   'CUSTOMER_ENQUIRY',
+  'CUSTOMER_DUE_QUERY',
+  'SPECIAL_ORDER_BOOKING',
+  'REFILL_ONBOARDING',
+  'TRIGGER_AUTOMATION',
   'PAGE_GUIDANCE',
   'CHITCHAT',
   'UNKNOWN'
@@ -110,8 +119,68 @@ User: "Rajesh ka refill due kab hai?"
 User: "expiry check karo 60 days"
 {"intent":"EXPIRY_AUDIT","confidence":0.95,"timeframeDays":60}
 
-User: "where are order hub settings?"
-{"intent":"PAGE_GUIDANCE","confidence":0.95,"targetPage":"/settings","targetTab":"integrations"}
+User: "share payment qr for Rajesh monthly due bill"
+{"intent":"CUSTOMER_DUE_QUERY","confidence":0.95,"patientName":"Rajesh"}
+
+User: "Rajesh ka monthly due kitna hai"
+{"intent":"CUSTOMER_DUE_QUERY","confidence":0.95,"patientName":"Rajesh"}
+
+User: "send due bill payment qr code to 9876543210"
+{"intent":"CUSTOMER_DUE_QUERY","confidence":0.95,"patientName":"9876543210"}
+
+User: "book special order for Augmentin 625 Duo for Suresh"
+{"intent":"SPECIAL_ORDER_BOOKING","confidence":0.95,"medicineName":"Augmentin 625 Duo","patientName":"Suresh","quantity":1}
+
+User: "Pan 40 shortage hai order book karo customer ke liye"
+{"intent":"SPECIAL_ORDER_BOOKING","confidence":0.95,"medicineName":"Pan 40","quantity":1}
+
+User: "onboard monthly refill for Rajesh Dolo 650"
+{"intent":"REFILL_ONBOARDING","confidence":0.95,"patientName":"Rajesh","medicineName":"Dolo 650","timeframeDays":30}
+
+User: "search batch DL2041"
+{"intent":"STOCK_LOOKUP","confidence":0.95,"medicineName":"batch DL2041"}
+
+User: "medicines with MRP 34.50"
+{"intent":"STOCK_LOOKUP","confidence":0.95,"medicineName":"mrp 34.50"}
+
+User: "find in-stock alternatives for Augmentin 625"
+{"intent":"GENERAL_PHARMACY_QA","confidence":0.95,"medicineName":"Augmentin 625"}
+
+User: "which medicines are expiring in 30 days"
+{"intent":"EXPIRY_AUDIT","confidence":0.95,"timeframeDays":30}
+
+User: "distributor return draft banao 60 days"
+{"intent":"DISTRIBUTOR_RETURN_DRAFT","confidence":0.95,"timeframeDays":60}
+
+User: "query today sales turnover"
+{"intent":"SALES_SUMMARY","confidence":0.95}
+
+User: "run overdue credit reminder scan"
+{"intent":"TRIGGER_AUTOMATION","confidence":0.95,"automationId":"credit_reminders"}
+
+User: "bhai 60 din ki expiry scan chala do"
+{"intent":"TRIGGER_AUTOMATION","confidence":0.95,"automationId":"expiry_scan","timeframeDays":60}
+
+User: "trigger collection reminders for ready orders"
+{"intent":"TRIGGER_AUTOMATION","confidence":0.95,"automationId":"collection_reminders"}
+
+User: "backup database now"
+{"intent":"TRIGGER_AUTOMATION","confidence":0.95,"automationId":"backup"}
+
+User: "database ka backup le lo"
+{"intent":"TRIGGER_AUTOMATION","confidence":0.95,"automationId":"backup"}
+
+User: "check email for distributor invoices"
+{"intent":"TRIGGER_AUTOMATION","confidence":0.95,"automationId":"email_poller"}
+
+User: "distributor email check karo bill aaya kya"
+{"intent":"TRIGGER_AUTOMATION","confidence":0.95,"automationId":"email_poller"}
+
+User: "Dolo 650 nahi hai badle me kya de sakte hai?"
+{"intent":"GENERAL_PHARMACY_QA","confidence":0.95,"medicineName":"Dolo 650"}
+
+User: "Rajesh ka kitna udhar baki hai?"
+{"intent":"CUSTOMER_DUE_QUERY","confidence":0.95,"patientName":"Rajesh"}
 
 Respond ONLY with valid JSON containing non-null keys.`;
 }
@@ -143,51 +212,67 @@ export function parseOperationalIntent(raw: string): OperationalModelOutput {
       return fallback;
     }
 
-    const parsed = JSON.parse(clean.substring(firstBrace, lastBrace + 1));
-    if (!parsed || typeof parsed !== 'object') return fallback;
+    const rawParsed = JSON.parse(clean.substring(firstBrace, lastBrace + 1));
+    if (!rawParsed || typeof rawParsed !== 'object') return fallback;
+
+    // Case-insensitive & punctuation-safe key normalization
+    const parsed: Record<string, any> = {};
+    for (const [k, v] of Object.entries(rawParsed)) {
+      parsed[k.toLowerCase().replace(/[^a-z0-9]/g, '')] = v;
+    }
 
     let intent: OperationalIntent = 'UNKNOWN';
-    if (parsed.intent && typeof parsed.intent === 'string') {
-      const normalized = parsed.intent.toUpperCase().trim() as OperationalIntent;
+    const rawIntent = parsed['intent'];
+    if (rawIntent && typeof rawIntent === 'string') {
+      const normalized = rawIntent.toUpperCase().trim() as OperationalIntent;
       if (VALID_INTENTS.has(normalized)) {
         intent = normalized;
       }
     }
 
-    let confidence = Number(parsed.confidence);
-    if (isNaN(confidence) || confidence < 0) confidence = 0;
+    let confidence = Number(parsed['confidence']);
+    if (isNaN(confidence) || confidence < 0) {
+      // Default to high confidence (0.85) when a recognized intent is returned without explicit confidence
+      confidence = (intent !== 'UNKNOWN') ? 0.85 : 0;
+    }
     if (confidence > 1) confidence = 1;
 
     let timeframeDays: number | undefined;
-    if (parsed.timeframeDays != null && !isNaN(Number(parsed.timeframeDays))) {
-      timeframeDays = Math.max(1, Math.min(365, Math.round(Number(parsed.timeframeDays))));
+    const rawTimeframe = parsed['timeframedays'] ?? parsed['timeframe'];
+    if (rawTimeframe != null && !isNaN(Number(rawTimeframe))) {
+      timeframeDays = Math.max(1, Math.min(365, Math.round(Number(rawTimeframe))));
     }
 
     let medicineName: string | undefined;
-    if (parsed.medicineName && typeof parsed.medicineName === 'string') {
-      let med = parsed.medicineName.trim().replace(/^the\s+/i, '');
+    const rawMedicine = parsed['medicinename'] ?? parsed['medicine'];
+    if (rawMedicine && typeof rawMedicine === 'string') {
+      let med = rawMedicine.trim().replace(/^the\s+/i, '');
       if (med.length >= 2 && med.length <= 100) medicineName = med;
     }
 
     let patientName: string | undefined;
-    if (parsed.patientName && typeof parsed.patientName === 'string') {
-      const pat = parsed.patientName.trim();
+    const rawPatient = parsed['patientname'] ?? parsed['patient'];
+    if (rawPatient && typeof rawPatient === 'string') {
+      const pat = rawPatient.trim();
       if (pat.length >= 2 && pat.length <= 80) patientName = pat;
     }
 
     let quantity: number | undefined;
-    if (parsed.quantity != null && !isNaN(Number(parsed.quantity))) {
-      quantity = Math.max(1, Math.min(1000, Math.round(Number(parsed.quantity))));
+    const rawQty = parsed['quantity'] ?? parsed['qty'];
+    if (rawQty != null && !isNaN(Number(rawQty))) {
+      quantity = Math.max(1, Math.min(1000, Math.round(Number(rawQty))));
     }
 
     let unit: string | undefined;
-    if (parsed.unit && typeof parsed.unit === 'string') {
-      unit = parsed.unit.trim().toLowerCase();
+    const rawUnit = parsed['unit'];
+    if (rawUnit && typeof rawUnit === 'string') {
+      unit = rawUnit.trim().toLowerCase();
     }
 
     let destination: 'live_cart' | 'pos_cart' | undefined;
-    if (parsed.destination && typeof parsed.destination === 'string') {
-      const d = parsed.destination.toLowerCase().trim();
+    const rawDest = parsed['destination'] ?? parsed['dest'];
+    if (rawDest && typeof rawDest === 'string') {
+      const d = rawDest.toLowerCase().trim();
       if (d === 'live_cart' || d === 'pharmarack' || d.includes('live')) {
         destination = 'live_cart';
       } else if (d === 'pos_cart' || d === 'pos' || d.includes('bill') || d.includes('pos')) {
@@ -196,34 +281,47 @@ export function parseOperationalIntent(raw: string): OperationalModelOutput {
     }
 
     let distributorName: string | undefined;
-    if (parsed.distributorName && typeof parsed.distributorName === 'string') {
-      const dist = parsed.distributorName.trim();
+    const rawDist = parsed['distributorname'] ?? parsed['distributor'];
+    if (rawDist && typeof rawDist === 'string') {
+      const dist = rawDist.trim();
       if (dist.length >= 2 && dist.length <= 100) distributorName = dist;
     }
 
     let actionRequested: 'QUERY' | 'DRAFT' | 'CONFIRM' | 'CANCEL' = 'QUERY';
-    if (parsed.actionRequested && typeof parsed.actionRequested === 'string') {
-      const act = parsed.actionRequested.toUpperCase().trim();
+    const rawAction = parsed['actionrequested'] ?? parsed['action'];
+    if (rawAction && typeof rawAction === 'string') {
+      const act = rawAction.toUpperCase().trim();
       if (act === 'DRAFT' || act === 'CONFIRM' || act === 'CANCEL') {
         actionRequested = act;
       }
     }
 
     let targetId: string | number | undefined;
-    if (parsed.targetId != null) {
-      targetId = String(parsed.targetId).trim().slice(0, 50);
+    const rawTargetId = parsed['targetid'];
+    if (rawTargetId != null) {
+      targetId = String(rawTargetId).trim().slice(0, 50);
     }
 
     let targetPage: string | undefined;
-    if (parsed.targetPage && typeof parsed.targetPage === 'string') {
-      const p = parsed.targetPage.trim();
+    const rawPage = parsed['targetpage'] ?? parsed['page'];
+    if (rawPage && typeof rawPage === 'string') {
+      const p = rawPage.trim();
       if (p.startsWith('/')) targetPage = p;
     }
 
     let targetTab: string | undefined;
-    if (parsed.targetTab && typeof parsed.targetTab === 'string') {
-      targetTab = parsed.targetTab.trim().toLowerCase();
+    const rawTab = parsed['targettab'] ?? parsed['tab'];
+    if (rawTab && typeof rawTab === 'string') {
+      targetTab = rawTab.trim().toLowerCase();
     }
+
+    let automationId: string | undefined;
+    const rawAuto = parsed['automationid'] ?? parsed['automation'];
+    if (rawAuto && typeof rawAuto === 'string') {
+      automationId = rawAuto.trim().toLowerCase();
+    }
+
+    const rawExplanation = parsed['explanation'] ?? parsed['message'] ?? parsed['query'];
 
     return {
       intent,
@@ -237,9 +335,10 @@ export function parseOperationalIntent(raw: string): OperationalModelOutput {
       destination,
       targetPage,
       targetTab,
+      automationId,
       actionRequested,
       targetId,
-      explanation: typeof parsed.explanation === 'string' ? parsed.explanation.slice(0, 200) : ''
+      explanation: typeof rawExplanation === 'string' ? rawExplanation.slice(0, 200) : ''
     };
   } catch {
     return fallback;

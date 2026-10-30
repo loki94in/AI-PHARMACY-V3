@@ -72,11 +72,11 @@ function getPageContextInfo(pathname: string): PageContextInfo {
     return {
       name: 'POS Billing',
       suggestions: [
-        'Add Dolo 650 to bill',
-        'Add refill for Rajesh',
         'Stock check for Dolo 650',
-        'Show due refills',
-        'Query today sales turnover'
+        'Find in-stock alternatives for Augmentin 625',
+        'Share payment QR for Rajesh monthly due bill',
+        'Onboard monthly refill for patient',
+        'Check ready pickup collection'
       ]
     };
   }
@@ -84,132 +84,67 @@ function getPageContextInfo(pathname: string): PageContextInfo {
     return {
       name: 'Inventory & Batches',
       suggestions: [
-        'Add Dolo 650 to live cart',
-        'Find low stock medicines',
-        'Audit expiring batches',
-        'Search Paracetamol 650',
-        'Show recent tasks'
+        'Search batch DL2041',
+        'Search medicine by MRP 120',
+        'Find in-stock alternatives for Dolo 650',
+        'Run 60-day expiry scan',
+        'Stage shortage medicine to live cart'
       ]
     };
   }
   if (clean === '/crm') {
     return {
-      name: 'CRM & Patients',
+      name: 'CRM & Patient Care',
       suggestions: [
-        'Add refill for Rajesh',
-        'Show due refills',
-        'List pending call tasks',
-        'What WhatsApp messages need replies?',
-        'Check customer enquiries'
+        'Share payment QR for Rajesh monthly due bill',
+        'Check overdue credit dues',
+        'Onboard monthly refill for patient',
+        'Show due refills for today',
+        'Send collection reminders for ready pickups'
       ]
     };
   }
   if (clean === '/pharmarack-cart' || clean === '/live-cart') {
     return {
-      name: 'Order Hub & Live Cart',
+      name: 'Distributor Live Cart',
       suggestions: [
-        'Add Dolo 650',
         'Stage 5 Pan 40 to live cart',
-        'Where are Order Hub settings?',
-        'Check distributor minimums',
-        'Show recent tasks'
+        'Stage shortage items to distributor',
+        'Check distributor PTR and minimums',
+        'Refresh live cart status'
       ]
     };
   }
-  if (clean === '/purchases' || clean === '/purchase-history' || clean === '/manual-purchase') {
+  if (clean === '/purchases' || clean === '/purchase-history' || clean === '/manual-purchase' || clean === '/reorder') {
     return {
-      name: 'Purchase Entry',
+      name: 'Purchases & Reorder Hub',
       suggestions: [
-        'Explain this page',
-        'View latest purchase rates',
-        'Check profit margins',
-        'Audit expiring batches'
-      ]
-    };
-  }
-  if (clean === '/dispatch') {
-    return {
-      name: 'Dispatch & Delivery',
-      suggestions: [
-        'Which deliveries are still pending?',
-        'Explain dispatch workflow',
-        'Check pending distributor dispatches',
-        'Show delivery schedules'
-      ]
-    };
-  }
-  if (clean === '/sells') {
-    return {
-      name: 'Sales History',
-      suggestions: [
-        'Query today sales turnover',
-        'Explain this page',
-        'Search medicine in stock'
-      ]
-    };
-  }
-  if (clean === '/returns') {
-    return {
-      name: 'Returns Hub',
-      suggestions: [
-        'Prepare 60-day distributor return list',
-        'Audit expiring batches',
-        'Show pending supplier returns',
-        'Explain return policy'
+        'Poll email invoices from distributors',
+        'View latest distributor purchase rates',
+        'Check purchase invoice PTR and schemes',
+        'Stage low stock to live cart'
       ]
     };
   }
   if (clean === '/audit' || clean === '/investigation' || clean === '/reports') {
     return {
-      name: 'Investigation & Reports',
+      name: 'Investigation & Audit Hub',
       suggestions: [
-        'Query today sales turnover',
-        'Show recent tasks',
-        'Audit near-expiry batches',
-        'Explain audit log security'
-      ]
-    };
-  }
-  if (clean === '/settings') {
-    return {
-      name: 'Settings & Automation',
-      suggestions: [
-        'Where are Order Hub settings?',
-        'How to connect Pharmarack',
-        'Connect WhatsApp Web',
-        'Configure thermal printer',
-        'Explain this page'
-      ]
-    };
-  }
-  if (clean === '/ai-engineering') {
-    return {
-      name: 'AI Hub',
-      suggestions: [
-        'Review recent OCR scans',
-        'Check schedule drug compliance',
-        'Explain this page'
-      ]
-    };
-  }
-  if (clean === '/portal' || clean === '/customer-login' || clean === '/my-bills') {
-    return {
-      name: 'Customer Portal',
-      suggestions: [
-        'How to request a refill',
-        'Ask a medicine question',
-        'Check store timings'
+        'Backup database now',
+        'Run 60-day expiry scan',
+        'Audit batch discrepancies and movement',
+        'Query today sales turnover'
       ]
     };
   }
   return {
-    name: 'Dashboard Overview',
+    name: 'Pharmacy Operations',
     suggestions: [
-      'Where are Order Hub settings?',
-      'How to connect Pharmarack',
-      'Show due refills',
-      'Find low stock medicines',
-      'Audit expiring batches'
+      'Search medicine by Name, Batch, or MRP',
+      'Find in-stock alternatives for medicine',
+      'Share monthly due payment QR',
+      'Onboard monthly patient refill',
+      'Book special order for customer'
     ]
   };
 }
@@ -237,7 +172,8 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId] = useState(() => `staff-${Date.now()}`);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [statusInfo, setStatusInfo] = useState<{ healthy: boolean; localAi: boolean } | null>(null);
+  const [statusInfo, setStatusInfo] = useState<{ healthy: boolean; localAi: boolean; automationGate?: 'open' | 'paused' | 'blocked' } | null>(null);
+  const [isAutomationPaused, setIsAutomationPaused] = useState(false);
   const [selectedImageBase64, setSelectedImageBase64] = useState<string | null>(null);
   const [selectedImageName, setSelectedImageName] = useState<string | null>(null);
 
@@ -266,6 +202,26 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const handleToggleAutomation = async () => {
+    try {
+      if (isAutomationPaused) {
+        const res = await apiClient.post('/local-ai/automation-resume');
+        if (res.data?.success) {
+          setIsAutomationPaused(false);
+          toastEvent.trigger('AI background automation resumed.', 'success');
+        }
+      } else {
+        const res = await apiClient.post('/local-ai/automation-pause', { reason: 'Paused via Operations Assistant' });
+        if (res.data?.success) {
+          setIsAutomationPaused(true);
+          toastEvent.trigger('AI background automation paused by operator.', 'info');
+        }
+      }
+    } catch (err: any) {
+      toastEvent.trigger(`Failed to change automation state: ${err.message || 'Error'}`, 'error');
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 100);
@@ -273,10 +229,13 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
       apiClient.get('/assistant/status')
         .then((res: any) => {
           if (res.data?.success) {
+            const data = res.data.data;
             setStatusInfo({
-              healthy: !!res.data.data.localAiServerHealthy,
-              localAi: !!res.data.data.localAiConfigured
+              healthy: !!data.localAiServerHealthy,
+              localAi: !!data.localAiConfigured,
+              automationGate: data.automationGate
             });
+            setIsAutomationPaused(data.automationGate === 'paused');
           }
         })
         .catch(() => setStatusInfo(null));
@@ -325,7 +284,7 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
           pathname: activePath,
           pageTitle: document.title || pageInfo.name
         }
-      });
+      }, { timeout: 60000 });
 
       if (res.data?.success && res.data.data) {
         const d = res.data.data;
@@ -344,10 +303,14 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
         throw new Error(res.data?.error || 'Invalid server response');
       }
     } catch (err: any) {
+      const isTimeout = err?.code === 'ECONNABORTED' || (err?.message && err.message.includes('timeout'));
+      const friendlyMsg = isTimeout
+        ? 'The offline local AI engine took longer than expected to process. If it was starting up, please try your request again now.'
+        : `Sorry, an error occurred while processing your request: ${err.message || 'Server error'}. Please try again.`;
       const errorMsg: AssistantMessage = {
         id: `err-${Date.now()}`,
         sender: 'assistant',
-        text: `Sorry, an error occurred while processing your request: ${err.message || 'Server error'}. Please try again.`,
+        text: friendlyMsg,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
       setMessages(prev => [...prev, errorMsg]);
@@ -479,6 +442,21 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleToggleAutomation}
+              title={isAutomationPaused ? 'Resume AI Background Automation' : 'Pause AI Background Automation'}
+              className={`px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer ${
+                isAutomationPaused
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-500 hover:bg-amber-500/20'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isAutomationPaused ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+              <span className="hidden sm:inline">
+                {isAutomationPaused ? 'Auto: Paused' : 'Auto: Active'}
+              </span>
+            </button>
             <button
               type="button"
               onClick={handleClearContext}
@@ -706,7 +684,7 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
               type="text"
               value={inputMessage}
               onChange={e => setInputMessage(e.target.value)}
-              placeholder="Ask a question, find alternatives, audit expiries, or upload doc..."
+              placeholder="Search medicine by Name, Batch, or MRP, check alternatives, due bills..."
               className="flex-1 bg-bg2 border border-border focus:border-primary rounded-xl px-4 py-2.5 text-sm text-text placeholder:text-muted focus:outline-none transition-colors"
               disabled={isLoading}
             />

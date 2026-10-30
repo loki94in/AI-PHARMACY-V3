@@ -487,7 +487,7 @@ export async function queryOperationalAiIntent(
 
   const endpoint = `${getLocalAiBaseUrl(cfg)}/v1/chat/completions`;
   const systemPrompt = buildOperationalSystemPrompt();
-  const timeoutMs = options.timeoutMs || 20000;
+  const timeoutMs = options.timeoutMs || 10000;
 
   const payload = {
     model: 'qwen3-1.7b',

@@ -27,6 +27,10 @@ import { eventService } from '../eventService.js';
 import { medicineAvailabilityEngine } from '../medicineAvailabilityEngine.js';
 import { prescriptionOrchestratorService } from '../prescriptionOrchestratorService.js';
 import { invoiceVisionService } from '../invoiceVisionService.js';
+import { paymentQrService } from '../paymentQrService.js';
+import { creditReminderService } from '../creditReminderService.js';
+import { normalizeWhatsAppPhone } from '../../whatsappClient.js';
+import { toLocalSqlDateTime } from '../../utils/localTime.js';
 
 export interface RefillRecordItem {
   id: number;
@@ -52,6 +56,24 @@ export interface MedicineAvailabilityItem {
   inStock: boolean;
   stockQuantity: number;
   rackLocation?: string;
+  batchNo?: string;
+  expiryDate?: string;
+}
+
+export interface CustomerPendingInvoice {
+  invoiceNo: string;
+  date: string;
+  amount: number;
+}
+
+export interface CustomerCreditDueResult {
+  customerId: number;
+  name: string;
+  phone: string;
+  creditBalance: number;
+  creditDueDate?: string;
+  pendingInvoices: CustomerPendingInvoice[];
+  formattedBreakdown: string;
 }
 
 export interface AlternativeCandidateItem {
@@ -67,6 +89,7 @@ export interface AlternativeCandidateItem {
   stockQuantity: number;
   manufacturer?: string;
   differenceNote?: string;
+  rackLocation?: string;
 }
 
 export interface AlternativesResult {
@@ -171,7 +194,9 @@ export class PharmacyToolRegistry {
       sellingPrice: m.sellingPrice,
       inStock: m.inStock,
       stockQuantity: m.stockQuantity,
-      rackLocation: m.rackLocation
+      rackLocation: m.rackLocation,
+      batchNo: m.batchNo,
+      expiryDate: m.expiryDate
     }));
   }
 
@@ -231,6 +256,7 @@ export class PharmacyToolRegistry {
         inStock: Number(r.total_stock || 0) > 0,
         stockQuantity: Number(r.total_stock || 0),
         manufacturer: r.manufacturer,
+        rackLocation: r.rack || undefined,
         differenceNote: `Same composition (${sourceSalt}). ${Number(r.total_stock || 0) > 0 ? `Available in stock: ${r.total_stock} units` : 'Currently out of stock'}.`
       }));
     }
@@ -1327,6 +1353,543 @@ export class PharmacyToolRegistry {
       return {
         success: false,
         message: `Failed to stage into Live Cart: ${err.message}`
+      };
+    }
+  }
+
+  /**
+   * Queries patient credit balance and unpaid invoice breakdown for monthly due reminders
+   */
+  public async queryCustomerCreditDue(
+    customerQuery: string,
+    dbInstance?: any
+  ): Promise<CustomerCreditDueResult | null> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const clean = customerQuery.trim();
+    if (!clean) return null;
+
+    let customer = await db.get(
+      `SELECT id, name, phone, credit_balance, credit_due_date, language
+       FROM customers
+       WHERE phone LIKE ? OR phone = ? LIMIT 1`,
+      [`%${clean.replace(/\D/g, '')}%`, clean]
+    ).catch(() => null);
+
+    if (!customer) {
+      customer = await db.get(
+        `SELECT id, name, phone, credit_balance, credit_due_date, language
+         FROM customers
+         WHERE name LIKE ? COLLATE NOCASE LIMIT 1`,
+        [`%${clean}%`]
+      ).catch(() => null);
+    }
+
+    if (!customer) return null;
+
+    const invoices = await db.all(
+      `SELECT invoice_no, total_amount, date FROM sales_invoices
+       WHERE customer_id = ?
+         AND (payment_medium = 'CREDIT' OR payment_status = 'UNPAID' OR payment_status = 'PENDING')
+         AND payment_status != 'PAID'
+       ORDER BY date ASC, id ASC`,
+      [customer.id]
+    ).catch(() => []);
+
+    const pendingInvoices: CustomerPendingInvoice[] = invoices.map((inv: any) => ({
+      invoiceNo: String(inv.invoice_no),
+      date: inv.date ? String(inv.date).slice(0, 10) : 'Recent',
+      amount: Number(inv.total_amount || 0)
+    }));
+
+    const computedTotal = pendingInvoices.reduce((acc, curr) => acc + curr.amount, 0);
+    const creditBalance = (customer.credit_balance !== undefined && customer.credit_balance !== null && Number(customer.credit_balance) > 0)
+      ? Number(customer.credit_balance)
+      : computedTotal;
+
+    let formattedBreakdown = '';
+    if (pendingInvoices.length > 0) {
+      formattedBreakdown = pendingInvoices
+        .map(inv => `• Bill #${inv.invoiceNo} (${inv.date}): ₹${inv.amount.toFixed(2)}`)
+        .join('\n');
+    }
+
+    return {
+      customerId: customer.id,
+      name: customer.name || 'Customer',
+      phone: customer.phone || '',
+      creditBalance,
+      creditDueDate: customer.credit_due_date ? String(customer.credit_due_date).slice(0, 10) : undefined,
+      pendingInvoices,
+      formattedBreakdown
+    };
+  }
+
+  /**
+   * Generates a branded UPI payment QR code for a customer's outstanding monthly due bill
+   */
+  public async generateDuePaymentQr(
+    customerId: number,
+    dbInstance?: any
+  ): Promise<{ success: boolean; upiUri: string; qrImageBase64?: string; totalAmount: number; payeeName: string; upiId: string; message: string }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const customer = await db.get('SELECT id, name, phone, credit_balance FROM customers WHERE id = ?', [customerId]);
+    if (!customer) {
+      return { success: false, upiUri: '', totalAmount: 0, payeeName: '', upiId: '', message: 'Customer not found.' };
+    }
+
+    const dueResult = await this.queryCustomerCreditDue(String(customerId), db);
+    const amount = dueResult ? dueResult.creditBalance : Number(customer.credit_balance || 0);
+
+    if (amount <= 0) {
+      return { success: false, upiUri: '', totalAmount: 0, payeeName: '', upiId: '', message: `Customer ${customer.name} has no pending due balance.` };
+    }
+
+    const activeQr = await paymentQrService.allocateNextQr();
+    const storeName = await paymentQrService.getStoreName();
+    const upiUri = paymentQrService.buildUpiUri(
+      activeQr.upi_id,
+      activeQr.payee_name || storeName,
+      amount,
+      `DUE-${customerId}`
+    );
+
+    let qrImageBase64: string | undefined;
+    try {
+      const qrBuf = await paymentQrService.generateQrBuffer(upiUri);
+      qrImageBase64 = `data:image/png;base64,${qrBuf.toString('base64')}`;
+    } catch (_) {}
+
+    return {
+      success: true,
+      upiUri,
+      qrImageBase64,
+      totalAmount: amount,
+      payeeName: activeQr.payee_name || storeName,
+      upiId: activeQr.upi_id,
+      message: `Generated UPI Payment QR for ${customer.name}: ₹${amount.toFixed(2)}`
+    };
+  }
+
+  /**
+   * Books a special order directly into the canonical special_orders table
+   * Reference: AGENT_DATA_FLOW_TREE.md (CRM / Quick Assist node)
+   */
+  public async bookSpecialOrder(
+    data: {
+      medicineName: string;
+      customerName: string;
+      customerPhone: string;
+      quantity: number;
+      notes?: string;
+    },
+    dbInstance?: any
+  ): Promise<{ success: boolean; orderId?: number; message: string; details?: any }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const { medicineName, customerName, customerPhone, quantity = 1, notes } = data;
+
+    if (!medicineName || !medicineName.trim()) {
+      return { success: false, message: 'Medicine name is required to book a special order.' };
+    }
+
+    const cleanPhone = normalizeWhatsAppPhone(customerPhone || '');
+    const cleanRequester = (customerName || 'Walk-in Customer').trim();
+
+    // Check catalog to resolve medicine ID and check live distributor availability
+    const medRow = await db.get(
+      `SELECT id, name, mrp, sell_price, manufacturer FROM medicines 
+       WHERE name LIKE ? ORDER BY length(name) ASC LIMIT 1`,
+      [`%${medicineName.trim()}%`]
+    ).catch(() => null);
+
+    const medId = medRow?.id || null;
+    const resolvedName = medRow?.name || medicineName.trim();
+
+    // Look for linked distributor rates if available in pharmarack cache or vendor items
+    let distributor = medRow?.manufacturer || 'Primary Distributor';
+    let distributorRate = medRow?.sell_price || medRow?.mrp || 0;
+    let pharmarackMapped = 0;
+
+    const distRow = await db.get(
+      `SELECT distributor_name, ptr, mrp FROM live_distributor_inventory_cache 
+       WHERE product_name LIKE ? LIMIT 1`,
+      [`%${resolvedName}%`]
+    ).catch(() => null);
+
+    if (distRow) {
+      distributor = distRow.distributor_name || distributor;
+      distributorRate = distRow.ptr || distributorRate;
+      pharmarackMapped = 1;
+    }
+
+    // Insert canonical special_orders row per AGENT_DATA_FLOW_TREE.md
+    const result = await db.run(
+      `INSERT INTO special_orders (
+        product, medicine_name, medicine_id, qty, requester, phone, notes,
+        status, customer_order_source, needs_live_cart_sync, pharmarack_mapped,
+        pharmarack_distributor, pharmarack_rate, pharmarack_mrp, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', 'assistant', 1, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [
+        resolvedName,
+        resolvedName,
+        medId,
+        quantity,
+        cleanRequester,
+        cleanPhone,
+        notes || 'Booked via Operations Assistant',
+        pharmarackMapped,
+        distributor,
+        distributorRate,
+        medRow?.mrp || distributorRate
+      ]
+    );
+
+    const orderId = result.lastID;
+
+    // Log mutation audit
+    await logMutationAudit({
+      entity: 'special_orders',
+      entityId: orderId,
+      action: 'BOOK_SPECIAL_ORDER',
+      description: `Special Order #${orderId} booked for ${resolvedName} (${quantity} qty) for ${cleanRequester}`,
+      metadata: { medicineName: resolvedName, quantity, customerName: cleanRequester, customerPhone: cleanPhone }
+    }).catch(() => {});
+
+    // Broadcast event for UI synchronization
+    eventService.broadcast('special_order_created', {
+      id: orderId,
+      product: resolvedName,
+      medicine_name: resolvedName,
+      qty: quantity,
+      requester: cleanRequester,
+      phone: cleanPhone,
+      status: 'Pending'
+    });
+
+    return {
+      success: true,
+      orderId,
+      message: `Special Order #${orderId} booked for ${resolvedName} (${quantity} qty) for ${cleanRequester}.`,
+      details: {
+        orderId,
+        medicineName: resolvedName,
+        distributor,
+        estimatedRate: distributorRate
+      }
+    };
+  }
+
+  /**
+   * Onboards a recurring patient refill schedule into patient_refills table
+   */
+  public async onboardPatientRefill(
+    data: {
+      customerName: string;
+      customerPhone: string;
+      medicineName: string;
+      quantity?: number;
+      intervalDays?: number;
+      notes?: string;
+    },
+    dbInstance?: any
+  ): Promise<{ success: boolean; refillId?: number; message: string; details?: any }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const { customerName, customerPhone, medicineName, quantity = 1, intervalDays = 30 } = data;
+
+    if (!medicineName || !medicineName.trim()) {
+      return { success: false, message: 'Medicine name is required for refill onboarding.' };
+    }
+
+    const cleanPhone = normalizeWhatsAppPhone(customerPhone || '');
+    const cleanPatient = (customerName || 'Patient').trim();
+
+    // Check or create customer
+    let cust = await db.get(
+      `SELECT id FROM customers WHERE phone LIKE ? OR phone = ? LIMIT 1`,
+      [`%${cleanPhone.slice(-10)}%`, cleanPhone]
+    ).catch(() => null);
+
+    if (!cust && cleanPhone) {
+      const custRes = await db.run(
+        `INSERT INTO customers (name, phone, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))`,
+        [cleanPatient, cleanPhone]
+      ).catch(() => null);
+      if (custRes?.lastID) cust = { id: custRes.lastID };
+    }
+
+    const custId = cust?.id || null;
+
+    // Resolve medicine
+    const medRow = await db.get(
+      `SELECT id, name FROM medicines WHERE name LIKE ? ORDER BY length(name) ASC LIMIT 1`,
+      [`%${medicineName.trim()}%`]
+    ).catch(() => null);
+
+    const medId = medRow?.id || null;
+    const resolvedMedName = medRow?.name || medicineName.trim();
+
+    // Calculate next refill date in shop local time (B4 compliant)
+    const nextRefillDate = toLocalSqlDateTime(new Date(Date.now() + intervalDays * 24 * 60 * 60 * 1000)).slice(0, 10);
+
+    const result = await db.run(
+      `INSERT INTO patient_refills (
+        customer_id, patient_name, patient_phone, medicine_id, medicine_name,
+        quantity_needed, refill_interval_days, next_refill_date, status, is_active,
+        is_ready, source
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Active', 1, 0, 'assistant')`,
+      [
+        custId,
+        cleanPatient,
+        cleanPhone,
+        medId,
+        resolvedMedName,
+        quantity,
+        intervalDays,
+        nextRefillDate
+      ]
+    );
+
+    const refillId = result.lastID;
+
+    await logMutationAudit({
+      entity: 'patient_refills',
+      entityId: refillId,
+      action: 'ONBOARD_REFILL',
+      description: `Refill #${refillId} scheduled for ${cleanPatient} (${resolvedMedName}, every ${intervalDays} days)`,
+      metadata: { patientName: cleanPatient, medicineName: resolvedMedName, intervalDays, nextRefillDate }
+    }).catch(() => {});
+
+    eventService.broadcast('refills_changed', { at: Date.now(), id: refillId, action: 'onboard' });
+
+    return {
+      success: true,
+      refillId,
+      message: `Refill #${refillId} scheduled for ${cleanPatient} (${resolvedMedName}, every ${intervalDays} days). Next refill date: ${nextRefillDate}.`,
+      details: { refillId, patientName: cleanPatient, medicineName: resolvedMedName, nextRefillDate }
+    };
+  }
+
+  /**
+   * Previews pending targets and status of a pharmacy automation without mutating state
+   */
+  public async previewAutomation(
+    automationId: string,
+    options?: any,
+    dbInstance?: any
+  ): Promise<{ ready: boolean; automationId: string; count?: number; totalDue?: number; summary: string; details?: any }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const id = automationId.toLowerCase().trim();
+
+    if (id === 'credit_reminders' || id.includes('credit')) {
+      const row = await db.get(
+        `SELECT COUNT(DISTINCT id) as cnt, SUM(credit_balance) as total_due 
+         FROM customers WHERE credit_balance > 0`
+      ).catch(() => ({ cnt: 0, total_due: 0 }));
+      const count = Number(row?.cnt || 0);
+      const totalDue = Number(row?.total_due || 0);
+      return {
+        ready: true,
+        automationId: 'credit_reminders',
+        count,
+        totalDue,
+        summary: count > 0
+          ? `Found ${count} customer(s) with outstanding credit balances totaling ₹${totalDue.toFixed(2)}.`
+          : 'All customer credit accounts are currently settled with zero outstanding dues.'
+      };
+    }
+
+    if (id === 'refill_scan' || id.includes('refill')) {
+      const row = await db.get(
+        `SELECT COUNT(*) as cnt FROM patient_refills 
+         WHERE is_active = 1 AND next_refill_date <= date('now', '+2 days')`
+      ).catch(() => ({ cnt: 0 }));
+      const count = Number(row?.cnt || 0);
+      return {
+        ready: true,
+        automationId: 'refill_scan',
+        count,
+        summary: count > 0
+          ? `Found ${count} recurring refill(s) due for renewal or reminder dispatch.`
+          : 'No patient refills are currently due for renewal today.'
+      };
+    }
+
+    if (id === 'collection_reminders' || id.includes('collection') || id.includes('pickup')) {
+      const soRow = await db.get(`SELECT COUNT(*) as cnt FROM special_orders WHERE status = 'Ready'`).catch(() => ({ cnt: 0 }));
+      const refRow = await db.get(`SELECT COUNT(*) as cnt FROM patient_refills WHERE is_ready = 1 AND is_active = 1`).catch(() => ({ cnt: 0 }));
+      const total = Number(soRow?.cnt || 0) + Number(refRow?.cnt || 0);
+      return {
+        ready: true,
+        automationId: 'collection_reminders',
+        count: total,
+        summary: total > 0
+          ? `Found ${total} packaged order(s) and refill(s) marked Ready for counter pickup.`
+          : 'No packaged orders are currently awaiting customer pickup reminders.'
+      };
+    }
+
+    if (id === 'expiry_scan' || id.includes('expiry') || id.includes('expire')) {
+      const lookahead = Number(options?.lookaheadDays || 60);
+      const row = await db.get(
+        `SELECT COUNT(*) as cnt, COUNT(DISTINCT medicine_id) as med_cnt 
+         FROM inventory_master 
+         WHERE quantity > 0 AND expiry_date <= date('now', '+' || ? || ' days') AND expiry_date >= date('now')`,
+        [lookahead]
+      ).catch(() => ({ cnt: 0, med_cnt: 0 }));
+      const count = Number(row?.cnt || 0);
+      return {
+        ready: true,
+        automationId: 'expiry_scan',
+        count,
+        summary: count > 0
+          ? `Found ${count} inventory batch(es) across ${row?.med_cnt || 0} medicine(s) expiring within ${lookahead} days.`
+          : `No inventory batches are expiring within the next ${lookahead} days.`
+      };
+    }
+
+    if (id === 'expiry_returns' || id.includes('return')) {
+      const row = await db.get(
+        `SELECT COUNT(*) as cnt FROM inventory_master WHERE quantity > 0 AND expiry_date <= date('now', '+60 days')`
+      ).catch(() => ({ cnt: 0 }));
+      const count = Number(row?.cnt || 0);
+      return {
+        ready: true,
+        automationId: 'expiry_returns',
+        count,
+        summary: `Ready to group ${count} near-expiry batch(es) into distributor credit review drafts.`
+      };
+    }
+
+    if (id === 'backup') {
+      return {
+        ready: true,
+        automationId: 'backup',
+        summary: 'Ready to create an encrypted, timestamped SQLite database snapshot in data/backups/.'
+      };
+    }
+
+    if (id === 'email_poller' || id.includes('email') || id.includes('invoice')) {
+      return {
+        ready: true,
+        automationId: 'email_poller',
+        summary: 'Ready to connect to configured distributor email inbox and parse new invoice PDFs.'
+      };
+    }
+
+    if (id === 'pharmarack_heartbeat' || id.includes('heartbeat') || id.includes('pharmarack')) {
+      return {
+        ready: true,
+        automationId: 'pharmarack_heartbeat',
+        summary: 'Ready to execute cheap authenticated GetUserCartDetails probe to verify distributor session.'
+      };
+    }
+
+    return {
+      ready: true,
+      automationId: id,
+      summary: `Automation "${automationId}" is registered and ready for on-demand execution.`
+    };
+  }
+
+  /**
+   * Executes a verified background automation on demand with full audit logging
+   */
+  public async executeAutomation(
+    automationId: string,
+    options?: any,
+    dbInstance?: any
+  ): Promise<{ success: boolean; message: string; details?: any }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const id = automationId.toLowerCase().trim();
+
+    try {
+      if (id === 'credit_reminders' || id.includes('credit')) {
+        const { creditReminderService } = await import('../creditReminderService.js');
+        const res = await creditReminderService.checkOverdueAndEnqueue(db, true);
+        return {
+          success: true,
+          message: `Overdue credit reminder scan complete. Processed: ${res.processed}, Queued: ${res.queued}, Skipped: ${res.skipped}.`,
+          details: res
+        };
+      }
+
+      if (id === 'refill_scan' || id.includes('refill')) {
+        const { checkAllRefills, dispatchDueRefillReminders } = await import('../refillService.js');
+        await checkAllRefills(db);
+        const res = await dispatchDueRefillReminders(db);
+        return {
+          success: true,
+          message: `Chronic refill evaluation cycle completed. Reminders dispatched to due patients.`,
+          details: res
+        };
+      }
+
+      if (id === 'collection_reminders' || id.includes('collection') || id.includes('pickup')) {
+        const { runCollectionReminderCycle } = await import('../collectionReminderWorker.js');
+        const res = await runCollectionReminderCycle(true);
+        return {
+          success: true,
+          message: `Pickup collection reminder cycle completed. Refills queued: ${res.refillsQueued || 0}, Orders queued: ${res.ordersQueued || 0}.`,
+          details: res
+        };
+      }
+
+      if (id === 'expiry_scan' || id.includes('expiry') || id.includes('expire')) {
+        const lookahead = Number(options?.lookaheadDays || 60);
+        const { runExpiryScanAndAlert } = await import('../expiryAlertService.js');
+        await runExpiryScanAndAlert(lookahead);
+        return {
+          success: true,
+          message: `Near-expiry scan completed for next ${lookahead} days. Alert summary recorded.`,
+          details: { lookaheadDays: lookahead }
+        };
+      }
+
+      if (id === 'expiry_returns' || id.includes('return')) {
+        const { scanAndCreateExpiryReviews } = await import('../returnsService.js');
+        await scanAndCreateExpiryReviews(db);
+        return {
+          success: true,
+          message: `Distributor return reviews generated and staged in Returns Hub for review.`
+        };
+      }
+
+      if (id === 'email_poller' || id.includes('email') || id.includes('invoice')) {
+        const { emailService } = await import('../emailService.js');
+        await emailService.pollInbox();
+        return {
+          success: true,
+          message: `Distributor email inbox polled. New invoice PDFs extracted into purchase drafts queue.`
+        };
+      }
+
+      if (id === 'backup') {
+        const { createBackup } = await import('../backupService.js');
+        const res = await createBackup(options?.label || 'Manual Assistant Backup');
+        return {
+          success: true,
+          message: `Database backup created successfully: ${res.filename}`,
+          details: res
+        };
+      }
+
+      if (id === 'pharmarack_heartbeat' || id.includes('heartbeat') || id.includes('pharmarack')) {
+        const { tokenRefreshScheduler } = await import('../tokenRefreshScheduler.js');
+        await tokenRefreshScheduler.runSessionHeartbeat('heartbeat');
+        return {
+          success: true,
+          message: `Pharmarack authenticated session heartbeat verified. Connection active.`
+        };
+      }
+
+      return {
+        success: false,
+        message: `Unknown automation ID: "${automationId}"`
+      };
+    } catch (err: any) {
+      console.error(`[PharmacyToolRegistry] Automation execution failed for ${automationId}:`, err);
+      return {
+        success: false,
+        message: `Automation execution error: ${err.message || 'Operation failed'}`
       };
     }
   }

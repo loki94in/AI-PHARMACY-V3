@@ -77,6 +77,8 @@ export interface RetrievedMedicineEvidence {
   manufacturer?: string;
   genericName?: string;
   rackLocation?: string;
+  batchNo?: string;
+  expiryDate?: string;
 }
 
 export interface RetrievedShopEvidence {

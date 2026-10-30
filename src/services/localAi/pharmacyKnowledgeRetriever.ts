@@ -38,7 +38,94 @@ export class PharmacyKnowledgeRetriever {
     const db = dbInstance || (await dbManager.getConnection());
 
     try {
-      // 1. Try exact or prefix search first
+      // 1. Batch Number Lookup: If query explicitly asks for a batch or contains a batch-like format
+      const batchMatch = query.match(/(?:batch(?:\s*(?:no|number)?)?\s*[:#-]?\s*([A-Za-z0-9_-]{3,}))/i);
+      if (batchMatch && batchMatch[1]) {
+        const batchQuery = `%${batchMatch[1].trim()}%`;
+        const batchRows = await db.all(
+          `SELECT m.id, m.name, m.canonical_name, m.dosage_form, m.strength, 
+                  COALESCE(im.mrp, m.mrp) as mrp, 
+                  COALESCE(im.unit_price, m.sell_price, m.mrp) as sell_price,
+                  im.quantity as total_stock, m.pack_size, m.manufacturer, m.generic_name,
+                  COALESCE(im.rack_location, m.rack) as rack,
+                  im.batch_no, im.expiry_date
+           FROM inventory_master im
+           JOIN medicines m ON im.medicine_id = m.id
+           WHERE im.batch_no LIKE ? AND im.is_active = 1
+           ORDER BY (im.quantity > 0) DESC, im.expiry_date ASC
+           LIMIT 5`,
+          [batchQuery]
+        );
+
+        if (batchRows && batchRows.length > 0) {
+          return batchRows.map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            canonicalName: r.canonical_name || r.name,
+            dosageForm: r.dosage_form || undefined,
+            strength: r.strength || undefined,
+            mrp: Number(r.mrp || 0),
+            sellingPrice: Number(r.sell_price || r.mrp || 0),
+            inStock: Number(r.total_stock || 0) > 0,
+            stockQuantity: Number(r.total_stock || 0),
+            packSize: r.pack_size || undefined,
+            manufacturer: r.manufacturer || undefined,
+            genericName: r.generic_name || undefined,
+            rackLocation: r.rack || undefined,
+            batchNo: r.batch_no || undefined,
+            expiryDate: r.expiry_date ? String(r.expiry_date).slice(0, 10) : undefined
+          }));
+        }
+      }
+
+      // 2. MRP Search: If query specifies an MRP / price target
+      const mrpMatch = query.match(/(?:mrp|price|rs\.?|₹)\s*[:=]?\s*(\d+(?:\.\d+)?)/i);
+      if (mrpMatch && mrpMatch[1] && !/\b(?:dolo|pan|augmentin|paracetamol|telma|cifin|azithral)\b/i.test(query)) {
+        const targetMrp = parseFloat(mrpMatch[1]);
+        if (!isNaN(targetMrp) && targetMrp > 0) {
+          const mrpRows = await db.all(
+            `SELECT m.id, m.name, m.canonical_name, m.dosage_form, m.strength, 
+                    m.mrp, m.sell_price, m.total_stock, m.pack_size, m.manufacturer, m.generic_name, m.rack
+             FROM medicines m
+             WHERE ABS(m.mrp - ?) <= 1.0
+             ORDER BY (m.total_stock > 0) DESC, ABS(m.mrp - ?) ASC
+             LIMIT 5`,
+            [targetMrp, targetMrp]
+          );
+
+          if (mrpRows && mrpRows.length > 0) {
+            const results: RetrievedMedicineEvidence[] = [];
+            for (const row of mrpRows) {
+              const activeBatch = await db.get(
+                `SELECT batch_no, expiry_date, rack_location, quantity FROM inventory_master
+                 WHERE medicine_id = ? AND is_active = 1 AND quantity > 0
+                 ORDER BY expiry_date ASC LIMIT 1`,
+                [row.id]
+              );
+              results.push({
+                id: row.id,
+                name: row.name,
+                canonicalName: row.canonical_name || row.name,
+                dosageForm: row.dosage_form || undefined,
+                strength: row.strength || undefined,
+                mrp: Number(row.mrp || 0),
+                sellingPrice: Number(row.sell_price || row.mrp || 0),
+                inStock: Number(row.total_stock || 0) > 0,
+                stockQuantity: Number(row.total_stock || 0),
+                packSize: row.pack_size || undefined,
+                manufacturer: row.manufacturer || undefined,
+                genericName: row.generic_name || undefined,
+                rackLocation: activeBatch?.rack_location || row.rack || undefined,
+                batchNo: activeBatch?.batch_no || undefined,
+                expiryDate: activeBatch?.expiry_date ? String(activeBatch.expiry_date).slice(0, 10) : undefined
+              });
+            }
+            return results;
+          }
+        }
+      }
+
+      // 3. Name-Based Search (Exact, Prefix, or Fuzzy)
       const exactRows = await db.all(
         `SELECT id, name, canonical_name, dosage_form, strength, mrp, sell_price, 
                 total_stock, total_loose_stock, pack_size, manufacturer, generic_name, rack
@@ -51,7 +138,7 @@ export class PharmacyKnowledgeRetriever {
 
       let matchedRows = exactRows;
 
-      // 2. If no exact/prefix matches, use existing fuzzy matching
+      // 4. If no exact/prefix matches, use existing fuzzy matching
       if (!matchedRows || matchedRows.length === 0) {
         const fuzzyNames = await fuzzySearchLocalMedicines(db, query, 3);
         if (fuzzyNames && fuzzyNames.length > 0) {
@@ -71,7 +158,7 @@ export class PharmacyKnowledgeRetriever {
         return [];
       }
 
-      // 3. For each matched medicine, verify live inventory details from inventory_master
+      // 5. For each matched medicine, verify live inventory details and active batches from inventory_master
       const results: RetrievedMedicineEvidence[] = [];
 
       for (const row of matchedRows) {
@@ -80,6 +167,14 @@ export class PharmacyKnowledgeRetriever {
           `SELECT SUM(quantity) as live_qty, MAX(mrp) as inv_mrp, MIN(unit_price) as inv_price, rack_location
            FROM inventory_master
            WHERE medicine_id = ? AND is_active = 1`,
+          [row.id]
+        );
+
+        // Fetch primary active batch in stock
+        const batchRow = await db.get(
+          `SELECT batch_no, expiry_date, rack_location FROM inventory_master
+           WHERE medicine_id = ? AND is_active = 1 AND quantity > 0
+           ORDER BY expiry_date ASC LIMIT 1`,
           [row.id]
         );
 
@@ -104,7 +199,9 @@ export class PharmacyKnowledgeRetriever {
           packSize: row.pack_size || undefined,
           manufacturer: row.manufacturer || undefined,
           genericName: row.generic_name || undefined,
-          rackLocation: invRow?.rack_location || row.rack || undefined
+          rackLocation: batchRow?.rack_location || invRow?.rack_location || row.rack || undefined,
+          batchNo: batchRow?.batch_no || undefined,
+          expiryDate: batchRow?.expiry_date ? String(batchRow.expiry_date).slice(0, 10) : undefined
         });
       }
 

@@ -86,7 +86,11 @@ export interface ProposedAction {
     | 'LOW_STOCK_REORDER'
     | 'APPLY_DISCOUNT'
     | 'HOLD_BILL'
-    | 'LIVE_CART_SYNC';
+    | 'LIVE_CART_SYNC'
+    | 'SEND_DUE_PAYMENT_QR'
+    | 'BOOK_SPECIAL_ORDER'
+    | 'ONBOARD_REFILL'
+    | 'TRIGGER_AUTOMATION';
   summary: string;
   data: Record<string, any>;
   requiresConfirmation?: boolean;
@@ -364,14 +368,24 @@ export class ConversationalAgentEngine {
             latencyMs: Math.round(performance.now() - startTime)
           };
         } else {
+          const stageRes = await pharmacyToolRegistry.stageLiveCartItem(
+            slotFill.medicineName,
+            parsedSlotQty,
+            parsedSlotUnit,
+            db
+          );
+
           await conversationalMemoryService.recordMicroTask(session.id, {
-            action: 'STAGE_POS_ITEM',
-            summary: `Staged ${parsedSlotQty} ${parsedSlotUnit} of ${slotFill.medicineName} to POS Counter`,
-            data: { medicineName: slotFill.medicineName, quantity: parsedSlotQty, unit: parsedSlotUnit, destination: 'pos_cart' },
+            action: 'STAGE_LIVE_CART_ITEM',
+            summary: `Staged ${parsedSlotQty} ${parsedSlotUnit} of ${slotFill.medicineName} to Live Cart`,
+            data: { medicineName: slotFill.medicineName, quantity: parsedSlotQty, unit: parsedSlotUnit, destination: 'live_cart' },
             revertible: true
           }, db);
 
-          const replyText = `✅ *Added to Cart!*\n\n*${parsedSlotQty} ${parsedSlotUnit}* of *${slotFill.medicineName}* is staged on your POS billing counter.`;
+          const replyText = stageRes.success
+            ? `✅ *Live Cart Updated!*\n\n*${parsedSlotQty} ${parsedSlotUnit}* of *${slotFill.medicineName}* has been staged into your Pharmarack Live Cart.`
+            : `⚠️ *Live Cart Notice:* ${stageRes.message}`;
+
           await conversationalMemoryService.recordTurn(session.id, 'assistant', replyText, [], db);
 
           return {
@@ -379,16 +393,16 @@ export class ConversationalAgentEngine {
             replyText,
             intent: 'CART_STAGING',
             state: 'completed',
-            actionTaken: 'STAGE_POS_ITEM',
+            actionTaken: 'STAGE_LIVE_CART_ITEM',
             requiresConfirmation: false,
             cards: [{
-              id: `pos_${Date.now()}`,
+              id: `cart_${Date.now()}`,
               title: slotFill.medicineName,
-              subtitle: `Quantity: ${parsedSlotQty} ${parsedSlotUnit} | POS Billing`,
-              badge: 'POS Staged',
+              subtitle: `Quantity: ${parsedSlotQty} ${parsedSlotUnit} | Pharmarack Live Cart`,
+              badge: 'Live Cart Staged',
               badgeColor: 'green'
             }],
-            suggestedFollowUps: ['Open POS screen', `Check stock for ${slotFill.medicineName}`, 'Undo last action'],
+            suggestedFollowUps: ['Open Live Cart', `Check stock for ${slotFill.medicineName}`, 'Undo last action'],
             latencyMs: Math.round(performance.now() - startTime)
           };
         }
@@ -506,12 +520,69 @@ export class ConversationalAgentEngine {
         } else if (proposal.type === 'LOW_STOCK_REORDER') {
           replyText = `✅ *Reorder Draft Confirmed!* Staged into procurement queue.`;
           executionResult = { success: true, draft: proposal.data };
-        } else if (proposal.type === 'APPLY_DISCOUNT') {
-          replyText = `✅ *Discount Confirmed!* Applied ${proposal.data.discountPercent}% discount to active POS billing ticket.`;
-          executionResult = { success: true, discountPercent: proposal.data.discountPercent };
-        } else if (proposal.type === 'HOLD_BILL') {
-          replyText = `✅ *Bill Parked!* The active POS bill has been safely held to serve the next customer.`;
-          executionResult = { success: true };
+        } else if (proposal.type === 'SEND_DUE_PAYMENT_QR') {
+          const { creditReminderService } = await import('../creditReminderService.js');
+          const remRes = await creditReminderService.buildCreditReminderWithQr(
+            proposal.data.customerId,
+            db,
+            { skipDedupe: true, isManual: true }
+          );
+          if (remRes.success) {
+            replyText = `✅ *Payment Reminder Dispatched!*\n\nBranded UPI Payment QR card and itemized bill breakdown sent via WhatsApp to *${proposal.data.customerName}* (${proposal.data.phone || 'patient'}). Total due: ₹${Number(proposal.data.amount || 0).toFixed(2)}.`;
+          } else {
+            replyText = `⚠️ *Reminder Notice:* ${remRes.reason || 'Could not dispatch WhatsApp message'}. The UPI QR code remains valid.`;
+          }
+          executionResult = remRes;
+        } else if (proposal.type === 'BOOK_SPECIAL_ORDER') {
+          const bookRes = await pharmacyToolRegistry.bookSpecialOrder(
+            {
+              medicineName: proposal.data.medicineName,
+              customerName: proposal.data.customerName,
+              customerPhone: proposal.data.customerPhone,
+              quantity: proposal.data.quantity || 1,
+              notes: proposal.data.notes
+            },
+            db
+          );
+          if (bookRes.success) {
+            replyText = `✅ *Special Order Booked!*\n\nSpecial Order #${bookRes.orderId} booked for *${proposal.data.medicineName}* (${proposal.data.quantity || 1} units) for *${proposal.data.customerName}*.\n• Linked Distributor: ${bookRes.details?.distributor || 'Primary'}\n• Visible in: CRM → Special Orders and Quick Assist sidebar.`;
+          } else {
+            replyText = `⚠️ *Order Notice:* ${bookRes.message}`;
+          }
+          executionResult = bookRes;
+        } else if (proposal.type === 'ONBOARD_REFILL') {
+          const onboardRes = await pharmacyToolRegistry.onboardPatientRefill(
+            {
+              customerName: proposal.data.customerName,
+              customerPhone: proposal.data.customerPhone,
+              medicineName: proposal.data.medicineName,
+              quantity: proposal.data.quantity || 1,
+              intervalDays: proposal.data.intervalDays || 30,
+              notes: proposal.data.notes
+            },
+            db
+          );
+          if (onboardRes.success) {
+            replyText = `✅ *Refill Schedule Onboarded!*\n\nScheduled recurring refill for *${proposal.data.customerName}* (${proposal.data.medicineName}, every ${proposal.data.intervalDays || 30} days).\n• Next Refill Date: *${onboardRes.details?.nextRefillDate}*\n• Visible in: CRM → Patient Refills.`;
+          } else {
+            replyText = `⚠️ *Refill Notice:* ${onboardRes.message}`;
+          }
+          executionResult = onboardRes;
+        } else if (proposal.type === 'TRIGGER_AUTOMATION') {
+          const autoRes = await pharmacyToolRegistry.executeAutomation(
+            proposal.data.automationId,
+            proposal.data,
+            db
+          );
+          if (autoRes.success) {
+            replyText = `✅ *Automation Cycle Complete!*\n\n${autoRes.message}`;
+          } else {
+            replyText = `⚠️ *Automation Execution Notice:* ${autoRes.message}`;
+          }
+          executionResult = autoRes;
+        } else if (proposal.type === 'APPLY_DISCOUNT' || proposal.type === 'HOLD_BILL') {
+          replyText = `ℹ️ *POS Counter Notice:* POS billing actions are managed directly on the POS screen by the cashier.`;
+          executionResult = { success: false };
         } else if (proposal.type === 'LIVE_CART_SYNC') {
           replyText = `✅ *Distributor Cart Synced!* Pharmarack Live Cart status refreshed.`;
           executionResult = { success: true };
@@ -1126,10 +1197,11 @@ export class ConversationalAgentEngine {
                 `👉 *Would you like to stage this refill to the POS billing counter?*\nClick *Stage to Cart* or reply *Yes*.`;
 
               proposedAction = {
-                id: `refill_stage_${Date.now()}`,
-                type: 'STAGE_POS_ITEM',
-                summary: `Stage ${targetRefill.quantityNeeded} of ${targetRefill.medicineName} for ${displayName} at POS`,
+                id: `refill_confirm_${Date.now()}`,
+                type: 'CONFIRM_REFILL',
+                summary: `Prepare refill (${targetRefill.quantityNeeded} of ${targetRefill.medicineName}) for ${displayName}`,
                 data: {
+                  refillId: targetRefill.id,
                   medicineName: targetRefill.medicineName,
                   quantity: targetRefill.quantityNeeded,
                   customerName: displayName,
@@ -1139,7 +1211,7 @@ export class ConversationalAgentEngine {
                 requiresConfirmation: true,
                 status: 'PENDING_CONFIRMATION'
               };
-              suggestedFollowUps = ['Stage to Cart', 'Order from distributor', 'Cancel'];
+              suggestedFollowUps = ['Confirm Refill', 'Order from distributor', 'Cancel'];
             } else {
               replyText = `🔔 *Patient Refill — ${displayName}*\n\n` +
                 `💊 *${targetRefill.medicineName}* (${targetRefill.quantityNeeded} units)\n` +
@@ -1221,45 +1293,42 @@ export class ConversationalAgentEngine {
             `${stockStatus}\n\n`;
 
           if (topItem.inStock) {
-            const isAddRequest = /\b(?:add|bill|dispense|put|cart|stage|dalo|lagao)\b/i.test(userText);
-            const isPosPage = input.pageContext?.pathname === '/pos' || input.pageContext?.pathname === '/sales';
-            if (isAddRequest || isPosPage) {
-              replyText += `👉 *Ready to add to bill:* Click *Stage to Cart* or reply *Yes* to stage *${topItem.name}* into the POS cart.`;
-              proposedAction = {
-                id: `pos_stage_${Date.now()}`,
-                type: 'STAGE_POS_ITEM',
-                summary: `Add ${topItem.name} to POS billing cart`,
-                data: {
-                  medicineId: topItem.id,
-                  medicineName: topItem.name,
-                  mrp: topItem.mrp,
-                  price: topItem.sellingPrice,
-                  dosageForm: topItem.dosageForm,
-                  inStock: topItem.inStock,
-                  stockQuantity: topItem.stockQuantity,
-                  quantity: detected.quantity || 1
-                },
-                requiresConfirmation: true,
-                status: 'PENDING_CONFIRMATION'
-              };
-              state = 'awaiting_confirmation';
-              suggestedFollowUps = ['Stage to Cart', 'Find alternative', 'Cancel'];
-            } else {
-              replyText += `Would you like us to stage this medicine for dispensing?`;
-              suggestedFollowUps = [`Add ${topItem.name} to cart`, 'Check alternatives'];
-            }
+            replyText += (topItem.batchNo ? `🏷️ *Batch:* ${topItem.batchNo}\n` : '') +
+              (topItem.expiryDate ? `📅 *Expiry:* ${topItem.expiryDate}\n` : '') +
+              (topItem.rackLocation ? `📍 *Rack Location:* ${topItem.rackLocation}\n\n` : '\n');
+
+            replyText += `👉 Item is in stock. You can verify on shelf, check in-stock alternatives, or stage to Pharmarack distributor cart.`;
+            suggestedFollowUps = ['Find in-stock alternatives', `Stage ${topItem.name} to Live Cart`, 'Check due refills'];
           } else {
-            replyText += `Would you like to find an alternative medicine, or order it from the distributor?`;
+            replyText += `⏳ *Currently Out of Stock*\n\n`;
+
+            // Check for verified in-stock same-salt alternatives
+            const altResult = await pharmacyToolRegistry.findAlternatives(topItem.name, db);
+            const inStockAlts = (altResult?.candidates || []).filter(c => c.inStock);
+
+            if (inStockAlts.length > 0) {
+              replyText += `💡 *Available In-Stock Equivalents (${altResult.sourceSalt || 'Same Salt'}):*\n` +
+                inStockAlts.slice(0, 3).map((a, i) =>
+                  `${i + 1}. *${a.name}* (${a.manufacturer || 'Standard'}) — ✅ ${a.stockQuantity} in stock | MRP ₹${a.mrp.toFixed(2)} (Rack: ${a.rackLocation || 'Shelf'})`
+                ).join('\n') + `\n\n`;
+            }
+
+            replyText += `Would you like to book a Special Order for a patient, or stage into Pharmarack Live Cart?`;
             proposedAction = {
-              id: `enquiry_${Date.now()}`,
-              type: 'CREATE_ENQUIRY',
-              summary: `Order non-stocked medicine ${topItem.name}`,
-              data: { medicineName: topItem.name, notes: 'Customer inquiry via conversational AI' },
+              id: `spec_order_${Date.now()}`,
+              type: 'BOOK_SPECIAL_ORDER',
+              summary: `Book Special Order for ${topItem.name} in CRM & Quick Assist`,
+              data: {
+                medicineName: topItem.name,
+                customerName: session.contextData?.lastCustomer || 'Walk-in Customer',
+                customerPhone: session.contextData?.lastPhone || '',
+                quantity: detected.quantity || 1
+              },
               requiresConfirmation: true,
               status: 'PENDING_CONFIRMATION'
             };
             state = 'awaiting_confirmation';
-            suggestedFollowUps = [`Find alternative for ${topItem.name}`, 'Order from distributor'];
+            suggestedFollowUps = ['Book Special Order', `Stage ${topItem.name} to Live Cart`, 'Cancel'];
           }
 
           cards = searchResult.slice(0, 3).map(m => ({
@@ -1331,95 +1400,34 @@ export class ConversationalAgentEngine {
 
         const qty = detected.quantity;
 
-        if (destination === 'live_cart') {
-          replyText = `🛒 *Distributor Live Cart Staging*\n\n` +
-            `• *Medicine:* ${medName}\n` +
-            `• *Quantity:* ${qty} ${unit}\n` +
-            `• *Destination:* Pharmarack Live Cart\n\n` +
-            `👉 *Confirm staging this item to your live distributor cart?*\nReply *Yes* or click *Stage to Live Cart* to confirm, or *No* to cancel.`;
+        replyText = `🛒 *Distributor Live Cart Staging*\n\n` +
+          `• *Medicine:* ${medName}\n` +
+          `• *Quantity:* ${qty} ${unit}\n` +
+          `• *Destination:* Pharmarack Live Cart\n\n` +
+          `👉 *Confirm staging this item to your live distributor cart?*\nReply *Yes* or click *Stage to Live Cart* to confirm, or *No* to cancel.`;
 
-          proposedAction = {
-            id: `live_cart_${Date.now()}`,
-            type: 'STAGE_LIVE_CART_ITEM',
-            summary: `Stage ${qty} ${unit} of ${medName} into Pharmarack Live Cart`,
-            data: {
-              medicineName: medName,
-              quantity: qty,
-              unit,
-              destination: 'live_cart'
-            },
-            requiresConfirmation: true,
-            status: 'PENDING_CONFIRMATION'
-          };
-          state = 'awaiting_confirmation';
-          suggestedFollowUps = ['Stage to Live Cart', 'Cancel'];
-          cards = [{
-            id: `cart_${Date.now()}`,
-            title: medName,
-            subtitle: `Quantity: ${qty} ${unit} | Pharmarack Live Cart`,
-            badge: 'Live Cart',
-            badgeColor: 'green'
-          }];
-        } else {
-          const searchResult = await pharmacyToolRegistry.searchMedicineAvailability(medName, db);
-          toolExecutions.push({ tool: 'searchMedicineAvailability', result: searchResult });
-
-          if (searchResult && searchResult.length > 0) {
-            const topItem = searchResult[0];
-            replyText = `🛒 *POS Billing Cart Staging*\n\n` +
-              `• *Medicine:* ${topItem.name}\n` +
-              `• *Quantity:* ${qty} ${unit}\n` +
-              `• *Form:* ${topItem.dosageForm || 'Tablet'} ${topItem.strength || ''}\n` +
-              `• *Price:* ₹${topItem.sellingPrice.toFixed(2)} (MRP ₹${topItem.mrp.toFixed(2)})\n` +
-              `• *Shelf Stock:* ${topItem.inStock ? `✅ ${topItem.stockQuantity} in stock` : '❌ Out of stock'}\n\n` +
-              `👉 *Confirm adding this item to the POS billing screen?*\nReply *Yes* to stage, or *No* to cancel.`;
-
-            proposedAction = {
-              id: `pos_stage_${Date.now()}`,
-              type: 'STAGE_POS_ITEM',
-              summary: `Add ${qty} of ${topItem.name} to POS billing cart`,
-              data: {
-                medicineId: topItem.id,
-                medicineName: topItem.name,
-                mrp: topItem.mrp,
-                price: topItem.sellingPrice,
-                dosageForm: topItem.dosageForm,
-                inStock: topItem.inStock,
-                stockQuantity: topItem.stockQuantity,
-                quantity: qty,
-                unit
-              },
-              requiresConfirmation: true,
-              status: 'PENDING_CONFIRMATION'
-            };
-            state = 'awaiting_confirmation';
-            suggestedFollowUps = ['Stage to Cart', 'Cancel'];
-            cards = [{
-              id: topItem.id,
-              title: topItem.name,
-              subtitle: `${qty} ${unit} | Shelf: ${topItem.stockQuantity}`,
-              badge: topItem.inStock ? 'In Stock' : 'Out of Stock',
-              badgeColor: topItem.inStock ? 'green' : 'amber'
-            }];
-          } else {
-            replyText = `🔍 We could not find *${medName}* in your local shelf stock.\n\nWould you like to stage it into the *Pharmarack Live Cart* to order from distributor, or log a procurement enquiry?`;
-            proposedAction = {
-              id: `live_cart_${Date.now()}`,
-              type: 'STAGE_LIVE_CART_ITEM',
-              summary: `Stage ${qty} ${unit} of ${medName} into Pharmarack Live Cart`,
-              data: {
-                medicineName: medName,
-                quantity: qty,
-                unit,
-                destination: 'live_cart'
-              },
-              requiresConfirmation: true,
-              status: 'PENDING_CONFIRMATION'
-            };
-            state = 'awaiting_confirmation';
-            suggestedFollowUps = ['Order from distributor', 'Log procurement enquiry', 'Cancel'];
-          }
-        }
+        proposedAction = {
+          id: `live_cart_${Date.now()}`,
+          type: 'STAGE_LIVE_CART_ITEM',
+          summary: `Stage ${qty} ${unit} of ${medName} into Pharmarack Live Cart`,
+          data: {
+            medicineName: medName,
+            quantity: qty,
+            unit,
+            destination: 'live_cart'
+          },
+          requiresConfirmation: true,
+          status: 'PENDING_CONFIRMATION'
+        };
+        state = 'awaiting_confirmation';
+        suggestedFollowUps = ['Stage to Live Cart', 'Cancel'];
+        cards = [{
+          id: `cart_${Date.now()}`,
+          title: medName,
+          subtitle: `Quantity: ${qty} ${unit} | Pharmarack Live Cart`,
+          badge: 'Live Cart',
+          badgeColor: 'green'
+        }];
         break;
       }
 
@@ -1530,55 +1538,173 @@ export class ConversationalAgentEngine {
         break;
       }
 
-      // ── Capability 8: POS Page Micro-Workflows ──────────────────────────────
-      case 'POS_APPLY_DISCOUNT': {
-        const discount = detected.discountPercent || 5;
-        replyText = `💳 *POS Bill Discount*\n\n` +
-          `• Proposed Discount: *${discount}%*\n` +
-          `• Target: Active POS Billing Ticket\n\n` +
-          `👉 *Confirm applying this discount?*\nClick *Apply Discount* or reply *Yes* to apply, or *No* to cancel.`;
+      // ── Capability 8: Customer Due Bill & Monthly Payment QR ────────────────
+      case 'CUSTOMER_DUE_QUERY': {
+        const targetCustomer = detected.patientName || session.contextData?.lastCustomer || 'Walk-in Customer';
+        const dueResult = await pharmacyToolRegistry.queryCustomerCreditDue(targetCustomer, db);
+        toolExecutions.push({ tool: 'queryCustomerCreditDue', result: dueResult });
+
+        if (dueResult && dueResult.creditBalance > 0) {
+          replyText = `💳 *Monthly Due Summary for ${dueResult.name}*\n\n` +
+            `• *Total Outstanding Balance:* ₹${dueResult.creditBalance.toFixed(2)}\n` +
+            `• *Registered Phone:* ${dueResult.phone || 'Not recorded'}\n` +
+            `• *Due Date:* ${dueResult.creditDueDate || 'As agreed'}\n\n` +
+            `📋 *Unpaid Invoices Breakdown (${dueResult.pendingInvoices.length}):*\n` +
+            `${dueResult.formattedBreakdown || '• Ledger balance record'}\n\n` +
+            `👉 *Would you like to send an official WhatsApp payment reminder with rotating UPI QR code?*`;
+
+          proposedAction = {
+            id: `due_qr_${Date.now()}`,
+            type: 'SEND_DUE_PAYMENT_QR',
+            summary: `Send WhatsApp payment reminder & UPI QR for ₹${dueResult.creditBalance.toFixed(2)} to ${dueResult.name}`,
+            data: {
+              customerId: dueResult.customerId,
+              customerName: dueResult.name,
+              phone: dueResult.phone,
+              amount: dueResult.creditBalance
+            },
+            requiresConfirmation: true,
+            status: 'PENDING_CONFIRMATION'
+          };
+          state = 'awaiting_confirmation';
+          suggestedFollowUps = ['Confirm & Send QR Reminder', 'Cancel'];
+          cards = [{
+            id: `due_${Date.now()}`,
+            title: dueResult.name,
+            subtitle: `Due: ₹${dueResult.creditBalance.toFixed(2)} | ${dueResult.pendingInvoices.length} pending bill(s)`,
+            badge: `₹${dueResult.creditBalance.toFixed(2)} DUE`,
+            badgeColor: 'amber',
+            details: {
+              Customer: dueResult.name,
+              Phone: dueResult.phone || 'N/A',
+              'Due Date': dueResult.creditDueDate || 'Immediate'
+            }
+          }];
+        } else if (dueResult) {
+          replyText = `✅ *Clear Balance:* Customer *${dueResult.name}* has zero outstanding dues. All bills are fully paid!`;
+          suggestedFollowUps = ['Check another customer', 'Search medicine in stock'];
+        } else {
+          replyText = `🔍 We could not locate customer record *"${targetCustomer}"*. Please provide the customer's registered phone number or full name.`;
+          suggestedFollowUps = ['Show customer ledger', 'Search medicine in stock'];
+        }
+        break;
+      }
+
+      // ── Capability 8b: Canonical CRM Special Order Booking ─────────────────
+      case 'BOOK_SPECIAL_ORDER': {
+        const medName = detected.medicineName || session.contextData?.lastMedicine || 'Medicine';
+        const custName = detected.patientName || session.contextData?.lastCustomer || 'Walk-in Customer';
+        const qty = detected.quantity || 1;
+
+        replyText = `📦 *Confirm Special Order Booking*\n\n` +
+          `• *Medicine:* ${medName}\n` +
+          `• *Quantity:* ${qty} unit(s)\n` +
+          `• *Customer / Requester:* ${custName}\n` +
+          `• *Target Destination:* CRM → Special Orders & Quick Assist sidebar\n\n` +
+          `👉 *Confirm booking this special order?* Click *Book Special Order* or reply *Yes* to confirm.`;
 
         proposedAction = {
-          id: `discount_${Date.now()}`,
-          type: 'APPLY_DISCOUNT',
-          summary: `Apply ${discount}% discount to active POS bill`,
-          data: { discountPercent: discount },
+          id: `spec_order_${Date.now()}`,
+          type: 'BOOK_SPECIAL_ORDER',
+          summary: `Book Special Order for ${qty} of ${medName} for ${custName}`,
+          data: {
+            medicineName: medName,
+            customerName: custName,
+            customerPhone: session.contextData?.lastPhone || '',
+            quantity: qty
+          },
           requiresConfirmation: true,
           status: 'PENDING_CONFIRMATION'
         };
         state = 'awaiting_confirmation';
-        suggestedFollowUps = ['Apply Discount', 'Cancel'];
+        suggestedFollowUps = ['Book Special Order', 'Cancel'];
         cards = [{
-          id: `disc_${Date.now()}`,
-          title: `${discount}% Discount`,
-          subtitle: 'Active POS Billing Counter',
-          badge: `${discount}% OFF`,
+          id: `spec_${Date.now()}`,
+          title: medName,
+          subtitle: `Quantity: ${qty} | Customer: ${custName}`,
+          badge: 'Special Order',
           badgeColor: 'blue'
         }];
         break;
       }
 
-      case 'POS_HOLD_BILL': {
-        replyText = `📋 *Park Active Bill*\n\n` +
-          `Would you like to hold/park the current customer's bill so you can serve the next customer in queue?\n\n` +
-          `👉 Click *Park Bill* or reply *Yes* to confirm.`;
+      // ── Capability 8c: CRM Patient Refill Onboarding ───────────────────────
+      case 'ONBOARD_REFILL': {
+        const medName = detected.medicineName || session.contextData?.lastMedicine || 'Medicine';
+        const custName = detected.patientName || session.contextData?.lastCustomer || 'Patient';
+        const days = detected.timeframe ? parseInt(detected.timeframe, 10) : 30;
+
+        replyText = `🗓️ *Schedule Patient Refill*\n\n` +
+          `• *Patient:* ${custName}\n` +
+          `• *Medicine:* ${medName}\n` +
+          `• *Cycle:* Every ${days} days\n` +
+          `• *Target Destination:* CRM → Patient Refills\n\n` +
+          `👉 *Confirm scheduling this refill?* Click *Schedule Refill* or reply *Yes* to confirm.`;
 
         proposedAction = {
-          id: `hold_bill_${Date.now()}`,
-          type: 'HOLD_BILL',
-          summary: `Park/hold active POS billing ticket`,
-          data: { action: 'park' },
+          id: `refill_onboard_${Date.now()}`,
+          type: 'ONBOARD_REFILL',
+          summary: `Schedule refill for ${custName} (${medName}, every ${days} days)`,
+          data: {
+            customerName: custName,
+            customerPhone: session.contextData?.lastPhone || '',
+            medicineName: medName,
+            quantity: 1,
+            intervalDays: days
+          },
           requiresConfirmation: true,
           status: 'PENDING_CONFIRMATION'
         };
         state = 'awaiting_confirmation';
-        suggestedFollowUps = ['Park Bill', 'Cancel'];
+        suggestedFollowUps = ['Schedule Refill', 'Cancel'];
         cards = [{
-          id: `park_${Date.now()}`,
-          title: 'Hold Current Bill',
-          subtitle: 'Saves current cart to recall later',
-          badge: 'Park Sale',
-          badgeColor: 'amber'
+          id: `refill_${Date.now()}`,
+          title: custName,
+          subtitle: `${medName} • Refill every ${days} days`,
+          badge: 'Recurring Refill',
+          badgeColor: 'blue'
+        }];
+        break;
+      }
+
+      case 'POS_APPLY_DISCOUNT':
+      case 'POS_HOLD_BILL': {
+        replyText = `ℹ️ *POS Counter Notice:* POS billing actions (discounts, holding bills, line-item entry) are managed directly on the POS screen by the cashier. You can search inventory (Name/Batch/MRP), find in-stock alternatives, send payment QR reminders for monthly dues, or book special orders here.`;
+        suggestedFollowUps = ['Find in-stock alternatives', 'Search batch DL2041', 'Share monthly due QR'];
+        break;
+      }
+
+      // ── Capability 8d: On-Demand Pharmacy Automation Orchestrator ─────────
+      case 'TRIGGER_AUTOMATION': {
+        const autoId = detected.topic || 'credit_reminders';
+        const lookaheadDays = detected.timeframe ? parseInt(detected.timeframe, 10) : 60;
+        const preview = await pharmacyToolRegistry.previewAutomation(autoId, { lookaheadDays }, db);
+        toolExecutions.push({ tool: 'previewAutomation', result: preview });
+
+        replyText = `⚙️ *Automation Inspection — ${preview.automationId.toUpperCase().replace(/_/g, ' ')}*\n\n` +
+          `• *Status:* Ready for on-demand execution\n` +
+          `• *Inspection Assessment:* ${preview.summary}\n\n` +
+          `👉 *Confirm running this automation now?* Click *Confirm & Run Automation* or reply *Yes*.`;
+
+        proposedAction = {
+          id: `auto_${Date.now()}`,
+          type: 'TRIGGER_AUTOMATION',
+          summary: `Execute ${preview.automationId}: ${preview.summary}`,
+          data: {
+            automationId: preview.automationId,
+            lookaheadDays
+          },
+          requiresConfirmation: true,
+          status: 'PENDING_CONFIRMATION'
+        };
+        state = 'awaiting_confirmation';
+        suggestedFollowUps = ['Confirm & Run Automation', 'Cancel'];
+        cards = [{
+          id: `auto_card_${Date.now()}`,
+          title: preview.automationId.replace(/_/g, ' ').toUpperCase(),
+          subtitle: preview.summary,
+          badge: 'Ready to Run',
+          badgeColor: 'blue'
         }];
         break;
       }
@@ -1700,6 +1826,16 @@ export class ConversationalAgentEngine {
       lastIntent: detected.type
     };
 
+    if (detected.medicineName && detected.medicineName.length >= 3 && !/^(it|this|that|iska|uska|medicine|dawa)$/i.test(detected.medicineName)) {
+      contextDataToSave.lastMedicine = detected.medicineName;
+    }
+    if (detected.patientName && detected.patientName.length >= 2 && !/^(he|him|his|she|her|customer|patient|uska|iska)$/i.test(detected.patientName)) {
+      contextDataToSave.lastCustomer = detected.patientName;
+    }
+    if (detected.batchNo) {
+      contextDataToSave.lastBatch = detected.batchNo;
+    }
+
     if (proposedAction) {
       contextDataToSave.pendingProposal = proposedAction;
     } else if (state === 'idle') {
@@ -1791,6 +1927,15 @@ export class ConversationalAgentEngine {
       return { type: 'DOCUMENT_OCR' };
     }
 
+    // 0a. Instant Fast-Path for Deterministic Greetings (sub-millisecond, zero CPU LLM load)
+    if (
+      /^(?:hi|hello|hey|namaste|namaskar|pranam|good\s+morning|good\s+afternoon|good\s+evening|salaam|kem\s+cho|kasa\s+kay)$/i.test(
+        t.replace(/[!.,?]/g, '').trim()
+      )
+    ) {
+      return { type: 'GREETING' };
+    }
+
     // 0b. Prioritize Qwen Operational Local AI Intent when active/ready
     try {
       if (isLocalAiEnabled()) {
@@ -1844,29 +1989,117 @@ export class ConversationalAgentEngine {
           if (opIntent.intent === 'CUSTOMER_ENQUIRY') {
             return { type: 'MEDICINE_INQUIRY', medicineName: opIntent.medicineName };
           }
+          if (opIntent.intent === 'CUSTOMER_DUE_QUERY') {
+            return { type: 'CUSTOMER_DUE_QUERY', patientName: opIntent.patientName };
+          }
+          if (opIntent.intent === 'SPECIAL_ORDER_BOOKING') {
+            return {
+              type: 'BOOK_SPECIAL_ORDER',
+              medicineName: opIntent.medicineName,
+              patientName: opIntent.patientName,
+              quantity: opIntent.quantity || 1
+            };
+          }
+          if (opIntent.intent === 'REFILL_ONBOARDING') {
+            return {
+              type: 'ONBOARD_REFILL',
+              patientName: opIntent.patientName,
+              medicineName: opIntent.medicineName,
+              timeframe: opIntent.timeframeDays ? String(opIntent.timeframeDays) : '30'
+            };
+          }
+          if (opIntent.intent === 'TRIGGER_AUTOMATION') {
+            return {
+              type: 'TRIGGER_AUTOMATION',
+              topic: opIntent.automationId || 'credit_reminders',
+              timeframe: opIntent.timeframeDays ? String(opIntent.timeframeDays) : '60'
+            };
+          }
         }
       }
     } catch (_) {
       // Gracefully fall back to deterministic pattern matchers below
     }
 
+    // 0ba. Deterministic Fast-Path for On-Demand Pharmacy Automation Triggers (English, Hindi, Hinglish)
+    if (
+      /\b(?:run|trigger|start|execute|launch|perform|chala\s*do|chalao|kar\s*do|le\s*lo)\s*(?:the\s*)?(?:[a-z0-9-]+\s*){0,4}(?:credit\s*reminder|overdue\s*(?:credit|scan)|refill\s*scan|chronic\s*refill|pickup\s*reminder|collection\s*reminder|ready\s*pickup|expiry\s*(?:scan|alert)|expiry\s*return|distributor\s*return|email\s*poller|distributor\s*email|database\s*backup|backup|session\s*heartbeat|pharmarack\s*heartbeat)\b/i.test(t) ||
+      /\b(?:(?:bhai\s*)?(?:\d{1,3}\s*(?:din|day|days)\s*(?:ki\s*)?)?expiry\s*scan\s*(?:chala\s*do|chalao|kar\s*do|run)?)\b/i.test(t) ||
+      /\b(?:backup\s*(?:database|data|le\s*lo|now)?|database\s*(?:ka\s*)?backup\s*(?:le\s*lo|now|karo)?)\b/i.test(t) ||
+      /\b(?:email\s*(?:check\s*karo|invoices|poll)|poll\s*(?:distributor\s*)?email(?:s|\s*invoices)?|check\s*overdue\s*credit(?:\s*dues)?)\b/i.test(t)
+    ) {
+      let autoId = 'credit_reminders';
+      if (/\b(?:refill|chronic)\b/i.test(t)) autoId = 'refill_scan';
+      else if (/\b(?:pickup|collection)\b/i.test(t)) autoId = 'collection_reminders';
+      else if (/\b(?:expiry\s*return|distributor\s*return)\b/i.test(t)) autoId = 'expiry_returns';
+      else if (/\b(?:expiry|near\s*expiry)\b/i.test(t)) autoId = 'expiry_scan';
+      else if (/\b(?:email|inbox|poll)\b/i.test(t)) autoId = 'email_poller';
+      else if (/\b(?:backup|snapshot)\b/i.test(t)) autoId = 'backup';
+      else if (/\b(?:heartbeat|pharmarack|session)\b/i.test(t)) autoId = 'pharmarack_heartbeat';
+      else if (/\b(?:credit|due|overdue|udhar|udhari)\b/i.test(t)) autoId = 'credit_reminders';
+
+      const daysMatch = text.match(/\b(\d{1,3})\s*(?:day|days|din)\b/i);
+      return {
+        type: 'TRIGGER_AUTOMATION',
+        topic: autoId,
+        timeframe: daysMatch ? daysMatch[1] : '60'
+      };
+    }
+
+    // 0c. Customer Due Bills, Payment QR, Special Orders & Refill Onboarding Fallbacks
+    if (
+      /\b(?:due|balance|khata|ledger|monthly\s*due|due\s*bill|pending\s*bill|udhar|udhari|baki|kitna\s*hai)\b/i.test(t) ||
+      /\b(?:share|send|generate|bhejo|bhej)\b.*\b(?:qr|payment\s*qr|due\s*qr)\b/i.test(t) ||
+      /\b(?:payment\s*reminder|due\s*reminder)\b/i.test(t)
+    ) {
+      const custMatch = text.match(/(?:for|to|of|ka|ki|ke|customer)\s+([A-Za-z0-9\s]{2,30})/i);
+      const phoneMatch = text.match(/\b\d{10}\b/);
+      let pat = phoneMatch ? phoneMatch[0] : (custMatch ? custMatch[1].trim() : undefined);
+      if (!pat || /^(him|his|her|customer|patient|iska|uska)$/i.test(pat.trim())) {
+        pat = session.contextData?.lastCustomer || undefined;
+      }
+      return { type: 'CUSTOMER_DUE_QUERY', patientName: pat };
+    }
+
+    if (
+      /\b(?:book|place|create)\s*(?:a\s*)?(?:special\s*order|shortage\s*order)\b/i.test(t) ||
+      /\b(?:special\s*order)\b/i.test(t)
+    ) {
+      const med = this.extractMedicineFromText(text);
+      const custMatch = text.match(/(?:for|to|patient|customer)\s+([A-Za-z0-9\s]{2,30})/i);
+      const qtyMatch = text.match(/\b(\d{1,4})\s*(?:strip|tablet|box|unit|pack|bottle)?s?\b/i);
+      return {
+        type: 'BOOK_SPECIAL_ORDER',
+        medicineName: med,
+        patientName: custMatch ? custMatch[1].trim() : undefined,
+        quantity: qtyMatch ? parseInt(qtyMatch[1], 10) : 1
+      };
+    }
+
+    if (
+      /\b(?:onboard|schedule|register)\s*(?:a\s*)?(?:patient\s*)?refill\b/i.test(t) ||
+      /\b(?:add\s*refill\s*schedule|new\s*refill)\b/i.test(t)
+    ) {
+      const custMatch = text.match(/(?:for|to|patient)\s+([A-Za-z0-9\s]{2,30})/i);
+      const med = this.extractMedicineFromText(text);
+      return {
+        type: 'ONBOARD_REFILL',
+        patientName: custMatch ? custMatch[1].trim() : undefined,
+        medicineName: med
+      };
+    }
+
     // 0c. Page-Specific Quick Fallbacks (POS discount, hold bill, live cart sync, rack location)
-    if (/\b(?:discount|chhoot)\b.*\b(\d{1,2})\s*%/i.test(t) || /\b(\d{1,2})\s*%\s*(?:discount|chhoot|off)\b/i.test(t)) {
-      const match = t.match(/\b(\d{1,2})\s*%/);
-      const disc = match ? parseInt(match[1], 10) : 5;
-      return { type: 'POS_APPLY_DISCOUNT', discountPercent: disc };
-    }
-
-    if (/\b(?:hold|park)\b.*\b(?:bill|ticket|sale|pos)\b/i.test(t) || /\b(?:park bill|hold bill)\b/i.test(t)) {
-      return { type: 'POS_HOLD_BILL' };
-    }
-
+    // 0d. Live Cart Sync & Shelf Rack Location Fallbacks
     if (/\b(?:sync|refresh)\b.*\b(?:live\s*cart|distributor\s*cart|pharmarack)\b/i.test(t) || /\b(?:live\s*cart\s*sync|sync\s*cart)\b/i.test(t)) {
       return { type: 'LIVE_CART_SYNC' };
     }
 
-    if (/\b(?:where is|kahan hai|which rack|rack location|shelf location|rack for)\b/i.test(t)) {
-      const med = this.extractMedicineFromText(text);
+    if (/\b(?:where is|kahan hai|which rack|rack location|shelf location|rack for|rakha hai)\b/i.test(t)) {
+      let med = this.extractMedicineFromText(text);
+      if ((!med || /^(it|this|that|iska|uska|medicine|dawa)$/i.test(med.trim())) && session.contextData?.lastMedicine) {
+        med = session.contextData.lastMedicine;
+      }
       return { type: 'INVENTORY_STOCK_AUDIT', medicineName: med };
     }
 
@@ -1883,7 +2116,7 @@ export class ConversationalAgentEngine {
     if (
       /\b(?:live\s*cart|pharmarack|distributor\s*cart)\b/i.test(t) ||
       (/\b(?:add|stage|put|load|insert|order)\b/i.test(t) && /\b(?:live\s*cart|pos\s*cart|bill|cart)\b/i.test(t)) ||
-      (/\b(?:add|stage|put|load)\s+([A-Za-z0-9\s-]{2,30})\b/i.test(t) && !/\b(?:refill|user|customer|patient|reminder|call)\b/i.test(t) && this.extractMedicineFromText(text))
+      (/\b(?:add|stage|put|load)\s+([A-Za-z0-9\s-]{2,30})\b/i.test(t) && !/\b(?:refill|user|customer|patient|reminder|call)\b/i.test(t) && (this.extractMedicineFromText(text) || session.contextData?.lastMedicine))
     ) {
       const isLiveCart = /\b(?:live\s*cart|pharmarack|distributor\s*cart)\b/i.test(t) || input.pageContext?.pathname === '/live-cart' || input.pageContext?.pathname === '/pharmarack-cart';
       let parsedQty: number | undefined = undefined;
@@ -1902,25 +2135,28 @@ export class ConversationalAgentEngine {
         parsedQty = parseInt(cartLeadingQtyMatch[1], 10);
       }
       const unitMatch = text.match(/\b(strip|strips|tablet|tablets|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units)\b/i);
-      const med = this.extractMedicineFromText(text);
+      let med = this.extractMedicineFromText(text);
+      if ((!med || /^(it|this|that|dawa|medicine|goli)$/i.test(med.trim())) && session.contextData?.lastMedicine) {
+        med = session.contextData.lastMedicine;
+      }
       return {
         type: 'CART_STAGING',
         medicineName: med,
         quantity: parsedQty,
         unit: unitMatch ? unitMatch[1].toLowerCase() : 'strip',
-        destination: isLiveCart ? 'live_cart' : (input.pageContext?.pathname === '/pos' ? 'pos_cart' : 'live_cart')
+        destination: 'live_cart'
       };
     }
 
     // 2. Alternative & Salt Comparison
     if (
       /\b(?:alternative|substitute|substitutes|instead of|replace|badle|paray|options for)\b/i.test(t) ||
-      /\b(?:unavailable|not in stock|out of stock)\b.*\b(?:find|suggest|search|show)\b.*\b(?:alternative|another|substitute)\b/i.test(t) ||
+      /\b(?:unavailable|not in stock|out of stock|khatam|nahi hai)\b.*\b(?:find|suggest|search|show|batao|kya)\b.*\b(?:alternative|another|substitute|dusra|badle)\b/i.test(t) ||
       /find an alternative for/i.test(t)
     ) {
       const altMatch = text.match(/(?:alternative|substitute|substitutes|options?)\s+for\s+([A-Za-z0-9\s-]{2,30})/i);
       let med = altMatch ? altMatch[1].trim().replace(/[.,!]/g, '') : this.extractMedicineFromText(text);
-      if (!med || med.length < 2 || /^(this|the)?\s*medicine$/i.test(med.trim())) {
+      if (!med || med.length < 2 || /^(this|the|its|it|that|iska|uska)?\s*(?:medicine|alternative|dawa)?$/i.test(med.trim()) || /^(it|this|that|its|iska|uska)$/i.test(med.trim())) {
         med = session.contextData?.lastMedicine || undefined;
       }
       return { type: 'ALTERNATIVES_SEARCH', medicineName: med };
@@ -2136,31 +2372,6 @@ export class ConversationalAgentEngine {
     // 14. Optional Local AI LLM intent classification if running
     try {
       if (isLocalAiEnabled()) {
-        const { queryOperationalAiIntent } = await import('./llamaServerClient.js');
-        const opIntent = await queryOperationalAiIntent(text);
-        if (opIntent && opIntent.confidence >= 0.6) {
-          if (opIntent.intent === 'DISTRIBUTOR_RETURN_DRAFT') {
-            return { type: 'DISTRIBUTOR_RETURN_DRAFT', timeframe: opIntent.timeframeDays ? `${opIntent.timeframeDays}_days` : '60_days' };
-          }
-          if (opIntent.intent === 'LOW_STOCK_REORDER') {
-            return { type: 'LOW_STOCK_REORDER' };
-          }
-          if (opIntent.intent === 'DELIVERY_STATUS') {
-            return { type: 'DELIVERY_STATUS' };
-          }
-          if (opIntent.intent === 'PURCHASE_QUERY') {
-            return { type: 'PURCHASE_QUERY', medicineName: opIntent.medicineName };
-          }
-          if (opIntent.intent === 'EXPIRY_AUDIT') {
-            return { type: 'EXPIRY_AUDIT', timeframe: opIntent.timeframeDays ? `${opIntent.timeframeDays}_days` : '60_days' };
-          }
-          if (opIntent.intent === 'SALES_SUMMARY') {
-            return { type: 'SALES_COMPARISON' };
-          }
-          if (opIntent.intent === 'REFILL_MANAGEMENT') {
-            return { type: 'REFILL', medicineName: opIntent.medicineName, patientName: opIntent.patientName };
-          }
-        }
         const aiIntent = await queryLocalAiIntent(text);
         if (aiIntent && aiIntent.confidence >= 0.7) {
           if (aiIntent.intent === 'REFILL') return { type: 'REFILL' };
@@ -2176,19 +2387,19 @@ export class ConversationalAgentEngine {
   }
 
   /**
-   * Helper to detect positive user confirmation.
+   * Helper to detect positive user confirmation (English, Hindi, Hinglish).
    */
   public isAffirmative(text: string): boolean {
     const clean = text.trim().toLowerCase().replace(/[^\w\s]/g, '');
-    return /\b(yes|haan|ha|ho|confirm|confirmed|ok|okay|bhej do|kar do|proceed|ready|prepare|order|thik hai|theek hai|approve|approved|accept|commit|stage)\b/i.test(clean) || clean === '1';
+    return /\b(yes|yeah|yep|sure|haan|ha|ho|haanji|confirm|confirmed|ok|okay|run|run it|execute|do it|go ahead|bhej do|bhejo|kar do|chala do|chalao|proceed|ready|prepare|order|thik hai|theek hai|sahi hai|bilkul|chalega|approve|approved|accept|commit|stage)\b/i.test(clean) || clean === '1';
   }
 
   /**
-   * Helper to detect negative cancellation.
+   * Helper to detect negative cancellation (English, Hindi, Hinglish).
    */
   public isNegative(text: string): boolean {
     const clean = text.trim().toLowerCase().replace(/[^\w\s]/g, '');
-    return /\b(no|nahin|nahi|na|nako|cancel|cancelled|stop|mat bhejo|don't|dont)\b/i.test(clean) || clean === '2';
+    return /\b(no|nahin|nahi|na|nako|cancel|cancelled|stop|abort|mat bhejo|mat karo|rok do|rehne do|nahi chahiye|don't|dont|nevermind)\b/i.test(clean) || clean === '2';
   }
 
   /**
@@ -2223,7 +2434,7 @@ export class ConversationalAgentEngine {
     clean = clean.replace(/^[-–—\s]+|[-–—\s]+$/g, '').trim();
     clean = clean.replace(/^(?:the|a|an)\s+/i, '').trim();
 
-    if (clean.length >= 3 && !/^(hi|hello|yes|no|ok|refill|call|timing|shop|store|address|hours|this medicine|medicine)$/i.test(clean)) {
+    if (clean.length >= 3 && !/^(hi|hello|yes|no|ok|refill|call|timing|shop|store|address|hours|this medicine|medicine|its alternative|alternative|substitute|it|this|that|iska|uska)$/i.test(clean)) {
       return clean;
     }
     return undefined;

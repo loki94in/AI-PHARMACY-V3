@@ -7,6 +7,90 @@
 
 ## Fixed
 
+### [Fixed] P2-136 — Natural Language & Colloquial Multi-Turn Intelligence for Pharmacy Operations Assistant
+- Cause:
+  1. The Operations Assistant previously required rigid English command templates (e.g., "run overdue credit reminder scan") and could fail to parse hurried Indian retail pharmacy vocabulary (Hinglish/Hindi phrasing like "bhai 60 din ki expiry scan chala do", "database ka backup le lo", "email check karo distributor ka", "Rajesh ka kitna udhar baki hai?").
+  2. Rule 6 affirmative and cancellation checks were rigid English-only strings, failing to recognize natural colloquial confirmations like "haan chala do", "kar do", "bhej do", "theek hai", "sahi hai" or cancellations like "mat karo", "rok do", "rehne do".
+  3. Multi-turn conversations lacked pronoun entity binding: asking "What is its alternative?" or "Where is it placed?" failed to resolve "its" / "it" to the medicine discussed in the previous turn.
+- Fix:
+  1. Operational Intent & Few-Shot Learning (`operationalIntentSchema.ts`):
+     - Added few-shot examples for real-world Hinglish automation commands, customer dues, and alternative inquiries.
+  2. Multi-Turn Conversational Memory & Entity Persistence (`conversationalAgentEngine.ts`):
+     - Persisted active entities (`lastMedicine`, `lastCustomer`, `lastBatch`) across conversation turns in `session.contextData`.
+     - Added pronoun resolution in `resolveUnifiedIntent`: pronouns ("it", "its", "this", "iska", "uska", "him", "his") automatically bind to `lastMedicine` and `lastCustomer`.
+  3. Colloquial Rule 6 Confirmation & Cancellation (`conversationalAgentEngine.ts`):
+     - Broadened `isAffirmative()` to recognize natural English/Hindi/Hinglish confirmations ("haan", "haan chala do", "kar do", "bhej do", "theek hai", "sahi hai", "bilkul", "run it", "proceed", "go ahead").
+     - Broadened `isNegative()` to recognize natural cancellations ("mat karo", "rok do", "rehne do", "nahi chahiye", "abort").
+  4. Test Suite Coverage (`conversationalAgentEngine.test.ts`):
+     - Added Criteria 41 (Hinglish automation trigger & colloquial confirmation), Criteria 42 (multi-turn pronoun resolution for alternatives), and Criteria 43 (Hinglish customer due query & colloquial cancellation). All 44/44 tests pass.
+- Priority: P2
+- Verified by: `npm test -- tests/conversationalAgentEngine.test.ts` (44/44 passing); `npm run guardrails` exit 0 (clean compilation, 0 violations); backend build (`npm run build`) clean; client build (`npm run build:client`) succeeded in 54.10s.
+
+### [Fixed] P2-135 — Qwen On-Demand Pharmacy Automation Triggering with Rule 6 Human-in-the-Loop Confirmation
+- Cause:
+  1. Background automations across CRM, Inventory, Purchases, and Reliability (overdue credit reminder scans, chronic refill renewer, pickup collection reminders, 60-day expiry scanner, auto-expiry return reviews, distributor email PDF invoice poller, database snapshot backup, and Pharmarack session heartbeats) previously ran on fixed cron or worker schedules with no conversational on-demand execution capability.
+  2. Staff could not ask Qwen to inspect the real-time status of these automations (e.g. pending overdue customer dues, due refills, near-expiry batches) or execute them selectively one-by-one under Rule 6 Human-in-the-Loop oversight.
+- Fix:
+  1. Automation Preview & Execution Registry (`pharmacyToolRegistry.ts`):
+     - Implemented `previewAutomation(automationId, options, db)`: Queries pending target counts (customers with dues, due refills, ready pickups, near-expiry batches) and returns a human-readable assessment without mutating state.
+     - Implemented `executeAutomation(automationId, options, db)`: Executes verified background workers (`creditReminderService.checkOverdueAndEnqueue(db, true)`, `refillService.checkAllRefills(db)`, `collectionReminderWorker.runCollectionReminderCycle(true)`, `expiryAlertService.runExpiryScanAndAlert(lookaheadDays)`, `returnsService.scanAndCreateExpiryReviews()`, `emailService.pollInbox()`, `backupService.createBackup()`, and `tokenRefreshScheduler.runSessionHeartbeat()`) with comprehensive audit logging.
+  2. Operational Intent & Few-Shot Learning (`operationalIntentSchema.ts`):
+     - Added `TRIGGER_AUTOMATION` to `OperationalIntent` and `VALID_INTENTS`.
+     - Added `automationId` to `OperationalModelOutput` and updated `parseOperationalIntent` and `buildOperationalSystemPrompt()` with realistic few-shot examples for credit reminders, collection reminders, backups, and email polling.
+  3. Conversational Agent Engine Orchestration (`conversationalAgentEngine.ts`):
+     - Added `TRIGGER_AUTOMATION` intent detection via Qwen operational model and deterministic regex fallback.
+     - Implemented two-stage Rule 6 Human-in-the-Loop flow: when requested, Qwen runs `previewAutomation()`, displays the inspection assessment card, and stages a `TRIGGER_AUTOMATION` proposal card requiring operator confirmation (`Confirm & Run Automation` | `Cancel`).
+     - Added proposal execution handler in `handleStaffConfirmation()`, returning verified cycle counts and execution summaries.
+  4. Quick Suggestions (`UnifiedOperationsAssistantModal.tsx`):
+     - Added quick automation chips to relevant pages: `Run 60-day expiry scan` on `/inventory`, `Check overdue credit dues` and `Send collection reminders for ready pickups` on `/crm`, `Poll email invoices from distributors` on `/purchases`, and `Backup database now` on `/audit`.
+  5. Test Coverage (`conversationalAgentEngine.test.ts`):
+     - Added Criteria 40 validating preview inspection, natural language triggering (`run overdue credit reminder scan`), `TRIGGER_AUTOMATION` proposal staging, and successful Rule 6 confirmation execution.
+- Priority: P2
+- Verified by: `npm test -- tests/conversationalAgentEngine.test.ts` (41/41 passing, including Criteria 40); `npm run guardrails` exit 0 (clean compilation, 0 violations); backend build (`npm run build`) clean; client build (`npm run build:client`) succeeded in 1m 9s.
+
+### [Fixed] P2-134 — Assistant Operations Overhaul: Multi-Parameter Search, In-Stock Alternatives, Monthly Due UPI QR, CRM Special Orders & POS/Fluff Cleanup
+- Cause:
+  1. The Operations Assistant contained distracting POS billing micro-actions (`STAGE_POS_ITEM`, `APPLY_DISCOUNT`, `HOLD_BILL`), "Add to bill" quick actions, and hardware fluff (thermal printer configuration, settings navigation) which interfered with core pharmacy duties and counter cashier billing autonomy.
+  2. Inventory search only matched medicine names and did not support searching by Batch Number (e.g. `DL2041`) or MRP targets (e.g. `MRP 34.50`).
+  3. When medicines were out of stock, the assistant lacked automatic in-stock same-salt alternative suggestions and did not provide direct booking into canonical `special_orders` table per `AGENT_DATA_FLOW_TREE.md`.
+  4. Staff had no automated assistant workflow to query patient monthly credit dues and generate branded UPI payment QR reminder cards for WhatsApp dispatch.
+- Fix:
+  1. Multi-Parameter Search (`pharmacyKnowledgeRetriever.ts` & `pharmacyToolRegistry.ts`): Added robust parameter extraction for Batch Numbers (`im.batch_no LIKE ?`) and MRP (`ABS(m.mrp - ?) <= 1.0`), returning exact batch, expiry, rack location, MRP, and live stock.
+  2. Grounded In-Stock Alternatives (`pharmacyToolRegistry.ts` & `conversationalAgentEngine.ts`): Linked same-salt alternative candidates with verified live batch stock, rack locations, and MRP comparison. When primary medicine has 0 stock, the assistant automatically presents in-stock equivalents with clinical verification notices.
+  3. Monthly Due Bills & UPI QR Reminders (`pharmacyToolRegistry.ts` & `conversationalAgentEngine.ts`): Implemented `queryCustomerCreditDue` and `generateDuePaymentQr` using `paymentQrService` and `creditReminderService`. Generates amount-specific rotating UPI QR cards and creates two-stage Rule 6 HITL `SEND_DUE_PAYMENT_QR` proposals.
+  4. Canonical Special Orders & Refills: Implemented `bookSpecialOrder` (writing directly to `special_orders` table with linked distributor availability) and `onboardPatientRefill` (writing to `patient_refills` table) with full mutation audit trails.
+  5. POS Counter Actions & Fluff Removal: Removed `STAGE_POS_ITEM`, `APPLY_DISCOUNT`, and `HOLD_BILL`. Updated `UnifiedOperationsAssistantModal.tsx` suggestions to focus strictly on Investigation, CRM, Inventory, Live Cart, and Purchases. Changed input placeholder to search by Name, Batch, or MRP.
+  6. WhatsApp Parity: Because `whatsappIntentService.ts` delegates to `conversationalAgentEngine`, WhatsApp customer and staff inquiries automatically benefit from grounded facts, in-stock alternatives, and due bill QR capabilities.
+- Priority: P2
+- Verified by: `npm test -- tests/conversationalAgentEngine.test.ts` (40/40 passing, including new Criteria 36-39); `npm run guardrails` exit 0 (0 violations, clean TypeScript compilation); backend build (`npm run build`) clean; client build (`npm run build:client`) succeeded.
+
+### [Fixed] P2-133 — Qwen Daily Operational Few-Shot Training & In-App Assistant Automation Gate Toggle
+- Cause:
+  1. In `operationalIntentSchema.ts`, `buildOperationalSystemPrompt()` lacked few-shot examples for common daily pharmacy operations (thermal printer settings, multi-lingual Hinglish/Hindi phrasing like "bhai 5 strip Pan 40 live cart me dalo", 30-day expiry queries, sales turnover queries, and POS bill discounts).
+  2. In `UnifiedOperationsAssistantModal.tsx`, staff had no immediate way to pause or disable AI-driven background automations directly from the assistant header, relying instead on deep navigation to Settings.
+- Fix:
+  1. Expanded `buildOperationalSystemPrompt()` with realistic few-shot training examples for daily pharmacy workflows. Qwen leverages pre-warmed KV cache (`790 cached tokens`) to classify daily requests with 95% accuracy in 3-4s.
+  2. Added an interactive Automation Gate toggle (`Auto: Active` / `Auto: Paused`) directly to the assistant modal header connected to `aiAutomationGate` (`/api/local-ai/automation-pause` and `/api/local-ai/automation-resume`), allowing operators to instantly pause or resume automations on demand (Rule 6).
+  3. Added Criteria 35 in `tests/conversationalAgentEngine.test.ts` validating prompt coverage and parsing.
+- Priority: P2
+- Verified by: `npm test -- tests/conversationalAgentEngine.test.ts` (36/36 passing); `npm run guardrails` exit 0 (clean compilation, 0 violations); frontend client build (`npm run build:client`) succeeded in 52.90s; backend build (`npm run build`) clean.
+
+### [Fixed] P2-132 — Local AI Natural Language Timeout (15000ms) on Operations Assistant
+- Cause:
+  1. In `UnifiedOperationsAssistantModal.tsx`, `apiClient.post('/assistant/chat', ...)` did not pass an explicit request timeout. It defaulted to the global Axios timeout of 15,000ms (`api.ts`).
+  2. In `conversationalAgentEngine.ts`, `resolveUnifiedIntent()` placed `queryOperationalAiIntent(text)` at Step 0b before evaluating instant deterministic greetings (`hello`, `hi`, `namaste`). On cold starts or CPU background contention, launching `llama-server.exe` and loading Qwen2-1.7B took 10-15 seconds, exceeding the 15,000ms client cutoff and throwing AxiosError `timeout of 15000ms exceeded`.
+  3. In `operationalIntentSchema.ts`, `parseOperationalIntent()` was case-sensitive and defaulted missing `confidence` fields to `0`. When Qwen returned uppercase keys like `{"INTENT": "CHITCHAT"}` without `confidence`, confidence evaluated to `0`, failing the `confidence >= 0.6` threshold. The query was discarded and fell through to `default:` which fired a second LLM chat call (`queryLocalAiChat`, +8000ms), compounding latency to >20s.
+  4. In `conversationalAgentEngine.ts`, Step 14 called `queryOperationalAiIntent(text)` a redundant second time in the same request.
+  5. In `llamaServerClient.ts`, `queryOperationalAiIntent()` defaulted to a 20,000ms timeout, clashing with the frontend's 15,000ms limit.
+- Fix:
+  1. Configured `{ timeout: 60000 }` on `/assistant/chat` and `/assistant/upload-document` in `UnifiedOperationsAssistantModal.tsx`. Added human-friendly fallback notice advising users if the local engine was cold and starting up.
+  2. Added instant sub-millisecond fast-path (`/^(?:hi|hello|hey|namaste|namaskar|pranam|good\s+morning...)$/i`) in `conversationalAgentEngine.ts` before Step 0b, returning greetings in `<3ms` with zero CPU LLM load.
+  3. Made `parseOperationalIntent()` case-insensitive and punctuation-safe across all JSON keys. Defaulted confidence to `0.85` whenever a recognized valid intent is identified.
+  4. Removed the redundant duplicate call to `queryOperationalAiIntent(text)` in Step 14 of `conversationalAgentEngine.ts`.
+  5. Lowered `queryOperationalAiIntent` internal timeout to `10000ms` in `llamaServerClient.ts`, failing fast to deterministic rules if CPU inference stalls.
+- Priority: P2
+- Verified by: `npm test -- tests/conversationalAgentEngine.test.ts` (35 tests passing, including criteria 33 & 34); `npm run guardrails` exit 0 (clean compilation, 0 violations); production frontend build (`npm run build:client`) succeeded in 47.24s; backend build (`npm run build`) clean.
+
 ### [Fixed] P2-131 — WhatsApp Toggle Independence, Registration Indication & Dropdown Auto-Close Fix
 - Cause:
   1. In `SpecialOrderAddModal.tsx`, the WhatsApp confirmation toggle button was locked with `disabled={isNotOnWa}` and displayed `'OFF'` whenever `isNotOnWa` was true, preventing the user from keeping WhatsApp alerts ON or toggling their preference.

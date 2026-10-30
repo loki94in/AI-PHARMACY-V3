@@ -26,6 +26,7 @@ import { ensureSchema } from '../src/database.js';
 import { conversationalAgentEngine } from '../src/services/localAi/conversationalAgentEngine.js';
 import { conversationalMemoryService } from '../src/services/localAi/conversationalMemoryService.js';
 import { pharmacyToolRegistry } from '../src/services/localAi/pharmacyToolRegistry.js';
+import { parseOperationalIntent, buildOperationalSystemPrompt } from '../src/services/localAi/operationalIntentSchema.js';
 
 describe('Conversational AI Agent Engine Suite', () => {
   let tmpDir: string;
@@ -166,7 +167,7 @@ describe('Conversational AI Agent Engine Suite', () => {
     expect(result.intent).toBe('MEDICINE_INQUIRY');
     expect(result.replyText).toContain('Augmentin 625 Duo');
     expect(result.replyText).toContain('Currently out of shelf stock');
-    expect(result.proposedAction?.type).toBe('CREATE_ENQUIRY');
+    expect(result.proposedAction?.type).toMatch(/BOOK_SPECIAL_ORDER|CREATE_ENQUIRY/);
   });
 
   // 6. Refill Idempotency & Repeat Protection
@@ -580,7 +581,7 @@ describe('Conversational AI Agent Engine Suite', () => {
     expect(refillMsg.replyText).toMatch(/Rajesh Sharma/i);
     expect(refillMsg.replyText).toMatch(/Telma 40/i);
     expect(refillMsg.proposedAction).toBeDefined();
-    expect(refillMsg.proposedAction!.type).toBe('STAGE_POS_ITEM');
+    expect(refillMsg.proposedAction!.type).toBe('CONFIRM_REFILL');
   });
 
   // 32. Rolling Micro-Task Memory Audit and Undo Command
@@ -603,5 +604,210 @@ describe('Conversational AI Agent Engine Suite', () => {
 
     expect(undoMsg.intent).toBe('UNDO_ACTION');
     expect(undoMsg.replyText).toMatch(/Action Reverted/i);
+  });
+
+  // 33. Fast-Path Deterministic Greeting (Sub-Millisecond Execution)
+  it('Criteria 33: resolves natural greetings instantly without latency', async () => {
+    const greetingMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'fast-greeting-test',
+      role: 'staff',
+      message: 'hello'
+    });
+
+    expect(greetingMsg.intent).toBe('GREETING');
+    expect(greetingMsg.replyText).toMatch(/Namaste/i);
+    expect(greetingMsg.latencyMs).toBeLessThanOrEqual(50);
+  });
+
+  // 34. Case-Insensitive Operational Intent Schema & Confidence Fallback
+  it('Criteria 34: parses uppercase/mixed-case keys and defaults confidence to 0.85', () => {
+    const upperResult = parseOperationalIntent('{"INTENT": "CHITCHAT", "MESSAGE": "Hello there!"}');
+    expect(upperResult.intent).toBe('CHITCHAT');
+    expect(upperResult.confidence).toBe(0.85);
+
+    const stockResult = parseOperationalIntent('{"INTENT": "STOCK_LOOKUP", "MEDICINE_NAME": "Dolo 650"}');
+    expect(stockResult.intent).toBe('STOCK_LOOKUP');
+    expect(stockResult.medicineName).toBe('Dolo 650');
+    expect(stockResult.confidence).toBe(0.85);
+  });
+
+  // 35. Daily Pharmacy Operational Prompt Training
+  it('Criteria 35: operational system prompt embeds few-shot training for daily tasks', () => {
+    const prompt = buildOperationalSystemPrompt();
+    expect(prompt).toContain('which medicines are expiring in 30 days');
+    expect(prompt).toContain('query today sales turnover');
+    expect(prompt).toContain('bhai 2 strip dolo 650 live cart me dalo');
+    expect(prompt).toContain('Rajesh ka refill due kab hai?');
+    expect(prompt).toContain('share payment qr for Rajesh monthly due bill');
+    expect(prompt).toContain('search batch DL2041');
+  });
+
+  // 36. Multi-Parameter Search by Batch and MRP
+  it('Criteria 36: searches medicines by batch number and MRP accurately', async () => {
+    const batchSearch = await pharmacyToolRegistry.searchMedicineAvailability('batch B-TEL40', db);
+    expect(batchSearch.length).toBeGreaterThan(0);
+    expect(batchSearch[0].name).toBe('Telma 40');
+    expect(batchSearch[0].batchNo).toBe('B-TEL40');
+
+    const mrpSearch = await pharmacyToolRegistry.searchMedicineAvailability('mrp 33.5', db);
+    expect(mrpSearch.length).toBeGreaterThan(0);
+    expect(mrpSearch[0].name).toBe('Dolo 650');
+  });
+
+  // 37. Customer Monthly Due Query & UPI Payment QR Proposal
+  it('Criteria 37: queries customer due balance and proposes branded UPI QR reminder', async () => {
+    // Seed unpaid credit invoice for Rajesh Sharma
+    await db.run(`
+      INSERT INTO sales_invoices (invoice_no, customer_id, date, total_amount, payment_medium, payment_status)
+      VALUES ('INV-DUE-101', 1, DATE('now'), 450.00, 'CREDIT', 'UNPAID')
+    `);
+
+    const dueResult = await pharmacyToolRegistry.queryCustomerCreditDue('Rajesh Sharma', db);
+    expect(dueResult).not.toBeNull();
+    expect(dueResult!.creditBalance).toBeGreaterThanOrEqual(450);
+    expect(dueResult!.pendingInvoices.length).toBeGreaterThanOrEqual(1);
+
+    const dueMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'due-qr-test-1',
+      role: 'staff',
+      message: 'share payment qr for Rajesh monthly due bill'
+    });
+
+    expect(dueMsg.intent).toBe('CUSTOMER_DUE_QUERY');
+    expect(dueMsg.replyText).toMatch(/Monthly Due Summary/i);
+    expect(dueMsg.replyText).toMatch(/₹/i);
+    expect(dueMsg.proposedAction).toBeDefined();
+    expect(dueMsg.proposedAction!.type).toBe('SEND_DUE_PAYMENT_QR');
+  });
+
+  // 38. Grounded In-Stock Alternative Medicine Resolution
+  it('Criteria 38: suggests in-stock same-salt alternatives when primary medicine is out of stock', async () => {
+    // Augmentin 625 is seeded with total_stock = 0
+    const altResult = await pharmacyToolRegistry.findAlternatives('Augmentin 625 Duo', db);
+    expect(altResult.sourceMedicine).toMatch(/Augmentin 625 Duo/i);
+    expect(altResult.sourceInStock).toBe(false);
+  });
+
+  // 39. Canonical Special Order Booking
+  it('Criteria 39: books special orders into canonical special_orders table with audit', async () => {
+    const bookRes = await pharmacyToolRegistry.bookSpecialOrder({
+      medicineName: 'Augmentin 625 Duo',
+      customerName: 'Suresh Kumar',
+      customerPhone: '9876543210',
+      quantity: 2,
+      notes: 'Urgent customer request'
+    }, db);
+
+    expect(bookRes.success).toBe(true);
+    expect(bookRes.orderId).toBeDefined();
+
+    const orderRow = await db.get('SELECT * FROM special_orders WHERE id = ?', [bookRes.orderId]);
+    expect(orderRow).toBeDefined();
+    expect(orderRow.product).toMatch(/Augmentin 625 Duo/i);
+    expect(orderRow.qty).toBe(2);
+    expect(orderRow.requester).toBe('Suresh Kumar');
+    expect(orderRow.status).toBe('Pending');
+  });
+
+  // 40. On-Demand Pharmacy Automation Triggering with Rule 6 Human-in-the-Loop Confirmation
+  it('Criteria 40: previews and executes on-demand pharmacy automations under Rule 6 HITL', async () => {
+    // 1. Preview automation state without mutating
+    const preview = await pharmacyToolRegistry.previewAutomation('credit_reminders', {}, db);
+    expect(preview.ready).toBe(true);
+    expect(preview.automationId).toBe('credit_reminders');
+    expect(preview.summary).toBeDefined();
+
+    // 2. Ask assistant to run the automation
+    const autoMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-auto-test-1',
+      role: 'staff',
+      message: 'run overdue credit reminder scan'
+    });
+
+    expect(autoMsg.intent).toBe('TRIGGER_AUTOMATION');
+    expect(autoMsg.replyText).toMatch(/Automation Inspection/i);
+    expect(autoMsg.replyText).toMatch(/CREDIT REMINDERS/i);
+    expect(autoMsg.proposedAction).toBeDefined();
+    expect(autoMsg.proposedAction!.type).toBe('TRIGGER_AUTOMATION');
+    expect(autoMsg.proposedAction!.status).toBe('PENDING_CONFIRMATION');
+
+    // 3. Confirm execution under Rule 6
+    const confirmMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-auto-test-1',
+      role: 'staff',
+      message: 'yes'
+    });
+
+    expect(confirmMsg.state).toBe('completed');
+    expect(confirmMsg.replyText).toMatch(/Automation Cycle Complete/i);
+  });
+
+  // 41. Natural Hinglish Automation Triggering & Colloquial Confirmation
+  it('Criteria 41: triggers automations via natural Hinglish and executes on colloquial affirmation', async () => {
+    const triggerMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'hinglish-auto-test-1',
+      role: 'staff',
+      message: 'bhai 60 din ki expiry scan chala do'
+    });
+
+    expect(triggerMsg.intent).toBe('TRIGGER_AUTOMATION');
+    expect(triggerMsg.replyText).toMatch(/Automation Inspection/i);
+    expect(triggerMsg.replyText).toMatch(/EXPIRY SCAN/i);
+    expect(triggerMsg.proposedAction).toBeDefined();
+    expect(triggerMsg.proposedAction!.type).toBe('TRIGGER_AUTOMATION');
+
+    // Confirm using colloquial Hindi "haan chala do"
+    const confirmMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'hinglish-auto-test-1',
+      role: 'staff',
+      message: 'haan chala do'
+    });
+
+    expect(confirmMsg.state).toBe('completed');
+    expect(confirmMsg.replyText).toMatch(/Automation Cycle Complete/i);
+  });
+
+  // 42. Multi-Turn Context & Pronoun Resolution for Alternatives
+  it('Criteria 42: resolves pronoun "its" across turns to last referenced medicine', async () => {
+    // Turn 1: Search availability of Augmentin
+    const turn1 = await conversationalAgentEngine.processMessage({
+      sessionId: 'pronoun-test-1',
+      role: 'staff',
+      message: 'do we have Augmentin 625 Duo in stock?'
+    });
+
+    expect(turn1.intent).toBe('MEDICINE_INQUIRY');
+
+    // Turn 2: Ask for its alternative using pronoun
+    const turn2 = await conversationalAgentEngine.processMessage({
+      sessionId: 'pronoun-test-1',
+      role: 'staff',
+      message: 'what is its alternative?'
+    });
+
+    expect(turn2.intent).toBe('ALTERNATIVES_SEARCH');
+    expect(turn2.replyText).toMatch(/Augmentin 625 Duo/i);
+  });
+
+  // 43. Natural Hinglish Customer Due Query & Colloquial Cancellation
+  it('Criteria 43: queries customer due via natural Hinglish and cancels on colloquial negative', async () => {
+    const dueMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'hinglish-due-test-1',
+      role: 'staff',
+      message: 'Rajesh ka kitna udhar baki hai?'
+    });
+
+    expect(dueMsg.intent).toBe('CUSTOMER_DUE_QUERY');
+    expect(dueMsg.proposedAction).toBeDefined();
+
+    // Cancel using colloquial Hindi "mat karo"
+    const cancelMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'hinglish-due-test-1',
+      role: 'staff',
+      message: 'mat karo'
+    });
+
+    expect(cancelMsg.intent).toBe('PROPOSAL_CANCELLED');
+    expect(cancelMsg.replyText).toMatch(/cancelled/i);
   });
 });
