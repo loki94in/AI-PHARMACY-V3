@@ -447,20 +447,31 @@ if (!skipGithub && !uploadedViaGh) {
       }
 
       console.log(`   Uploading ${fileName} (${(fileSize / (1024 * 1024)).toFixed(1)} MB)...`);
-      const fileStream = fs.createReadStream(filePath);
-      await axios.post(
-        `https://uploads.github.com/repos/${ghRepo}/releases/${release.id}/assets?name=${encodeURIComponent(fileName)}`,
-        fileStream,
-        {
+      const uploadUrl = `https://uploads.github.com/repos/${ghRepo}/releases/${release.id}/assets?name=${encodeURIComponent(fileName)}`;
+      let uploadSuccess = false;
+      try {
+        execSync("curl.exe --version", { stdio: "ignore" });
+        console.log(`   Using curl.exe streaming chunked upload (with retry & keepalive)...`);
+        execSync(
+          `curl.exe -f -L -# -X POST -T "${filePath}" -H "Authorization: Bearer ${ghToken}" -H "Content-Type: application/octet-stream" -H "Accept: application/vnd.github.v3+json" --retry 3 --retry-delay 5 "${uploadUrl}"`,
+          { stdio: "inherit", cwd: rootDir }
+        );
+        uploadSuccess = true;
+      } catch (curlErr) {
+        console.warn(`   ⚠️ curl.exe upload failed (${curlErr.message}), falling back to axios...`);
+      }
+      if (!uploadSuccess) {
+        const fileStream = fs.createReadStream(filePath);
+        await axios.post(uploadUrl, fileStream, {
           headers: {
             ...ghHeaders,
-            'Content-Type': 'application/octet-stream',
-            'Content-Length': fileSize,
+            "Content-Type": "application/octet-stream",
+            "Content-Length": fileSize,
           },
           maxBodyLength: Infinity,
           maxContentLength: Infinity,
-        }
-      );
+        });
+      }
       console.log(`   ✓ Uploaded ${fileName}`);
     }
     console.log('✓ GitHub REST API upload complete (installer + update package + APK if present).');
