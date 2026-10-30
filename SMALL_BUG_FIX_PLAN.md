@@ -7,6 +7,26 @@
 
 ## Fixed
 
+### [Fixed] P2-137 — Grounded Qwen RAG Conversational Generation for Pharmacy Operations Assistant
+- Cause:
+  1. The Operations Assistant previously constructed static JavaScript template strings with rigid bullets (`• Medicine: ...`, `• Total Stock: ...`, `• Outstanding Balance: ...`), rather than allowing Qwen to formulate natural conversational responses.
+  2. Qwen was only used to return a JSON intent string, while the actual conversational reply was pre-formatted statically, making the assistant feel robotic.
+- Fix:
+  1. Grounded RAG Response Synthesizer (`conversationalAgentEngine.ts`):
+     - Implemented `synthesizeGroundedResponse(userText, facts, instructions, fallbackText)`:
+     - Directs verified SQLite database facts (stock quantities, shelf rack locations, MRP, customer balance, invoices, automation findings) into local Qwen LLM via `queryLocalAiChat` (temperature 0.3, maxTokens 150, timeout 3000ms).
+     - Restricts Qwen strictly to ground-truth facts (zero hallucination) and instructs it to reply warmly and concisely in 1–3 sentences matching the user's language (English, Hindi, Hinglish).
+     - Seamlessly returns clean, deterministic fallback text if the local AI engine is restarting or times out.
+  2. Comprehensive Intent Grounding (`conversationalAgentEngine.ts`):
+     - Migrated `ALTERNATIVES_SEARCH`, `MEDICINE_INQUIRY`, `CUSTOMER_DUE_QUERY`, `TRIGGER_AUTOMATION`, `INVENTORY_STOCK_AUDIT`, `BOOK_SPECIAL_ORDER`, `ONBOARD_REFILL`, `CART_STAGING`, `REMINDER_SCHEDULE`, `SALES_COMPARISON`, and `DELIVERY_STATUS` to use grounded RAG synthesis.
+     - Retained Rule 6 Human-in-the-Loop proposal cards and action buttons (`Confirm & Run Automation`, `Send Due QR`, `Book Special Order`, `Stage to Cart`).
+  3. Natural Medicine Extraction & Query Parsing:
+     - Enhanced `extractMedicineFromText` to handle composite inventory audit queries like "check rack and stock for [medicine]".
+  4. Test Suite Coverage (`conversationalAgentEngine.test.ts`):
+     - Added Criteria 44 (grounded RAG response synthesis with zero-hallucination fallback) and Criteria 45 (grounded stock audit and due query output integrity). All 46/46 tests pass.
+- Priority: P2
+- Verified by: `npm test -- tests/conversationalAgentEngine.test.ts` (46/46 passing); `npm run guardrails` exit 0 (clean compilation, 0 violations); backend build (`npm run build`) clean; client build (`npm run build:client`) succeeded.
+
 ### [Fixed] P2-136 — Natural Language & Colloquial Multi-Turn Intelligence for Pharmacy Operations Assistant
 - Cause:
   1. The Operations Assistant previously required rigid English command templates (e.g., "run overdue credit reminder scan") and could fail to parse hurried Indian retail pharmacy vocabulary (Hinglish/Hindi phrasing like "bhai 60 din ki expiry scan chala do", "database ka backup le lo", "email check karo distributor ka", "Rajesh ka kitna udhar baki hai?").

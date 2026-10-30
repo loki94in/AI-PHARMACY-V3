@@ -810,4 +810,58 @@ describe('Conversational AI Agent Engine Suite', () => {
     expect(cancelMsg.intent).toBe('PROPOSAL_CANCELLED');
     expect(cancelMsg.replyText).toMatch(/cancelled/i);
   });
+
+  // 44. Grounded RAG Synthesis with Zero-Hallucination Fallback
+  it('Criteria 44: synthesizeGroundedResponse safely returns grounded factual text or fallback', async () => {
+    const facts = {
+      medicine: 'Dolo 650',
+      stockQuantity: 45,
+      rackLocation: 'RACK-B2',
+      mrp: 33.50
+    };
+    const fallback = '💊 Dolo 650 is Available in stock (45 units) at Rack RACK-B2, MRP ₹33.50.';
+
+    const result = await conversationalAgentEngine.synthesizeGroundedResponse(
+      'Kitna stock hai Dolo 650 ka?',
+      facts,
+      'Tell the user how much stock is available, its shelf rack location, and price in 1-2 sentences.',
+      fallback
+    );
+
+    expect(result).toBeDefined();
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThan(10);
+    // Either the local AI synthesized it or the deterministic fallback returned safely
+    expect(result).toMatch(/Dolo 650/i);
+    expect(result).toMatch(/45/);
+    expect(result).toMatch(/RACK-B2/i);
+  });
+
+  // 45. Grounded Inventory Audit & Due Query Output Integrity
+  it('Criteria 45: produces grounded responses and interactive cards for stock audit and due balances', async () => {
+    // Inventory Stock Audit
+    const auditRes = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-grounded-audit-1',
+      role: 'staff',
+      message: 'check rack and stock for Dolo 650'
+    });
+
+    expect(auditRes.intent).toBe('INVENTORY_STOCK_AUDIT');
+    expect(auditRes.replyText).toMatch(/Dolo 650/i);
+    expect(auditRes.cards).toBeDefined();
+    expect(auditRes.cards!.length).toBeGreaterThan(0);
+    expect(auditRes.cards![0].title).toBe('Dolo 650');
+
+    // Customer Due Query
+    const dueRes = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-grounded-due-1',
+      role: 'staff',
+      message: 'what is the outstanding due for Rajesh'
+    });
+
+    expect(dueRes.intent).toBe('CUSTOMER_DUE_QUERY');
+    expect(dueRes.replyText).toMatch(/Rajesh/i);
+    expect(dueRes.proposedAction).toBeDefined();
+    expect(dueRes.proposedAction!.type).toBe('SEND_DUE_PAYMENT_QR');
+  });
 });

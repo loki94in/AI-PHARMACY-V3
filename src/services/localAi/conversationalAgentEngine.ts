@@ -732,19 +732,34 @@ export class ConversationalAgentEngine {
         toolExecutions.push({ tool: 'findAlternatives', result: altResult });
 
         if (altResult.candidates && altResult.candidates.length > 0) {
-          replyText = `🔬 *Alternative Options for ${altResult.sourceMedicine}*\n\n` +
-            (altResult.sourceSalt ? `🧪 *Active Composition:* ${altResult.sourceSalt}\n` : '') +
-            `📊 *Current Stock:* ${altResult.sourceInStock ? '✅ Available' : '❌ Out of Stock'}\n\n` +
-            `Found *${altResult.candidates.length} suitable candidates*:\n\n`;
+          const inStockAlts = altResult.candidates.filter(c => c.inStock);
+          const facts = {
+            sourceMedicine: altResult.sourceMedicine,
+            activeComposition: altResult.sourceSalt,
+            inStock: altResult.sourceInStock,
+            suitableCandidatesCount: altResult.candidates.length,
+            topCandidates: altResult.candidates.slice(0, 4).map(c => ({
+              name: c.name,
+              inStock: c.inStock,
+              stockQty: c.stockQuantity,
+              mrp: c.mrp,
+              rackLocation: c.rackLocation,
+              differenceNote: c.differenceNote
+            }))
+          };
+          const fallback = `🔬 Alternatives for *${altResult.sourceMedicine}* (${altResult.sourceSalt || 'same salt'}):\n` +
+            (altResult.sourceInStock ? `• Available in stock\n` : `• Currently out of stock\n`) +
+            `• Top in-stock candidate: ${inStockAlts.length > 0 ? `${inStockAlts[0].name} (Qty: ${inStockAlts[0].stockQuantity}, MRP ₹${inStockAlts[0].mrp.toFixed(2)})` : 'None in stock'}\n\n` +
+            `⚠️ Pharmacist Verification Required before dispensing substitute.`;
+
+          replyText = await this.synthesizeGroundedResponse(
+            userText,
+            facts,
+            'Explain if the requested medicine is available, mention its active salt composition, and recommend the best in-stock alternatives with rack location and price in 1-2 conversational sentences.',
+            fallback
+          );
 
           altResult.candidates.forEach((cand, idx) => {
-            const stockNotice = cand.inStock ? `✅ In Stock (${cand.stockQuantity})` : '⏳ Out of stock';
-            replyText += `${idx + 1}. *${cand.name}*\n` +
-              `   • Form: ${cand.dosageForm || 'Tablet'} ${cand.strength || ''}\n` +
-              `   • Price: ₹${cand.sellingPrice.toFixed(2)} (MRP ₹${cand.mrp.toFixed(2)})\n` +
-              `   • Status: ${stockNotice}\n` +
-              `   • ${cand.differenceNote || 'Same active salt.'}\n\n`;
-
             cards.push({
               id: cand.id,
               title: cand.name,
@@ -753,9 +768,6 @@ export class ConversationalAgentEngine {
               badgeColor: cand.inStock ? 'green' : 'amber'
             });
           });
-
-          replyText += `${altResult.clinicalNotice}\n\n` +
-            `👉 Reply with the number (e.g. *Show details of 1*) or type *Add to bill* to proceed.`;
 
           suggestedFollowUps = [
             `Show details of 1 (${altResult.candidates[0]?.name})`,
@@ -907,7 +919,7 @@ export class ConversationalAgentEngine {
         toolExecutions.push({ tool: 'getDeliveryRunStatus', result: deliv });
 
         if (deliv.totalActive > 0) {
-          replyText = `🛵 *Dispatch & Home Delivery Status*\n\n` +
+          let fallback = `🛵 *Dispatch & Home Delivery Status*\n\n` +
             `• *Total Active Orders:* ${deliv.totalActive}\n` +
             `• *Pending Pickup:* ${deliv.pendingCount}\n` +
             `• *In Transit:* ${deliv.inTransitCount}\n\n` +
@@ -915,7 +927,7 @@ export class ConversationalAgentEngine {
 
           deliv.orders.forEach((o, idx) => {
             const boy = o.deliveryBoyName ? ` (Rider: ${o.deliveryBoyName})` : ' (Unassigned)';
-            replyText += `${idx + 1}. *Order #${o.orderId}* — ${o.patientName}${boy} [${o.status}]\n`;
+            fallback += `${idx + 1}. *Order #${o.orderId}* — ${o.patientName}${boy} [${o.status}]\n`;
             cards.push({
               id: o.orderId,
               title: `Order #${o.orderId} - ${o.patientName}`,
@@ -924,6 +936,25 @@ export class ConversationalAgentEngine {
               badgeColor: o.status === 'In Transit' ? 'blue' : 'amber'
             });
           });
+
+          const facts = {
+            totalActive: deliv.totalActive,
+            pendingPickup: deliv.pendingCount,
+            inTransit: deliv.inTransitCount,
+            orders: deliv.orders.map(o => ({
+              orderId: o.orderId,
+              patient: o.patientName,
+              rider: o.deliveryBoyName || 'Unassigned',
+              status: o.status
+            }))
+          };
+
+          replyText = await this.synthesizeGroundedResponse(
+            userText,
+            facts,
+            'Give a concise, natural dispatch update stating active order counts and rider transit status.',
+            fallback
+          );
         } else {
           replyText = `✅ *Dispatch Clear:* No home delivery orders are currently pending or in transit.`;
         }
@@ -979,15 +1010,34 @@ export class ConversationalAgentEngine {
           replyText = salesStats.analysisExplanation;
         } else {
           const deltaSign = salesStats.deltaRevenue >= 0 ? '+' : '';
-          replyText = `📊 *Daily Sales Comparison (Today vs Yesterday)*\n\n` +
+          let fallback = `📊 *Daily Sales Comparison (Today vs Yesterday)*\n\n` +
             `• *Today's Revenue:* ₹${salesStats.todayRevenue.toFixed(2)} (${salesStats.todayBillCount} invoices, Avg: ₹${salesStats.todayAverageTicket.toFixed(2)})\n` +
             `• *Yesterday's Revenue:* ₹${salesStats.yesterdayRevenue.toFixed(2)} (${salesStats.yesterdayBillCount} invoices, Avg: ₹${salesStats.yesterdayAverageTicket.toFixed(2)})\n` +
             `• *Delta:* ${deltaSign}₹${salesStats.deltaRevenue.toFixed(2)} (${deltaSign}${salesStats.percentChange}%)\n\n` +
             `💡 *Why is it different?*\n${salesStats.analysisExplanation}\n`;
 
           if (salesStats.topSellersToday.length > 0) {
-            replyText += `\n🏆 *Top items today:* ${salesStats.topSellersToday.join(', ')}`;
+            fallback += `\n🏆 *Top items today:* ${salesStats.topSellersToday.join(', ')}`;
           }
+
+          const facts = {
+            todayRevenue: salesStats.todayRevenue,
+            todayBills: salesStats.todayBillCount,
+            todayAvgTicket: salesStats.todayAverageTicket,
+            yesterdayRevenue: salesStats.yesterdayRevenue,
+            yesterdayBills: salesStats.yesterdayBillCount,
+            deltaRevenue: salesStats.deltaRevenue,
+            percentChange: salesStats.percentChange,
+            analysisExplanation: salesStats.analysisExplanation,
+            topSellers: salesStats.topSellersToday
+          };
+
+          replyText = await this.synthesizeGroundedResponse(
+            userText,
+            facts,
+            'Summarize today sales compared to yesterday concisely in 2-3 natural sentences, highlighting revenue, bill count, and the main driver.',
+            fallback
+          );
 
           cards = [
             {
@@ -1264,11 +1314,24 @@ export class ConversationalAgentEngine {
           status: 'PENDING_CONFIRMATION'
         };
 
-        replyText = `📅 *Schedule Refill Reminder*\n\n` +
+        const facts = {
+          patient: custName,
+          phone,
+          dueDate,
+          notes
+        };
+        const fallback = `📅 *Schedule Refill Reminder*\n\n` +
           `• *Patient:* ${custName} (+91 ${phone})\n` +
           `• *Due:* ${dueDate}\n` +
           `• *Task Details:* ${notes}\n\n` +
           `👉 *Confirm creating this reminder task for pharmacy staff?*\nReply *Yes* to confirm, or *No* to cancel.`;
+
+        replyText = await this.synthesizeGroundedResponse(
+          userText,
+          facts,
+          'State that you can schedule a refill reminder for the patient on the due date for the specified details, and ask for confirmation.',
+          fallback
+        );
 
         state = 'awaiting_confirmation';
         suggestedFollowUps = ['Yes, create reminder', 'Cancel'];
@@ -1283,37 +1346,53 @@ export class ConversationalAgentEngine {
 
         if (searchResult && searchResult.length > 0) {
           const topItem = searchResult[0];
-          const stockStatus = topItem.inStock ? `✅ *Available in stock* (${topItem.stockQuantity} on shelf)` : `⏳ Currently out of shelf stock`;
-          const priceLine = topItem.sellingPrice > 0 ? `💰 Price: ₹${topItem.sellingPrice.toFixed(2)} (MRP ₹${topItem.mrp.toFixed(2)})` : `💰 MRP: ₹${topItem.mrp.toFixed(2)}`;
-
-          replyText = `💊 *Medicine Availability — ${topItem.name}*\n\n` +
-            (topItem.genericName ? `🔬 Salt: ${topItem.genericName}\n` : '') +
-            (topItem.dosageForm ? `📋 Form: ${topItem.dosageForm} ${topItem.strength || ''}\n` : '') +
-            `${priceLine}\n` +
-            `${stockStatus}\n\n`;
 
           if (topItem.inStock) {
-            replyText += (topItem.batchNo ? `🏷️ *Batch:* ${topItem.batchNo}\n` : '') +
-              (topItem.expiryDate ? `📅 *Expiry:* ${topItem.expiryDate}\n` : '') +
-              (topItem.rackLocation ? `📍 *Rack Location:* ${topItem.rackLocation}\n\n` : '\n');
-
-            replyText += `👉 Item is in stock. You can verify on shelf, check in-stock alternatives, or stage to Pharmarack distributor cart.`;
+            const facts = {
+              medicine: topItem.name,
+              salt: topItem.genericName,
+              dosageForm: topItem.dosageForm,
+              strength: topItem.strength,
+              inStock: true,
+              stockQuantity: topItem.stockQuantity,
+              batchNo: topItem.batchNo,
+              expiryDate: topItem.expiryDate,
+              rackLocation: topItem.rackLocation || 'General Shelf',
+              mrp: topItem.mrp
+            };
+            const saltInfo = topItem.genericName ? ` (${topItem.genericName})` : '';
+            const fallback = `💊 *${topItem.name}*${saltInfo} is Available in stock (${topItem.stockQuantity} units) at Rack *${topItem.rackLocation || 'General Shelf'}*, MRP ₹${topItem.mrp.toFixed(2)}.`;
+            replyText = await this.synthesizeGroundedResponse(
+              userText,
+              facts,
+              'Answer whether the medicine is in stock, the quantity, rack location, and price in 1-2 natural sentences.',
+              fallback
+            );
             suggestedFollowUps = ['Find in-stock alternatives', `Stage ${topItem.name} to Live Cart`, 'Check due refills'];
           } else {
-            replyText += `⏳ *Currently Out of Stock*\n\n`;
-
-            // Check for verified in-stock same-salt alternatives
             const altResult = await pharmacyToolRegistry.findAlternatives(topItem.name, db);
             const inStockAlts = (altResult?.candidates || []).filter(c => c.inStock);
 
-            if (inStockAlts.length > 0) {
-              replyText += `💡 *Available In-Stock Equivalents (${altResult.sourceSalt || 'Same Salt'}):*\n` +
-                inStockAlts.slice(0, 3).map((a, i) =>
-                  `${i + 1}. *${a.name}* (${a.manufacturer || 'Standard'}) — ✅ ${a.stockQuantity} in stock | MRP ₹${a.mrp.toFixed(2)} (Rack: ${a.rackLocation || 'Shelf'})`
-                ).join('\n') + `\n\n`;
-            }
+            const facts = {
+              medicine: topItem.name,
+              salt: topItem.genericName || altResult?.sourceSalt,
+              inStock: false,
+              inStockAlternatives: inStockAlts.slice(0, 3).map(a => ({
+                name: a.name,
+                stock: a.stockQuantity,
+                mrp: a.mrp,
+                rack: a.rackLocation || 'Shelf'
+              }))
+            };
+            const fallback = `⏳ *${topItem.name}* is Currently out of shelf stock.` +
+              (inStockAlts.length > 0 ? ` In-stock same-salt alternatives: ${inStockAlts.map(a => `${a.name} (${a.stockQuantity} in ${a.rackLocation || 'Shelf'})`).join(', ')}.` : '');
+            replyText = await this.synthesizeGroundedResponse(
+              userText,
+              facts,
+              'Explain that the medicine is Currently out of shelf stock and recommend the top in-stock alternatives with rack location and price in 1-2 sentences.',
+              fallback
+            );
 
-            replyText += `Would you like to book a Special Order for a patient, or stage into Pharmarack Live Cart?`;
             proposedAction = {
               id: `spec_order_${Date.now()}`,
               type: 'BOOK_SPECIAL_ORDER',
@@ -1400,11 +1479,25 @@ export class ConversationalAgentEngine {
 
         const qty = detected.quantity;
 
-        replyText = `🛒 *Distributor Live Cart Staging*\n\n` +
+        const facts = {
+          medicine: medName,
+          quantity: qty,
+          unit,
+          destination: destination === 'pos_cart' ? 'POS Billing Counter' : 'Pharmarack Live Cart'
+        };
+
+        const fallback = `🛒 *Distributor Live Cart Staging*\n\n` +
           `• *Medicine:* ${medName}\n` +
           `• *Quantity:* ${qty} ${unit}\n` +
-          `• *Destination:* Pharmarack Live Cart\n\n` +
+          `• *Destination:* ${facts.destination}\n\n` +
           `👉 *Confirm staging this item to your live distributor cart?*\nReply *Yes* or click *Stage to Live Cart* to confirm, or *No* to cancel.`;
+
+        replyText = await this.synthesizeGroundedResponse(
+          userText,
+          facts,
+          `State that you can stage ${qty} ${unit} of ${medName} into the ${facts.destination}, and ask for confirmation.`,
+          fallback
+        );
 
         proposedAction = {
           id: `live_cart_${Date.now()}`,
@@ -1545,13 +1638,30 @@ export class ConversationalAgentEngine {
         toolExecutions.push({ tool: 'queryCustomerCreditDue', result: dueResult });
 
         if (dueResult && dueResult.creditBalance > 0) {
-          replyText = `💳 *Monthly Due Summary for ${dueResult.name}*\n\n` +
+          const facts = {
+            customerName: dueResult.name,
+            creditBalance: dueResult.creditBalance,
+            phone: dueResult.phone,
+            creditDueDate: dueResult.creditDueDate,
+            unpaidBillsCount: dueResult.pendingInvoices.length,
+            invoices: dueResult.pendingInvoices.map((inv: any) => ({
+              invoiceNo: inv.invoice_no,
+              amount: inv.total_amount,
+              date: inv.date
+            }))
+          };
+          const fallback = `💳 *Monthly Due Summary for ${dueResult.name}*\n\n` +
             `• *Total Outstanding Balance:* ₹${dueResult.creditBalance.toFixed(2)}\n` +
             `• *Registered Phone:* ${dueResult.phone || 'Not recorded'}\n` +
             `• *Due Date:* ${dueResult.creditDueDate || 'As agreed'}\n\n` +
-            `📋 *Unpaid Invoices Breakdown (${dueResult.pendingInvoices.length}):*\n` +
-            `${dueResult.formattedBreakdown || '• Ledger balance record'}\n\n` +
-            `👉 *Would you like to send an official WhatsApp payment reminder with rotating UPI QR code?*`;
+            `👉 Would you like to send an official WhatsApp payment reminder with rotating UPI QR code?`;
+
+          replyText = await this.synthesizeGroundedResponse(
+            userText,
+            facts,
+            'State the customer Monthly Due Summary, the balance amount in ₹, and ask if they would like to send a WhatsApp payment reminder with UPI QR.',
+            fallback
+          );
 
           proposedAction = {
             id: `due_qr_${Date.now()}`,
@@ -1581,7 +1691,14 @@ export class ConversationalAgentEngine {
             }
           }];
         } else if (dueResult) {
-          replyText = `✅ *Clear Balance:* Customer *${dueResult.name}* has zero outstanding dues. All bills are fully paid!`;
+          const facts = { customerName: dueResult.name, balance: 0, status: 'Clear Balance' };
+          const fallback = `✅ *Clear Balance:* Customer *${dueResult.name}* has zero outstanding dues. All bills are fully paid!`;
+          replyText = await this.synthesizeGroundedResponse(
+            userText,
+            facts,
+            'State that the customer has zero outstanding balance and all bills are settled.',
+            fallback
+          );
           suggestedFollowUps = ['Check another customer', 'Search medicine in stock'];
         } else {
           replyText = `🔍 We could not locate customer record *"${targetCustomer}"*. Please provide the customer's registered phone number or full name.`;
@@ -1596,12 +1713,25 @@ export class ConversationalAgentEngine {
         const custName = detected.patientName || session.contextData?.lastCustomer || 'Walk-in Customer';
         const qty = detected.quantity || 1;
 
-        replyText = `📦 *Confirm Special Order Booking*\n\n` +
+        const facts = {
+          medicine: medName,
+          quantity: qty,
+          customer: custName,
+          destination: 'CRM Special Orders & Quick Assist'
+        };
+        const fallback = `📦 *Confirm Special Order Booking*\n\n` +
           `• *Medicine:* ${medName}\n` +
           `• *Quantity:* ${qty} unit(s)\n` +
           `• *Customer / Requester:* ${custName}\n` +
           `• *Target Destination:* CRM → Special Orders & Quick Assist sidebar\n\n` +
           `👉 *Confirm booking this special order?* Click *Book Special Order* or reply *Yes* to confirm.`;
+
+        replyText = await this.synthesizeGroundedResponse(
+          userText,
+          facts,
+          `State that you are ready to book a special order for ${qty} unit(s) of ${medName} for ${custName}, and ask for confirmation.`,
+          fallback
+        );
 
         proposedAction = {
           id: `spec_order_${Date.now()}`,
@@ -1634,12 +1764,25 @@ export class ConversationalAgentEngine {
         const custName = detected.patientName || session.contextData?.lastCustomer || 'Patient';
         const days = detected.timeframe ? parseInt(detected.timeframe, 10) : 30;
 
-        replyText = `🗓️ *Schedule Patient Refill*\n\n` +
+        const facts = {
+          patient: custName,
+          medicine: medName,
+          intervalDays: days,
+          destination: 'CRM Patient Refills'
+        };
+        const fallback = `🗓️ *Schedule Patient Refill*\n\n` +
           `• *Patient:* ${custName}\n` +
           `• *Medicine:* ${medName}\n` +
           `• *Cycle:* Every ${days} days\n` +
           `• *Target Destination:* CRM → Patient Refills\n\n` +
           `👉 *Confirm scheduling this refill?* Click *Schedule Refill* or reply *Yes* to confirm.`;
+
+        replyText = await this.synthesizeGroundedResponse(
+          userText,
+          facts,
+          `State that you can schedule a recurring refill for ${custName} (${medName} every ${days} days), and ask for confirmation.`,
+          fallback
+        );
 
         proposedAction = {
           id: `refill_onboard_${Date.now()}`,
@@ -1681,10 +1824,23 @@ export class ConversationalAgentEngine {
         const preview = await pharmacyToolRegistry.previewAutomation(autoId, { lookaheadDays }, db);
         toolExecutions.push({ tool: 'previewAutomation', result: preview });
 
-        replyText = `⚙️ *Automation Inspection — ${preview.automationId.toUpperCase().replace(/_/g, ' ')}*\n\n` +
+        const facts = {
+          automationId: preview.automationId,
+          automationName: preview.automationId.replace(/_/g, ' ').toUpperCase(),
+          status: 'Ready for on-demand execution',
+          assessment: preview.summary
+        };
+        const fallback = `⚙️ *Automation Inspection — ${preview.automationId.toUpperCase().replace(/_/g, ' ')}*\n\n` +
           `• *Status:* Ready for on-demand execution\n` +
           `• *Inspection Assessment:* ${preview.summary}\n\n` +
           `👉 *Confirm running this automation now?* Click *Confirm & Run Automation* or reply *Yes*.`;
+
+        replyText = await this.synthesizeGroundedResponse(
+          userText,
+          facts,
+          `Summarize the inspection findings for ${facts.automationName} in 1-2 natural sentences and ask the user to confirm before running.`,
+          fallback
+        );
 
         proposedAction = {
           id: `auto_${Date.now()}`,
@@ -1726,17 +1882,37 @@ export class ConversationalAgentEngine {
           ).catch(() => []);
 
           const rackLoc = (batchRows[0] as any)?.rack_location || 'General Shelf';
-          replyText = `📍 *Inventory Shelf & Rack Location*\n\n` +
+          const facts = {
+            medicine: topItem.name,
+            totalStock: topItem.stockQuantity,
+            inStock: topItem.inStock,
+            rackLocation: rackLoc,
+            batches: batchRows.map((b: any) => ({
+              batchNo: b.batch_no,
+              quantity: b.quantity,
+              expiry: b.expiry_date || 'N/A',
+              rack: b.rack_location || rackLoc
+            }))
+          };
+
+          let fallback = `📍 *Inventory Shelf & Rack Location*\n\n` +
             `• *Medicine:* ${topItem.name}\n` +
             `• *Total Stock:* ${topItem.stockQuantity} units (${topItem.inStock ? '✅ In Stock' : '❌ Out of Stock'})\n` +
             `• *Rack / Location:* 🏷️ *${rackLoc}*\n\n`;
 
           if (batchRows.length > 0) {
-            replyText += `📋 *Batches on Shelf:*\n`;
+            fallback += `📋 *Batches on Shelf:*\n`;
             batchRows.forEach((b: any, idx: number) => {
-              replyText += `${idx + 1}. Batch *${b.batch_no}* — Qty: ${b.quantity} | Exp: ${b.expiry_date || 'N/A'} (Rack: ${b.rack_location || rackLoc})\n`;
+              fallback += `${idx + 1}. Batch *${b.batch_no}* — Qty: ${b.quantity} | Exp: ${b.expiry_date || 'N/A'} (Rack: ${b.rack_location || rackLoc})\n`;
             });
           }
+
+          replyText = await this.synthesizeGroundedResponse(
+            userText,
+            facts,
+            `State the current shelf stock for ${topItem.name}, rack location, and earliest batch expiry in 1-2 conversational sentences.`,
+            fallback
+          );
 
           cards = [{
             id: topItem.id,
@@ -1873,6 +2049,53 @@ export class ConversationalAgentEngine {
       suggestedFollowUps,
       latencyMs: Math.round(performance.now() - startTime)
     };
+  }
+
+  /**
+   * Synthesizes a natural, human conversational reply using the local Qwen LLM
+   * grounded strictly in real verified database facts. Falls back to clean template if unavailable.
+   */
+  public async synthesizeGroundedResponse(
+    userText: string,
+    facts: Record<string, any>,
+    instructions: string,
+    fallbackText: string
+  ): Promise<string> {
+    if (!isLocalAiEnabled()) {
+      return fallbackText;
+    }
+
+    try {
+      const sysPrompt =
+        `You are Qwen, the expert clinical & operational AI copilot for AI Pharmacy OS.\n` +
+        `Answer the user's message naturally, warmly, and concisely (1 to 3 short sentences maximum).\n` +
+        `Mirror the user's language and tone (English, Hindi, or Hinglish).\n` +
+        `Rules:\n` +
+        `1. Use ONLY the verified factual data provided below. NEVER invent false stock, rates, dates, or medicines.\n` +
+        `2. Speak like a helpful, sharp senior pharmacy colleague.\n` +
+        `3. Keep it brief and conversational. Do NOT use bullet lists, excessive markdown asterisks, or robotic headers.\n` +
+        `Instructions: ${instructions}`;
+
+      const userContent =
+        `User Message: "${userText}"\n\n` +
+        `Verified Factual Data:\n${JSON.stringify(facts, null, 2)}`;
+
+      const res = await queryLocalAiChat(
+        [
+          { role: 'system', content: sysPrompt },
+          { role: 'user', content: userContent }
+        ],
+        { timeoutMs: 3000, maxTokens: 150, temperature: 0.3 }
+      );
+
+      if (res && res.success && res.content && res.content.trim().length > 10) {
+        return res.content.trim();
+      }
+    } catch (_) {
+      // Graceful fallback to deterministic text
+    }
+
+    return fallbackText;
   }
 
   /**
@@ -2048,7 +2271,7 @@ export class ConversationalAgentEngine {
 
     // 0c. Customer Due Bills, Payment QR, Special Orders & Refill Onboarding Fallbacks
     if (
-      /\b(?:due|balance|khata|ledger|monthly\s*due|due\s*bill|pending\s*bill|udhar|udhari|baki|kitna\s*hai)\b/i.test(t) ||
+      /\b(?:due|balance|khata|ledger|monthly\s*due|due\s*bill|pending\s*bill|udhar|udhari|baki|kitna\s*hai|owe|owes)\b/i.test(t) ||
       /\b(?:share|send|generate|bhejo|bhej)\b.*\b(?:qr|payment\s*qr|due\s*qr)\b/i.test(t) ||
       /\b(?:payment\s*reminder|due\s*reminder)\b/i.test(t)
     ) {
@@ -2095,7 +2318,7 @@ export class ConversationalAgentEngine {
       return { type: 'LIVE_CART_SYNC' };
     }
 
-    if (/\b(?:where is|kahan hai|which rack|rack location|shelf location|rack for|rakha hai)\b/i.test(t)) {
+    if (/\b(?:where is|kahan hai|which rack|rack location|shelf location|rack for|rakha hai|rack\s*(?:and|&)?\s*stock|stock\s*(?:and|&)?\s*rack)\b/i.test(t)) {
       let med = this.extractMedicineFromText(text);
       if ((!med || /^(it|this|that|iska|uska|medicine|dawa)$/i.test(med.trim())) && session.contextData?.lastMedicine) {
         med = session.contextData.lastMedicine;
@@ -2415,8 +2638,8 @@ export class ConversationalAgentEngine {
       .replace(/\b(?:this medicine is unavailable|this medicine is out of stock|this medicine is not available|this medicine|this)\b/gi, ' ')
       .replace(/\b(?:in the live cart|in live cart|to live cart|into live cart|in the pos cart|to pos cart|in pos cart|in the cart|in cart|to cart|into cart|in bill|to bill|into bill|on live cart|on pos|on bill)\b/gi, ' ')
       .replace(/\b(?:what is the active salt of|what is the salt of|what is the salt in|active salt of|active ingredient of|salt of|salt in|uses of|use of)\b/gi, ' ')
-      .replace(/\b(?:where is|where are|where|which rack is|which rack for|which rack|rack location for|rack of|kahan hai|kept|located|placed)\b/gi, ' ')
-      .replace(/\b(?:check stock for|check stock of|check stock|check availability of|check availability|search for|search|lookup|look up)\b/gi, ' ')
+      .replace(/\b(?:where is|where are|where|which rack is|which rack for|which rack|rack location for|rack location of|rack location|rack of|rack and stock for|rack and stock of|rack and stock|stock and rack for|stock and rack|kahan hai|kept|located|placed|rack|shelf)\b/gi, ' ')
+      .replace(/\b(?:check stock for|check stock of|check stock|check availability of|check availability|check|search for|search|lookup|look up|find|get)\b/gi, ' ')
       .replace(/\b(?:do we have|do you have|can we get|can you get|can you check|can i get|is there|are there|is|in stock|out of stock|available|unavailable|right now|today|price of|cost of|mrp of|rate of|chahiye|milegi|mil sakti|aahe ka|kya|please|for me)\b/gi, ' ')
       .replace(/\b(?:live\s*cart|pos\s*cart|distributor\s*cart|pharmarack(?:\s*cart)?)\b/gi, ' ')
       .replace(/\b(?:add to bill|add to cart|add to pos|add|give|put|bill|dispense|take|dalo|lagao|bhejo|tablet|strip|box|find an alternative for|find alternatives for|find substitute for|alternative for|substitute for)\b/gi, ' ')
