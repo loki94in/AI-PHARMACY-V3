@@ -118,7 +118,7 @@ export class QwenReadinessService {
       const res = await fetch(healthUrl, {
         method: 'GET',
         headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(1200)
+        signal: AbortSignal.timeout(4000)
       });
 
       if (res.ok) {
@@ -135,7 +135,7 @@ export class QwenReadinessService {
     if (!endpointStatus) {
       this.currentState = 'OFFLINE';
       this.lastErrorCode = 'ENDPOINT_UNREACHABLE';
-      this.lastErrorMessage = `Local AI runtime at 127.0.0.1:${cfg.port} is not responding.`;
+      this.lastErrorMessage = `Local AI runtime at 127.0.0.1:${cfg.port} is not responding (idle or stopped).`;
       this.notifyIfStateChanged(previousState);
       return this.buildStatusPayload();
     }
@@ -163,10 +163,10 @@ export class QwenReadinessService {
     }
 
     // LEVEL 4: BOUNDED NON-DESTRUCTIVE INFERENCE PROBE
-    // Probe with a minimal 1-token test prompt bounded by a strict 3000ms timeout
+    // Probe with a minimal 1-token test prompt bounded by a 6000ms timeout
     const testResult = await queryLocalAiChat(
       [{ role: 'user', content: 'test' }],
-      { maxTokens: 1, timeoutMs: 3000 }
+      { maxTokens: 1, timeoutMs: 6000 }
     );
 
     if (testResult.success) {

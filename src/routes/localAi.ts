@@ -7,7 +7,8 @@ import express, { Request, Response } from 'express';
 import { localAiLifecycleManager } from '../services/localAi/localAiLifecycleManager.js';
 import { qwenReadinessService } from '../services/localAi/qwenReadinessService.js';
 import { aiAutomationGate } from '../services/localAi/aiAutomationGate.js';
-import { ensureLlamaServerRunning } from '../services/localAi/llamaServerClient.js';
+import { ensureLlamaServerRunning, checkLlamaServerHealth } from '../services/localAi/llamaServerClient.js';
+import { detectHardwareAccelerationProfile } from '../services/localAi/hardwareDetector.js';
 import { modelDownloadManager } from '../services/localAi/modelDownloadManager.js';
 import { dbManager } from '../database/connection.js';
 
@@ -23,6 +24,7 @@ router.get('/status', async (req: Request, res: Response) => {
     const readiness = await qwenReadinessService.getStatus(forceRefresh);
     const gateStatus = await aiAutomationGate.getStatus();
     const downloadState = modelDownloadManager.getState();
+    const hardwareProfile = detectHardwareAccelerationProfile();
 
     res.json({
       success: true,
@@ -31,7 +33,8 @@ router.get('/status', async (req: Request, res: Response) => {
         automationGate: gateStatus.gate,
         isPausedByUser: gateStatus.isPausedByUser,
         pauseReason: gateStatus.pauseReason,
-        downloadState
+        downloadState,
+        hardwareProfile
       }
     });
   } catch (err) {
@@ -44,20 +47,40 @@ router.get('/status', async (req: Request, res: Response) => {
 
 /**
  * POST /api/local-ai/retry-start
- * Explicitly launches or reconnects the runtime and executes a fresh readiness probe.
+ * Non-blocking start: launches runtime in background and returns immediate STARTING state,
+ * preventing frontend 15000ms timeouts while SSE broadcasts final readiness.
  */
 router.post('/retry-start', async (_req: Request, res: Response) => {
   try {
     qwenReadinessService.invalidateCache();
-    await ensureLlamaServerRunning();
-    const status = await qwenReadinessService.getStatus(true);
+    const isHealthy = await checkLlamaServerHealth();
+    if (isHealthy) {
+      const status = await qwenReadinessService.getStatus(true);
+      return res.json({
+        success: true,
+        message: status.inferenceReady
+          ? 'Qwen runtime successfully verified and ready.'
+          : `Qwen runtime status: ${status.state}`,
+        data: status
+      });
+    }
 
+    // Launch asynchronously in background so client never blocks or times out
+    ensureLlamaServerRunning()
+      .then(() => qwenReadinessService.getStatus(true))
+      .catch((err) => {
+        console.warn('[Local AI] Background startup error:', err?.message || err);
+      });
+
+    // Immediate non-blocking response with STARTING state
+    const currentStatus = await qwenReadinessService.getStatus(false);
     res.json({
       success: true,
-      message: status.inferenceReady
-        ? 'Qwen runtime successfully started and verified.'
-        : `Qwen runtime status: ${status.state}`,
-      data: status
+      message: 'Qwen runtime is starting in background...',
+      data: {
+        ...currentStatus,
+        state: 'STARTING'
+      }
     });
   } catch (err) {
     res.status(500).json({

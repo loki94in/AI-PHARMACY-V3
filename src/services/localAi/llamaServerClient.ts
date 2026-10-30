@@ -11,6 +11,8 @@ import { validateLocalAiAssets, DEFAULT_LOCAL_AI_DIR } from './localAiAssetValid
 import { getLocalAiStorageDir } from './localAiStorage.js';
 import { parseStructuredIntent } from './structuredIntentParser.js';
 import { buildOperationalSystemPrompt, parseOperationalIntent, type OperationalModelOutput } from './operationalIntentSchema.js';
+import { activityTracker } from '../../utils/activityTracker.js';
+import { detectHardwareAccelerationProfile } from './hardwareDetector.js';
 import type { StructuredIntentResult } from './types.js';
 
 export interface LlamaServerConfig {
@@ -77,6 +79,39 @@ export function getLocalAiConfig(overrides: Partial<LlamaServerConfig> = {}): Ll
 let serverProcess: ChildProcess | null = null;
 let isStartingServer = false;
 let cachedAssetPresence: boolean | null = null;
+let lastActivityTimestamp = Date.now();
+let idleSleepTimer: NodeJS.Timeout | null = null;
+const DEFAULT_IDLE_SLEEP_MIN = 15;
+
+export function markLocalAiActivity(): void {
+  lastActivityTimestamp = Date.now();
+}
+
+export function getLocalAiIdleSleepMin(): number {
+  const envVal = process.env.LOCAL_AI_IDLE_SLEEP_MIN;
+  if (envVal !== undefined && envVal !== '') {
+    const parsed = parseInt(envVal, 10);
+    return isNaN(parsed) ? DEFAULT_IDLE_SLEEP_MIN : parsed;
+  }
+  return DEFAULT_IDLE_SLEEP_MIN;
+}
+
+function initIdleSleepWatcher(): void {
+  if (idleSleepTimer) return;
+  idleSleepTimer = setInterval(() => {
+    const idleMin = getLocalAiIdleSleepMin();
+    if (idleMin <= 0) return; // 0 = never sleep
+    if (!serverProcess) return;
+
+    const isAppIdle = activityTracker.isIdle();
+    const idleMs = Date.now() - lastActivityTimestamp;
+    if (idleMs >= idleMin * 60 * 1000) {
+      console.log(`[Local AI] Runtime idle for ${Math.round(idleMs / 60000)}m (app idle: ${isAppIdle}). Stopping llama-server to reclaim RAM...`);
+      stopLlamaServer('idle_timeout');
+    }
+  }, 30_000);
+  if (idleSleepTimer.unref) idleSleepTimer.unref();
+}
 
 export function resetLocalAiAssetCache(): void {
   cachedAssetPresence = null;
@@ -137,7 +172,7 @@ export async function checkLlamaServerHealth(config?: Partial<LlamaServerConfig>
     const res = await fetch(url, {
       method: 'GET',
       headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(1000)
+      signal: AbortSignal.timeout(4000)
     });
     if (!res.ok) return false;
     const contentType = res.headers.get('content-type') || '';
@@ -157,9 +192,13 @@ export async function checkLlamaServerHealth(config?: Partial<LlamaServerConfig>
  * Enforces No-GPU contract (--n-gpu-layers 0).
  */
 export async function ensureLlamaServerRunning(config?: Partial<LlamaServerConfig>): Promise<boolean> {
+  markLocalAiActivity();
   let cfg = getLocalAiConfig(config);
   if (!isLocalAiEnabled()) return false;
-  if (await checkLlamaServerHealth(cfg)) return true;
+  if (await checkLlamaServerHealth(cfg)) {
+    initIdleSleepWatcher();
+    return true;
+  }
   if (serverProcess || isStartingServer) return false;
 
   const assetCheck = validateLocalAiAssets(cfg.modelsDir);
@@ -170,29 +209,44 @@ export async function ensureLlamaServerRunning(config?: Partial<LlamaServerConfi
 
   isStartingServer = true;
   try {
-    // Dynamic Port Hunting: probe and resolve free port before spawning
-    const targetPort = await findAvailablePort(cfg.port, cfg.host);
+    // Probe preferred port first
+    let targetPort = cfg.port;
+    if (!(await isPortAvailable(targetPort, cfg.host))) {
+      // Check if an existing llama-server is already running on that port
+      if (await checkLlamaServerHealth({ ...config, port: targetPort })) {
+        console.log(`[Local AI] Reusing active llama-server at http://${cfg.host}:${targetPort}`);
+        activeLlamaPort = targetPort;
+        initIdleSleepWatcher();
+        return true;
+      }
+      targetPort = await findAvailablePort(cfg.port, cfg.host);
+    }
+
     activeLlamaPort = targetPort;
     cfg = getLocalAiConfig({ ...config, port: targetPort });
 
-    // Re-verify if an existing instance is already running on the resolved port
-    if (await checkLlamaServerHealth(cfg)) {
-      console.log(`[Local AI] Found existing active llama-server at ${getLocalAiBaseUrl(cfg)}`);
-      return true;
-    }
+    const hwProfile = detectHardwareAccelerationProfile();
+    const cpuThreads = hwProfile.cpuThreads;
+    const offloadLayers = hwProfile.offloadLayers;
 
-    const cpuThreads = Math.max(1, Math.min(4, os.cpus().length - 1));
+    const rawContextSize = parseInt(process.env.LOCAL_AI_CONTEXT_SIZE || '4096', 10);
+    const contextSize = isNaN(rawContextSize) ? 4096 : Math.min(Math.max(2048, rawContextSize), 16384);
+
     const args = [
       '-m', assetCheck.details.modelPath,
       '--host', cfg.host,
       '--port', String(cfg.port),
-      '-ngl', '0', // strictly CPU-only, No-GPU contract
+      '-ngl', String(offloadLayers),
       '-t', String(cpuThreads),
-      '-c', '2048', // context length
+      '-c', String(contextSize), // Dynamic context length (default 4096, up to 16384)
+      '-ctk', 'q8_0',            // Quantized 8-bit Key cache saves ~50% RAM
+      '-ctv', 'q8_0',            // Quantized 8-bit Value cache saves ~50% RAM
       '--log-disable'
     ];
 
-    console.log(`[Local AI] Spawning llama-server (${assetCheck.details.runtimePath}) on CPU with ${cpuThreads} threads on port ${cfg.port}...`);
+    console.log(
+      `[Local AI] Spawning llama-server (${assetCheck.details.runtimePath}) [Mode: ${hwProfile.executionMode}, ngl: ${offloadLayers}, threads: ${cpuThreads}] on port ${cfg.port}...`
+    );
     serverProcess = spawn(assetCheck.details.runtimePath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true
@@ -210,11 +264,12 @@ export async function ensureLlamaServerRunning(config?: Partial<LlamaServerConfi
       activeLlamaPort = null;
     });
 
-    // Wait briefly for server readiness
-    for (let i = 0; i < 15; i++) {
-      await new Promise(r => setTimeout(r, 400));
+    // Wait for server readiness (up to 25 * 500ms = 12.5s)
+    for (let i = 0; i < 25; i++) {
+      await new Promise(r => setTimeout(r, 500));
       if (await checkLlamaServerHealth(cfg)) {
         console.log('[Local AI] ✓ llama-server is ready and healthy at', getLocalAiBaseUrl(cfg));
+        initIdleSleepWatcher();
         return true;
       }
     }
@@ -231,7 +286,11 @@ export async function ensureLlamaServerRunning(config?: Partial<LlamaServerConfi
 /**
  * Shuts down background llama-server process.
  */
-export function stopLlamaServer(): void {
+export function stopLlamaServer(reason = 'manual'): void {
+  if (idleSleepTimer) {
+    clearInterval(idleSleepTimer);
+    idleSleepTimer = null;
+  }
   if (serverProcess) {
     try {
       if (process.platform === 'win32' && serverProcess.pid) {
@@ -241,6 +300,8 @@ export function stopLlamaServer(): void {
       }
     } catch (_) {}
     serverProcess = null;
+    activeLlamaPort = null;
+    console.log(`[Local AI] llama-server stopped (${reason}).`);
   }
 }
 
@@ -270,16 +331,17 @@ export async function queryLocalAiChat(
   messages: LlamaChatMessage[],
   options: LlamaChatCompletionOptions = {}
 ): Promise<LlamaChatCompletionResult> {
+  markLocalAiActivity();
   const start = performance.now();
   const cfg = getLocalAiConfig(options);
   const endpoint = `${getLocalAiBaseUrl(cfg)}/v1/chat/completions`;
-  const timeoutMs = options.timeoutMs || cfg.timeoutMs || 4000;
+  const timeoutMs = options.timeoutMs || cfg.timeoutMs || 6000;
 
   const payload: any = {
     model: 'qwen3-1.7b',
     messages,
     temperature: options.temperature ?? 0.1,
-    max_tokens: options.maxTokens ?? 256
+    max_tokens: options.maxTokens ?? (process.env.LOCAL_AI_MAX_TOKENS ? parseInt(process.env.LOCAL_AI_MAX_TOKENS, 10) : 384)
   };
   if (options.responseFormat) {
     payload.response_format = options.responseFormat;
@@ -416,6 +478,7 @@ export async function queryOperationalAiIntent(
   userText: string,
   options: Partial<LlamaServerConfig> = {}
 ): Promise<OperationalModelOutput> {
+  markLocalAiActivity();
   const cfg = getLocalAiConfig(options);
 
   if (!userText || !userText.trim()) {
@@ -424,6 +487,7 @@ export async function queryOperationalAiIntent(
 
   const endpoint = `${getLocalAiBaseUrl(cfg)}/v1/chat/completions`;
   const systemPrompt = buildOperationalSystemPrompt();
+  const timeoutMs = options.timeoutMs || 20000;
 
   const payload = {
     model: 'qwen3-1.7b',
@@ -432,7 +496,7 @@ export async function queryOperationalAiIntent(
       { role: 'user', content: userText }
     ],
     temperature: 0.1,
-    max_tokens: 180,
+    max_tokens: 75,
     response_format: { type: 'json_object' }
   };
 
@@ -441,7 +505,7 @@ export async function queryOperationalAiIntent(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(cfg.timeoutMs)
+      signal: AbortSignal.timeout(timeoutMs)
     });
 
     if (!response.ok) {

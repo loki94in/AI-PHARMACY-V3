@@ -33,6 +33,7 @@ describe('Conversational AI Agent Engine Suite', () => {
   let db: any;
 
   beforeAll(async () => {
+    process.env.LOCAL_AI_ENABLED = 'false';
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'conv-agent-test-'));
     dbPath = path.join(tmpDir, 'test.db');
     process.env.DB_PATH = dbPath;
@@ -449,6 +450,20 @@ describe('Conversational AI Agent Engine Suite', () => {
     expect(confirmMsg.actionTaken).toBe('STAGE_LIVE_CART_ITEM');
   });
 
+  it('Criteria 24b: correctly extracts medicine and destination from "add live cart dolo 650"', async () => {
+    const stageMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-session-cart-2',
+      role: 'staff',
+      message: 'add live cart 1 dolo 650'
+    });
+
+    expect(stageMsg.intent).toBe('CART_STAGING');
+    expect(stageMsg.requiresConfirmation).toBe(true);
+    expect(stageMsg.proposedAction?.type).toBe('STAGE_LIVE_CART_ITEM');
+    expect(stageMsg.proposedAction?.data.medicineName).toMatch(/^dolo 650$/i);
+    expect(stageMsg.proposedAction?.data.destination).toBe('live_cart');
+  });
+
   // 25. Order Hub & Application Settings Guidance with 1-Click Navigation Cards
   it('Criteria 25: guides user to Order Hub settings with direct navigation action card', async () => {
     const settingsMsg = await conversationalAgentEngine.processMessage({
@@ -475,5 +490,118 @@ describe('Conversational AI Agent Engine Suite', () => {
     expect(greetMsg.replyText).toContain('Order Hub & Distributor Live Cart Guidance');
     expect(greetMsg.cards).toBeDefined();
     expect(greetMsg.cards!.some(c => c.actionUrl === '/live-cart')).toBe(true);
+  });
+
+  // 26. Natural Stock Lookup with Conversational Action Prefix Stripping
+  it('Criteria 26: correctly cleans "check stock for Dolo 650" and retrieves live stock', async () => {
+    const stockMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-stock-check-1',
+      role: 'staff',
+      message: 'check stock for Dolo 650'
+    });
+
+    expect(stockMsg.intent).toBe('MEDICINE_INQUIRY');
+    expect(stockMsg.replyText).toContain('Dolo 650');
+    expect(stockMsg.replyText).toContain('Available in stock');
+    expect(stockMsg.cards).toBeDefined();
+    expect(stockMsg.cards!.length).toBeGreaterThan(0);
+    expect(stockMsg.cards![0].title).toBe('Dolo 650');
+    expect(stockMsg.cards![0].badge).toContain('in stock');
+  });
+
+  // 27. Conversational inquiry phrasing with question marks
+  it('Criteria 27: extracts medicine cleanly from "do we have Augmentin 625 Duo in stock?"', async () => {
+    const medExtracted = conversationalAgentEngine.extractMedicineFromText('do we have Augmentin 625 Duo in stock?');
+    expect(medExtracted).toMatch(/Augmentin 625 Duo/i);
+
+    const stockMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-stock-check-2',
+      role: 'staff',
+      message: 'do we have Augmentin 625 Duo in stock?'
+    });
+
+    expect(stockMsg.intent).toBe('MEDICINE_INQUIRY');
+    expect(stockMsg.replyText).toContain('Augmentin 625 Duo');
+    expect(stockMsg.replyText).toContain('out of shelf stock');
+  });
+
+  // 28. General Pharmacy Q&A with Grounded Clinical Guidance
+  it('Criteria 28: answers general drug information question with grounded medicine details', async () => {
+    const qaMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-qa-1',
+      role: 'staff',
+      message: 'what is the active salt of Dolo 650?'
+    });
+
+    expect(['GENERAL_PHARMACY_QA', 'MEDICINE_INQUIRY']).toContain(qaMsg.intent);
+    expect(qaMsg.replyText).toMatch(/Dolo 650/i);
+    expect(qaMsg.replyText).toMatch(/Paracetamol 650mg/i);
+  });
+
+  // 29. Smart Slot-Filling when quantity is omitted on cart staging
+  it('Criteria 29: prompts for quantity slot-filling when user says "add Dolo 650 to live cart"', async () => {
+    const slotMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-slot-test-1',
+      role: 'staff',
+      message: 'add Dolo 650 to live cart'
+    });
+
+    expect(slotMsg.state).toBe('awaiting_clarification');
+    expect(slotMsg.replyText).toMatch(/How many strips of \*Dolo 650\*/i);
+    expect(slotMsg.suggestedFollowUps).toBeDefined();
+    expect(slotMsg.suggestedFollowUps).toContain('1 strip');
+    expect(slotMsg.suggestedFollowUps).toContain('5 strips');
+    expect(slotMsg.suggestedFollowUps).toContain('10 strips');
+  });
+
+  // 30. Multi-Turn Slot Resolution with Interactive Quick Chip
+  it('Criteria 30: completes staging when user provides quantity chip in next turn', async () => {
+    const fillMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-slot-test-1',
+      role: 'staff',
+      message: '5 strips'
+    });
+
+    expect(fillMsg.state).toBe('completed');
+    expect(fillMsg.replyText).toMatch(/Live Cart Updated/i);
+    expect(fillMsg.replyText).toMatch(/5 strips/i);
+    expect(fillMsg.replyText).toMatch(/Dolo 650/i);
+  });
+
+  // 31. Patient Refill Pipeline with CRM Customer Resolution
+  it('Criteria 31: looks up CRM customer by patientName and stages chronic refill', async () => {
+    const refillMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-refill-pipeline-1',
+      role: 'staff',
+      message: 'add refill for Rajesh'
+    });
+
+    expect(refillMsg.intent).toBe('REFILL');
+    expect(refillMsg.replyText).toMatch(/Rajesh Sharma/i);
+    expect(refillMsg.replyText).toMatch(/Telma 40/i);
+    expect(refillMsg.proposedAction).toBeDefined();
+    expect(refillMsg.proposedAction!.type).toBe('STAGE_POS_ITEM');
+  });
+
+  // 32. Rolling Micro-Task Memory Audit and Undo Command
+  it('Criteria 32: audits recent micro-tasks and reverts last action upon undo request', async () => {
+    const auditMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-slot-test-1',
+      role: 'staff',
+      message: 'show recent tasks'
+    });
+
+    expect(auditMsg.intent).toBe('MICRO_TASK_AUDIT');
+    expect(auditMsg.replyText).toMatch(/Recent Micro-Tasks/i);
+    expect(auditMsg.replyText).toMatch(/Dolo 650/i);
+
+    const undoMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-slot-test-1',
+      role: 'staff',
+      message: 'undo'
+    });
+
+    expect(undoMsg.intent).toBe('UNDO_ACTION');
+    expect(undoMsg.replyText).toMatch(/Action Reverted/i);
   });
 });

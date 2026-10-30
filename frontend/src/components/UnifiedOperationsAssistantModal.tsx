@@ -72,10 +72,10 @@ function getPageContextInfo(pathname: string): PageContextInfo {
     return {
       name: 'POS Billing',
       suggestions: [
-        'Explain POS shortcuts',
+        'Add Dolo 650 to bill',
+        'Add refill for Rajesh',
         'Stock check for Dolo 650',
         'Show due refills',
-        'Check customer enquiries',
         'Query today sales turnover'
       ]
     };
@@ -84,10 +84,11 @@ function getPageContextInfo(pathname: string): PageContextInfo {
     return {
       name: 'Inventory & Batches',
       suggestions: [
+        'Add Dolo 650 to live cart',
         'Find low stock medicines',
         'Audit expiring batches',
         'Search Paracetamol 650',
-        'Explain this page'
+        'Show recent tasks'
       ]
     };
   }
@@ -95,6 +96,7 @@ function getPageContextInfo(pathname: string): PageContextInfo {
     return {
       name: 'CRM & Patients',
       suggestions: [
+        'Add refill for Rajesh',
         'Show due refills',
         'List pending call tasks',
         'What WhatsApp messages need replies?',
@@ -106,11 +108,11 @@ function getPageContextInfo(pathname: string): PageContextInfo {
     return {
       name: 'Order Hub & Live Cart',
       suggestions: [
+        'Add Dolo 650',
+        'Stage 5 Pan 40 to live cart',
         'Where are Order Hub settings?',
-        'How to connect Pharmarack',
         'Check distributor minimums',
-        'Stage Dolo 650 to live cart',
-        'Explain this page'
+        'Show recent tasks'
       ]
     };
   }
@@ -157,13 +159,14 @@ function getPageContextInfo(pathname: string): PageContextInfo {
       ]
     };
   }
-  if (clean === '/audit' || clean === '/investigation') {
+  if (clean === '/audit' || clean === '/investigation' || clean === '/reports') {
     return {
-      name: 'Audit Center',
+      name: 'Investigation & Reports',
       suggestions: [
-        'Explain audit log security',
-        'Show recent system activity',
-        'Audit near-expiry batches'
+        'Query today sales turnover',
+        'Show recent tasks',
+        'Audit near-expiry batches',
+        'Explain audit log security'
       ]
     };
   }

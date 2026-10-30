@@ -642,14 +642,39 @@ export class PharmacyToolRegistry {
       `⚠️ *Accounting Rule:* Stock adjustments should never be made without physical verification.`;
 
     let stagedProposal: any = null;
-    if (options.medicineId && options.batchNo && typeof options.newQuantity === 'number') {
+    let resolvedMedId = options.medicineId;
+    let resolvedBatchNo = options.batchNo;
+    let resolvedMedName = options.medicineName;
+    const db = options.dbInstance;
+
+    if (!resolvedMedId && resolvedMedName && db) {
+      try {
+        const medRow = await db.get(
+          `SELECT id, name FROM medicines WHERE name LIKE ? OR canonical_name LIKE ? ORDER BY id DESC LIMIT 1`,
+          [`%${resolvedMedName}%`, `%${resolvedMedName}%`]
+        );
+        if (medRow) {
+          resolvedMedId = medRow.id;
+          resolvedMedName = medRow.name;
+          if (!resolvedBatchNo) {
+            const batchRow = await db.get(
+              `SELECT batch_no FROM inventory_master WHERE medicine_id = ? ORDER BY id DESC LIMIT 1`,
+              [medRow.id]
+            );
+            if (batchRow) resolvedBatchNo = batchRow.batch_no;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (resolvedMedId && typeof options.newQuantity === 'number') {
       stagedProposal = {
         type: 'ADJUST_STOCK',
-        summary: `Adjust stock for medicine #${options.medicineId} (Batch: ${options.batchNo}) to ${options.newQuantity} units`,
+        summary: `Adjust stock for ${resolvedMedName || `medicine #${resolvedMedId}`} (Batch: ${resolvedBatchNo || 'General'}) to ${options.newQuantity} units`,
         data: {
-          medicineId: options.medicineId,
-          medicineName: options.medicineName,
-          batchNo: options.batchNo,
+          medicineId: resolvedMedId,
+          medicineName: resolvedMedName,
+          batchNo: resolvedBatchNo || 'DEFAULT',
           newQuantity: options.newQuantity,
           reason: options.reason || 'Physical count adjustment'
         }

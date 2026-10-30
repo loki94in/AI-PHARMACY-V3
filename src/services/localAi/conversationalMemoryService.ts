@@ -47,6 +47,15 @@ export interface ConversationTurn {
   createdAt?: string;
 }
 
+export interface MicroTaskRecord {
+  id: string;
+  action: string;
+  summary: string;
+  data?: Record<string, any>;
+  timestamp: string;
+  revertible: boolean;
+}
+
 export class ConversationalMemoryService {
   /**
    * Generates a stable session ID
@@ -290,6 +299,57 @@ export class ConversationalMemoryService {
         createdAt: r.created_at
       };
     });
+  }
+
+  /**
+   * Records a compact micro-task into session context memory (retains last 5 items)
+   */
+  public async recordMicroTask(
+    sessionId: string,
+    task: Omit<MicroTaskRecord, 'id' | 'timestamp'>,
+    dbInstance?: any
+  ): Promise<MicroTaskRecord> {
+    const session = await this.getSession(sessionId, dbInstance);
+    const existing = (session?.contextData?.recentMicroTasks || []) as MicroTaskRecord[];
+    const newTask: MicroTaskRecord = {
+      id: `task_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      action: task.action,
+      summary: task.summary,
+      data: task.data,
+      timestamp: new Date().toISOString(),
+      revertible: task.revertible ?? false
+    };
+
+    const updatedTasks = [newTask, ...existing].slice(0, 5);
+    const updatedContext = {
+      ...(session?.contextData || {}),
+      recentMicroTasks: updatedTasks
+    };
+
+    await this.updateSession(sessionId, { contextData: updatedContext }, dbInstance);
+    return newTask;
+  }
+
+  /**
+   * Retrieves recent micro-tasks for a session
+   */
+  public async getRecentMicroTasks(
+    sessionId: string,
+    limit = 5,
+    dbInstance?: any
+  ): Promise<MicroTaskRecord[]> {
+    const session = await this.getSession(sessionId, dbInstance);
+    const tasks = (session?.contextData?.recentMicroTasks || []) as MicroTaskRecord[];
+    return tasks.slice(0, limit);
+  }
+
+  /**
+   * Formats a tiny 1-line prompt context summarizing recent completed actions
+   */
+  public formatMicroTasksPromptHeader(tasks: MicroTaskRecord[]): string {
+    if (!tasks || tasks.length === 0) return '';
+    const summaries = tasks.slice(0, 2).map(t => t.summary).join('; ');
+    return `[Recent actions: ${summaries}]`;
   }
 
   /**

@@ -14,6 +14,16 @@ export type QwenState =
   | 'OFFLINE'
   | 'ERROR';
 
+export interface HardwareProfileData {
+  hasDedicatedGpu: boolean;
+  gpuName: string | null;
+  vramMb: number;
+  offloadLayers: number;
+  cpuThreads: number;
+  executionMode: 'GPU_FULL' | 'GPU_PARTIAL' | 'CPU_SMART';
+  recommendation: string;
+}
+
 export interface QwenStatusData {
   state: QwenState;
   enabled: boolean;
@@ -31,6 +41,7 @@ export interface QwenStatusData {
   errorMessage: string | null;
   automationGate: 'open' | 'paused' | 'blocked';
   isPausedByUser?: boolean;
+  hardwareProfile?: HardwareProfileData;
 }
 
 interface MovableQwenStatusIconProps {
@@ -251,11 +262,17 @@ export const MovableQwenStatusIcon: React.FC<MovableQwenStatusIconProps> = ({ on
     try {
       setIsRetrying(true);
       const res = await apiClient.post<{ success: boolean; message: string; data: QwenStatusData }>(
-        '/local-ai/retry-start'
+        '/local-ai/retry-start',
+        {},
+        { timeout: 30000 }
       );
       if (res.data?.success) {
         setStatus(res.data.data);
-        toastEvent.trigger(res.data.message || 'Qwen runtime started.', 'success');
+        const isStarting = res.data.data?.state === 'STARTING';
+        toastEvent.trigger(
+          res.data.message || (isStarting ? 'Qwen runtime starting in background...' : 'Qwen runtime ready.'),
+          isStarting ? 'info' : 'success'
+        );
       } else {
         toastEvent.trigger('Failed to start Qwen runtime.', 'error');
       }
@@ -385,7 +402,11 @@ export const MovableQwenStatusIcon: React.FC<MovableQwenStatusIconProps> = ({ on
               <Sparkles className="w-4 h-4 text-primary" />
               <div>
                 <div className="font-semibold text-sm leading-none">Qwen Local AI</div>
-                <div className="text-[10px] text-muted mt-0.5">CPU-only · Qwen3-1.7B</div>
+                <div className="text-[10px] text-muted mt-0.5">
+                  {status?.hardwareProfile?.hasDedicatedGpu
+                    ? `GPU Accelerated (${status.hardwareProfile.vramMb}MB) · Qwen3-1.7B`
+                    : 'CPU Smart Shift · Qwen3-1.7B'}
+                </div>
               </div>
             </div>
             {state === 'READY' && (
@@ -447,6 +468,17 @@ export const MovableQwenStatusIcon: React.FC<MovableQwenStatusIconProps> = ({ on
                 {status?.automationGate || 'Unknown'}
               </span>
             </div>
+
+            {status?.hardwareProfile && (
+              <div className="flex justify-between items-center">
+                <span>Hardware Tier:</span>
+                <span className="font-medium text-text">
+                  {status.hardwareProfile.hasDedicatedGpu
+                    ? `GPU (${status.hardwareProfile.offloadLayers} layers)`
+                    : `CPU (${status.hardwareProfile.cpuThreads} threads)`}
+                </span>
+              </div>
+            )}
 
             {status?.errorMessage && (
               <div className="mt-2 p-2 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] leading-tight">

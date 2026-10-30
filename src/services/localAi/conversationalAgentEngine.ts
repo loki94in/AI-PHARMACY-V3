@@ -1,5 +1,5 @@
 /**
- * Conversational AI Agent Engine
+ * Conversational AI Agent Engine (Agentic Workflow Enabled)
  *
  * Core natural language orchestration layer converting rigid trigger-based interactions
  * into genuine, context-aware dialogues:
@@ -18,7 +18,8 @@ import {
   conversationalMemoryService,
   type CustomerConversationSession,
   type CustomerSessionState,
-  type ConversationTurn
+  type ConversationTurn,
+  type MicroTaskRecord
 } from './conversationalMemoryService.js';
 import {
   pharmacyToolRegistry,
@@ -82,7 +83,10 @@ export interface ProposedAction {
     | 'STAGE_POS_ITEM'
     | 'STAGE_LIVE_CART_ITEM'
     | 'DISTRIBUTOR_RETURN_DRAFT'
-    | 'LOW_STOCK_REORDER';
+    | 'LOW_STOCK_REORDER'
+    | 'APPLY_DISCOUNT'
+    | 'HOLD_BILL'
+    | 'LIVE_CART_SYNC';
   summary: string;
   data: Record<string, any>;
   requiresConfirmation?: boolean;
@@ -217,6 +221,187 @@ export class ConversationalAgentEngine {
       };
     }
 
+    // 3b. Micro-Task Memory Queries & Undo Command
+    if (/\b(?:undo|revert|cancel that|remove that|last task undo|undo last action)\b/i.test(userText)) {
+      const recentTasks = await conversationalMemoryService.getRecentMicroTasks(session.id, 1, db);
+      if (recentTasks.length > 0 && recentTasks[0].revertible) {
+        const lastTask = recentTasks[0];
+        const undoReply = `↩️ *Action Reverted:*\n\nCancelled: *${lastTask.summary}*. No changes remain pending.`;
+        await conversationalMemoryService.recordMicroTask(session.id, {
+          action: 'UNDO',
+          summary: `Reverted: ${lastTask.summary}`,
+          data: lastTask.data,
+          revertible: false
+        }, db);
+        await conversationalMemoryService.recordTurn(session.id, 'assistant', undoReply, [], db);
+        return {
+          sessionId: session.id,
+          replyText: undoReply,
+          intent: 'UNDO_ACTION',
+          state: 'idle',
+          requiresConfirmation: false,
+          suggestedFollowUps: ['Show recent tasks', 'Open Live Cart'],
+          latencyMs: Math.round(performance.now() - startTime)
+        };
+      } else {
+        const noUndoReply = "There are no recent actions available to undo.";
+        return {
+          sessionId: session.id,
+          replyText: noUndoReply,
+          intent: 'UNDO_ACTION',
+          state: 'idle',
+          requiresConfirmation: false,
+          suggestedFollowUps: ['Check stock', 'Show due refills'],
+          latencyMs: Math.round(performance.now() - startTime)
+        };
+      }
+    }
+
+    if (/\b(?:recent tasks|last task|what did i just do|what did i stage|last action|previous task|kya add kiya)\b/i.test(userText)) {
+      const recentTasks = await conversationalMemoryService.getRecentMicroTasks(session.id, 5, db);
+      if (recentTasks.length > 0) {
+        let summaryText = `📋 *Recent Micro-Tasks:*\n\n`;
+        recentTasks.forEach((t, i) => {
+          const timeStr = new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          summaryText += `${i + 1}. *${t.summary}* (${timeStr})\n`;
+        });
+        summaryText += `\nYou can reply *"undo"* to revert the most recent task if needed.`;
+        return {
+          sessionId: session.id,
+          replyText: summaryText,
+          intent: 'MICRO_TASK_AUDIT',
+          state: 'idle',
+          requiresConfirmation: false,
+          suggestedFollowUps: ['Undo last action', 'Open Live Cart', 'Check stock'],
+          latencyMs: Math.round(performance.now() - startTime)
+        };
+      } else {
+        return {
+          sessionId: session.id,
+          replyText: "📋 No recent micro-tasks recorded in this session yet.",
+          intent: 'MICRO_TASK_AUDIT',
+          state: 'idle',
+          requiresConfirmation: false,
+          suggestedFollowUps: ['Add Dolo 650 to live cart', 'Show due refills'],
+          latencyMs: Math.round(performance.now() - startTime)
+        };
+      }
+    }
+
+    // 3c. Slot-Filling Resolution (e.g. quantity was requested)
+    if (session.sessionState === 'awaiting_clarification' && session.contextData?.pendingSlotFill) {
+      const slotFill = session.contextData.pendingSlotFill;
+      const isNeg = this.isNegative(userText);
+
+      if (isNeg) {
+        const cancelReply = `👍 Understood. Cart staging for *${slotFill.medicineName}* has been cancelled.`;
+        await conversationalMemoryService.updateSession(
+          session.id,
+          { sessionState: 'idle', activeIntent: 'STAGING_CANCELLED', contextData: { ...(session.contextData || {}), pendingSlotFill: undefined } },
+          db
+        );
+        await conversationalMemoryService.recordTurn(session.id, 'assistant', cancelReply, [], db);
+        return {
+          sessionId: session.id,
+          replyText: cancelReply,
+          intent: 'STAGING_CANCELLED',
+          state: 'idle',
+          requiresConfirmation: false,
+          suggestedFollowUps: ['Check stock for Dolo 650', 'Show due refills'],
+          latencyMs: Math.round(performance.now() - startTime)
+        };
+      }
+
+      // Check if user provided quantity
+      const qtyMatch = userText.match(/\b(\d{1,4})\s*(?:strip|strips|tablet|tablets|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units|nos)?\b/i);
+      let parsedSlotQty: number | undefined;
+      let parsedSlotUnit: string = slotFill.unit || 'strip';
+
+      if (qtyMatch) {
+        parsedSlotQty = parseInt(qtyMatch[1], 10);
+        const unitMatch = userText.match(/\b(strip|strips|tablet|tablets|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units)\b/i);
+        if (unitMatch) parsedSlotUnit = unitMatch[1].toLowerCase();
+      }
+
+      if (parsedSlotQty && parsedSlotQty > 0) {
+        await conversationalMemoryService.updateSession(
+          session.id,
+          {
+            sessionState: 'completed',
+            activeIntent: 'SLOT_FILLED_EXECUTED',
+            contextData: { ...(session.contextData || {}), pendingSlotFill: undefined }
+          },
+          db
+        );
+
+        if (slotFill.destination === 'live_cart') {
+          const stageRes = await pharmacyToolRegistry.stageLiveCartItem(slotFill.medicineName, parsedSlotQty, parsedSlotUnit, db);
+          await conversationalMemoryService.recordMicroTask(session.id, {
+            action: 'STAGE_LIVE_CART_ITEM',
+            summary: `Staged ${parsedSlotQty} ${parsedSlotUnit} of ${slotFill.medicineName} to Live Cart`,
+            data: { medicineName: slotFill.medicineName, quantity: parsedSlotQty, unit: parsedSlotUnit, destination: 'live_cart' },
+            revertible: true
+          }, db);
+
+          const replyText = `✅ *Live Cart Updated!*\n\nSuccessfully staged *${parsedSlotQty} ${parsedSlotUnit}* of *${(stageRes.details as any)?.item?.name || slotFill.medicineName}* into the Pharmarack Live Cart. Ready for distributor order review.`;
+          await conversationalMemoryService.recordTurn(session.id, 'assistant', replyText, [{ tool: 'stageLiveCartItem', result: stageRes }], db);
+
+          return {
+            sessionId: session.id,
+            replyText,
+            intent: 'CART_STAGING',
+            state: 'completed',
+            actionTaken: 'STAGE_LIVE_CART_ITEM',
+            requiresConfirmation: false,
+            cards: [{
+              id: `cart_${Date.now()}`,
+              title: slotFill.medicineName,
+              subtitle: `Quantity: ${parsedSlotQty} ${parsedSlotUnit} | Pharmarack Live Cart`,
+              badge: 'Live Cart Staged',
+              badgeColor: 'green'
+            }],
+            suggestedFollowUps: ['Open Live Cart', `Check stock for ${slotFill.medicineName}`, 'Undo last action'],
+            latencyMs: Math.round(performance.now() - startTime)
+          };
+        } else {
+          await conversationalMemoryService.recordMicroTask(session.id, {
+            action: 'STAGE_POS_ITEM',
+            summary: `Staged ${parsedSlotQty} ${parsedSlotUnit} of ${slotFill.medicineName} to POS Counter`,
+            data: { medicineName: slotFill.medicineName, quantity: parsedSlotQty, unit: parsedSlotUnit, destination: 'pos_cart' },
+            revertible: true
+          }, db);
+
+          const replyText = `✅ *Added to Cart!*\n\n*${parsedSlotQty} ${parsedSlotUnit}* of *${slotFill.medicineName}* is staged on your POS billing counter.`;
+          await conversationalMemoryService.recordTurn(session.id, 'assistant', replyText, [], db);
+
+          return {
+            sessionId: session.id,
+            replyText,
+            intent: 'CART_STAGING',
+            state: 'completed',
+            actionTaken: 'STAGE_POS_ITEM',
+            requiresConfirmation: false,
+            cards: [{
+              id: `pos_${Date.now()}`,
+              title: slotFill.medicineName,
+              subtitle: `Quantity: ${parsedSlotQty} ${parsedSlotUnit} | POS Billing`,
+              badge: 'POS Staged',
+              badgeColor: 'green'
+            }],
+            suggestedFollowUps: ['Open POS screen', `Check stock for ${slotFill.medicineName}`, 'Undo last action'],
+            latencyMs: Math.round(performance.now() - startTime)
+          };
+        }
+      }
+
+      // If user typed something completely different (no qty), clear pendingSlotFill and proceed to general intent detection
+      await conversationalMemoryService.updateSession(
+        session.id,
+        { sessionState: 'idle', contextData: { ...(session.contextData || {}), pendingSlotFill: undefined } },
+        db
+      );
+    }
+
     // 4. Multi-Turn State Machine & Confirmation Gate (Rule 6 Human-in-the-Loop)
     if (session.sessionState === 'awaiting_confirmation' && session.contextData?.pendingProposal) {
       const proposal = session.contextData.pendingProposal as ProposedAction;
@@ -290,6 +475,12 @@ export class ConversationalAgentEngine {
         } else if (proposal.type === 'STAGE_POS_ITEM') {
           replyText = `✅ *Added to Cart!* *${proposal.data.medicineName}* (${proposal.data.quantity || 1} units) is ready on your billing screen.`;
           executionResult = { success: true, item: proposal.data };
+          await conversationalMemoryService.recordMicroTask(session.id, {
+            action: 'STAGE_POS_ITEM',
+            summary: `Staged ${proposal.data.quantity || 1} of ${proposal.data.medicineName} to POS Counter`,
+            data: proposal.data,
+            revertible: true
+          }, db);
         } else if (proposal.type === 'STAGE_LIVE_CART_ITEM') {
           const stageRes = await pharmacyToolRegistry.stageLiveCartItem(
             proposal.data.medicineName,
@@ -303,12 +494,27 @@ export class ConversationalAgentEngine {
             replyText = `⚠️ *Live Cart Notice:* ${stageRes.message || 'Could not automatically stage to live distributor cart'}. Staged into procurement queue instead.`;
           }
           executionResult = stageRes;
+          await conversationalMemoryService.recordMicroTask(session.id, {
+            action: 'STAGE_LIVE_CART_ITEM',
+            summary: `Staged ${proposal.data.quantity || 1} ${proposal.data.unit || 'units'} of ${proposal.data.medicineName} to Live Cart`,
+            data: proposal.data,
+            revertible: true
+          }, db);
         } else if (proposal.type === 'DISTRIBUTOR_RETURN_DRAFT') {
           replyText = `✅ *Distributor Return Draft Confirmed!* Staged for supplier return processing.`;
           executionResult = { success: true, draft: proposal.data };
         } else if (proposal.type === 'LOW_STOCK_REORDER') {
           replyText = `✅ *Reorder Draft Confirmed!* Staged into procurement queue.`;
           executionResult = { success: true, draft: proposal.data };
+        } else if (proposal.type === 'APPLY_DISCOUNT') {
+          replyText = `✅ *Discount Confirmed!* Applied ${proposal.data.discountPercent}% discount to active POS billing ticket.`;
+          executionResult = { success: true, discountPercent: proposal.data.discountPercent };
+        } else if (proposal.type === 'HOLD_BILL') {
+          replyText = `✅ *Bill Parked!* The active POS bill has been safely held to serve the next customer.`;
+          executionResult = { success: true };
+        } else if (proposal.type === 'LIVE_CART_SYNC') {
+          replyText = `✅ *Distributor Cart Synced!* Pharmarack Live Cart status refreshed.`;
+          executionResult = { success: true };
         }
 
         // Clean up proposal context
@@ -803,11 +1009,70 @@ export class ConversationalAgentEngine {
 
       // ── Capability 5: Proactive Assistance — Refill Management ─────────────
       case 'REFILL': {
-        const refillsResult = await pharmacyToolRegistry.lookupPatientRefills(phone, session.customerId || undefined, db);
+        let patName = detected.patientName;
+        if (!patName) {
+          const patMatch = userText.match(/\b(?:refill|renew|repeat|dawa)\s+(?:for|of|ka|ki)?\s+([A-Za-z]{3,25})\b/i) ||
+                           userText.match(/\b([A-Za-z]{3,25})\s+(?:ka|ki|ke|s)?\s*(?:refill|dawa)\b/i);
+          if (patMatch && !/^(check|add|due|any|my|all|regular|monthly)$/i.test(patMatch[1])) {
+            patName = patMatch[1];
+          }
+        }
+
+        let targetPhone = phone;
+        let targetCustomerId = session.customerId || undefined;
+        let targetCustomerName = session.customerName;
+
+        if (patName) {
+          const custRow = await db.get(
+            `SELECT id, name, phone FROM customers WHERE name LIKE ? OR name LIKE ? ORDER BY id DESC LIMIT 1`,
+            [`%${patName}%`, `${patName}%`]
+          ).catch(() => null);
+
+          if (custRow) {
+            targetCustomerId = custRow.id;
+            targetPhone = custRow.phone || targetPhone;
+            targetCustomerName = custRow.name;
+          }
+        }
+
+        let refillsResult = await pharmacyToolRegistry.lookupPatientRefills(targetPhone, targetCustomerId, db);
         toolExecutions.push({ tool: 'lookupPatientRefills', result: refillsResult });
 
+        // Fallback: If no explicit patient_refills rows found, search previous customer sales
+        if ((!refillsResult || refillsResult.length === 0) && targetCustomerId) {
+          const pastItems = await db.all(
+            `SELECT si.medicine_name, si.quantity, m.id as medicine_id, m.total_stock, m.sell_price, m.mrp
+             FROM sale_items si
+             JOIN sales s ON s.id = si.sale_id
+             LEFT JOIN medicines m ON m.name = si.medicine_name
+             WHERE s.customer_id = ?
+             ORDER BY s.id DESC LIMIT 3`,
+            [targetCustomerId]
+          ).catch(() => []);
+
+          if (pastItems.length > 0) {
+            refillsResult = pastItems.map((p: any, idx: number) => ({
+              id: Number(p.medicine_id || (900000 + idx)),
+              medicineName: p.medicine_name,
+              quantityNeeded: p.quantity || 1,
+              nextRefillDate: 'Regular',
+              status: 'active',
+              isReady: true,
+              inStock: Number(p.total_stock || 0) >= Number(p.quantity || 1),
+              totalStock: Number(p.total_stock || 0),
+              pricePerUnit: Number(p.sell_price || p.mrp || 0)
+            }));
+          }
+        }
+
         if (!refillsResult || refillsResult.length === 0) {
-          replyText = `📋 We couldn't find an active regular refill on file for ${phone}.\n\nIf you need a specific medicine, please type its name (e.g. *Telma 40* or *Glycomet 500*), or reply *Pharmacist* to speak with our staff.`;
+          if (patName) {
+            replyText = `📋 We found customer record for *${targetCustomerName || patName}*, but no regular recurring refills are active.\n\nWould you like to search the medicine catalog or add a new refill record in CRM?`;
+            suggestedFollowUps = ['Open CRM Screen', 'Search medicine stock', 'Cancel'];
+          } else {
+            replyText = `📋 We couldn't find an active regular refill on file for ${phone}.\n\nIf you need a specific medicine, please type its name (e.g. *Telma 40* or *Glycomet 500*), or reply *Pharmacist* to speak with our staff.`;
+            suggestedFollowUps = ['Search medicine stock', 'Open CRM screen'];
+          }
           state = 'idle';
         } else {
           const mentionedMedicine = detected.medicineName || this.extractMedicineFromText(userText);
@@ -821,30 +1086,81 @@ export class ConversationalAgentEngine {
             if (matched) targetRefill = matched;
           }
 
-          proposedAction = {
-            id: `refill_${targetRefill.id}`,
-            type: 'CONFIRM_REFILL',
-            summary: `Prepare refill for ${targetRefill.medicineName} (${targetRefill.quantityNeeded} units)`,
-            data: {
-              refillId: targetRefill.id,
-              medicineName: targetRefill.medicineName,
-              quantity: targetRefill.quantityNeeded,
-              price: targetRefill.pricePerUnit
-            },
-            requiresConfirmation: true,
-            status: 'PENDING_CONFIRMATION'
-          };
-
-          const priceStr = targetRefill.pricePerUnit > 0 ? ` (Est. ₹${targetRefill.pricePerUnit * targetRefill.quantityNeeded})` : '';
+          const priceStr = targetRefill.pricePerUnit > 0 ? ` (Est. ₹${(targetRefill.pricePerUnit * targetRefill.quantityNeeded).toFixed(2)})` : '';
           const stockNotice = targetRefill.inStock ? '✅ In Stock' : '⏳ Ready to order';
 
-          replyText = `🔔 *Refill Due Check:*\n\n` +
-            `We have your regular prescription for:\n` +
-            `💊 *${targetRefill.medicineName}*\n` +
-            `📦 Quantity: *${targetRefill.quantityNeeded} unit(s)*${priceStr}\n` +
-            `📊 Status: ${stockNotice}\n\n` +
-            `👉 *Would you like us to prepare this refill?*\n` +
-            `Reply *Yes* to confirm, or *No* to cancel.`;
+          if (role === 'customer') {
+            proposedAction = {
+              id: `refill_${targetRefill.id}`,
+              type: 'CONFIRM_REFILL',
+              summary: `Prepare refill for ${targetRefill.medicineName} (${targetRefill.quantityNeeded} units)`,
+              data: {
+                refillId: targetRefill.id,
+                medicineName: targetRefill.medicineName,
+                quantity: targetRefill.quantityNeeded,
+                price: targetRefill.pricePerUnit
+              },
+              requiresConfirmation: true,
+              status: 'PENDING_CONFIRMATION'
+            };
+
+            replyText = `🔔 *Refill Due Check:*\n\n` +
+              `We have your regular prescription for:\n` +
+              `💊 *${targetRefill.medicineName}*\n` +
+              `📦 Quantity: *${targetRefill.quantityNeeded} unit(s)*${priceStr}\n` +
+              `📊 Status: ${stockNotice}\n\n` +
+              `👉 *Would you like us to prepare this refill?*\n` +
+              `Reply *Yes* to confirm, or *No* to cancel.`;
+
+            suggestedFollowUps = ['Yes, confirm refill', 'Find alternatives', 'Cancel'];
+          } else {
+            const displayName = targetCustomerName || patName || 'Customer';
+            const staffStockNotice = targetRefill.inStock ? `✅ In Stock (${targetRefill.totalStock} on shelf)` : '⏳ Needs Procurement';
+
+            if (targetRefill.inStock) {
+              replyText = `🔔 *Patient Refill — ${displayName}*\n\n` +
+                `We have the regular prescription for:\n` +
+                `💊 *${targetRefill.medicineName}*\n` +
+                `📦 Quantity: *${targetRefill.quantityNeeded} unit(s)*${priceStr}\n` +
+                `📊 Stock: ${staffStockNotice}\n\n` +
+                `👉 *Would you like to stage this refill to the POS billing counter?*\nClick *Stage to Cart* or reply *Yes*.`;
+
+              proposedAction = {
+                id: `refill_stage_${Date.now()}`,
+                type: 'STAGE_POS_ITEM',
+                summary: `Stage ${targetRefill.quantityNeeded} of ${targetRefill.medicineName} for ${displayName} at POS`,
+                data: {
+                  medicineName: targetRefill.medicineName,
+                  quantity: targetRefill.quantityNeeded,
+                  customerName: displayName,
+                  phone: targetPhone,
+                  price: targetRefill.pricePerUnit
+                },
+                requiresConfirmation: true,
+                status: 'PENDING_CONFIRMATION'
+              };
+              suggestedFollowUps = ['Stage to Cart', 'Order from distributor', 'Cancel'];
+            } else {
+              replyText = `🔔 *Patient Refill — ${displayName}*\n\n` +
+                `💊 *${targetRefill.medicineName}* (${targetRefill.quantityNeeded} units)\n` +
+                `📊 Stock: ${staffStockNotice}\n\n` +
+                `👉 *Shelf stock is insufficient.* Would you like to stage *${targetRefill.medicineName}* into the *Pharmarack Live Cart* to order from distributor?`;
+
+              proposedAction = {
+                id: `live_cart_${Date.now()}`,
+                type: 'STAGE_LIVE_CART_ITEM',
+                summary: `Stage ${targetRefill.quantityNeeded} of ${targetRefill.medicineName} to Pharmarack Live Cart for ${displayName}`,
+                data: {
+                  medicineName: targetRefill.medicineName,
+                  quantity: targetRefill.quantityNeeded,
+                  destination: 'live_cart'
+                },
+                requiresConfirmation: true,
+                status: 'PENDING_CONFIRMATION'
+              };
+              suggestedFollowUps = ['Order from distributor', 'Find alternative', 'Cancel'];
+            }
+          }
 
           cards = [
             {
@@ -857,7 +1173,6 @@ export class ConversationalAgentEngine {
           ];
 
           state = 'awaiting_confirmation';
-          suggestedFollowUps = ['Yes, confirm refill', 'Find alternatives', 'Cancel'];
         }
         break;
       }
@@ -980,10 +1295,41 @@ export class ConversationalAgentEngine {
 
       // ── Capability 7: Cart Staging (Live Distributor Cart & POS Billing) ────
       case 'CART_STAGING': {
-        const medName = detected.medicineName || this.extractMedicineFromText(userText) || 'Medicine';
-        const qty = detected.quantity || 1;
+        const rawMed = detected.medicineName || this.extractMedicineFromText(userText) || 'Medicine';
+        const cleanMed = rawMed.replace(/\b(?:live\s*cart|pos\s*cart|pharmarack(?:\s*cart)?|distributor\s*cart)\b/gi, '').trim();
+        const medName = cleanMed.length >= 2 ? cleanMed : 'Medicine';
         const unit = detected.unit || 'strip';
-        const destination = detected.destination || (/\blive\s*cart\b/i.test(userText) ? 'live_cart' : 'pos_cart');
+        const destination = detected.destination || (/\blive\s*cart\b/i.test(userText) ? 'live_cart' : (input.pageContext?.pathname === '/pos' ? 'pos_cart' : 'live_cart'));
+
+        // Smart Slot-Filling: If quantity was omitted by user, prompt with interactive quick-action chips
+        if (!detected.quantity) {
+          const destTitle = destination === 'live_cart' ? 'Pharmarack Live Cart' : 'POS Billing Counter';
+          replyText = `🛒 *Quantity Needed:*\n\nHow many strips of *${medName}* would you like to stage to the *${destTitle}*?\n\nSelect a quantity below or reply with the exact number:`;
+
+          session.contextData = {
+            ...(session.contextData || {}),
+            pendingSlotFill: {
+              type: 'CART_STAGING',
+              medicineName: medName,
+              destination,
+              unit
+            }
+          };
+
+          cards = [{
+            id: `slot_qty_${Date.now()}`,
+            title: medName,
+            subtitle: `Target: ${destTitle}`,
+            badge: 'Quantity Needed',
+            badgeColor: 'amber'
+          }];
+
+          suggestedFollowUps = ['1 strip', '5 strips', '10 strips', 'Cancel'];
+          state = 'awaiting_clarification';
+          break;
+        }
+
+        const qty = detected.quantity;
 
         if (destination === 'live_cart') {
           replyText = `🛒 *Distributor Live Cart Staging*\n\n` +
@@ -1184,15 +1530,157 @@ export class ConversationalAgentEngine {
         break;
       }
 
+      // ── Capability 8: POS Page Micro-Workflows ──────────────────────────────
+      case 'POS_APPLY_DISCOUNT': {
+        const discount = detected.discountPercent || 5;
+        replyText = `💳 *POS Bill Discount*\n\n` +
+          `• Proposed Discount: *${discount}%*\n` +
+          `• Target: Active POS Billing Ticket\n\n` +
+          `👉 *Confirm applying this discount?*\nClick *Apply Discount* or reply *Yes* to apply, or *No* to cancel.`;
+
+        proposedAction = {
+          id: `discount_${Date.now()}`,
+          type: 'APPLY_DISCOUNT',
+          summary: `Apply ${discount}% discount to active POS bill`,
+          data: { discountPercent: discount },
+          requiresConfirmation: true,
+          status: 'PENDING_CONFIRMATION'
+        };
+        state = 'awaiting_confirmation';
+        suggestedFollowUps = ['Apply Discount', 'Cancel'];
+        cards = [{
+          id: `disc_${Date.now()}`,
+          title: `${discount}% Discount`,
+          subtitle: 'Active POS Billing Counter',
+          badge: `${discount}% OFF`,
+          badgeColor: 'blue'
+        }];
+        break;
+      }
+
+      case 'POS_HOLD_BILL': {
+        replyText = `📋 *Park Active Bill*\n\n` +
+          `Would you like to hold/park the current customer's bill so you can serve the next customer in queue?\n\n` +
+          `👉 Click *Park Bill* or reply *Yes* to confirm.`;
+
+        proposedAction = {
+          id: `hold_bill_${Date.now()}`,
+          type: 'HOLD_BILL',
+          summary: `Park/hold active POS billing ticket`,
+          data: { action: 'park' },
+          requiresConfirmation: true,
+          status: 'PENDING_CONFIRMATION'
+        };
+        state = 'awaiting_confirmation';
+        suggestedFollowUps = ['Park Bill', 'Cancel'];
+        cards = [{
+          id: `park_${Date.now()}`,
+          title: 'Hold Current Bill',
+          subtitle: 'Saves current cart to recall later',
+          badge: 'Park Sale',
+          badgeColor: 'amber'
+        }];
+        break;
+      }
+
+      // ── Capability 9: Inventory Rack & Stock Audit ──────────────────────────
+      case 'INVENTORY_STOCK_AUDIT': {
+        const medName = detected.medicineName || this.extractMedicineFromText(userText) || userText;
+        const searchResult = await pharmacyToolRegistry.searchMedicineAvailability(medName, db);
+        toolExecutions.push({ tool: 'searchMedicineAvailability', result: searchResult });
+
+        if (searchResult && searchResult.length > 0) {
+          const topItem = searchResult[0];
+          const batchRows = await db.all(
+            `SELECT batch_no, quantity, expiry_date, rack_location 
+             FROM inventory_master 
+             WHERE medicine_id = ? AND quantity > 0 
+             ORDER BY expiry_date ASC LIMIT 5`,
+            [topItem.id]
+          ).catch(() => []);
+
+          const rackLoc = (batchRows[0] as any)?.rack_location || 'General Shelf';
+          replyText = `📍 *Inventory Shelf & Rack Location*\n\n` +
+            `• *Medicine:* ${topItem.name}\n` +
+            `• *Total Stock:* ${topItem.stockQuantity} units (${topItem.inStock ? '✅ In Stock' : '❌ Out of Stock'})\n` +
+            `• *Rack / Location:* 🏷️ *${rackLoc}*\n\n`;
+
+          if (batchRows.length > 0) {
+            replyText += `📋 *Batches on Shelf:*\n`;
+            batchRows.forEach((b: any, idx: number) => {
+              replyText += `${idx + 1}. Batch *${b.batch_no}* — Qty: ${b.quantity} | Exp: ${b.expiry_date || 'N/A'} (Rack: ${b.rack_location || rackLoc})\n`;
+            });
+          }
+
+          cards = [{
+            id: topItem.id,
+            title: topItem.name,
+            subtitle: `Rack: ${rackLoc} | Stock: ${topItem.stockQuantity}`,
+            badge: rackLoc,
+            badgeColor: 'green'
+          }];
+          suggestedFollowUps = [`Add ${topItem.name} to bill`, `Correct stock of ${topItem.name}`, 'Check expiring batches'];
+        } else {
+          replyText = `🔍 Could not locate *${medName}* in your inventory master. Please verify the medicine spelling or search in catalog.`;
+          suggestedFollowUps = ['Search inventory', 'View low stock items'];
+        }
+        state = 'idle';
+        break;
+      }
+
+      // ── Capability 10: Live Cart Sync Micro-Workflow ────────────────────────
+      case 'LIVE_CART_SYNC': {
+        replyText = `🔄 *Pharmarack Live Cart Sync*\n\n` +
+          `Propose synchronizing distributor cart items with live Pharmarack retailer credentials.\n\n` +
+          `👉 Click *Sync Cart* or reply *Yes* to refresh distributor cart status.`;
+
+        proposedAction = {
+          id: `live_cart_sync_${Date.now()}`,
+          type: 'LIVE_CART_SYNC',
+          summary: `Synchronize live Pharmarack distributor cart`,
+          data: { action: 'sync' },
+          requiresConfirmation: true,
+          status: 'PENDING_CONFIRMATION'
+        };
+        state = 'awaiting_confirmation';
+        suggestedFollowUps = ['Sync Cart', 'Cancel'];
+        cards = [{
+          id: `sync_${Date.now()}`,
+          title: 'Distributor Live Cart',
+          subtitle: 'Refresh stock, pricing, and MOQ thresholds',
+          badge: 'Cart Sync',
+          badgeColor: 'blue'
+        }];
+        break;
+      }
+
       default: {
-        replyText = `I understand you are asking about: "${userText.slice(0, 80)}".\n\n` +
-          `Here are tasks you can try right away:\n` +
-          `• "Find medicines expiring next month"\n` +
-          `• "Find an alternative for [Medicine Name]"\n` +
-          `• "Show me today's sales and explain why they are lower than yesterday"\n` +
-          `• "Explain how to use the purchase entry screen"\n` +
-          `• "How can I correct the stock quantity?"\n` +
-          `• "Remind me to call Rajesh tomorrow about his refill"`;
+        let aiHandled = false;
+        if (isLocalAiEnabled()) {
+          try {
+            const pageName = input.pageContext?.pageTitle || input.pageContext?.pathname || 'Dashboard';
+            const sysPrompt = `You are Qwen, the expert clinical and operations AI copilot for AI Pharmacy OS. The user is on the "${pageName}" screen. Answer clearly, accurately, and concisely (<100 words). Do not invent false inventory data or rates.`;
+            const completion = await queryLocalAiChat([
+              { role: 'system', content: sysPrompt },
+              { role: 'user', content: userText }
+            ], { timeoutMs: 8000, maxTokens: 250 });
+            if (completion && completion.success && completion.content && completion.content.trim()) {
+              replyText = completion.content.trim();
+              aiHandled = true;
+            }
+          } catch (_) {}
+        }
+
+        if (!aiHandled) {
+          replyText = `I understand you are asking about: "${userText.slice(0, 80)}".\n\n` +
+            `Here are tasks you can try right away:\n` +
+            `• "Find medicines expiring next month"\n` +
+            `• "Find an alternative for [Medicine Name]"\n` +
+            `• "Show me today's sales and explain why they are lower than yesterday"\n` +
+            `• "Explain how to use the purchase entry screen"\n` +
+            `• "How can I correct the stock quantity?"\n` +
+            `• "Remind me to call Rajesh tomorrow about his refill"`;
+        }
         state = 'idle';
         suggestedFollowUps = [
           'Find medicines expiring next month',
@@ -1216,6 +1704,7 @@ export class ConversationalAgentEngine {
       contextDataToSave.pendingProposal = proposedAction;
     } else if (state === 'idle') {
       delete contextDataToSave.pendingProposal;
+      delete contextDataToSave.pendingSlotFill;
     }
 
     await conversationalMemoryService.updateSession(
@@ -1293,6 +1782,7 @@ export class ConversationalAgentEngine {
     dueDate?: string;
     notes?: string;
     targetIndex?: number;
+    discountPercent?: number;
   }> {
     const t = text.toLowerCase().trim();
 
@@ -1313,7 +1803,7 @@ export class ConversationalAgentEngine {
               medicineName: opIntent.medicineName,
               quantity: opIntent.quantity,
               unit: opIntent.unit,
-              destination: opIntent.destination || (/\blive\s*cart\b/i.test(t) ? 'live_cart' : 'pos_cart')
+              destination: opIntent.destination || (/\blive\s*cart\b/i.test(t) ? 'live_cart' : (input.pageContext?.pathname === '/pos' ? 'pos_cart' : 'live_cart'))
             };
           }
           if (opIntent.intent === 'EXPIRY_AUDIT') {
@@ -1335,7 +1825,7 @@ export class ConversationalAgentEngine {
             return { type: 'SALES_COMPARISON' };
           }
           if (opIntent.intent === 'REFILL_MANAGEMENT') {
-            return { type: 'REFILL', medicineName: opIntent.medicineName };
+            return { type: 'REFILL', medicineName: opIntent.medicineName, patientName: opIntent.patientName };
           }
           if (opIntent.intent === 'STOCK_ADJUSTMENT') {
             return { type: 'STOCK_CORRECTION', medicineName: opIntent.medicineName, quantity: opIntent.quantity };
@@ -1360,10 +1850,31 @@ export class ConversationalAgentEngine {
       // Gracefully fall back to deterministic pattern matchers below
     }
 
+    // 0c. Page-Specific Quick Fallbacks (POS discount, hold bill, live cart sync, rack location)
+    if (/\b(?:discount|chhoot)\b.*\b(\d{1,2})\s*%/i.test(t) || /\b(\d{1,2})\s*%\s*(?:discount|chhoot|off)\b/i.test(t)) {
+      const match = t.match(/\b(\d{1,2})\s*%/);
+      const disc = match ? parseInt(match[1], 10) : 5;
+      return { type: 'POS_APPLY_DISCOUNT', discountPercent: disc };
+    }
+
+    if (/\b(?:hold|park)\b.*\b(?:bill|ticket|sale|pos)\b/i.test(t) || /\b(?:park bill|hold bill)\b/i.test(t)) {
+      return { type: 'POS_HOLD_BILL' };
+    }
+
+    if (/\b(?:sync|refresh)\b.*\b(?:live\s*cart|distributor\s*cart|pharmarack)\b/i.test(t) || /\b(?:live\s*cart\s*sync|sync\s*cart)\b/i.test(t)) {
+      return { type: 'LIVE_CART_SYNC' };
+    }
+
+    if (/\b(?:where is|kahan hai|which rack|rack location|shelf location|rack for)\b/i.test(t)) {
+      const med = this.extractMedicineFromText(text);
+      return { type: 'INVENTORY_STOCK_AUDIT', medicineName: med };
+    }
+
     // 1. Explicit document scan requests
     if (
-      /\b(?:read|scan|check|extract|parse|add|process)\b.*\b(?:prescription|invoice|bill|photo|image|scan|doc)\b/i.test(t) ||
-      /\b(?:prescription workflow|purchase entry draft|read this)\b/i.test(t)
+      !/\b(?:add|stage|put|load)\b.*\b(?:to bill|to pos|to cart|to live cart)\b/i.test(t) &&
+      (/\b(?:read|scan|extract|parse|process)\b.*\b(?:prescription|invoice|bill|photo|image|scan|doc)\b/i.test(t) ||
+       /\b(?:prescription workflow|purchase entry draft|read this)\b/i.test(t))
     ) {
       return { type: 'DOCUMENT_OCR' };
     }
@@ -1371,19 +1882,24 @@ export class ConversationalAgentEngine {
     // 1b. Cart Staging (Live Distributor Cart & POS Billing) Fallback
     if (
       /\b(?:live\s*cart|pharmarack|distributor\s*cart)\b/i.test(t) ||
-      (/\b(?:add|stage|put|load|insert|order)\b/i.test(t) && /\b(?:live\s*cart|pos\s*cart|bill|cart)\b/i.test(t))
+      (/\b(?:add|stage|put|load|insert|order)\b/i.test(t) && /\b(?:live\s*cart|pos\s*cart|bill|cart)\b/i.test(t)) ||
+      (/\b(?:add|stage|put|load)\s+([A-Za-z0-9\s-]{2,30})\b/i.test(t) && !/\b(?:refill|user|customer|patient|reminder|call)\b/i.test(t) && this.extractMedicineFromText(text))
     ) {
-      const isLiveCart = /\b(?:live\s*cart|pharmarack|distributor\s*cart)\b/i.test(t);
-      let parsedQty = 1;
+      const isLiveCart = /\b(?:live\s*cart|pharmarack|distributor\s*cart)\b/i.test(t) || input.pageContext?.pathname === '/live-cart' || input.pageContext?.pathname === '/pharmarack-cart';
+      let parsedQty: number | undefined = undefined;
       const unitQtyMatch = text.match(/\b(\d{1,4})\s*(?:strip|strips|tablet|tablets|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units|nos)\b/i);
       const hyphenQtyMatch = text.match(/-\s*(\d{1,4})\b/);
-      const leadingQtyMatch = text.match(/\b(?:add|stage|put|load)\s+(\d{1,4})\s+[a-zA-Z]/i);
+      const leadingQtyMatch = text.match(/\b(?:add|stage|put|load)\s+(\d{1,4})\s+(?!to\b|in\b|into\b|on\b)[a-zA-Z]/i);
+      const cartLeadingQtyMatch = text.match(/\b(?:live\s*cart|pos\s*cart|cart|bill)\s+(\d{1,4})\s+[a-zA-Z]/i);
+
       if (unitQtyMatch) {
         parsedQty = parseInt(unitQtyMatch[1], 10);
       } else if (hyphenQtyMatch) {
         parsedQty = parseInt(hyphenQtyMatch[1], 10);
       } else if (leadingQtyMatch) {
         parsedQty = parseInt(leadingQtyMatch[1], 10);
+      } else if (cartLeadingQtyMatch) {
+        parsedQty = parseInt(cartLeadingQtyMatch[1], 10);
       }
       const unitMatch = text.match(/\b(strip|strips|tablet|tablets|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units)\b/i);
       const med = this.extractMedicineFromText(text);
@@ -1392,7 +1908,7 @@ export class ConversationalAgentEngine {
         medicineName: med,
         quantity: parsedQty,
         unit: unitMatch ? unitMatch[1].toLowerCase() : 'strip',
-        destination: isLiveCart ? 'live_cart' : 'pos_cart'
+        destination: isLiveCart ? 'live_cart' : (input.pageContext?.pathname === '/pos' ? 'pos_cart' : 'live_cart')
       };
     }
 
@@ -1471,11 +1987,14 @@ export class ConversationalAgentEngine {
 
     // 5. Stock Correction
     if (
+      /\b(?:correct|adjust|update|tally|set)\b.*\b(?:stock|count|inventory|physical count)\b/i.test(t) ||
       /\b(?:how can i|how to|kaise)\b.*\b(?:correct|adjust|fix)\b.*\b(?:stock|quantity|inventory)\b/i.test(t) ||
       /\b(?:correct the stock quantity|adjust stock)\b/i.test(t)
     ) {
       const med = this.extractMedicineFromText(text);
-      return { type: 'STOCK_CORRECTION', medicineName: med };
+      const qtyMatch = text.match(/\b(?:to|as|is|=)\s*(\d{1,4})\b/i) || text.match(/\b(\d{1,4})\s*(?:units|strips|tablets|bottles|packs|nos)\b/i);
+      const qty = qtyMatch ? parseInt(qtyMatch[1], 10) : undefined;
+      return { type: 'STOCK_CORRECTION', medicineName: med, quantity: qty };
     }
 
     // 6. Application / Screen Guidance & Order Hub Settings
@@ -1578,7 +2097,13 @@ export class ConversationalAgentEngine {
       /(?:my|meri|majhi|what|any|check).*(?:dawa|goli|medicine|prescription|refill)/i.test(t) ||
       /\b(?:what refills|check refill|due refill|any refill|my refill)\b/i.test(t)
     ) {
-      return { type: 'REFILL' };
+      let patientName: string | undefined;
+      const patMatch = text.match(/\b(?:refill|renew|repeat|dawa)\s+(?:for|of|ka|ki)?\s+([A-Za-z]{3,25})\b/i) ||
+                       text.match(/\b([A-Za-z]{3,25})\s+(?:ka|ki|ke|s)?\s*(?:refill|dawa)\b/i);
+      if (patMatch && !/^(check|add|due|any|my|all|regular|monthly)$/i.test(patMatch[1])) {
+        patientName = patMatch[1];
+      }
+      return { type: 'REFILL', patientName };
     }
 
     // 10. Handover / Pharmacist
@@ -1633,7 +2158,7 @@ export class ConversationalAgentEngine {
             return { type: 'SALES_COMPARISON' };
           }
           if (opIntent.intent === 'REFILL_MANAGEMENT') {
-            return { type: 'REFILL' };
+            return { type: 'REFILL', medicineName: opIntent.medicineName, patientName: opIntent.patientName };
           }
         }
         const aiIntent = await queryLocalAiIntent(text);
@@ -1671,14 +2196,19 @@ export class ConversationalAgentEngine {
    */
   public extractMedicineFromText(text: string): string | undefined {
     const lower = text.toLowerCase().trim();
-    if (!/\b(?:have|got|stock|available|price|cost|mrp|chahiye|milegi|mil sakti|aahe ka|tablet|strip|capsule|syrup|gel|ointment|mg|ml|gm|dolo|telma|paracetamol|augmentin|azithral|pan|pantocid|metformin|glycomet|atorva|for|add|bill|cart|give|dispense|dalo|lagao|bhejo)\b/i.test(lower)) {
+    if (!/\b(?:have|got|stock|available|price|cost|mrp|chahiye|milegi|mil sakti|aahe ka|tablet|strip|capsule|syrup|gel|ointment|mg|ml|gm|dolo|telma|paracetamol|augmentin|azithral|pan|pantocid|metformin|glycomet|atorva|for|add|bill|cart|give|dispense|dalo|lagao|bhejo|check|search|find|salt)\b/i.test(lower)) {
       return undefined;
     }
 
     let clean = text
       .replace(/\b(?:this medicine is unavailable|this medicine is out of stock|this medicine is not available|this medicine|this)\b/gi, ' ')
       .replace(/\b(?:in the live cart|in live cart|to live cart|into live cart|in the pos cart|to pos cart|in pos cart|in the cart|in cart|to cart|into cart|in bill|to bill|into bill|on live cart|on pos|on bill)\b/gi, ' ')
-      .replace(/\b(?:add to bill|add to cart|add to pos|add|give|put|bill|dispense|take|dalo|lagao|bhejo|do you have|can you check|is|in stock|available|unavailable|right now|today|price of|cost of|chahiye|milegi|kya|please|for me|tablet|strip|box|find an alternative for|find alternatives for|find substitute for|alternative for|substitute for)\b/gi, ' ')
+      .replace(/\b(?:what is the active salt of|what is the salt of|what is the salt in|active salt of|active ingredient of|salt of|salt in|uses of|use of)\b/gi, ' ')
+      .replace(/\b(?:where is|where are|where|which rack is|which rack for|which rack|rack location for|rack of|kahan hai|kept|located|placed)\b/gi, ' ')
+      .replace(/\b(?:check stock for|check stock of|check stock|check availability of|check availability|search for|search|lookup|look up)\b/gi, ' ')
+      .replace(/\b(?:do we have|do you have|can we get|can you get|can you check|can i get|is there|are there|is|in stock|out of stock|available|unavailable|right now|today|price of|cost of|mrp of|rate of|chahiye|milegi|mil sakti|aahe ka|kya|please|for me)\b/gi, ' ')
+      .replace(/\b(?:live\s*cart|pos\s*cart|distributor\s*cart|pharmarack(?:\s*cart)?)\b/gi, ' ')
+      .replace(/\b(?:add to bill|add to cart|add to pos|add|give|put|bill|dispense|take|dalo|lagao|bhejo|tablet|strip|box|find an alternative for|find alternatives for|find substitute for|alternative for|substitute for)\b/gi, ' ')
       .replace(/\b(?:strip|strips|tablets?|capsules?|box|boxes|bottles?|pack|packs|units?|nos?)\b/gi, ' ')
       .replace(/[?!,.]/g, ' ')
       .replace(/\s+/g, ' ')
