@@ -54,6 +54,8 @@
     "release:pilot": "node scripts/release.mjs --pilot",
     "release:publish": "node scripts/release.mjs --remote",
     "release:pilot:publish": "node scripts/release.mjs --pilot --remote",
+    "fuses:harden": "node scripts/flip-electron-fuses.mjs",
+    "fuses:verify": "node scripts/flip-electron-fuses.mjs --verify",
     "test:e2e": "e2e run",
     "test:e2e:headed": "e2e run --headed --workers 1",
     "test:e2e:live": "e2e run --headed --workers 1"

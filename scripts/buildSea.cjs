@@ -103,6 +103,19 @@ if (fs.existsSync(rceditPath) && fs.existsSync(appIconPath)) {
   }
 }
 
+// Flip Electron security fuses on PharmacyOS.exe (PRODUCTION.md §13, §21; Auto-Update Security Hardening)
+try {
+  console.log('[build-sea] Step 5b: Hardening PharmacyOS.exe with Electron security fuses...');
+  execFileSync(
+    process.execPath,
+    [path.join(root, 'scripts', 'flip-electron-fuses.mjs'), '--target', outElectronExe],
+    { cwd: root, stdio: 'inherit' }
+  );
+  console.log('[build-sea] ✓ PharmacyOS.exe security fuses configured.');
+} catch (err) {
+  console.warn('[build-sea] Warning: Failed to flip security fuses on PharmacyOS.exe:', err.message);
+}
+
 // Prepare resources/app folder
 const appResourcesDir = path.join(distDir, 'resources', 'app');
 fs.mkdirSync(appResourcesDir, { recursive: true });

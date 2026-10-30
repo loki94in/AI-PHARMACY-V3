@@ -7,6 +7,46 @@
 
 ## Fixed
 
+### [Fixed] P2-139 — Coucou Parity: GitHub Release Notes & Markdown Changelog Ingestion for In-App Updates
+- Cause:
+  1. If the update license server returned an empty or minimal changelog string, the in-app `UpdateBanner` had no release notes to display, leaving the pharmacist unaware of new features and improvements.
+  2. When an update was pre-downloaded in a previous session and discovered on boot (`boot_staged`), `autoUpdateService.ts` broadcasted `update_available` without attaching a changelog.
+  3. When background downloading finished (`downloadProgress = 100`), the SSE event payload previously omitted `changelog`.
+  4. `UpdateBanner.tsx` displayed raw text without styled bullets or bold highlight parsing, unlike Coucou's clean release view.
+- Fix:
+  1. Automatic GitHub Release Notes Ingestion (`src/services/autoUpdateService.ts`):
+     - Implemented `extractWhatsNewSection` to parse markdown sections (`## What's new`, `## Changelog`, `## Improvements`).
+     - Implemented `resolveChangelogForVersion` leveraging `updateHistoryService.ts` to query GitHub releases (`https://api.github.com/repos/loki94in/AI-PHARMACY-V3/releases`).
+     - Automatically backfills changelogs during `runCheck` (when license server changelog is missing) and during `boot_staged` package preloading.
+     - Preserved `changelog` in download completion SSE broadcasts (`downloadProgress: 100`).
+  2. Client-Side Store Normalization (`frontend/src/services/updateStatusStore.ts`):
+     - Ensured `normalizeUpdateFrame` preserves existing release notes when intermediate download progress frames omit the changelog field.
+  3. Styled Bullet & Bold Formatting (`frontend/src/components/UpdateBanner.tsx`):
+     - Implemented `renderFormattedChangelog` parsing GitHub markdown bullets (`- `, `* `) into theme-aware styled bullet items with bold text highlights.
+- Priority: P2
+- Verified by: `npm run guardrails` exit 0 (`tsc --noEmit` clean, 0 violations); frontend client production build (`npm run build:client`) succeeded in 46.50s with 0 errors; live GitHub release extraction test succeeded.
+
+### [Fixed] P2-138 — Electron Fuse Security Hardening for Desktop Runtime (PharmacyOS.exe)
+- Cause:
+  1. The compiled Electron desktop binary (`PharmacyOS.exe`) was built with default stock Electron fuses enabled: `RunAsNode` was enabled (allowing arbitrary Node.js script execution via `ELECTRON_RUN_AS_NODE=1`), and `NodeCliInspectArguments` / `NodeOptionsEnvironmentVariable` were enabled (exposing inspector debugging and `NODE_OPTIONS` injection surfaces).
+  2. Chromium `CookieEncryption` was disabled, leaving desktop session cookies stored in unencrypted SQLite on disk.
+  3. `GrantFileProtocolExtraPrivileges` was enabled despite the application exclusively serving content locally over HTTP (`http://127.0.0.1:5175`).
+- Fix:
+  1. Created standalone automation utility `scripts/flip-electron-fuses.mjs`:
+     - Uses `@electron/fuses` (`FuseVersion.V1`) to flip fuses into a hardened production profile:
+       - `RunAsNode` -> `false` (blocks `ELECTRON_RUN_AS_NODE=1`).
+       - `EnableCookieEncryption` -> `true` (encrypts session cookies at rest via Windows DPAPI).
+       - `EnableNodeOptionsEnvironmentVariable` -> `false` (ignores malicious `NODE_OPTIONS`).
+       - `EnableNodeCliInspectArguments` -> `false` (blocks `--inspect` in production).
+       - `GrantFileProtocolExtraPrivileges` -> `false` (disables privileged `file://` access).
+       - Preserves `EnableEmbeddedAsarIntegrityValidation: false` and `OnlyLoadAppFromAsar: false` to retain unpacked `resources/app` compatibility for differential auto-updates via `Updater.bat`.
+  2. Integrated automatic fuse hardening in `scripts/buildSea.cjs`:
+     - Added Step 5b to automatically flip and verify security fuses immediately upon branding `dist/PharmacyOS.exe`.
+  3. Added `npm run fuses:harden` and `npm run fuses:verify` scripts to `package.json`.
+  4. Verified binary state via REA MCP tool (`inspect_electron_fuses`): `RunAsNode: disabled`, `EnableCookieEncryption: enabled`, `NodeCliInspectArguments: not_honored`, `GrantFileProtocolExtraPrivileges: disabled`.
+- Priority: P2
+- Verified by: `npm run fuses:verify` (all 5 hardened fuses verified); REA MCP `inspect_electron_fuses` on `dist/PharmacyOS.exe` (evidence verified); `npm run guardrails` exit 0 (0 violations).
+
 ### [Fixed] P2-137 — Grounded Qwen RAG Conversational Generation for Pharmacy Operations Assistant
 - Cause:
   1. The Operations Assistant previously constructed static JavaScript template strings with rigid bullets (`• Medicine: ...`, `• Total Stock: ...`, `• Outstanding Balance: ...`), rather than allowing Qwen to formulate natural conversational responses.

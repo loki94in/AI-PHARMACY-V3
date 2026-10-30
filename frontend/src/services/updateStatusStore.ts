@@ -97,7 +97,7 @@ export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatu
 
   // Never report a target version older than or equal to current running binary unless currentVersion is unknown
   const version = (rawVersion && !isTargetNewer && currentVersion !== '0.0.0') ? currentVersion : rawVersion;
-  const changelog = frame.changelog !== undefined ? (frame.changelog || '') : current.changelog;
+  const changelog = (frame.changelog && frame.changelog.trim()) ? frame.changelog.trim() : current.changelog;
   const downloadUrl = frame.downloadUrl !== undefined ? frame.downloadUrl : current.downloadUrl;
   const updatePackageUrl = frame.updatePackageUrl !== undefined ? frame.updatePackageUrl : current.updatePackageUrl;
   const lastCheckedAt = frame.lastCheckedAt !== undefined ? frame.lastCheckedAt : current.lastCheckedAt;

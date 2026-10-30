@@ -3,6 +3,39 @@ import { RefreshCw, ArrowDownToLine, Sparkles } from 'lucide-react';
 import { toastEvent } from '../services/events';
 import { useUpdateStatus } from '../services/updateStatusStore';
 
+function renderFormattedChangelog(text: string) {
+  const lines = text
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.length > 0 && !l.startsWith('##'));
+
+  if (lines.length === 0) {
+    return <p className="mt-2 text-muted leading-relaxed font-sans">{text}</p>;
+  }
+
+  return (
+    <ul className="mt-2 space-y-1.5 text-xs text-text leading-relaxed">
+      {lines.map((line, idx) => {
+        const clean = line.replace(/^[-*•]\s*/, '');
+        const parts = clean.split(/(\*\*[^*]+\*\*)/g);
+        return (
+          <li key={idx} className="flex items-start gap-2">
+            <span className="text-primary font-bold text-sm leading-none shrink-0 mt-0.5">•</span>
+            <span className="leading-snug">
+              {parts.map((part, pIdx) => {
+                if (part.startsWith('**') && part.endsWith('**')) {
+                  return <strong key={pIdx} className="font-bold text-text">{part.slice(2, -2)}</strong>;
+                }
+                return <span key={pIdx} className="text-muted">{part}</span>;
+              })}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /**
  * UpdateBanner — Ready-only banner rendered when update package has downloaded
  * and verified in background. Progress is owned by the Topbar ticker.
@@ -110,11 +143,14 @@ export default function UpdateBanner() {
           </button>
         </div>
 
-        {/* Expandable changelog notes */}
+        {/* Expandable changelog notes (Coucou-style formatted release notes) */}
         {showChangelog && updateStatus.changelog && (
-          <div className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-xs whitespace-pre-line shadow-lg mt-1">
-            <strong className="text-primary font-bold">Release Notes — v{targetVersion}</strong>
-            <p className="mt-1 text-muted leading-relaxed font-sans">{updateStatus.changelog}</p>
+          <div className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-xs shadow-lg mt-1 max-h-60 overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-border pb-1.5">
+              <strong className="text-primary font-bold tracking-wide">What's New in v{targetVersion}</strong>
+              <span className="text-[10px] text-muted">Release Highlights</span>
+            </div>
+            {renderFormattedChangelog(updateStatus.changelog)}
           </div>
         )}
       </div>

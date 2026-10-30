@@ -33,6 +33,39 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
+/**
+ * Extracts the "What's new" section from a GitHub release markdown body,
+ * or returns the full body if no specific section heading is present (Coucou parity).
+ */
+export function extractWhatsNewSection(body: string): string {
+  if (!body) return '';
+  const match = body.match(/##\s*(?:what['’]?s\s*new|changelog|improvements|changes)([\s\S]*?)(?=\n##\s|\n---\s*|\s*$)/i);
+  if (match && match[1] && match[1].trim()) {
+    return match[1].trim();
+  }
+  return body.trim();
+}
+
+/**
+ * Resolves release notes/changelog for a version from GitHub Releases
+ * if the update server didn't provide one (matching Coucou's release notes behavior).
+ */
+export async function resolveChangelogForVersion(version: string, existingChangelog?: string): Promise<string | undefined> {
+  if (existingChangelog && existingChangelog.trim()) {
+    return extractWhatsNewSection(existingChangelog.trim());
+  }
+  try {
+    const { getUpdateHistory } = await import('./updateHistoryService.js');
+    const history = await getUpdateHistory(false);
+    const targetVer = version.replace(/^v/, '');
+    const matched = history.releases?.find(r => r.version.replace(/^v/, '') === targetVer);
+    if (matched?.changelog && matched.changelog.trim()) {
+      return extractWhatsNewSection(matched.changelog.trim());
+    }
+  } catch (_) {}
+  return existingChangelog;
+}
+
 // ── Update staging directory ─────────────────────────────────────────────────
 // PRODUCTION.md §21: download to {app}\updates\staging, NOT os.tmpdir()
 function getStagingDir(): string {
@@ -238,16 +271,34 @@ class AutoUpdateService {
                   readyToInstall: true,
                   downloading: false,
                 };
-                setTimeout(() => {
-                  eventService.broadcast('update_available', {
-                    latestVersion:  stagedVersion,
-                    currentVersion: APP_VERSION,
-                    hasUpdate:      true,
-                    readyToInstall: true,
-                    downloading:    false,
-                    reason:         'boot_staged',
-                  });
-                }, 3000);
+                // Coucou parity: resolve GitHub release notes for staged package before broadcast
+                resolveChangelogForVersion(stagedVersion).then(changelog => {
+                  if (this.lastResult && this.lastResult.latestVersion === stagedVersion) {
+                    this.lastResult.changelog = changelog;
+                  }
+                  setTimeout(() => {
+                    eventService.broadcast('update_available', {
+                      latestVersion:  stagedVersion,
+                      currentVersion: APP_VERSION,
+                      hasUpdate:      true,
+                      changelog:      changelog || '',
+                      readyToInstall: true,
+                      downloading:    false,
+                      reason:         'boot_staged',
+                    });
+                  }, 3000);
+                }).catch(() => {
+                  setTimeout(() => {
+                    eventService.broadcast('update_available', {
+                      latestVersion:  stagedVersion,
+                      currentVersion: APP_VERSION,
+                      hasUpdate:      true,
+                      readyToInstall: true,
+                      downloading:    false,
+                      reason:         'boot_staged',
+                    });
+                  }, 3000);
+                });
               }
             }
           }
@@ -364,6 +415,14 @@ class AutoUpdateService {
       if (trulyHasUpdate) {
         console.log(`[AutoUpdate] New version available: ${result.latestVersion}`);
 
+        // Coucou parity: auto-enrich release notes from GitHub if update server sent empty/minimal changelog
+        if (!result.changelog && result.latestVersion) {
+          result.changelog = await resolveChangelogForVersion(result.latestVersion);
+          if (this.lastResult) {
+            this.lastResult.changelog = result.changelog;
+          }
+        }
+
         if (alreadyDownloaded) {
           eventService.broadcast('update_available', {
             latestVersion:    result.latestVersion,
@@ -442,9 +501,12 @@ class AutoUpdateService {
         this.lastResult.downloadProgress = 100;
       }
       eventService.broadcast('update_available', {
-        latestVersion: target.latestVersion,
+        latestVersion:  target.latestVersion,
+        currentVersion: APP_VERSION,
+        hasUpdate:      true,
+        changelog:      target.changelog || this.lastResult?.changelog || '',
         readyToInstall: true,
-        downloading: false,
+        downloading:    false,
         downloadProgress: 100,
         reason,
       });
