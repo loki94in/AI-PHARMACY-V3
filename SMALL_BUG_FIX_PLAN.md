@@ -212,6 +212,21 @@
 - Priority: P2
 - Verified by: `npm run guardrails` exit 0 (TypeScript compilation clean, 0 violations); frontend production build clean.
 
+### [Fixed] P2-132 — Fix Pharmarack Missing Phone Badge Header Synchronization & Query Resolution
+- Cause:
+  1. On the Pharmarack Live page, unmapped distributors with missing WhatsApp numbers showed the warning badge (`⚠️ [1] Missing Phone — Click to Add`) and the Unmapped filter tab count. However, the topbar Header countdown pill (`LiveCartCountdownPill` in `Layout.tsx`) did not show the missing mark warning badge (`⚠️ N`).
+  2. `PharmarackCart/index.tsx` calculated unmapped distributors locally on cart fetch/refresh but never notified `Layout.tsx` via `refresh-pharmarack-cart`.
+  3. `/api/pharmarack/live-cart-summary` used an isolated 6s probe that timed out on cold boot, returning `missingDistributorsCount: 0` without falling back to `serverCartCache`.
+  4. In `src/routes/pharmarack.ts`, queries in `/live-cart-summary` and `/distributor-mappings` used `COALESCE(d.phone, d.contact, m.phone)`. Because empty string `''` is non-null in SQLite, distributors with empty string phone numbers shadowed valid numbers in `pharmarack_distributor_mappings`.
+  5. Phone validation was mismatched: backend accepted any 10 digits (`\d{10}`), while frontend strictly enforced Indian mobile regex (`/^[6-9]\d{9}$/`).
+- Fix:
+  1. In `src/database.ts`, added expression indexes `idx_pharmarack_dist_mappings_lower` on `pharmarack_distributor_mappings(LOWER(TRIM(store_name)))` and `idx_distributors_name_lower` on `distributors(LOWER(TRIM(name)))` across both fast boot schema and full DDL blocks.
+  2. In `src/routes/pharmarack.ts`, updated `/live-cart-summary` and `/distributor-mappings` to wrap phone fields in `NULLIF(..., '')`, aligned phone validation to `/^[6-9]\d{9}$/`, and added fallback to `serverCartCache` when upstream probe returns empty or times out.
+  3. In `frontend/src/pages/PharmarackCart/index.tsx`, added `window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'))` inside `fetchCart` and `fetchCartSilent`.
+  4. In `frontend/src/components/Layout.tsx`, added navigation route listener in `LiveCartCountdownPill` to refresh cart summary whenever `/pharmarack-cart` is active.
+- Priority: P2
+- Verified by: `npm run guardrails` passed with 0 violations (`tsc --noEmit` clean); `http://localhost:5174/api/pharmarack/live-cart-summary` verified returning accurate `missingDistributorsCount`; `node scripts/quick-update.mjs` updated knowledge graph.
+
 ### [Fixed] P2-130 — Equalize All CRM Top Metric Cards to Identical Size & Layout
 - Cause: On the CRM Refills page, the 4 top elements in the cards grid were visually asymmetrical and different in size. Cards 1, 2, and 3 were formatted as metric KPI summary cards (padding `p-3.5`, title, count, and `w-9 h-9` icon container), whereas Slot 4 was formatted as a container packed with 5 small buttons (`+ Add Refill`, `Delay Notice`, `Unlinked`, `Run Check`, `Refresh`) with different padding (`p-2.5`) and mismatched styling.
 - Fix:

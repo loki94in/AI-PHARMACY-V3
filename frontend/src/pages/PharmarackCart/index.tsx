@@ -4085,6 +4085,7 @@ export default function PharmarackCart() {
           persistCartCache(list, cachedPriceHistory);
           return list;
         });
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
 
         // Clean up confirmed deleted keys if verified absent from incoming live cart and queue is idle
         if (deleteQueueRef.current.length === 0 && pendingDeleteKeysRef.current.size > 0) {
@@ -4154,6 +4155,7 @@ export default function PharmarackCart() {
           persistCartCache(list, cachedPriceHistory);
           return list;
         });
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
 
         if (deleteQueueRef.current.length === 0 && pendingDeleteKeysRef.current.size > 0) {
           const liveKeys = new Set<string>();

@@ -669,6 +669,8 @@ async function ensureOrderTimingSchema(db: any) {
     )
   `);
   await db.run('CREATE INDEX IF NOT EXISTS idx_pharmacy_holidays_date ON pharmacy_holidays(store_id, holiday_date)');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_pharmarack_dist_mappings_lower ON pharmarack_distributor_mappings(LOWER(TRIM(store_name)))');
+  await db.run('CREATE INDEX IF NOT EXISTS idx_distributors_name_lower ON distributors(LOWER(TRIM(name)))');
 
   await ensureColumns(db, 'pharmacy_holidays', {
     holiday_name: 'TEXT DEFAULT NULL',
@@ -3533,6 +3535,9 @@ export async function ensureSchema(dbPath: string) {
       delivery_boy_id INTEGER,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE INDEX IF NOT EXISTS idx_pharmarack_dist_mappings_lower ON pharmarack_distributor_mappings(LOWER(TRIM(store_name)));
+    CREATE INDEX IF NOT EXISTS idx_distributors_name_lower ON distributors(LOWER(TRIM(name)));
 
     CREATE TABLE IF NOT EXISTS contacts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

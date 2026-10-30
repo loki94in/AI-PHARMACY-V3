@@ -1106,6 +1106,7 @@ const LiveHeaderClock = () => {
 // ──────────────────────────────────────────────
 const LiveCartCountdownPill: React.FC = memo(() => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [cartCount, setCartCount] = useState<number>(0);
   const [cutoffTime, setCutoffTime] = useState<string>('11:00');
   const [pausedDates, setPausedDates] = useState<string[]>([]);
@@ -1214,6 +1215,12 @@ const LiveCartCountdownPill: React.FC = memo(() => {
       window.removeEventListener('focus', loadCartData);
     };
   }, [loadCartData]);
+
+  useEffect(() => {
+    if (location.pathname === '/pharmarack-cart') {
+      loadCartData();
+    }
+  }, [location.pathname, loadCartData]);
 
   const todayStr = useMemo(() => {
     const now = new Date();

@@ -679,9 +679,9 @@ router.get('/distributor-mappings', async (_req, res) => {
       SELECT 
         m.store_name, 
         COALESCE(m.distributor_id, d.id) as distributor_id, 
-        COALESCE(d.phone, d.contact, m.phone) as phone, 
+        COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, ''), NULLIF(m.phone, '')) as phone, 
         COALESCE(d.name, m.store_name) as distributor_name, 
-        COALESCE(d.phone, d.contact, m.phone) as distributor_phone,
+        COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, ''), NULLIF(m.phone, '')) as distributor_phone,
         COALESCE(m.delivery_boy_id, d.delivery_boy_id) as delivery_boy_id
       FROM pharmarack_distributor_mappings m
       LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
@@ -689,9 +689,9 @@ router.get('/distributor-mappings', async (_req, res) => {
       SELECT 
         d.name as store_name, 
         d.id as distributor_id, 
-        COALESCE(d.phone, d.contact) as phone, 
+        COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, '')) as phone, 
         d.name as distributor_name, 
-        COALESCE(d.phone, d.contact) as distributor_phone,
+        COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, '')) as distributor_phone,
         d.delivery_boy_id as delivery_boy_id
       FROM distributors d
       WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
@@ -3756,6 +3756,10 @@ router.get('/live-cart-summary', async (_req, res) => {
       }
     }
 
+    if (cartDistributors.length === 0 && serverCartCache && Array.isArray(serverCartCache.distributors) && serverCartCache.distributors.length > 0) {
+      cartDistributors = serverCartCache.distributors;
+    }
+
     const db = await dbManager.getConnection();
     const [pendingOrders, ignoredRows, mappingRows] = await Promise.all([
       db.all("SELECT * FROM special_orders WHERE status IN ('Pending', 'Waiting') ORDER BY id DESC"),
@@ -3763,13 +3767,13 @@ router.get('/live-cart-summary', async (_req, res) => {
       db.all(`
         SELECT 
           LOWER(TRIM(m.store_name)) as store_name_lower, 
-          COALESCE(d.phone, d.contact, m.phone) as phone
+          COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, ''), NULLIF(m.phone, '')) as phone
         FROM pharmarack_distributor_mappings m
         LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
         UNION
         SELECT 
           LOWER(TRIM(d.name)) as store_name_lower, 
-          COALESCE(d.phone, d.contact) as phone
+          COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, '')) as phone
         FROM distributors d
         WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
       `).catch(() => [])
@@ -3781,12 +3785,20 @@ router.get('/live-cart-summary', async (_req, res) => {
       return p && !ignoredWordsSet.has(p);
     });
 
+    const isValidIndianMobile = (p: string | null | undefined): boolean => {
+      if (!p) return false;
+      const clean = String(p).replace(/\D/g, '');
+      const standard = clean.length === 12 && clean.startsWith('91') ? clean.slice(2) : (clean.length === 11 && clean.startsWith('0') ? clean.slice(1) : clean);
+      return standard.length === 10 && /^[6-9]\d{9}$/.test(standard);
+    };
+
     const phoneMap = new Map<string, string>();
     for (const r of (mappingRows || [])) {
       if (r.store_name_lower && r.phone) {
-        const cleanP = String(r.phone).replace(/\D/g, '').slice(-10);
-        if (cleanP && cleanP.length === 10) {
-          phoneMap.set(r.store_name_lower, cleanP);
+        const cleanP = String(r.phone).replace(/\D/g, '');
+        const standard = cleanP.length === 12 && cleanP.startsWith('91') ? cleanP.slice(2) : (cleanP.length === 11 && cleanP.startsWith('0') ? cleanP.slice(1) : cleanP);
+        if (isValidIndianMobile(standard)) {
+          phoneMap.set(r.store_name_lower, standard);
         }
       }
     }
@@ -3795,7 +3807,7 @@ router.get('/live-cart-summary', async (_req, res) => {
     const unmappedDistributors = cartDistributors.filter(dist => {
       const sLower = String(dist.storeName || '').toLowerCase().trim();
       const mappedPhone = phoneMap.get(sLower);
-      return (!mappedPhone || mappedPhone.length !== 10) && dist.storeName;
+      return !isValidIndianMobile(mappedPhone) && dist.storeName;
     });
 
     if (unmappedDistributors.length > 0) {
@@ -3804,7 +3816,7 @@ router.get('/live-cart-summary', async (_req, res) => {
           const sLower = String(dist.storeName || '').toLowerCase().trim();
           try {
             const resolved = await resolveDistributorContact(db, dist.storeName);
-            if (resolved && resolved.distributor_phone && resolved.distributor_phone.length === 10) {
+            if (resolved && isValidIndianMobile(resolved.distributor_phone)) {
               phoneMap.set(sLower, resolved.distributor_phone);
             }
           } catch (_) {}
@@ -3817,8 +3829,7 @@ router.get('/live-cart-summary', async (_req, res) => {
       const sLower = String(dist.storeName || '').toLowerCase().trim();
       const mappedPhone = phoneMap.get(sLower) || '';
       dist.phone = mappedPhone;
-      const cleanP = mappedPhone.replace(/\D/g, '').slice(-10);
-      if (!cleanP || cleanP.length !== 10) {
+      if (!isValidIndianMobile(mappedPhone)) {
         missingDistributorsCount++;
       }
     }

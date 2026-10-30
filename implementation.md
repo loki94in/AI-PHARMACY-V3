@@ -1,78 +1,50 @@
-# Implementation Plan: Unified Multi-Task Chronic Refill Orchestration Flow
+# Implementation Plan: Fix Pharmarack Missing Phone Badge Header Synchronization & Query Resolution
 
-## 1. Feature Overview & Scope
-Enable the Pharmacy Operations Assistant to execute a complete, connected multi-action chronic refill journey in a single conversational flow:
-1. **Refill Lookup & Stock Availability Check**:
-   - Authoritatively inspects active chronic refills for the patient from `patient_refills`.
-   - Cross-references live inventory batches in `inventory_master`.
-2. **Shortage Handling -> Direct Live Cart Staging & Special Order**:
-   - If stock is insufficient or out of stock:
-     - Directly stages the shortage medicine into Pharmarack Live Cart with patient attribution (`refill_id`, `customer_name`).
-     - Books a shortage request into canonical `special_orders`.
-3. **Patient Refill Call Task Scheduling**:
-   - Schedules a follow-up call task in canonical `patient_call_tasks` with target date.
-4. **WhatsApp Payment Confirmation & UPI QR Sharing**:
-   - Inspects customer outstanding balance (`customers.credit_balance`).
-   - If due balance > 0, stages a verified WhatsApp payment confirmation reminder card with dynamic branded UPI QR code.
-5. **Rule 6 Human-in-the-Loop Multi-Action Card**:
-   - Displays a composite interactive card with discrete or bundled operator actions:
-     - `[Confirm & Dispense Refill]` (if in stock)
-     - `[Stage to Live Cart]` (if shortage)
-     - `[Book Special Order]`
-     - `[Schedule Call Task]`
-     - `[Share WhatsApp Payment QR]`
+## Problem Statement
+When viewing the Pharmarack Live page, distributors with missing WhatsApp numbers clearly show the `[1] Missing Phone — Click to Add` badge and the Unmapped filter count. However, the topbar Header pill (`LiveCartCountdownPill` in `Layout.tsx`) was not showing the missing mark warning badge (`⚠️ N`).
+
+### Root Causes
+1. **Frontend State Isolation:** `PharmarackCart/index.tsx` calculates unmapped distributors locally on cart fetch/refresh but never notified `Layout.tsx` via `refresh-pharmarack-cart`.
+2. **Cold Boot Timeout & Cache Decoupling:** `/api/pharmarack/live-cart-summary` used an isolated 6s probe that times out on cold boot, returning `missingDistributorsCount = 0` without reading `serverCartCache`.
+3. **SQLite COALESCE Empty-String Shadowing:** In `src/routes/pharmarack.ts`, queries used `COALESCE(d.phone, d.contact, m.phone)`. Because `''` is not `NULL` in SQLite, distributors with empty string phone numbers shadowed valid numbers in `pharmarack_distributor_mappings`.
+4. **Validation Mismatch:** Backend accepted any 10 digits (`\d{10}`), whereas frontend strictly enforces `/^[6-9]\d{9}$/`.
 
 ---
 
-## 2. Architecture & Data Flow Compliance (`AGENT_DATA_FLOW_TREE.md`)
-- **One Writer Per Fact**:
-  - Refill mutations write strictly to `patient_refills`.
-  - Shortage records write strictly to `special_orders`.
-  - Call tasks write strictly to `patient_call_tasks`.
-  - Distributor live cart writes via `pharmarack` routes / `addItemsToPharmarackCart`.
-  - Outbound messaging respects `outboundSecurityGateway` (PTR masked, customer-safe).
-- **Zero Dummy Data**: All patient names, balances, and medicines are resolved from live SQLite tables (`customers`, `patient_refills`, `inventory_master`).
+## Changes Implemented
+
+### 1. Database Indexing & Schema Safety
+- File: `src/database.ts`
+- Added performance expression indexes across both `ensureOrderTimingSchema` / `ensureSchema` fast boot and the full DDL table migration blocks:
+  - `CREATE INDEX IF NOT EXISTS idx_pharmarack_dist_mappings_lower ON pharmarack_distributor_mappings(LOWER(TRIM(store_name)));`
+  - `CREATE INDEX IF NOT EXISTS idx_distributors_name_lower ON distributors(LOWER(TRIM(name)));`
+
+### 2. Backend API Fixes
+- File: `src/routes/pharmarack.ts`
+  - In `GET /live-cart-summary`:
+    - Added fallback to `serverCartCache.distributors` when upstream probe fails or returns empty on cold boot.
+    - Updated query to use `COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, ''), NULLIF(m.phone, ''))`.
+    - Aligned phone number validation with frontend rule (`/^[6-9]\d{9}$/`).
+  - In `GET /distributor-mappings`:
+    - Updated query to use `NULLIF(d.phone, '')`, `NULLIF(d.contact, '')`, and `NULLIF(m.phone, '')` so empty strings do not shadow mapped distributor phone numbers.
+
+### 3. Frontend Event Synchronization
+- File: `frontend/src/pages/PharmarackCart/index.tsx`:
+  - Dispatched `window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'))` after successfully updating distributors in `fetchCart()` and `fetchCartSilent()`.
+- File: `frontend/src/components/Layout.tsx`:
+  - Added route location listener inside `LiveCartCountdownPill` to call `loadCartData()` whenever navigating to `/pharmarack-cart`.
+
+### 4. Verification & Guardrails
+- `npm run guardrails` passed with 0 violations (`tsc --noEmit` clean).
+- Verified `http://localhost:5174/api/pharmarack/live-cart-summary` outputs `missingDistributorsCount: 5`.
+- `node scripts/quick-update.mjs` synchronized knowledge graph (1336 nodes, 871 edges).
+- Updated `SMALL_BUG_FIX_PLAN.md` with issue P2-132.
 
 ---
 
-## 3. Surgical Implementation Steps
-
-### Step 1: Extend `pharmacyToolRegistry.ts`
-- Added `orchestrateUnifiedPatientRefillFlow(patientNameOrPhone, dbInstance)`:
-  - Fetches customer record and active refills.
-  - Queries live batch stock for each refill medicine from `inventory_master`.
-  - Computes shortage quantity.
-  - Checks customer outstanding credit due from `customers.credit_balance`.
-  - Returns unified composite plan containing:
-    - `refills`: status, stock, shortage, price.
-    - `dueBalance`: total unpaid credit.
-    - `suggestedActions`: Live Cart staging, Special Order booking, Call task scheduling, Payment QR dispatch.
-- Updated `scheduleCallTask` to persist `reschedule_date` to canonical `patient_call_tasks`.
-
-### Step 2: Extend `conversationalAgentEngine.ts`
-- In `resolveUnifiedIntent`:
-  - Added compound intent flags (`wantsPaymentQr`, `wantsLiveCart`, `wantsCallTask`, `wantsSpecialOrder`).
-  - Added guards so refill queries are not intercepted by raw `CART_STAGING`, `APPLICATION_GUIDE`, or `CUSTOMER_DUE_QUERY`.
-  - Replaced generic placeholder chips (`Stage item to live cart` -> `Stage 5 Pan 40 to live cart`).
-- In `processMessage` (`case 'REFILL'` & compound flows):
-  - Added `UNIFIED_REFILL_ORCHESTRATION` proposal handling.
-  - Executes multi-action bundles atomically under Rule 6 HITL confirmation.
-
-### Step 3: Verification & Test Suite
-- Created test suite `tests/unifiedRefillOrchestrationFlow.test.ts` (5/5 tests passing):
-  - Test 1: `orchestrateUnifiedPatientRefillFlow` detects shortages and customer dues correctly.
-  - Test 2: In-stock customer refill recommends dispensing and notes zero due.
-  - Test 3: Compound query stages `UNIFIED_REFILL_ORCHESTRATION` proposal under Rule 6 HITL.
-  - Test 4: Rule 6 Execution executes staged actions into canonical tables (`patient_call_tasks`, `audit_logs`).
-  - Test 5: Zero-balance customer does not stage false payment collection.
-- Added `tests/multiTaskAgentEngine.test.ts` (6/6 tests passing) covering typo handling, SOP Schedule H citations, and raw medicine lookups.
-- Verified `npm run guardrails` exit code 0 (17 files scanned, zero violations).
-- Synchronized knowledge graph (`node scripts/quick-update.mjs`).
-
----
-
-## 4. Execution Log & Tasks
-- [x] Task 1: Refill Orchestration Method in `pharmacyToolRegistry.ts` (Completed: `orchestrateUnifiedPatientRefillFlow` implemented with live stock cross-check and due balance lookup)
-- [x] Task 2: Multi-Action Refill Router & Composite Cards in `conversationalAgentEngine.ts` (Completed: added `UNIFIED_REFILL_ORCHESTRATION` execution and compound intent routing)
-- [x] Task 3: Comprehensive Test Suite in `tests/unifiedRefillOrchestrationFlow.test.ts` (Completed: 5/5 unit tests passed; combined with `multiTaskAgentEngine.test.ts` 11/11 tests passed)
-- [x] Task 4: Guardrails & Knowledge Graph Synchronization (Completed: `npm run guardrails` passed, knowledge graph updated)
+## Tasks Execution Checklist
+- [x] Task 1: Add lowercase trim indexes in `src/database.ts` (Completed: added `idx_pharmarack_dist_mappings_lower` and `idx_distributors_name_lower` in fast boot schema and full DDL).
+- [x] Task 2: Fix SQL `COALESCE` with `NULLIF`, shared cart cache fallback, and phone validation in `src/routes/pharmarack.ts` (Completed: updated SQL queries and validation regex in `/live-cart-summary` and `/distributor-mappings`).
+- [x] Task 3: Dispatch `refresh-pharmarack-cart` in `frontend/src/pages/PharmarackCart/index.tsx` and ensure `Layout.tsx` sync (Completed: event dispatched on cart state commit; route listener added in `LiveCartCountdownPill`).
+- [x] Task 4: Run guardrails, verify tests, update knowledge graph and bug fix plan (Completed: guardrails passed, knowledge graph updated, bug fix documented).
+- [x] Task 5: Human-in-the-Loop review and verification ready for user.
