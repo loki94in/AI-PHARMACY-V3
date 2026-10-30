@@ -104,12 +104,13 @@ function getPageContextInfo(pathname: string): PageContextInfo {
   }
   if (clean === '/pharmarack-cart' || clean === '/live-cart') {
     return {
-      name: 'Distributor Live Cart',
+      name: 'Order Hub & Live Cart',
       suggestions: [
-        'Explain this page',
-        'Show due refills',
-        'Add refill to live cart',
-        'Place distributor orders'
+        'Where are Order Hub settings?',
+        'How to connect Pharmarack',
+        'Check distributor minimums',
+        'Stage Dolo 650 to live cart',
+        'Explain this page'
       ]
     };
   }
@@ -168,11 +169,13 @@ function getPageContextInfo(pathname: string): PageContextInfo {
   }
   if (clean === '/settings') {
     return {
-      name: 'Settings',
+      name: 'Settings & Automation',
       suggestions: [
-        'Explain this page',
-        'Check store profile',
-        'Check local AI status'
+        'Where are Order Hub settings?',
+        'How to connect Pharmarack',
+        'Connect WhatsApp Web',
+        'Configure thermal printer',
+        'Explain this page'
       ]
     };
   }
@@ -199,11 +202,11 @@ function getPageContextInfo(pathname: string): PageContextInfo {
   return {
     name: 'Dashboard Overview',
     suggestions: [
+      'Where are Order Hub settings?',
+      'How to connect Pharmarack',
       'Show due refills',
-      'List pending call tasks',
-      'Stock check for Paracetamol 650',
-      'Explain this page',
-      'Check customer enquiries'
+      'Find low stock medicines',
+      'Audit expiring batches'
     ]
   };
 }

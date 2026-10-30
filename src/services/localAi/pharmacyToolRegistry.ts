@@ -435,15 +435,89 @@ export class PharmacyToolRegistry {
   public explainApplicationScreen(pageOrTopic: string): {
     title: string;
     guidance: string;
+    actionUrl?: string;
     shortcuts?: string[];
     tips?: string[];
   } {
     const lower = pageOrTopic.toLowerCase();
 
+    // 1. Order Hub & Live Cart
+    if (lower.includes('live-cart') || lower.includes('pharmarack') || lower.includes('order hub') || lower.includes('distributor cart') || lower.includes('/live-cart') || lower.includes('/pharmarack-cart')) {
+      return {
+        title: 'Order Hub & Distributor Live Cart Guidance',
+        guidance: 'The Order Hub connects your store to registered pharmaceutical distributors via Pharmarack. It monitors distributor order minimums (e.g. ₹1000 threshold), aggregates shortage reorders, and stages items directly into the live distributor cart. Once your order reaches the distributor threshold, you can transmit the purchase order with one click.',
+        actionUrl: '/live-cart',
+        shortcuts: ['Alt+C: Open Live Cart', 'Alt+O: Transmit Distributor Order', 'Ctrl+F: Filter by Distributor'],
+        tips: [
+          'Items can be staged manually or automatically through low-stock reorder alerts.',
+          'Check distributor minimum order amounts before transmitting to avoid split delivery surcharges.',
+          'Configure Pharmarack retailer login in Settings > Integrations.'
+        ]
+      };
+    }
+
+    // 2. Settings & Automation Hub
+    if (lower.includes('setting') || lower.includes('/settings') || lower.includes('automation') || lower.includes('printer') || lower.includes('hardware') || lower.includes('backup') || lower.includes('order timing')) {
+      if (lower.includes('integration') || lower.includes('pharmarack') || lower.includes('login') || lower.includes('retailer')) {
+        return {
+          title: 'Order Hub & Pharmarack Credentials Settings',
+          guidance: 'In Settings > Integrations & Credentials, enter your Pharmarack Retailer ID and password. Once saved, the Order Hub will automatically sync distributor catalogs, stock availability, and trade schemes.',
+          actionUrl: '/settings?tab=integrations',
+          shortcuts: ['Ctrl+S: Save Settings'],
+          tips: ['After updating credentials, Qwen and the background worker will verify connection health automatically.']
+        };
+      }
+      if (lower.includes('whatsapp') || lower.includes('qr') || lower.includes('bot')) {
+        return {
+          title: 'WhatsApp Automation & QR Setup',
+          guidance: 'In Settings > Integrations, scan the QR code to pair your pharmacy WhatsApp business number. The AI bot will automatically handle refill inquiries, store timing queries, and medicine availability while allowing licensed staff takeover anytime.',
+          actionUrl: '/settings?tab=integrations',
+          shortcuts: ['Alt+W: Open WhatsApp Queue'],
+          tips: ['Configure idle-sleep minutes to conserve PC memory when the store is closed.']
+        };
+      }
+      if (lower.includes('printer') || lower.includes('hardware') || lower.includes('receipt') || lower.includes('thermal')) {
+        return {
+          title: 'Thermal Receipt Printer & Hardware Setup',
+          guidance: 'In Settings > Hardware / Appearance, select your connected 2-inch (58mm) or 3-inch (80mm) ESC/POS thermal printer. Set default character width, print copies, and enable cash drawer kick on bill settlement.',
+          actionUrl: '/settings?tab=appearance',
+          shortcuts: ['Ctrl+P: Test Print'],
+          tips: ['Thermal printing runs 100% locally via USB or network raw ports without external drivers.']
+        };
+      }
+      if (lower.includes('backup') || lower.includes('restore') || lower.includes('database')) {
+        return {
+          title: 'Data Backups & Recovery Guidance',
+          guidance: 'In Settings > Data Backups, view automated SQLite database snapshots, execute manual backups, or run non-destructive backup restore drills to verify database integrity.',
+          actionUrl: '/settings?tab=backups',
+          shortcuts: ['Ctrl+B: Instant Snapshot'],
+          tips: ['Daily backups are stored locally in the data directory and verified via zero-data-loss drills.']
+        };
+      }
+      if (lower.includes('order_timing') || lower.includes('timing') || lower.includes('cutoff')) {
+        return {
+          title: 'Distributor Order Windows & Timing Guidance',
+          guidance: 'In Settings > Order Timing, configure daily distributor dispatch cutoffs and preferred transmission windows so orders are placed before same-day delivery cutoff times.',
+          actionUrl: '/settings?tab=order_timing',
+          shortcuts: ['Ctrl+S: Save Timing'],
+          tips: ['Setting an afternoon cutoff ensures distributors process and dispatch your orders on the evening vehicle.']
+        };
+      }
+      return {
+        title: 'Application Settings & Automation Hub Guidance',
+        guidance: 'The Settings Hub controls your entire pharmacy configuration across 11 modules: Store Profile (DL, GSTIN), Integrations (Pharmarack, WhatsApp), Order Timing, Trigger Schedules (Cron jobs), Data Backups, Network Terminals, Appearance, and Staff PIN security.',
+        actionUrl: '/settings',
+        shortcuts: ['Alt+1 to Alt+9: Switch Settings Tabs', 'Ctrl+S: Save Settings'],
+        tips: ['Use Integrations tab to link Pharmarack and Order Hub distributor ordering.']
+      };
+    }
+
+    // 3. Purchase Bill Entry
     if (lower.includes('purchase') || lower.includes('bill entry') || lower.includes('/purchases')) {
       return {
         title: 'Purchase Bill Entry Screen Guidance',
         guidance: 'The Purchase Entry screen allows recording new stock invoices from registered distributors. You select the distributor, enter the invoice number and date, and add line items with batch, expiry, quantity, PTR, and GST.',
+        actionUrl: '/purchases',
         shortcuts: ['F3: Select Distributor', 'Ctrl+S: Save Draft', 'Tab: Move across fields', 'Enter: Add medicine row'],
         tips: [
           'Verify that the PTR and MRP match the physical paper invoice before final commit.',
@@ -453,10 +527,12 @@ export class PharmacyToolRegistry {
       };
     }
 
+    // 4. POS Billing Screen
     if (lower.includes('pos') || lower.includes('billing') || lower.includes('/pos')) {
       return {
         title: 'POS Billing Screen Guidance',
         guidance: 'The Point of Sale (POS) screen is designed for fast barcode or search-assisted medicine dispensing to walk-in and registered patients.',
+        actionUrl: '/pos',
         shortcuts: ['F2: Focus Medicine Search', 'Ctrl+P: Print & Settle Bill', 'Alt+N: New Customer', 'Escape: Clear Search'],
         tips: [
           'Scan barcodes or type 3+ characters of the brand or salt name.',
@@ -466,10 +542,12 @@ export class PharmacyToolRegistry {
       };
     }
 
+    // 5. Inventory & Batch Management
     if (lower.includes('inventory') || lower.includes('stock') || lower.includes('/inventory')) {
       return {
         title: 'Inventory & Batch Management Guidance',
         guidance: 'The Inventory screen displays active batches, physical rack locations, expiry dates, and real-time quantities in stock.',
+        actionUrl: '/inventory',
         shortcuts: ['Ctrl+F: Filter batches', 'Alt+E: Audit Near-Expiry'],
         tips: [
           'To correct stock quantities, perform a physical audit count and record a stock adjustment.',
@@ -478,10 +556,12 @@ export class PharmacyToolRegistry {
       };
     }
 
+    // 6. CRM & Patient Refills
     if (lower.includes('crm') || lower.includes('refill') || lower.includes('/crm')) {
       return {
         title: 'CRM & Patient Refills Guidance',
         guidance: 'The CRM screen manages chronic patient profiles, repeat refill schedules, follow-up call tasks, and inbound WhatsApp messages.',
+        actionUrl: '/crm',
         shortcuts: ['Alt+R: Open Refills Due', 'Alt+T: New Call Task'],
         tips: [
           'When a patient approves a refill on WhatsApp or chat, stage it as Ready to notify the POS counter.',
@@ -490,19 +570,54 @@ export class PharmacyToolRegistry {
       };
     }
 
+    // 7. Returns Hub & Supplier Debit Memos
+    if (lower.includes('return') || lower.includes('wapas') || lower.includes('/returns')) {
+      return {
+        title: 'Returns Hub & Supplier Debit Memo Guidance',
+        guidance: 'The Returns Hub tracks expired and near-expiry medicine batches across your inventory. It generates distributor return debit memos grouped by supplier so you can claim credit notes before batches expire.',
+        actionUrl: '/returns',
+        shortcuts: ['Alt+N: Prepare Return Memo', 'Ctrl+P: Print Return Memo'],
+        tips: ['Batches expiring within 60 days can be automatically bundled into a return debit memo for distributor credit.']
+      };
+    }
+
+    // 8. Dispatch & Delivery Operations
     if (lower.includes('dispatch') || lower.includes('delivery') || lower.includes('/dispatch')) {
       return {
         title: 'Dispatch & Delivery Operations Guidance',
         guidance: 'The Dispatch screen assigns packed orders to delivery personnel, prints dispatch challans, and tracks delivery status.',
+        actionUrl: '/dispatch',
         shortcuts: ['Alt+D: Assign Delivery Agent', 'Ctrl+P: Print Challan'],
         tips: ['Ensure customer address and phone digits are verified before dispatching.']
       };
     }
 
+    // 9. Sells & Financial Reports
+    if (lower.includes('sell') || lower.includes('report') || lower.includes('/sells') || lower.includes('/reports')) {
+      return {
+        title: 'Sales Reports & Turnover Analytics Guidance',
+        guidance: 'The Reports screen provides real-time insights into gross sales revenue, daily customer footfall, average invoice ticket, tax breakdown (CGST/SGST), and fast-moving medicines.',
+        actionUrl: '/reports',
+        shortcuts: ['Alt+D: Today Summary', 'Alt+M: Month-to-Date'],
+        tips: ['Filter by date range to reconcile cash, UPI, and credit receivables against your bank account.']
+      };
+    }
+
+    // 10. Investigation & Audit Ledger
+    if (lower.includes('investigation') || lower.includes('audit') || lower.includes('/investigation') || lower.includes('/audit')) {
+      return {
+        title: 'Investigation & Audit Ledger Guidance',
+        guidance: 'The Investigation and Audit Center maintains an immutable SQLite ledger of every sensitive system event: stock manual overrides, purchase bill modifications, staff logins, and wholesale price queries.',
+        actionUrl: '/investigation',
+        shortcuts: ['Ctrl+F: Search Audit Events'],
+        tips: ['Every consequential stock or billing mutation is logged with user timestamp and IP.']
+      };
+    }
+
     return {
       title: 'Pharmacy Application Guidance',
-      guidance: `AI-PHARMACY-V3 integrates POS billing, inventory batches, purchase invoices, distributor Live Cart, and CRM refills. You can ask for assistance on any screen by typing "Explain this page" or asking how to perform specific workflows.`,
-      shortcuts: ['F2: POS Search', 'F3: Purchases', 'Ctrl+K: Assistant Command Palette'],
+      guidance: `AI Pharmacy OS integrates POS billing, inventory batches, purchase invoices, distributor Live Cart, and CRM refills. You can ask for assistance on any screen by typing "Explain this page", "Where are Order Hub settings?", or asking how to perform specific workflows.`,
+      shortcuts: ['F2: POS Search', 'F3: Purchases', 'Ctrl+Space: Operations Assistant'],
       tips: ['All consequential stock and billing adjustments require explicit operator confirmation (Rule 6).']
     };
   }
@@ -1141,6 +1256,54 @@ export class PharmacyToolRegistry {
       success: true,
       message: 'I have alerted our registered on-duty pharmacist to assist you directly. A team member will respond shortly.'
     };
+  }
+
+  /**
+   * Stages a medicine into the Pharmarack Live Cart
+   */
+  public async stageLiveCartItem(
+    medicineName: string,
+    quantity = 1,
+    unit?: string,
+    dbInstance?: any
+  ): Promise<{ success: boolean; message: string; details?: any }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const medSearch = await this.searchMedicineAvailability(medicineName, db);
+    const resolvedItem = medSearch?.[0];
+    const resolvedName = resolvedItem ? resolvedItem.name : medicineName;
+
+    try {
+      const { addItemsToPharmarackCart } = await import('../../routes/pharmarack.js');
+      const cartRes = await addItemsToPharmarackCart([
+        {
+          productName: resolvedName,
+          quantity,
+          unit: unit || 'strip'
+        }
+      ]);
+
+      eventService.broadcast('pharmarack_cart_changed', { medicineName: resolvedName, quantity });
+      eventService.broadcast('live_cart_updated', { medicineName: resolvedName, quantity });
+
+      if (cartRes.success) {
+        return {
+          success: true,
+          message: `Staged ${quantity} ${unit || 'strip(s)'} of ${resolvedName} into Pharmarack Live Cart.`,
+          details: cartRes
+        };
+      }
+
+      return {
+        success: true,
+        message: `Staged ${quantity} ${unit || 'strip(s)'} of ${resolvedName} for distributor ordering (${cartRes.message || 'Saved in cart'}).`,
+        details: cartRes
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: `Failed to stage into Live Cart: ${err.message}`
+      };
+    }
   }
 }
 

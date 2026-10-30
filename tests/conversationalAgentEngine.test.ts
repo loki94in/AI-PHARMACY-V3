@@ -421,4 +421,59 @@ describe('Conversational AI Agent Engine Suite', () => {
     expect(delivMsg.replyText).toContain('Dispatch');
     expect(delivMsg.requiresConfirmation).toBe(false);
   });
+
+  // 24. Live Cart Staging & Natural Language Parsing
+  it('Criteria 24: parses natural cart staging command and creates Rule 6 Live Cart proposal', async () => {
+    const stageMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-session-cart-1',
+      role: 'staff',
+      message: 'ADD THE DOLO 650 - 6 STRIP IN THE LIVE CART'
+    });
+
+    expect(stageMsg.intent).toBe('CART_STAGING');
+    expect(stageMsg.requiresConfirmation).toBe(true);
+    expect(stageMsg.proposedAction?.type).toBe('STAGE_LIVE_CART_ITEM');
+    expect(stageMsg.proposedAction?.data.medicineName).toMatch(/dolo 650/i);
+    expect(stageMsg.proposedAction?.data.quantity).toBe(6);
+    expect(stageMsg.proposedAction?.data.destination).toBe('live_cart');
+    expect(stageMsg.replyText).toContain('Pharmarack Live Cart');
+
+    // Confirm proposal with Rule 6 Human-in-the-loop approval
+    const confirmMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-session-cart-1',
+      role: 'staff',
+      message: 'Yes, stage it'
+    });
+
+    expect(confirmMsg.intent).toBe('CONFIRMATION_EXECUTED');
+    expect(confirmMsg.actionTaken).toBe('STAGE_LIVE_CART_ITEM');
+  });
+
+  // 25. Order Hub & Application Settings Guidance with 1-Click Navigation Cards
+  it('Criteria 25: guides user to Order Hub settings with direct navigation action card', async () => {
+    const settingsMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-session-settings-1',
+      role: 'staff',
+      message: 'Where are Order Hub settings?'
+    });
+
+    expect(settingsMsg.intent).toBe('APPLICATION_GUIDE');
+    expect(settingsMsg.replyText).toMatch(/Order Hub|Pharmarack|Settings/i);
+    expect(settingsMsg.cards).toBeDefined();
+    expect(settingsMsg.cards!.length).toBeGreaterThan(0);
+    expect(settingsMsg.cards![0].actionUrl).toContain('/settings?tab=integrations');
+
+    // Page-context aware greeting
+    const greetMsg = await conversationalAgentEngine.processMessage({
+      sessionId: 'staff-session-greet-cart',
+      role: 'staff',
+      message: 'Hello',
+      pageContext: { pathname: '/live-cart' }
+    });
+
+    expect(greetMsg.intent).toBe('GREETING');
+    expect(greetMsg.replyText).toContain('Order Hub & Distributor Live Cart Guidance');
+    expect(greetMsg.cards).toBeDefined();
+    expect(greetMsg.cards!.some(c => c.actionUrl === '/live-cart')).toBe(true);
+  });
 });

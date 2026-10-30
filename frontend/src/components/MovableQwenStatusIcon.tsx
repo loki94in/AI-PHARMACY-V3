@@ -82,7 +82,7 @@ export const MovableQwenStatusIcon: React.FC<MovableQwenStatusIconProps> = ({ on
     try {
       setIsLoading(true);
       const res = await apiClient.get<{ success: boolean; data: QwenStatusData }>(
-        `/api/local-ai/status${refresh ? '?refresh=true' : ''}`
+        `/local-ai/status${refresh ? '?refresh=true' : ''}`
       );
       if (res.data?.success && res.data.data) {
         setStatus(res.data.data);
@@ -251,7 +251,7 @@ export const MovableQwenStatusIcon: React.FC<MovableQwenStatusIconProps> = ({ on
     try {
       setIsRetrying(true);
       const res = await apiClient.post<{ success: boolean; message: string; data: QwenStatusData }>(
-        '/api/local-ai/retry-start'
+        '/local-ai/retry-start'
       );
       if (res.data?.success) {
         setStatus(res.data.data);
@@ -270,7 +270,7 @@ export const MovableQwenStatusIcon: React.FC<MovableQwenStatusIconProps> = ({ on
   const handleToggleGatePause = async () => {
     try {
       const isPaused = status?.automationGate === 'paused' || status?.isPausedByUser;
-      const endpoint = isPaused ? '/api/local-ai/automation-resume' : '/api/local-ai/automation-pause';
+      const endpoint = isPaused ? '/local-ai/automation-resume' : '/local-ai/automation-pause';
       const res = await apiClient.post<{ success: boolean; message: string }>(endpoint, {
         reason: 'Toggled via status icon'
       });

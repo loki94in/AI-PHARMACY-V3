@@ -80,6 +80,7 @@ export interface ProposedAction {
     | 'STAGE_PURCHASE_DRAFT'
     | 'STAGE_PRESCRIPTION_DRAFT'
     | 'STAGE_POS_ITEM'
+    | 'STAGE_LIVE_CART_ITEM'
     | 'DISTRIBUTOR_RETURN_DRAFT'
     | 'LOW_STOCK_REORDER';
   summary: string;
@@ -289,6 +290,19 @@ export class ConversationalAgentEngine {
         } else if (proposal.type === 'STAGE_POS_ITEM') {
           replyText = `✅ *Added to Cart!* *${proposal.data.medicineName}* (${proposal.data.quantity || 1} units) is ready on your billing screen.`;
           executionResult = { success: true, item: proposal.data };
+        } else if (proposal.type === 'STAGE_LIVE_CART_ITEM') {
+          const stageRes = await pharmacyToolRegistry.stageLiveCartItem(
+            proposal.data.medicineName,
+            proposal.data.quantity || 1,
+            proposal.data.unit,
+            db
+          );
+          if (stageRes.success) {
+            replyText = `✅ *Live Cart Updated!*\n\nStaged *${proposal.data.quantity || 1} ${proposal.data.unit || 'units'}* of *${(stageRes.details as any)?.item?.name || proposal.data.medicineName}* into the Pharmarack Live Cart.`;
+          } else {
+            replyText = `⚠️ *Live Cart Notice:* ${stageRes.message || 'Could not automatically stage to live distributor cart'}. Staged into procurement queue instead.`;
+          }
+          executionResult = stageRes;
         } else if (proposal.type === 'DISTRIBUTOR_RETURN_DRAFT') {
           replyText = `✅ *Distributor Return Draft Confirmed!* Staged for supplier return processing.`;
           executionResult = { success: true, draft: proposal.data };
@@ -734,7 +748,31 @@ export class ConversationalAgentEngine {
           replyText += `💡 *Operating Tips:*\n` + guide.tips.map(t => `• ${t}`).join('\n');
         }
 
-        suggestedFollowUps = ['Explain POS shortcuts', 'Explain Purchase entry', 'Explain CRM refills'];
+        const navUrl = detected.targetTab
+          ? `${detected.targetPage || '/settings'}?tab=${detected.targetTab}`
+          : (guide.actionUrl || detected.targetPage);
+
+        if (navUrl) {
+          cards.push({
+            id: `guide_nav_${Date.now()}`,
+            title: guide.title,
+            subtitle: 'Click below to open this module or settings screen directly.',
+            badge: 'Open Screen',
+            badgeColor: 'blue',
+            actionUrl: navUrl
+          });
+        }
+
+        const tLower = topic.toLowerCase();
+        if (tLower.includes('order hub') || tLower.includes('live cart') || tLower.includes('pharmarack')) {
+          suggestedFollowUps = ['Open Live Cart', 'How to connect Pharmarack', 'Explain order minimums', 'Stage item to live cart'];
+        } else if (tLower.includes('setting') || tLower.includes('printer') || tLower.includes('whatsapp') || tLower.includes('backup')) {
+          suggestedFollowUps = ['Where are Order Hub settings?', 'How to connect Pharmarack', 'Configure thermal printer', 'Connect WhatsApp Web'];
+        } else if (tLower.includes('pos')) {
+          suggestedFollowUps = ['Explain POS shortcuts', 'Check Dolo 650 stock', 'Show due refills', 'Query today sales'];
+        } else {
+          suggestedFollowUps = ['Where are Order Hub settings?', 'Explain POS shortcuts', 'Audit near-expiry stock', 'Show due refills'];
+        }
         state = 'idle';
         break;
       }
@@ -940,6 +978,105 @@ export class ConversationalAgentEngine {
         break;
       }
 
+      // ── Capability 7: Cart Staging (Live Distributor Cart & POS Billing) ────
+      case 'CART_STAGING': {
+        const medName = detected.medicineName || this.extractMedicineFromText(userText) || 'Medicine';
+        const qty = detected.quantity || 1;
+        const unit = detected.unit || 'strip';
+        const destination = detected.destination || (/\blive\s*cart\b/i.test(userText) ? 'live_cart' : 'pos_cart');
+
+        if (destination === 'live_cart') {
+          replyText = `🛒 *Distributor Live Cart Staging*\n\n` +
+            `• *Medicine:* ${medName}\n` +
+            `• *Quantity:* ${qty} ${unit}\n` +
+            `• *Destination:* Pharmarack Live Cart\n\n` +
+            `👉 *Confirm staging this item to your live distributor cart?*\nReply *Yes* or click *Stage to Live Cart* to confirm, or *No* to cancel.`;
+
+          proposedAction = {
+            id: `live_cart_${Date.now()}`,
+            type: 'STAGE_LIVE_CART_ITEM',
+            summary: `Stage ${qty} ${unit} of ${medName} into Pharmarack Live Cart`,
+            data: {
+              medicineName: medName,
+              quantity: qty,
+              unit,
+              destination: 'live_cart'
+            },
+            requiresConfirmation: true,
+            status: 'PENDING_CONFIRMATION'
+          };
+          state = 'awaiting_confirmation';
+          suggestedFollowUps = ['Stage to Live Cart', 'Cancel'];
+          cards = [{
+            id: `cart_${Date.now()}`,
+            title: medName,
+            subtitle: `Quantity: ${qty} ${unit} | Pharmarack Live Cart`,
+            badge: 'Live Cart',
+            badgeColor: 'green'
+          }];
+        } else {
+          const searchResult = await pharmacyToolRegistry.searchMedicineAvailability(medName, db);
+          toolExecutions.push({ tool: 'searchMedicineAvailability', result: searchResult });
+
+          if (searchResult && searchResult.length > 0) {
+            const topItem = searchResult[0];
+            replyText = `🛒 *POS Billing Cart Staging*\n\n` +
+              `• *Medicine:* ${topItem.name}\n` +
+              `• *Quantity:* ${qty} ${unit}\n` +
+              `• *Form:* ${topItem.dosageForm || 'Tablet'} ${topItem.strength || ''}\n` +
+              `• *Price:* ₹${topItem.sellingPrice.toFixed(2)} (MRP ₹${topItem.mrp.toFixed(2)})\n` +
+              `• *Shelf Stock:* ${topItem.inStock ? `✅ ${topItem.stockQuantity} in stock` : '❌ Out of stock'}\n\n` +
+              `👉 *Confirm adding this item to the POS billing screen?*\nReply *Yes* to stage, or *No* to cancel.`;
+
+            proposedAction = {
+              id: `pos_stage_${Date.now()}`,
+              type: 'STAGE_POS_ITEM',
+              summary: `Add ${qty} of ${topItem.name} to POS billing cart`,
+              data: {
+                medicineId: topItem.id,
+                medicineName: topItem.name,
+                mrp: topItem.mrp,
+                price: topItem.sellingPrice,
+                dosageForm: topItem.dosageForm,
+                inStock: topItem.inStock,
+                stockQuantity: topItem.stockQuantity,
+                quantity: qty,
+                unit
+              },
+              requiresConfirmation: true,
+              status: 'PENDING_CONFIRMATION'
+            };
+            state = 'awaiting_confirmation';
+            suggestedFollowUps = ['Stage to Cart', 'Cancel'];
+            cards = [{
+              id: topItem.id,
+              title: topItem.name,
+              subtitle: `${qty} ${unit} | Shelf: ${topItem.stockQuantity}`,
+              badge: topItem.inStock ? 'In Stock' : 'Out of Stock',
+              badgeColor: topItem.inStock ? 'green' : 'amber'
+            }];
+          } else {
+            replyText = `🔍 We could not find *${medName}* in your local shelf stock.\n\nWould you like to stage it into the *Pharmarack Live Cart* to order from distributor, or log a procurement enquiry?`;
+            proposedAction = {
+              id: `live_cart_${Date.now()}`,
+              type: 'STAGE_LIVE_CART_ITEM',
+              summary: `Stage ${qty} ${unit} of ${medName} into Pharmarack Live Cart`,
+              data: {
+                medicineName: medName,
+                quantity: qty,
+                unit,
+                destination: 'live_cart'
+              },
+              requiresConfirmation: true,
+              status: 'PENDING_CONFIRMATION'
+            };
+            state = 'awaiting_confirmation';
+            suggestedFollowUps = ['Order from distributor', 'Log procurement enquiry', 'Cancel'];
+          }
+        }
+        break;
+      }
+
       // ── Capability 6: Contextual Memory Follow-Ups ─────────────────────────
       case 'CONTEXTUAL_FOLLOW_UP': {
         const lastAlts = session.contextData?.lastAlternatives as AlternativeCandidateItem[];
@@ -1006,22 +1143,44 @@ export class ConversationalAgentEngine {
 
       case 'GREETING': {
         const greetingName = input.username || session.customerName || (role === 'owner' ? 'Owner' : 'Staff');
-        replyText = `👋 Namaste, ${greetingName}! Welcome to AI-PHARMACY-V3 Assistant.\n\n` +
+        const currPage = input.pageContext?.pathname || '/dashboard';
+        const pageGuide = pharmacyToolRegistry.explainApplicationScreen(currPage);
+
+        replyText = `👋 Namaste, ${greetingName}! Welcome to AI Pharmacy OS.\n\n` +
+          `You are currently on *${pageGuide.title}*.\n\n` +
           `I can assist you naturally across all pharmacy operations:\n` +
-          `• 🔍 *Check medicine stock & find salt alternatives*\n` +
-          `• 📄 *Read prescription or purchase invoice images*\n` +
-          `• ⚠️ *Audit near-expiry batches across inventory*\n` +
-          `• 📊 *Analyze today's sales and compare with yesterday*\n` +
-          `• 🔔 *Manage patient refills & schedule reminders*\n` +
-          `• 📖 *Explain any screen or workflow (POS, Purchases, CRM)*\n\n` +
+          `• 🛒 *Order Hub & Live Cart:* Stage shortage medicines and order from distributors\n` +
+          `• ⚙️ *Settings & Automation:* Setup Pharmarack, WhatsApp bot, thermal printers\n` +
+          `• 💊 *POS Counter & Inventory:* Fast billing, salt substitutes, near-expiry batch audits\n` +
+          `• 🔔 *CRM Refills:* Check chronic patient refills and schedule reminder calls\n\n` +
           `How can I help you right now?`;
+
+        if (pageGuide.actionUrl) {
+          cards.push({
+            id: `page_card_${Date.now()}`,
+            title: pageGuide.title,
+            subtitle: pageGuide.guidance.slice(0, 100) + '...',
+            badge: 'Current Screen',
+            badgeColor: 'green',
+            actionUrl: pageGuide.actionUrl
+          });
+        }
+
+        if (currPage.includes('live-cart') || currPage.includes('pharmarack')) {
+          suggestedFollowUps = ['Explain Order Hub settings', 'Stage item to live cart', 'Check distributor minimums', 'Show due refills'];
+        } else if (currPage.includes('setting')) {
+          suggestedFollowUps = ['How to connect Pharmarack', 'Configure thermal printer', 'Connect WhatsApp Web', 'View store profile'];
+        } else if (currPage.includes('pos')) {
+          suggestedFollowUps = ['Explain POS shortcuts', 'Check Dolo 650 stock', 'Show due refills', 'Query today sales'];
+        } else {
+          suggestedFollowUps = [
+            'Where are Order Hub settings?',
+            'Find medicines expiring next month',
+            'Show today sales vs yesterday',
+            'How to connect Pharmarack'
+          ];
+        }
         state = 'idle';
-        suggestedFollowUps = [
-          'Find medicines expiring next month',
-          'Show today sales vs yesterday',
-          'Explain how to use purchase entry',
-          'Audit near-expiry stock'
-        ];
         break;
       }
 
@@ -1124,6 +1283,10 @@ export class ConversationalAgentEngine {
     medicineId?: number;
     batchNo?: string;
     quantity?: number;
+    unit?: string;
+    destination?: 'live_cart' | 'pos_cart';
+    targetPage?: string;
+    targetTab?: string;
     timeframe?: string;
     topic?: string;
     patientName?: string;
@@ -1138,12 +1301,99 @@ export class ConversationalAgentEngine {
       return { type: 'DOCUMENT_OCR' };
     }
 
+    // 0b. Prioritize Qwen Operational Local AI Intent when active/ready
+    try {
+      if (isLocalAiEnabled()) {
+        const { queryOperationalAiIntent } = await import('./llamaServerClient.js');
+        const opIntent = await queryOperationalAiIntent(text);
+        if (opIntent && opIntent.confidence >= 0.6 && opIntent.intent !== 'UNKNOWN') {
+          if (opIntent.intent === 'CART_STAGING') {
+            return {
+              type: 'CART_STAGING',
+              medicineName: opIntent.medicineName,
+              quantity: opIntent.quantity,
+              unit: opIntent.unit,
+              destination: opIntent.destination || (/\blive\s*cart\b/i.test(t) ? 'live_cart' : 'pos_cart')
+            };
+          }
+          if (opIntent.intent === 'EXPIRY_AUDIT') {
+            return { type: 'EXPIRY_AUDIT', timeframe: opIntent.timeframeDays ? `${opIntent.timeframeDays}_days` : '60_days' };
+          }
+          if (opIntent.intent === 'DISTRIBUTOR_RETURN_DRAFT') {
+            return { type: 'DISTRIBUTOR_RETURN_DRAFT', timeframe: opIntent.timeframeDays ? `${opIntent.timeframeDays}_days` : '60_days' };
+          }
+          if (opIntent.intent === 'LOW_STOCK_REORDER') {
+            return { type: 'LOW_STOCK_REORDER' };
+          }
+          if (opIntent.intent === 'DELIVERY_STATUS') {
+            return { type: 'DELIVERY_STATUS' };
+          }
+          if (opIntent.intent === 'PURCHASE_QUERY') {
+            return { type: 'PURCHASE_QUERY', medicineName: opIntent.medicineName };
+          }
+          if (opIntent.intent === 'SALES_SUMMARY') {
+            return { type: 'SALES_COMPARISON' };
+          }
+          if (opIntent.intent === 'REFILL_MANAGEMENT') {
+            return { type: 'REFILL', medicineName: opIntent.medicineName };
+          }
+          if (opIntent.intent === 'STOCK_ADJUSTMENT') {
+            return { type: 'STOCK_CORRECTION', medicineName: opIntent.medicineName, quantity: opIntent.quantity };
+          }
+          if (opIntent.intent === 'PAGE_GUIDANCE') {
+            return {
+              type: 'APPLICATION_GUIDE',
+              topic: opIntent.targetPage || opIntent.explanation || text,
+              targetPage: opIntent.targetPage,
+              targetTab: opIntent.targetTab
+            };
+          }
+          if (opIntent.intent === 'CHITCHAT') {
+            return { type: 'GREETING' };
+          }
+          if (opIntent.intent === 'CUSTOMER_ENQUIRY') {
+            return { type: 'MEDICINE_INQUIRY', medicineName: opIntent.medicineName };
+          }
+        }
+      }
+    } catch (_) {
+      // Gracefully fall back to deterministic pattern matchers below
+    }
+
     // 1. Explicit document scan requests
     if (
       /\b(?:read|scan|check|extract|parse|add|process)\b.*\b(?:prescription|invoice|bill|photo|image|scan|doc)\b/i.test(t) ||
       /\b(?:prescription workflow|purchase entry draft|read this)\b/i.test(t)
     ) {
       return { type: 'DOCUMENT_OCR' };
+    }
+
+    // 1b. Cart Staging (Live Distributor Cart & POS Billing) Fallback
+    if (
+      /\b(?:live\s*cart|pharmarack|distributor\s*cart)\b/i.test(t) ||
+      (/\b(?:add|stage|put|load|insert|order)\b/i.test(t) && /\b(?:live\s*cart|pos\s*cart|bill|cart)\b/i.test(t))
+    ) {
+      const isLiveCart = /\b(?:live\s*cart|pharmarack|distributor\s*cart)\b/i.test(t);
+      let parsedQty = 1;
+      const unitQtyMatch = text.match(/\b(\d{1,4})\s*(?:strip|strips|tablet|tablets|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units|nos)\b/i);
+      const hyphenQtyMatch = text.match(/-\s*(\d{1,4})\b/);
+      const leadingQtyMatch = text.match(/\b(?:add|stage|put|load)\s+(\d{1,4})\s+[a-zA-Z]/i);
+      if (unitQtyMatch) {
+        parsedQty = parseInt(unitQtyMatch[1], 10);
+      } else if (hyphenQtyMatch) {
+        parsedQty = parseInt(hyphenQtyMatch[1], 10);
+      } else if (leadingQtyMatch) {
+        parsedQty = parseInt(leadingQtyMatch[1], 10);
+      }
+      const unitMatch = text.match(/\b(strip|strips|tablet|tablets|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units)\b/i);
+      const med = this.extractMedicineFromText(text);
+      return {
+        type: 'CART_STAGING',
+        medicineName: med,
+        quantity: parsedQty,
+        unit: unitMatch ? unitMatch[1].toLowerCase() : 'strip',
+        destination: isLiveCart ? 'live_cart' : 'pos_cart'
+      };
     }
 
     // 2. Alternative & Salt Comparison
@@ -1228,18 +1478,69 @@ export class ConversationalAgentEngine {
       return { type: 'STOCK_CORRECTION', medicineName: med };
     }
 
-    // 6. Application / Screen Guidance
+    // 6. Application / Screen Guidance & Order Hub Settings
     if (
-      /\b(?:explain how to use|how to use|how do i use|explain this screen|explain this page|explain page)\b/i.test(t) ||
-      /\b(?:purchase entry screen|pos billing|inventory screen|crm screen|dispatch screen)\b/i.test(t)
+      /\b(?:explain how to use|how to use|how do i use|explain this screen|explain this page|explain page|where is|where are|how to set up|how to setup|setup guide|how does.*work)\b/i.test(t) ||
+      /\b(?:order hub|live cart|settings|pharmarack|printer|whatsapp|backup|purchase entry screen|pos billing|inventory screen|crm screen|dispatch screen|returns hub|sales report)\b/i.test(t)
     ) {
       let topic = 'general';
-      if (t.includes('purchase')) topic = 'purchase';
-      else if (t.includes('pos')) topic = 'pos';
-      else if (t.includes('inventory')) topic = 'inventory';
-      else if (t.includes('crm')) topic = 'crm';
-      else if (t.includes('dispatch')) topic = 'dispatch';
-      return { type: 'APPLICATION_GUIDE', topic };
+      let targetPage: string | undefined;
+      let targetTab: string | undefined;
+
+      if (/\b(?:order hub|orderhub|live cart|pharmarack)\b/i.test(t)) {
+        topic = 'order hub';
+        if (t.includes('setting') || t.includes('setup') || t.includes('configure') || t.includes('connect')) {
+          targetPage = '/settings';
+          targetTab = 'integrations';
+        } else {
+          targetPage = '/live-cart';
+        }
+      } else if (/\b(?:whatsapp|qr|bot)\b/i.test(t)) {
+        topic = 'whatsapp';
+        targetPage = '/settings';
+        targetTab = 'integrations';
+      } else if (/\b(?:printer|hardware|receipt|thermal)\b/i.test(t)) {
+        topic = 'printer';
+        targetPage = '/settings';
+        targetTab = 'appearance';
+      } else if (/\b(?:backup|restore|database snapshot)\b/i.test(t)) {
+        topic = 'backup';
+        targetPage = '/settings';
+        targetTab = 'backups';
+      } else if (/\b(?:order timing|cutoff|window)\b/i.test(t)) {
+        topic = 'order timing';
+        targetPage = '/settings';
+        targetTab = 'order_timing';
+      } else if (/\b(?:setting|settings|automation hub)\b/i.test(t)) {
+        topic = 'settings';
+        targetPage = '/settings';
+      } else if (t.includes('purchase')) {
+        topic = 'purchase';
+        targetPage = '/purchases';
+      } else if (t.includes('pos') || t.includes('billing')) {
+        topic = 'pos';
+        targetPage = '/pos';
+      } else if (t.includes('inventory') || t.includes('stock')) {
+        topic = 'inventory';
+        targetPage = '/inventory';
+      } else if (t.includes('crm') || t.includes('refill')) {
+        topic = 'crm';
+        targetPage = '/crm';
+      } else if (t.includes('dispatch') || t.includes('delivery')) {
+        topic = 'dispatch';
+        targetPage = '/dispatch';
+      } else if (t.includes('return')) {
+        topic = 'returns';
+        targetPage = '/returns';
+      } else if (t.includes('report') || t.includes('sales')) {
+        topic = 'reports';
+        targetPage = '/reports';
+      } else if (t.includes('audit') || t.includes('investigation')) {
+        topic = 'investigation';
+        targetPage = '/investigation';
+      }
+
+      return { type: 'APPLICATION_GUIDE', topic, targetPage, targetTab };
     }
 
     // 7. Follow-up resolution ("show me the second one", "add that medicine")
@@ -1376,13 +1677,21 @@ export class ConversationalAgentEngine {
 
     let clean = text
       .replace(/\b(?:this medicine is unavailable|this medicine is out of stock|this medicine is not available|this medicine|this)\b/gi, ' ')
+      .replace(/\b(?:in the live cart|in live cart|to live cart|into live cart|in the pos cart|to pos cart|in pos cart|in the cart|in cart|to cart|into cart|in bill|to bill|into bill|on live cart|on pos|on bill)\b/gi, ' ')
       .replace(/\b(?:add to bill|add to cart|add to pos|add|give|put|bill|dispense|take|dalo|lagao|bhejo|do you have|can you check|is|in stock|available|unavailable|right now|today|price of|cost of|chahiye|milegi|kya|please|for me|tablet|strip|box|find an alternative for|find alternatives for|find substitute for|alternative for|substitute for)\b/gi, ' ')
+      .replace(/\b(?:strip|strips|tablets?|capsules?|box|boxes|bottles?|pack|packs|units?|nos?)\b/gi, ' ')
       .replace(/[?!,.]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
 
-    // Strip optional leading numbers (e.g. "2 Dolo 650" -> "Dolo 650")
-    clean = clean.replace(/^\d{1,3}\s+/, '').trim();
+    // Strip leading "the " or "a "
+    clean = clean.replace(/^(?:the|a|an)\s+/i, '').trim();
+
+    // Strip trailing or inline hyphen-quantity phrases (e.g. "- 6", "6")
+    clean = clean.replace(/-\s*\d{1,4}\s*$/g, '').trim();
+    clean = clean.replace(/^\d{1,4}\s+/, '').trim();
+    clean = clean.replace(/^[-–—\s]+|[-–—\s]+$/g, '').trim();
+    clean = clean.replace(/^(?:the|a|an)\s+/i, '').trim();
 
     if (clean.length >= 3 && !/^(hi|hello|yes|no|ok|refill|call|timing|shop|store|address|hours|this medicine|medicine)$/i.test(clean)) {
       return clean;
