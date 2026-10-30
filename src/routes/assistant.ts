@@ -111,6 +111,7 @@ router.post('/chat', async (req: Request, res: Response) => {
         createdAt: new Date().toISOString()
       } : undefined,
       cards: agentResult.cards || [],
+      citations: agentResult.citations || [],
       suggestedFollowUps: agentResult.suggestedFollowUps || [],
       requiresConfirmation: agentResult.requiresConfirmation,
       latencyMs: agentResult.latencyMs || 0
@@ -236,6 +237,19 @@ router.post('/cancel', async (req: Request, res: Response) => {
 
     const cancelled = unifiedAssistantOrchestrator.cancelProposal(proposalId, sessionId);
 
+    // Synchronize cancellation with persistent conversational memory
+    try {
+      const { conversationalMemoryService } = await import('../services/localAi/conversationalMemoryService.js');
+      const session = await conversationalMemoryService.getSession(sessionId);
+      if (session) {
+        await conversationalMemoryService.updateSession(session.id, {
+          sessionState: 'idle',
+          activeIntent: 'PROPOSAL_CANCELLED',
+          contextData: { ...(session.contextData || {}), pendingProposal: undefined }
+        });
+      }
+    } catch (_) {}
+
     return res.json({
       success: true,
       cancelled,
@@ -254,10 +268,16 @@ router.post('/cancel', async (req: Request, res: Response) => {
  * POST /api/assistant/clear-session
  * Clears conversational memory for a given session ID
  */
-router.post('/clear-session', (req: Request, res: Response) => {
+router.post('/clear-session', async (req: Request, res: Response) => {
   try {
     const { sessionId = 'default-staff-session' } = req.body || {};
     unifiedAssistantOrchestrator.clearSession(sessionId);
+
+    // Synchronize clearing with persistent conversational memory
+    try {
+      const { conversationalMemoryService } = await import('../services/localAi/conversationalMemoryService.js');
+      await conversationalMemoryService.clearSessionContext(sessionId);
+    } catch (_) {}
 
     return res.json({
       success: true,

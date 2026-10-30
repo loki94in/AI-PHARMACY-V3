@@ -174,6 +174,178 @@ export class PharmacyToolRegistry {
   }
 
   /**
+   * Complete connected multi-task chronic refill orchestrator:
+   * 1. Patient identification & credit balance lookup
+   * 2. Active chronic refills & live shelf inventory cross-validation
+   * 3. Shortage calculation (needed vs shelf stock)
+   * 4. Multi-action bundle (Live Cart Staging, Special Order, Call Task, WhatsApp Payment QR)
+   */
+  public async orchestrateUnifiedPatientRefillFlow(
+    patientQuery: string,
+    dbInstance?: any
+  ): Promise<{
+    found: boolean;
+    customer?: {
+      id: number;
+      name: string;
+      phone: string;
+      creditBalance: number;
+      creditDueDate?: string;
+    };
+    refills: Array<{
+      id: number;
+      medicineName: string;
+      quantityNeeded: number;
+      totalStock: number;
+      shortageQty: number;
+      inStock: boolean;
+      pricePerUnit: number;
+      nextRefillDate: string | null;
+    }>;
+    hasShortage: boolean;
+    hasOutstandingDue: boolean;
+    suggestedActions: string[];
+  }> {
+    const db = dbInstance || (await dbManager.getConnection());
+    const raw = String(patientQuery || '').trim();
+    const cleanDigits = raw.replace(/\D/g, '');
+
+    // 1. Resolve customer
+    let cust: any = null;
+    if (cleanDigits.length >= 10) {
+      cust = await db.get(
+        `SELECT id, name, phone, credit_balance, credit_due_date FROM customers WHERE phone = ? OR phone LIKE ? LIMIT 1`,
+        [cleanDigits.slice(-10), `%${cleanDigits.slice(-10)}`]
+      ).catch(() => null);
+    }
+    if (!cust && raw.length >= 2) {
+      cust = await db.get(
+        `SELECT id, name, phone, credit_balance, credit_due_date FROM customers
+         WHERE name = ? OR name LIKE ?
+         ORDER BY (name = ?) DESC, length(name) ASC LIMIT 1`,
+        [raw, `%${raw}%`, raw]
+      ).catch(() => null);
+    }
+
+    if (!cust) {
+      return {
+        found: false,
+        refills: [],
+        hasShortage: false,
+        hasOutstandingDue: false,
+        suggestedActions: ['Search medicine catalog', 'Open CRM Screen']
+      };
+    }
+
+    const customerData = {
+      id: Number(cust.id),
+      name: String(cust.name || 'Customer'),
+      phone: String(cust.phone || ''),
+      creditBalance: Math.max(0, Number(cust.credit_balance || 0)),
+      creditDueDate: cust.credit_due_date ? String(cust.credit_due_date).slice(0, 10) : undefined
+    };
+
+    // 2. Fetch active refills
+    const refillRows = await db.all(
+      `SELECT pr.id, pr.patient_name, pr.patient_phone, pr.quantity_needed,
+              pr.next_refill_date, pr.status, pr.is_ready, pr.medicine_name, pr.medicine_id,
+              m.name as catalog_med, m.sell_price, m.mrp, m.total_stock
+       FROM patient_refills pr
+       LEFT JOIN medicines m ON pr.medicine_id = m.id
+       WHERE (pr.is_active = 1 OR pr.is_active IS NULL)
+         AND pr.status NOT IN ('completed', 'canceled', 'cancelled')
+         AND (pr.customer_id = ? OR pr.patient_phone = ? OR pr.patient_phone LIKE ?)
+       ORDER BY pr.next_refill_date ASC LIMIT 10`,
+      [customerData.id, customerData.phone, `%${customerData.phone.slice(-10)}`]
+    ).catch(() => []);
+
+    let refills: any[] = [];
+    if (refillRows.length > 0) {
+      for (const r of refillRows) {
+        let liveStock = Number(r.total_stock || 0);
+        if (r.medicine_id) {
+          const invRow = await db.get(
+            `SELECT COALESCE(SUM(quantity), 0) as stock FROM inventory_master WHERE medicine_id = ? AND is_active = 1`,
+            [r.medicine_id]
+          ).catch(() => null);
+          if (invRow) liveStock = Number(invRow.stock);
+        }
+        const needed = Number(r.quantity_needed || 1);
+        const shortage = Math.max(0, needed - liveStock);
+        refills.push({
+          id: r.id,
+          medicineName: r.medicine_name || r.catalog_med || 'Medicine',
+          quantityNeeded: needed,
+          totalStock: liveStock,
+          shortageQty: shortage,
+          inStock: shortage === 0,
+          pricePerUnit: Number(r.sell_price || r.mrp || 0),
+          nextRefillDate: r.next_refill_date ? String(r.next_refill_date).slice(0, 10) : null
+        });
+      }
+    } else {
+      // Fallback: previous purchases in sale_items
+      const pastItems = await db.all(
+        `SELECT si.medicine_name, si.quantity, m.id as medicine_id, m.total_stock, m.sell_price, m.mrp
+         FROM sale_items si
+         JOIN sales_invoices s ON s.id = si.sale_id
+         LEFT JOIN medicines m ON m.name = si.medicine_name
+         WHERE s.customer_id = ?
+         ORDER BY s.id DESC LIMIT 3`,
+        [customerData.id]
+      ).catch(() => []);
+
+      for (const p of pastItems) {
+        let liveStock = Number(p.total_stock || 0);
+        if (p.medicine_id) {
+          const invRow = await db.get(
+            `SELECT COALESCE(SUM(quantity), 0) as stock FROM inventory_master WHERE medicine_id = ? AND is_active = 1`,
+            [p.medicine_id]
+          ).catch(() => null);
+          if (invRow) liveStock = Number(invRow.stock);
+        }
+        const needed = Number(p.quantity || 1);
+        const shortage = Math.max(0, needed - liveStock);
+        refills.push({
+          id: Number(p.medicine_id || 900000),
+          medicineName: p.medicine_name,
+          quantityNeeded: needed,
+          totalStock: liveStock,
+          shortageQty: shortage,
+          inStock: shortage === 0,
+          pricePerUnit: Number(p.sell_price || p.mrp || 0),
+          nextRefillDate: 'Regular'
+        });
+      }
+    }
+
+    const hasShortage = refills.some(r => !r.inStock);
+    const hasOutstandingDue = customerData.creditBalance > 0;
+
+    const suggestedActions: string[] = [];
+    if (refills.some(r => r.inStock)) {
+      suggestedActions.push('Confirm & Dispense Refill');
+    }
+    if (hasShortage) {
+      suggestedActions.push('Stage Shortage to Live Cart');
+      suggestedActions.push('Book Special Order');
+    }
+    if (hasOutstandingDue) {
+      suggestedActions.push('Send WhatsApp Payment QR');
+    }
+    suggestedActions.push('Schedule Follow-up Call');
+
+    return {
+      found: true,
+      customer: customerData,
+      refills,
+      hasShortage,
+      hasOutstandingDue,
+      suggestedActions
+    };
+  }
+
+  /**
    * Authoritative medicine search with customer-safe pricing (PTR/costs strictly masked)
    */
   public async searchMedicineAvailability(
@@ -975,7 +1147,7 @@ export class PharmacyToolRegistry {
 
     const result = await db.run(
       `INSERT INTO patient_call_tasks
-         (task_type, patient_name, patient_phone, details_json, priority, due_date, status)
+         (task_type, patient_name, patient_phone, details_json, priority, reschedule_date, status)
        VALUES ('callback', ?, ?, ?, ?, ?, 'pending')`,
       [patientName || 'Customer', patientPhone, JSON.stringify({ details }), priority, dueDate || null]
     );
@@ -1357,6 +1529,41 @@ export class PharmacyToolRegistry {
     }
   }
 
+
+  /**
+   * Retrieves current live items staged in the Pharmarack Live Cart
+   */
+  public async getLiveCartStatus(): Promise<{
+    totalItems: number;
+    distributorCount: number;
+    items: Array<{ name: string; qty: number; distributor?: string }>;
+  }> {
+    try {
+      const { getCachedCartLines, loadLiveCartCore } = await import('../../routes/pharmarack.js');
+      const lines = getCachedCartLines();
+      if (lines && lines.length > 0) {
+        return {
+          totalItems: lines.length,
+          distributorCount: new Set(lines.map(l => l.storeName)).size,
+          items: lines.map(l => ({ name: l.productName, qty: l.qty, distributor: l.storeName }))
+        };
+      }
+      const live = await loadLiveCartCore().catch(() => ({ distributors: [], totalItems: 0 }));
+      const allItems: any[] = [];
+      for (const dist of (live.distributors || [])) {
+        for (const item of (dist.items || [])) {
+          allItems.push({ name: item.productName || item.name, qty: item.quantity || item.qty || 1, distributor: dist.distributorName || dist.storeName });
+        }
+      }
+      return {
+        totalItems: live.totalItems || allItems.length,
+        distributorCount: (live.distributors || []).length,
+        items: allItems
+      };
+    } catch {
+      return { totalItems: 0, distributorCount: 0, items: [] };
+    }
+  }
   /**
    * Queries patient credit balance and unpaid invoice breakdown for monthly due reminders
    */

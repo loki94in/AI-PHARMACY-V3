@@ -7,6 +7,53 @@
 
 ## Fixed
 
+### [Fixed] P2-141 — Conversational Assistant Latency Optimization & Multi-Intent Fast-Path Routing
+- Cause:
+  1. `queryOperationalAiIntent` previously had a 10-second default timeout (`timeoutMs: 10000`) and was placed ahead of deterministic pattern matchers in `resolveUnifiedIntent`. When the local Qwen model process was cold or idle, every user request hung for ~10–13 seconds waiting for network timeouts.
+  2. Inquiries regarding live cart items (e.g. `"HOW MANY ITOM WE HAVE IN THE KLIVE CART"`) fell into `CART_STAGING` because `live cart` was in the text and treated `"ITOM"` as a new medicine name to stage with quantity 1.
+  3. Raw medicine queries with dosage forms (e.g. `"ALEX JUNIOR SYP 60ML"`) were not matched as `MEDICINE_INQUIRY` when command words like "stock" were omitted, falling into unknown intent.
+  4. Identity queries (`"WHO ARE YOU"`) fell into generic screen guidance instead of a clinical/operational copilot introduction.
+- Fix:
+  1. Fast-Path Latency Architecture (`src/services/localAi/llamaServerClient.ts`, `src/services/localAi/conversationalAgentEngine.ts`):
+     - Added `isServerProcessRunning()` guard: if the server is not active and 300ms probe fails, `queryOperationalAiIntent` immediately exits (0ms overhead).
+     - Reduced `queryOperationalAiIntent` timeout from 10000ms to 1200ms.
+     - Reordered `resolveUnifiedIntent`: deterministic fast-paths for greetings, bot identity, live cart status, sales comparison, and raw medicine inquiries execute upfront in < 15ms.
+  2. Dedicated Live Cart Status Intent (`src/services/localAi/pharmacyToolRegistry.ts`, `src/services/localAi/conversationalAgentEngine.ts`):
+     - Implemented `getLiveCartStatus()` inspecting active cached cart lines from `pharmarack.ts` (`loadLiveCartCore` & `getCachedCartLines`).
+     - Added `LIVE_CART_STATUS` intent returning exact count of staged items, linked distributors, and interactive cart action cards.
+  3. Raw Pharmaceutical Dosage Form Matcher:
+     - Regex detects dosage forms (`syp`, `tab`, `cap`, `inj`, `susp`, `drops`, `60ml`, `mg`) without command verbs, immediately routing to live stock, rack location, and substitute lookups.
+  4. Bot Identity Persona (`BOT_IDENTITY`):
+     - Formatted natural introductory response explaining clinical & operational AI capabilities with quick-access cards.
+- Priority: P2
+- Verified by: Live chat endpoint tests: `"WHO ARE YOU"` (11ms latency); `"ALEX JUNIOR SYP 60ML"` (routed to `MEDICINE_INQUIRY`); `"HOW MANY ITOM WE HAVE IN THE KLIVE CART"` (returned 5 items across 4 distributors); `npm run guardrails` exit 0 (0 violations); 53 Jest unit tests passing.
+- Cause:
+  1. Pharmacy Operations Assistant used static template responses for initial turns and lacked grounded SOP ingestion, leading to fallback scripts when users asked conversational pharmacy queries.
+  2. Queries that the assistant could not answer were not tracked or persisted anywhere, leaving pharmacists and owners unable to review missed questions or improve operational knowledge.
+  3. Llama server startup lacked a single-flight mutex (`ensureLlamaServerRunning()`), which caused concurrent requests to fail with `false` when initialization was in progress.
+  4. WhatsApp connecting previously triggered an unsolicited Qwen cold start on low-resource machines.
+  5. Multi-turn pronoun references ("its expiry", "how much stock does it have?", "is he ready?") were not resolved to entities from previous turns.
+- Fix:
+  1. Knowledge Base Service & SQLite FTS5 (`src/services/localAi/knowledgeBaseService.ts`, `src/database.ts`):
+     - Added `assistant_knowledge_documents`, `assistant_knowledge_chunks`, and virtual table `assistant_knowledge_fts` across fast-boot and DDL migration paths.
+     - Implemented document ingestion, SHA-256 content hashing, version tracking, block chunking, and BM25 FTS5 retrieval with SQL LIKE fallback.
+     - Seeded initial approved SOPs (SOP-DISP-01, SOP-REFILL-02, SOP-EXP-03) and user guides.
+  2. Unified Pharmacy RAG Service (`src/services/localAi/pharmacyRagService.ts`):
+     - Aggregates authoritative live medicine stock/pricing, customer CRM records, and indexed SOP documents into structured evidence packages with source citations.
+  3. Conversational Agent Grounding & Multi-Turn Resolution (`src/services/localAi/conversationalAgentEngine.ts`):
+     - Added multi-turn pronoun and entity resolution for medicines and customers.
+     - Grounded procedural queries with RAG evidence and attached citations chips.
+     - Unhandled or fallback queries are automatically recorded to `ai_assistant_fallbacks`.
+  4. Single-Flight Mutex & Token Profiles (`src/services/localAi/llamaServerClient.ts`, `src/services/localAi/localAiLifecycleManager.ts`):
+     - Replaced boolean flag with shared `startupPromise: Promise<boolean> | null` so concurrent requests await the identical startup.
+     - Decoupled WhatsApp connection from background Qwen cold starts.
+     - Reconciled manifest context window (2048) and configured bounded output token profiles (short: 128, normal: 256, detailed: 384).
+  5. Learning Center & UI Integration (`src/routes/learning.ts`, `frontend/src/pages/Learning/index.tsx`, `frontend/src/components/UnifiedOperationsAssistantModal.tsx`):
+     - Added Tab 4 ("Bot Fallbacks & Queries") in the Learning Center with status filters, query cards, and resolution modals.
+     - Rendered citations chips beneath assistant responses in the chat modal.
+- Priority: P2
+- Verified by: `npm run guardrails` exit 0 (clean `tsc --noEmit`, 0 violations); 53 unit tests passing (`tests/pharmacyKnowledgeBase.test.ts`, `tests/pharmacyRagPipeline.test.ts`, `tests/conversationalAgentEngine.test.ts`); frontend client build (`npm run build:client`) succeeded in 55.37s; backend build (`npm run build`) succeeded with 0 errors.
+
 ### [Fixed] P2-139 — Coucou Parity: GitHub Release Notes & Markdown Changelog Ingestion for In-App Updates
 - Cause:
   1. If the update license server returned an empty or minimal changelog string, the in-app `UpdateBanner` had no release notes to display, leaving the pharmacist unaware of new features and improvements.

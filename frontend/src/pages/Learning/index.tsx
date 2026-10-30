@@ -117,7 +117,34 @@ let cachedOcrCorrections: OcrCorrection[] = [];
 const cachedProfileDetailsMap: Record<number, LocalProfileDetailRow> = {};
 const forgetCachedProfileDetails = (id: number) => { delete cachedProfileDetailsMap[id]; };
 
-const VALID_LEARNING_TABS = ['clinical', 'doctors', 'distributors'];
+interface AssistantFallbackRow {
+  id: number;
+  session_id: string | null;
+  role: 'staff' | 'owner' | 'customer' | 'system';
+  user_id: number | null;
+  username: string | null;
+  query_text: string;
+  page_context_title: string | null;
+  page_context_path: string | null;
+  fallback_reason: string;
+  suggested_intent: string | null;
+  bot_reply_text: string;
+  status: 'pending' | 'reviewed' | 'resolved' | 'ignored';
+  resolution_notes: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+interface AssistantFallbacksResponse {
+  success: boolean;
+  fallbacks: AssistantFallbackRow[];
+  total: number;
+  pendingCount: number;
+  limit: number;
+  offset: number;
+}
+
+const VALID_LEARNING_TABS = ['clinical', 'doctors', 'distributors', 'assistant'];
 
 const Learning: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -127,6 +154,7 @@ const Learning: React.FC = () => {
     if (!t) return 'clinical';
     const lower = t.toLowerCase();
     if (lower === 'distributor_layouts' || lower === 'distributors') return 'distributors';
+    if (lower === 'assistant' || lower === 'fallbacks' || lower === 'bot') return 'assistant';
     if (VALID_LEARNING_TABS.includes(lower)) return lower;
     return 'clinical';
   };
@@ -199,11 +227,20 @@ const Learning: React.FC = () => {
   const [isSavingDoctor, setIsSavingDoctor] = useState(false);
   const [shakeEditDoctorPhone, setShakeEditDoctorPhone] = useState(false);
 
+  // Assistant Fallbacks state
+  const [fallbackStatusFilter, setFallbackStatusFilter] = useState<'all' | 'pending' | 'reviewed' | 'resolved'>('all');
+  const [fallbackSearchQuery, setFallbackSearchQuery] = useState('');
+  const [resolvingFallback, setResolvingFallback] = useState<AssistantFallbackRow | null>(null);
+  const [resolutionNoteInput, setResolutionNoteInput] = useState('');
+  const [isUpdatingFallback, setIsUpdatingFallback] = useState(false);
+  const [expandedFallbackId, setExpandedFallbackId] = useState<number | null>(null);
+
   // Universal Escape key dismissal for Learning modals
   useModalEscape(showAddDistributorModal, () => setShowAddDistributorModal(false));
   useModalEscape(showMergeModal, () => setShowMergeModal(false));
   useModalEscape(!!editingDistributor, () => setEditingDistributor(null));
   useModalEscape(!!editingDoctor, () => setEditingDoctor(null));
+  useModalEscape(!!resolvingFallback, () => setResolvingFallback(null));
 
   const handleOpenEditDistributor = async (p: LearningProfileSummary) => {
     let mappingStr = '{}';
@@ -400,6 +437,20 @@ const Learning: React.FC = () => {
     },
     { enabled: isPageVisible, staleTime: 60000 }
   );
+
+  // Assistant Fallbacks Query
+  const { data: fallbacksData, isLoading: loadingFallbacks, refetch: refetchFallbacks } = useApiQuery<AssistantFallbacksResponse>(
+    ['assistant-fallbacks', fallbackStatusFilter],
+    async () => {
+      const res = await apiClient.get('/learning/assistant-fallbacks', {
+        params: { status: fallbackStatusFilter, limit: 100 }
+      });
+      return res.data;
+    },
+    { enabled: isPageVisible }
+  );
+  const fallbacksList: AssistantFallbackRow[] = fallbacksData?.fallbacks || [];
+  const fallbacksPendingCount: number = fallbacksData?.pendingCount || 0;
 
   // Today's Pharmarack Sent Orders Query
   const { data: todaySentOrdersData } = useApiQuery<LocalSentOrdersResponse>(
@@ -704,6 +755,48 @@ const Learning: React.FC = () => {
     );
   }), [profilesList, profileSearchQuery, globalSearch]);
 
+  // Filtered Assistant Fallbacks
+  const filteredFallbacks = useMemo(() => {
+    return fallbacksList.filter(f => {
+      const q = fallbackSearchQuery.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        (f.query_text && f.query_text.toLowerCase().includes(q)) ||
+        (f.page_context_title && f.page_context_title.toLowerCase().includes(q)) ||
+        (f.bot_reply_text && f.bot_reply_text.toLowerCase().includes(q)) ||
+        (f.fallback_reason && f.fallback_reason.toLowerCase().includes(q))
+      );
+    });
+  }, [fallbacksList, fallbackSearchQuery]);
+
+  const handleUpdateFallbackStatus = async (id: number, nextStatus: 'reviewed' | 'resolved' | 'ignored', notes?: string) => {
+    setIsUpdatingFallback(true);
+    try {
+      await apiClient.patch(`/learning/assistant-fallbacks/${id}`, {
+        status: nextStatus,
+        resolution_notes: notes || undefined
+      });
+      toastEvent.trigger(nextStatus === 'resolved' ? 'Query marked as resolved' : 'Fallback updated', 'success');
+      setResolvingFallback(null);
+      setResolutionNoteInput('');
+      refetchFallbacks();
+    } catch (err: any) {
+      toastEvent.trigger(err?.response?.data?.error || 'Failed to update fallback', 'error');
+    } finally {
+      setIsUpdatingFallback(false);
+    }
+  };
+
+  const handleDeleteFallback = async (id: number) => {
+    try {
+      await apiClient.delete(`/learning/assistant-fallbacks/${id}`);
+      toastEvent.trigger('Fallback entry dismissed', 'success');
+      refetchFallbacks();
+    } catch (err: any) {
+      toastEvent.trigger('Failed to dismiss fallback', 'error');
+    }
+  };
+
   // Check if distributor has an active placed order today
   const hasOrderToday = (p: LearningProfileSummary) => {
     if (!todaySentOrdersList || todaySentOrdersList.length === 0) return false;
@@ -727,7 +820,8 @@ const Learning: React.FC = () => {
           {[
             { id: 'clinical', label: 'Clinical AI & OCR Rules', icon: Brain, badge: correctionsArray.length },
             { id: 'doctors', label: 'Doctor Directory', icon: Stethoscope, badge: doctorsListArray.length },
-            { id: 'distributors', label: 'Distributor OCR Layouts', icon: Database, badge: profilesList.length }
+            { id: 'distributors', label: 'Distributor OCR Layouts', icon: Database, badge: profilesList.length },
+            { id: 'assistant', label: 'Bot Fallbacks & Queries', icon: Bot, badge: fallbacksPendingCount }
           ].map(t => {
             const Icon = t.icon;
             const isActive = activeTab === t.id;
@@ -1604,6 +1698,222 @@ const Learning: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
+      {/* ========================================================================= */}
+      {/* TAB 4: Bot Fallbacks & Unresolved Assistant Queries */}
+      {/* ========================================================================= */}
+      {activeTab === 'assistant' && (
+        <div className="space-y-5 animate-fadeIn">
+          {/* Top Metric Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-glass-bg border border-glass-border p-4 rounded-2xl flex items-center gap-3.5 shadow-sm">
+              <div className="w-11 h-11 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20 flex items-center justify-center shrink-0">
+                <AlertCircle size={22} />
+              </div>
+              <div>
+                <div className="text-[11px] font-bold text-muted uppercase tracking-wider">Pending Review</div>
+                <div className="text-2xl font-black font-mono text-text mt-0.5">{fallbacksPendingCount}</div>
+              </div>
+            </div>
+
+            <div className="bg-glass-bg border border-glass-border p-4 rounded-2xl flex items-center gap-3.5 shadow-sm">
+              <div className="w-11 h-11 rounded-xl bg-primary/10 text-primary border border-primary/20 flex items-center justify-center shrink-0">
+                <Bot size={22} />
+              </div>
+              <div>
+                <div className="text-[11px] font-bold text-muted uppercase tracking-wider">Total Captured</div>
+                <div className="text-2xl font-black font-mono text-text mt-0.5">{fallbacksList.length}</div>
+              </div>
+            </div>
+
+            <div className="bg-glass-bg border border-glass-border p-4 rounded-2xl flex items-center gap-3.5 shadow-sm">
+              <div className="w-11 h-11 rounded-xl bg-green-500/10 text-green-500 border border-green-500/20 flex items-center justify-center shrink-0">
+                <CheckCircle2 size={22} />
+              </div>
+              <div>
+                <div className="text-[11px] font-bold text-muted uppercase tracking-wider">Resolved & Learned</div>
+                <div className="text-2xl font-black font-mono text-text mt-0.5">
+                  {fallbacksList.filter(f => f.status === 'resolved').length}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Control Bar: Filters & Search */}
+          <div className="bg-glass-bg border border-glass-border p-3 rounded-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shadow-sm">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+              {(['all', 'pending', 'reviewed', 'resolved'] as const).map(st => (
+                <button
+                  key={st}
+                  onClick={() => setFallbackStatusFilter(st)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold capitalize transition-all cursor-pointer ${
+                    fallbackStatusFilter === st
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'bg-bg2 text-muted hover:text-text hover:bg-bg3 border border-border'
+                  }`}
+                >
+                  {st === 'all' ? 'All Queries' : st}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative flex-1 sm:max-w-xs">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search captured queries..."
+                value={fallbackSearchQuery}
+                onChange={e => setFallbackSearchQuery(e.target.value)}
+                className="w-full bg-bg border border-border rounded-xl pl-8 pr-3.5 py-1.5 text-xs text-text focus:outline-none focus:border-primary"
+              />
+            </div>
+          </div>
+
+          {/* Fallbacks List */}
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-4 shadow-sm space-y-3">
+            <div className="flex items-center justify-between border-b border-border pb-2.5">
+              <div className="text-xs font-bold text-text uppercase tracking-wider flex items-center gap-2">
+                <Sparkles size={14} className="text-primary" />
+                <span>Assistant Unresolved Queries & Fallback Log</span>
+              </div>
+              <button
+                onClick={() => refetchFallbacks()}
+                className="text-xs text-primary font-bold hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <RefreshCw size={12} className={loadingFallbacks ? 'animate-spin' : ''} />
+                <span>Refresh</span>
+              </button>
+            </div>
+
+            {loadingFallbacks && fallbacksList.length === 0 ? (
+              <div className="py-12 text-center text-xs text-muted flex flex-col items-center gap-2">
+                <RefreshCw size={20} className="animate-spin text-primary" />
+                <span>Loading assistant query logs...</span>
+              </div>
+            ) : filteredFallbacks.length === 0 ? (
+              <div className="py-12 text-center text-xs text-muted space-y-2">
+                <div className="w-10 h-10 rounded-full bg-green-500/10 text-green-500 border border-green-500/20 flex items-center justify-center mx-auto">
+                  <CheckCircle2 size={20} />
+                </div>
+                <div className="font-bold text-text">No Unresolved Queries Found</div>
+                <p className="text-[11px] text-muted max-w-md mx-auto">
+                  Whenever the Pharmacy Operations Assistant encounters an unknown intent, local LLM timeout, or falls back to template guidance, it will automatically be captured here for staff review.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredFallbacks.map(f => {
+                  const isExpanded = expandedFallbackId === f.id;
+                  const isPending = f.status === 'pending';
+
+                  return (
+                    <div
+                      key={f.id}
+                      className={`p-3.5 rounded-xl border transition-all ${
+                        isPending
+                          ? 'bg-bg border-amber-500/30 shadow-xs'
+                          : 'bg-bg2/60 border-border'
+                      }`}
+                    >
+                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                        <div className="space-y-1 min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-sm text-text select-text">
+                              &ldquo;{f.query_text}&rdquo;
+                            </span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                              f.status === 'pending'
+                                ? 'bg-amber-500/15 text-amber-500 border border-amber-500/30'
+                                : f.status === 'resolved'
+                                ? 'bg-green-500/15 text-green-500 border border-green-500/30'
+                                : f.status === 'reviewed'
+                                ? 'bg-sky/15 text-sky border border-sky/30'
+                                : 'bg-bg3 text-muted border border-border'
+                            }`}>
+                              {f.status}
+                            </span>
+                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-bg3 text-muted border border-border font-mono">
+                              {f.fallback_reason}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-[11px] text-muted flex-wrap">
+                            {f.page_context_title && (
+                              <span>Screen: <strong className="text-text">{f.page_context_title}</strong></span>
+                            )}
+                            {f.role && (
+                              <span>Role: <strong className="text-text capitalize">{f.role}</strong></span>
+                            )}
+                            <span>{new Date(f.created_at).toLocaleString()}</span>
+                          </div>
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isPending && (
+                            <button
+                              onClick={() => handleUpdateFallbackStatus(f.id, 'reviewed')}
+                              disabled={isUpdatingFallback}
+                              className="px-2.5 py-1 rounded-lg bg-bg2 border border-border text-text hover:bg-bg3 font-bold text-xs cursor-pointer flex items-center gap-1 transition-all"
+                              title="Mark as Reviewed"
+                            >
+                              <Check size={12} className="text-sky" />
+                              <span>Review</span>
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => {
+                              setResolvingFallback(f);
+                              setResolutionNoteInput(f.resolution_notes || '');
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-primary text-white font-bold text-xs hover:bg-primary/90 cursor-pointer flex items-center gap-1 transition-all shadow-xs"
+                          >
+                            <Edit size={12} />
+                            <span>{f.status === 'resolved' ? 'Edit Note' : 'Resolve'}</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleDeleteFallback(f.id)}
+                            className="p-1 rounded-lg text-muted hover:text-red-500 hover:bg-red-500/10 cursor-pointer transition-all"
+                            title="Dismiss fallback"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Bot Reply Preview / Expandable */}
+                      <div className="mt-2.5 pt-2 border-t border-border/50 text-xs">
+                        <div className="flex items-center justify-between text-[11px] text-muted">
+                          <span>Bot Response:</span>
+                          <button
+                            onClick={() => setExpandedFallbackId(isExpanded ? null : f.id)}
+                            className="text-primary hover:underline font-bold cursor-pointer"
+                          >
+                            {isExpanded ? 'Collapse' : 'Expand full reply'}
+                          </button>
+                        </div>
+                        <p className={`text-muted mt-1 font-mono text-[11px] bg-bg3/50 p-2 rounded-lg border border-border/40 whitespace-pre-wrap ${
+                          isExpanded ? '' : 'line-clamp-2'
+                        }`}>
+                          {f.bot_reply_text}
+                        </p>
+                        {f.resolution_notes && (
+                          <div className="mt-1.5 p-2 rounded-lg bg-green-500/5 border border-green-500/20 text-[11px] text-green-600 dark:text-green-400">
+                            <strong>Resolution Note:</strong> {f.resolution_notes}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* ADD DISTRIBUTOR MODAL PORTAL */}
       {/* ========================================================================= */}
       {showAddDistributorModal && createPortal(
@@ -2013,6 +2323,75 @@ const Learning: React.FC = () => {
               >
                 {isSavingDoctor ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
                 <span>Save Changes</span>
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ========================================================================= */}
+      {/* RESOLVE FALLBACK MODAL PORTAL */}
+      {/* ========================================================================= */}
+      {resolvingFallback && createPortal(
+        <div className="fixed inset-0 z-modal bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-glass-bg border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.12)] animate-fadeIn">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="font-bold text-text text-base flex items-center gap-2">
+                <Bot size={18} className="text-primary" />
+                <span>Resolve Unhandled Query</span>
+              </div>
+              <button
+                onClick={() => setResolvingFallback(null)}
+                className="text-muted hover:text-text cursor-pointer p-1"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] font-bold text-muted block mb-1">User Query</label>
+                <div className="p-2.5 rounded-xl bg-bg border border-border text-xs font-bold text-text">
+                  &ldquo;{resolvingFallback.query_text}&rdquo;
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-muted block mb-1">Screen / Origin</label>
+                <div className="text-xs text-muted">
+                  {resolvingFallback.page_context_title || 'General Screen'} ({resolvingFallback.fallback_reason})
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-text block mb-1">
+                  Resolution / Learning Notes
+                </label>
+                <textarea
+                  rows={3}
+                  value={resolutionNoteInput}
+                  onChange={e => setResolutionNoteInput(e.target.value)}
+                  placeholder="e.g. Added custom intent trigger, updated POS shortcut guide, or verified clinical guidance..."
+                  className="w-full bg-bg border border-border rounded-xl p-3 text-xs text-text focus:outline-none focus:border-primary resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-border">
+              <button
+                onClick={() => setResolvingFallback(null)}
+                className="px-4 py-2 rounded-xl bg-bg2 border border-border text-text font-bold text-xs cursor-pointer hover:bg-bg3"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleUpdateFallbackStatus(resolvingFallback.id, 'resolved', resolutionNoteInput)}
+                disabled={isUpdatingFallback}
+                className="px-4 py-2 rounded-xl bg-primary text-white font-bold text-xs cursor-pointer hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5 shadow-md active:scale-95 transition-all"
+              >
+                {isUpdatingFallback ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                <span>Mark as Resolved</span>
               </button>
             </div>
           </div>

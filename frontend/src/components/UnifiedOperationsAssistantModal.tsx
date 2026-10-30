@@ -44,6 +44,14 @@ interface AssistantCardItem {
   actionUrl?: string;
 }
 
+interface RagCitationItem {
+  sourceTitle: string;
+  section?: string;
+  version?: string;
+  sourceType: string;
+  timestamp: string;
+}
+
 interface AssistantMessage {
   id: string;
   sender: 'user' | 'assistant';
@@ -52,6 +60,7 @@ interface AssistantMessage {
   cards?: AssistantCardItem[];
   proposedAction?: ProposedAction;
   suggestedFollowUps?: string[];
+  citations?: RagCitationItem[];
   timestamp: string;
 }
 
@@ -296,6 +305,7 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
           cards: d.cards,
           proposedAction: d.proposedAction,
           suggestedFollowUps: d.suggestedFollowUps,
+          citations: d.citations,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         };
         setMessages(prev => [...prev, assistantMsg]);
@@ -557,6 +567,28 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {/* Source Citations & Procedural Provenance */}
+                {msg.citations && msg.citations.length > 0 && (
+                  <div className="mt-2.5 pt-2 border-t border-border/50 text-[11px] text-muted space-y-1">
+                    <div className="font-bold flex items-center gap-1 text-primary">
+                      <span>Source Citations & Evidence:</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {msg.citations.map((c, ci) => (
+                        <span
+                          key={ci}
+                          className="px-2 py-0.5 rounded-md bg-bg2 border border-border text-[10px] text-text font-mono flex items-center gap-1"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                          <span>{c.sourceTitle}</span>
+                          {c.section && <span className="text-muted">({c.section})</span>}
+                          {c.version && <span className="text-muted font-bold">v{c.version}</span>}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
 

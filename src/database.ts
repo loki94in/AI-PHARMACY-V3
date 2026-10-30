@@ -1061,6 +1061,73 @@ async function ensureConversationalAiSchema(db: any) {
       FOREIGN KEY (session_id) REFERENCES customer_conversation_sessions(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_cust_turns_session ON customer_conversation_turns(session_id, id DESC);
+
+    CREATE TABLE IF NOT EXISTS ai_assistant_fallbacks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT,
+      role TEXT CHECK(role IN ('staff', 'owner', 'customer', 'system')) DEFAULT 'staff',
+      user_id INTEGER,
+      username TEXT,
+      query_text TEXT NOT NULL,
+      page_context_title TEXT,
+      page_context_path TEXT,
+      fallback_reason TEXT CHECK(fallback_reason IN ('UNKNOWN_INTENT', 'LLM_TIMEOUT_OR_OFFLINE', 'NO_MATCHING_DATA', 'CLINICAL_ESCALATION', 'UNHANDLED_AUTOMATION')) DEFAULT 'UNKNOWN_INTENT',
+      suggested_intent TEXT,
+      bot_reply_text TEXT,
+      status TEXT CHECK(status IN ('pending', 'reviewed', 'resolved', 'ignored')) DEFAULT 'pending',
+      resolution_notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      resolved_at DATETIME DEFAULT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_fallbacks_status ON ai_assistant_fallbacks(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_fallbacks_reason ON ai_assistant_fallbacks(fallback_reason);
+
+    CREATE TABLE IF NOT EXISTS assistant_knowledge_documents (
+      id TEXT PRIMARY KEY,
+      store_id INTEGER DEFAULT 1,
+      source_type TEXT NOT NULL CHECK (source_type IN ('sop', 'manual', 'guideline', 'policy', 'clinical')),
+      source_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      department TEXT,
+      applicable_role TEXT CHECK (applicable_role IN ('all', 'staff', 'owner', 'pharmacist')) DEFAULT 'all',
+      version TEXT NOT NULL DEFAULT '1.0',
+      approval_status TEXT CHECK (approval_status IN ('approved', 'draft', 'archived', 'superseded')) DEFAULT 'approved',
+      effective_date TEXT,
+      review_date TEXT,
+      content_hash TEXT NOT NULL,
+      status TEXT DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_ak_docs_status ON assistant_knowledge_documents(status, approval_status);
+    CREATE INDEX IF NOT EXISTS idx_ak_docs_type ON assistant_knowledge_documents(source_type, applicable_role);
+
+    CREATE TABLE IF NOT EXISTS assistant_knowledge_chunks (
+      id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL,
+      store_id INTEGER DEFAULT 1,
+      chunk_index INTEGER NOT NULL,
+      heading TEXT,
+      content TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      page_number INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (document_id) REFERENCES assistant_knowledge_documents(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ak_chunks_doc ON assistant_knowledge_chunks(document_id, chunk_index);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS assistant_knowledge_fts USING fts5(
+      document_id UNINDEXED,
+      chunk_id UNINDEXED,
+      title,
+      heading,
+      content,
+      source_type UNINDEXED,
+      department UNINDEXED,
+      approval_status UNINDEXED,
+      tokenize = 'porter unicode61'
+    );
   `);
 }
 
@@ -3910,6 +3977,73 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY (session_id) REFERENCES customer_conversation_sessions(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_cust_turns_session ON customer_conversation_turns(session_id, id DESC);
+
+    CREATE TABLE IF NOT EXISTS ai_assistant_fallbacks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT,
+      role TEXT CHECK(role IN ('staff', 'owner', 'customer', 'system')) DEFAULT 'staff',
+      user_id INTEGER,
+      username TEXT,
+      query_text TEXT NOT NULL,
+      page_context_title TEXT,
+      page_context_path TEXT,
+      fallback_reason TEXT CHECK(fallback_reason IN ('UNKNOWN_INTENT', 'LLM_TIMEOUT_OR_OFFLINE', 'NO_MATCHING_DATA', 'CLINICAL_ESCALATION', 'UNHANDLED_AUTOMATION')) DEFAULT 'UNKNOWN_INTENT',
+      suggested_intent TEXT,
+      bot_reply_text TEXT,
+      status TEXT CHECK(status IN ('pending', 'reviewed', 'resolved', 'ignored')) DEFAULT 'pending',
+      resolution_notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      resolved_at DATETIME DEFAULT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_ai_fallbacks_status ON ai_assistant_fallbacks(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_ai_fallbacks_reason ON ai_assistant_fallbacks(fallback_reason);
+
+    CREATE TABLE IF NOT EXISTS assistant_knowledge_documents (
+      id TEXT PRIMARY KEY,
+      store_id INTEGER DEFAULT 1,
+      source_type TEXT NOT NULL CHECK (source_type IN ('sop', 'manual', 'guideline', 'policy', 'clinical')),
+      source_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      department TEXT,
+      applicable_role TEXT CHECK (applicable_role IN ('all', 'staff', 'owner', 'pharmacist')) DEFAULT 'all',
+      version TEXT NOT NULL DEFAULT '1.0',
+      approval_status TEXT CHECK (approval_status IN ('approved', 'draft', 'archived', 'superseded')) DEFAULT 'approved',
+      effective_date TEXT,
+      review_date TEXT,
+      content_hash TEXT NOT NULL,
+      status TEXT DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      indexed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_ak_docs_status ON assistant_knowledge_documents(status, approval_status);
+    CREATE INDEX IF NOT EXISTS idx_ak_docs_type ON assistant_knowledge_documents(source_type, applicable_role);
+
+    CREATE TABLE IF NOT EXISTS assistant_knowledge_chunks (
+      id TEXT PRIMARY KEY,
+      document_id TEXT NOT NULL,
+      store_id INTEGER DEFAULT 1,
+      chunk_index INTEGER NOT NULL,
+      heading TEXT,
+      content TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      page_number INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (document_id) REFERENCES assistant_knowledge_documents(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_ak_chunks_doc ON assistant_knowledge_chunks(document_id, chunk_index);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS assistant_knowledge_fts USING fts5(
+      document_id UNINDEXED,
+      chunk_id UNINDEXED,
+      title,
+      heading,
+      content,
+      source_type UNINDEXED,
+      department UNINDEXED,
+      approval_status UNINDEXED,
+      tokenize = 'porter unicode61'
+    );
 
     -- Crash telemetry: written by processGuardian on uncaught exceptions
     CREATE TABLE IF NOT EXISTS crash_log (

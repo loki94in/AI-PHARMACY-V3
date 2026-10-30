@@ -753,6 +753,11 @@ server.on('error', (err: any) => {
         })
         .catch(err => console.warn('[Boot:Phase2] Master medicines CSV enrichment failed (non-fatal):', err?.message || err));
 
+      // Fire-and-forget: seed initial approved SOPs & system manuals into knowledge base
+      import('./services/localAi/knowledgeBaseService.js')
+        .then(m => m.knowledgeBaseService.seedInitialKnowledge(db))
+        .catch(kbErr => console.warn('[Boot:Phase2] Knowledge base initial seeding note:', kbErr?.message || kbErr));
+
       const phase2Duration = Math.round(performance.now() - phase2T0);
       import('./systemHealthMonitor.js').then(m => m.recordBootMilestone('phase2Ms', phase2Duration)).catch(() => {});
       console.log(`[Boot:Phase2] Cache init + reference seed dispatched in ${phase2Duration}ms.`);

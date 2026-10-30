@@ -14,6 +14,8 @@
 
 import { dbManager } from '../../database/connection.js';
 import { normalizePhoneDigits } from '../../utils/phoneValidation.js';
+import { pharmacyRagService, type RagSourceCitation, type PharmacyRagEvidencePackage } from './pharmacyRagService.js';
+import { knowledgeBaseService } from './knowledgeBaseService.js';
 import {
   conversationalMemoryService,
   type CustomerConversationSession,
@@ -90,7 +92,9 @@ export interface ProposedAction {
     | 'SEND_DUE_PAYMENT_QR'
     | 'BOOK_SPECIAL_ORDER'
     | 'ONBOARD_REFILL'
-    | 'TRIGGER_AUTOMATION';
+    | 'TRIGGER_AUTOMATION'
+    | 'STAGE_LIVE_CART_BATCH'
+    | 'UNIFIED_REFILL_ORCHESTRATION';
   summary: string;
   data: Record<string, any>;
   requiresConfirmation?: boolean;
@@ -108,6 +112,7 @@ export interface ConversationalAgentResult {
   toolExecutions?: Array<{ tool: string; result: any }>;
   cards?: AssistantCardItem[];
   suggestedFollowUps?: string[];
+  citations?: RagSourceCitation[];
   latencyMs?: number;
 }
 
@@ -126,7 +131,7 @@ export class ConversationalAgentEngine {
     const startTime = performance.now();
     const rawPhone = input.phone || '';
     const phone = normalizePhoneDigits(rawPhone) || rawPhone.replace(/\D/g, '').slice(-10) || '0000000000';
-    const userText = (input.message || '').trim();
+    const userText = (input.message || (input as any).text || '').trim();
     const role = input.role || 'staff';
     const channel = input.channel || (role === 'customer' ? 'whatsapp' : 'staff_modal');
     const db = await dbManager.getConnection();
@@ -495,6 +500,108 @@ export class ConversationalAgentEngine {
             data: proposal.data,
             revertible: true
           }, db);
+        } else if (proposal.type === 'STAGE_LIVE_CART_BATCH') {
+          const items: Array<{ medicineName: string; quantity: number; unit?: string }> = proposal.data.items || [];
+          const results: any[] = [];
+          for (const item of items) {
+            const res = await pharmacyToolRegistry.stageLiveCartItem(
+              item.medicineName,
+              item.quantity || 1,
+              item.unit,
+              db
+            );
+            results.push({ name: item.medicineName, qty: item.quantity, success: res.success });
+          }
+
+          const successCount = results.filter(r => r.success).length;
+          replyText = `✅ *Batch Staged to Live Cart!*\n\n` +
+            `Successfully staged *${successCount} of ${items.length} items* into your Pharmarack Live Cart:\n` +
+            results.map(r => `• *${r.name}* (${r.qty}) — ${r.success ? 'Staged' : 'Pending Review'}`).join('\n');
+
+          executionResult = { success: true, count: successCount, details: results };
+        } else if (proposal.type === 'UNIFIED_REFILL_ORCHESTRATION') {
+          const pData = proposal.data;
+          const reportLines: string[] = [];
+          const executions: any[] = [];
+
+          // 1. Confirm Refill / Dispensing staging
+          if (pData.confirmRefill && pData.refillId) {
+            const confRes = await pharmacyToolRegistry.confirmRefillExecution(
+              Number(pData.refillId),
+              pData.phone || phone,
+              { qty: Number(pData.quantity || 1), channel: 'in_app', dbInstance: db }
+            );
+            executions.push({ tool: 'confirmRefillExecution', result: confRes });
+            if (confRes.success) {
+              reportLines.push(`• *Refill Dispensing:* Prepared ${pData.quantity || 1} units of ${pData.medicineName}`);
+            }
+          }
+
+          // 2. Stage Shortage to Distributor Live Cart
+          if (pData.stageLiveCart) {
+            const stageQty = Number(pData.shortageQty || pData.quantity || 1);
+            const cartRes = await pharmacyToolRegistry.stageLiveCartItem(
+              pData.medicineName,
+              stageQty,
+              'strip',
+              db
+            );
+            executions.push({ tool: 'stageLiveCartItem', result: cartRes });
+            if (cartRes.success) {
+              reportLines.push(`• *Pharmarack Live Cart:* Staged ${stageQty} strip(s) of ${pData.medicineName} for distributor ordering`);
+            }
+          }
+
+          // 3. Book Special Order for patient shortage
+          if (pData.bookSpecialOrder) {
+            const bookRes = await pharmacyToolRegistry.bookSpecialOrder({
+              medicineName: pData.medicineName,
+              customerName: pData.customerName || 'Customer',
+              customerPhone: pData.phone || phone,
+              quantity: Number(pData.shortageQty || pData.quantity || 1),
+              notes: 'Chronic Refill shortage special order'
+            }, db);
+            executions.push({ tool: 'bookSpecialOrder', result: bookRes });
+            if (bookRes.success) {
+              reportLines.push(`• *Special Order Logged:* Order #${bookRes.orderId} booked in CRM`);
+            }
+          }
+
+          // 4. Schedule Follow-up Call Task
+          if (pData.scheduleCallTask) {
+            const callRes = await pharmacyToolRegistry.scheduleCallTask(
+              pData.customerName || 'Customer',
+              pData.phone || phone,
+              `Refill follow-up callback for ${pData.medicineName}`,
+              'normal',
+              undefined,
+              db
+            );
+            executions.push({ tool: 'scheduleCallTask', result: callRes });
+            if (callRes.success) {
+              reportLines.push(`• *CRM Callback Task:* Scheduled reminder for staff`);
+            }
+          }
+
+          // 5. Send WhatsApp Payment QR Reminder
+          if (pData.sendPaymentQr && pData.customerId && Number(pData.dueAmount || 0) > 0) {
+            const { creditReminderService } = await import('../creditReminderService.js');
+            const remRes = await creditReminderService.buildCreditReminderWithQr(
+              pData.customerId,
+              db,
+              { skipDedupe: true, isManual: true }
+            );
+            executions.push({ tool: 'buildCreditReminderWithQr', result: remRes });
+            if (remRes.success) {
+              reportLines.push(`• *WhatsApp Payment:* UPI Payment QR & invoice sent to ${pData.customerName} (Due: ₹${Number(pData.dueAmount).toFixed(2)})`);
+            }
+          }
+
+          replyText = `✅ *Refill Orchestration Executed!*\n\n` +
+            (reportLines.length > 0
+              ? reportLines.join('\n') + `\n\nAll actions linked to patient record for *${pData.customerName}*.`
+              : `Refill actions confirmed.`);
+          executionResult = { success: true, details: executions };
         } else if (proposal.type === 'STAGE_LIVE_CART_ITEM') {
           const stageRes = await pharmacyToolRegistry.stageLiveCartItem(
             proposal.data.medicineName,
@@ -645,6 +752,7 @@ export class ConversationalAgentEngine {
     let toolExecutions: Array<{ tool: string; result: any }> = [];
     let cards: AssistantCardItem[] = [];
     let suggestedFollowUps: string[] = [];
+    const citations: RagSourceCitation[] = [];
 
     switch (detected.type) {
       // ── Capability 3: OCR & Document Assistance ─────────────────────────────
@@ -1067,38 +1175,83 @@ export class ConversationalAgentEngine {
         const guide = pharmacyToolRegistry.explainApplicationScreen(topic);
         toolExecutions.push({ tool: 'explainApplicationScreen', result: guide });
 
-        replyText = `📖 *${guide.title}*\n\n${guide.guidance}\n\n`;
-        if (guide.shortcuts && guide.shortcuts.length > 0) {
-          replyText += `⌨️ *Keyboard Shortcuts:*\n` + guide.shortcuts.map(s => `• ${s}`).join('\n') + `\n\n`;
-        }
-        if (guide.tips && guide.tips.length > 0) {
-          replyText += `💡 *Operating Tips:*\n` + guide.tips.map(t => `• ${t}`).join('\n');
+        // Retrieve SOPs and procedural guidelines from shared RAG
+        const ragEvidence = await pharmacyRagService.assembleEvidence(userText || topic, role as any, {}, db);
+        if (ragEvidence.citations.length > 0) {
+          citations.push(...ragEvidence.citations);
         }
 
-        const navUrl = detected.targetTab
-          ? `${detected.targetPage || '/settings'}?tab=${detected.targetTab}`
-          : (guide.actionUrl || detected.targetPage);
+        if (ragEvidence.documents.length > 0 && /\b(?:sop|procedure|policy|protocol|guideline|rule|dispens)\b/i.test(userText)) {
+          const topDoc = ragEvidence.documents[0];
+          const docChunks = ragEvidence.documents
+            .filter(d => d.documentId === topDoc.documentId)
+            .map(d => (d.section && d.section !== 'General' && !d.section.startsWith('SOP-') ? `### ${d.section}\n${d.content}` : d.content))
+            .join('\n\n');
+          const fullContent = docChunks || topDoc.content;
+          const fallbackText = `📋 *${topDoc.title}*\n\n${fullContent}\n\n_Source: Approved Store SOP (v${topDoc.version})_`;
 
-        if (navUrl) {
+          replyText = await this.synthesizeGroundedResponse(
+            userText,
+            {
+              sopTitle: topDoc.title,
+              section: topDoc.section,
+              version: topDoc.version,
+              content: fullContent
+            },
+            'Summarize the essential sequential pharmacy operating procedure clearly, professionally, and step-by-step. Reference the exact SOP title and version.',
+            fallbackText
+          );
+
           cards.push({
-            id: `guide_nav_${Date.now()}`,
-            title: guide.title,
-            subtitle: 'Click below to open this module or settings screen directly.',
-            badge: 'Open Screen',
-            badgeColor: 'blue',
-            actionUrl: navUrl
+            id: `sop_card_${Date.now()}`,
+            title: `📋 ${topDoc.title}`,
+            subtitle: `${topDoc.section} • Approved Standard Operating Procedure (v${topDoc.version})`,
+            badge: 'Approved SOP',
+            badgeColor: 'green'
           });
+
+          suggestedFollowUps = [
+            'Dispense verified prescription',
+            'Check Schedule H register',
+            'Explain near-expiry audit SOP',
+            'View chronic refill SOP'
+          ];
+        } else {
+          replyText = `📖 *${guide.title}*\n\n${guide.guidance}\n\n`;
+          if (guide.shortcuts && guide.shortcuts.length > 0) {
+            replyText += `⌨️ *Keyboard Shortcuts:*\n` + guide.shortcuts.map(s => `• ${s}`).join('\n') + `\n\n`;
+          }
+          if (guide.tips && guide.tips.length > 0) {
+            replyText += `💡 *Operating Tips:*\n` + guide.tips.map(t => `• ${t}`).join('\n');
+          }
+
+          const navUrl = detected.targetTab
+            ? `${detected.targetPage || '/settings'}?tab=${detected.targetTab}`
+            : (guide.actionUrl || detected.targetPage);
+
+          if (navUrl) {
+            cards.push({
+              id: `guide_nav_${Date.now()}`,
+              title: guide.title,
+              subtitle: 'Click below to open this module or settings screen directly.',
+              badge: 'Open Screen',
+              badgeColor: 'blue',
+              actionUrl: navUrl
+            });
+          }
         }
 
-        const tLower = topic.toLowerCase();
-        if (tLower.includes('order hub') || tLower.includes('live cart') || tLower.includes('pharmarack')) {
-          suggestedFollowUps = ['Open Live Cart', 'How to connect Pharmarack', 'Explain order minimums', 'Stage item to live cart'];
-        } else if (tLower.includes('setting') || tLower.includes('printer') || tLower.includes('whatsapp') || tLower.includes('backup')) {
-          suggestedFollowUps = ['Where are Order Hub settings?', 'How to connect Pharmarack', 'Configure thermal printer', 'Connect WhatsApp Web'];
-        } else if (tLower.includes('pos')) {
-          suggestedFollowUps = ['Explain POS shortcuts', 'Check Dolo 650 stock', 'Show due refills', 'Query today sales'];
-        } else {
-          suggestedFollowUps = ['Where are Order Hub settings?', 'Explain POS shortcuts', 'Audit near-expiry stock', 'Show due refills'];
+        if (suggestedFollowUps.length === 0) {
+          const tLower = topic.toLowerCase();
+          if (tLower.includes('order hub') || tLower.includes('live cart') || tLower.includes('pharmarack')) {
+            suggestedFollowUps = ['Open Live Cart', 'How to connect Pharmarack', 'Explain order minimums', 'Stage 5 Pan 40 to live cart'];
+          } else if (tLower.includes('setting') || tLower.includes('printer') || tLower.includes('whatsapp') || tLower.includes('backup')) {
+            suggestedFollowUps = ['Where are Order Hub settings?', 'How to connect Pharmarack', 'Configure thermal printer', 'Connect WhatsApp Web'];
+          } else if (tLower.includes('pos')) {
+            suggestedFollowUps = ['Explain POS shortcuts', 'Check Dolo 650 stock', 'Show due refills', 'Query today sales'];
+          } else {
+            suggestedFollowUps = ['Where are Order Hub settings?', 'Explain POS shortcuts', 'Audit near-expiry stock', 'Show due refills'];
+          }
         }
         state = 'idle';
         break;
@@ -1238,7 +1391,68 @@ export class ConversationalAgentEngine {
             const displayName = targetCustomerName || patName || 'Customer';
             const staffStockNotice = targetRefill.inStock ? `✅ In Stock (${targetRefill.totalStock} on shelf)` : '⏳ Needs Procurement';
 
-            if (targetRefill.inStock) {
+            // Query customer credit balance
+            const custDueRow = targetCustomerId ? await db.get(
+              `SELECT credit_balance FROM customers WHERE id = ?`,
+              [targetCustomerId]
+            ).catch(() => null) : null;
+            const dueAmount = Math.max(0, Number(custDueRow?.credit_balance || 0));
+            const shortageQty = Math.max(0, targetRefill.quantityNeeded - Number(targetRefill.totalStock || 0));
+
+            const wantsQr = Boolean((detected as any).wantsPaymentQr && dueAmount > 0);
+            const wantsCart = Boolean((detected as any).wantsLiveCart || !targetRefill.inStock);
+            const wantsCall = Boolean((detected as any).wantsCallTask);
+            const wantsSpec = Boolean((detected as any).wantsSpecialOrder);
+
+            const isCompoundRequested = wantsQr || wantsCart || wantsCall || wantsSpec;
+
+            if (isCompoundRequested || dueAmount > 0 || !targetRefill.inStock) {
+              replyText = `🔔 *Patient Refill Orchestration — ${displayName}*\n\n` +
+                `💊 *${targetRefill.medicineName}* (${targetRefill.quantityNeeded} units)${priceStr}\n` +
+                `📊 Stock: ${staffStockNotice}` +
+                (!targetRefill.inStock ? ` (Shortage: *${shortageQty || targetRefill.quantityNeeded}*)` : '') +
+                (dueAmount > 0 ? `\n💳 *Outstanding Due Balance:* ₹${dueAmount.toFixed(2)}` : '') +
+                `\n\n👉 *Proposed Next Actions:*\n` +
+                (!targetRefill.inStock ? `• Stage shortage (${shortageQty || targetRefill.quantityNeeded}) to Pharmarack Live Cart\n` : `• Prepare refill for dispensing\n`) +
+                (wantsSpec ? `• Book Special Order shortage in CRM\n` : '') +
+                (wantsCall ? `• Schedule follow-up callback\n` : '') +
+                (dueAmount > 0 ? `• Send WhatsApp Payment QR reminder (₹${dueAmount.toFixed(2)})\n` : '') +
+                `\nClick *Approve & Execute* to proceed under Rule 6 HITL.`;
+
+              proposedAction = {
+                id: `refill_orch_${Date.now()}`,
+                type: 'UNIFIED_REFILL_ORCHESTRATION',
+                summary: (!targetRefill.inStock
+                  ? `Stage shortage of ${targetRefill.medicineName} to Live Cart`
+                  : `Prepare refill of ${targetRefill.medicineName}`) +
+                  (dueAmount > 0 ? ` & send WhatsApp payment QR (₹${dueAmount.toFixed(2)})` : '') +
+                  ` for ${displayName}`,
+                data: {
+                  refillId: targetRefill.id,
+                  medicineName: targetRefill.medicineName,
+                  quantity: targetRefill.quantityNeeded,
+                  shortageQty: shortageQty || targetRefill.quantityNeeded,
+                  customerName: displayName,
+                  phone: targetPhone,
+                  customerId: targetCustomerId,
+                  dueAmount,
+                  confirmRefill: targetRefill.inStock,
+                  stageLiveCart: !targetRefill.inStock || (detected as any).wantsLiveCart,
+                  bookSpecialOrder: (detected as any).wantsSpecialOrder,
+                  scheduleCallTask: (detected as any).wantsCallTask,
+                  sendPaymentQr: (detected as any).wantsPaymentQr && dueAmount > 0
+                },
+                requiresConfirmation: true,
+                status: 'PENDING_CONFIRMATION'
+              };
+
+              suggestedFollowUps = [
+                'Approve & Execute',
+                !targetRefill.inStock ? 'Stage to Live Cart' : 'Confirm Refill',
+                dueAmount > 0 ? 'Send WhatsApp Payment QR' : 'Schedule Refill Call',
+                'Cancel'
+              ];
+            } else {
               replyText = `🔔 *Patient Refill — ${displayName}*\n\n` +
                 `We have the regular prescription for:\n` +
                 `💊 *${targetRefill.medicineName}*\n` +
@@ -1261,26 +1475,7 @@ export class ConversationalAgentEngine {
                 requiresConfirmation: true,
                 status: 'PENDING_CONFIRMATION'
               };
-              suggestedFollowUps = ['Confirm Refill', 'Order from distributor', 'Cancel'];
-            } else {
-              replyText = `🔔 *Patient Refill — ${displayName}*\n\n` +
-                `💊 *${targetRefill.medicineName}* (${targetRefill.quantityNeeded} units)\n` +
-                `📊 Stock: ${staffStockNotice}\n\n` +
-                `👉 *Shelf stock is insufficient.* Would you like to stage *${targetRefill.medicineName}* into the *Pharmarack Live Cart* to order from distributor?`;
-
-              proposedAction = {
-                id: `live_cart_${Date.now()}`,
-                type: 'STAGE_LIVE_CART_ITEM',
-                summary: `Stage ${targetRefill.quantityNeeded} of ${targetRefill.medicineName} to Pharmarack Live Cart for ${displayName}`,
-                data: {
-                  medicineName: targetRefill.medicineName,
-                  quantity: targetRefill.quantityNeeded,
-                  destination: 'live_cart'
-                },
-                requiresConfirmation: true,
-                status: 'PENDING_CONFIRMATION'
-              };
-              suggestedFollowUps = ['Order from distributor', 'Find alternative', 'Cancel'];
+              suggestedFollowUps = ['Confirm Refill', 'Schedule Call Task', 'Cancel'];
             }
           }
 
@@ -1339,6 +1534,57 @@ export class ConversationalAgentEngine {
       }
 
       // ── Capability 4: Medicine Search & Stock Lookup ───────────────────────
+      case 'MULTI_MEDICINE_INQUIRY': {
+        const batchMeds = (detected.batchItems || []).map((b: any) => b.medicineName).filter(Boolean);
+        const medResults: Array<{ name: string; items: any[] }> = [];
+
+        for (const m of batchMeds) {
+          const searchRes = await pharmacyToolRegistry.searchMedicineAvailability(m, db);
+          medResults.push({ name: m, items: searchRes || [] });
+        }
+
+        toolExecutions.push({ tool: 'searchMedicineAvailabilityBatch', result: medResults });
+
+        let report = `📦 *Multi-Medicine Stock & Availability Check*\n\n`;
+        for (const res of medResults) {
+          const top = res.items[0];
+          if (top && top.stockQuantity > 0) {
+            report += `• *${top.name}:* ✅ In Stock (${top.stockQuantity} units) at Rack '${top.rackLocation || 'General'}', MRP ₹${top.mrp?.toFixed(2) || '0.00'}${top.expiryDate ? `, Expiry: ${top.expiryDate}` : ''}\n`;
+          } else if (top) {
+            report += `• *${top.name}:* ⏳ Out of Stock (MRP ₹${top.mrp?.toFixed(2) || '0.00'})\n`;
+          } else {
+            report += `• *${res.name}:* 🔍 Not found in active catalog\n`;
+          }
+
+          if (top) {
+            cards.push({
+              id: `med_batch_${top.id || Date.now()}`,
+              title: top.name,
+              subtitle: `${top.dosageForm || 'Medicine'} | Stock: ${top.stockQuantity || 0} | Rack: ${top.rackLocation || 'General Shelf'}${top.expiryDate ? ` | Exp: ${top.expiryDate}` : ''}`,
+              badge: top.stockQuantity > 0 ? `${top.stockQuantity} in stock` : 'Out of Stock',
+              badgeColor: top.stockQuantity > 0 ? 'green' : 'amber'
+            });
+          }
+        }
+
+        replyText = report.trim();
+        suggestedFollowUps = [
+          `Stage batch to live cart`,
+          `Find alternatives for ${batchMeds[0]}`,
+          'Query today sales'
+        ];
+
+        // Track both medicines in contextData for multi-turn pronouns
+        session.contextData = {
+          ...(session.contextData || {}),
+          lastMedicine: batchMeds[0],
+          recentMedicines: batchMeds
+        };
+
+        state = 'idle';
+        break;
+      }
+
       case 'MEDICINE_INQUIRY': {
         const medName = detected.medicineName || this.extractMedicineFromText(userText) || userText;
         const searchResult = await pharmacyToolRegistry.searchMedicineAvailability(medName, db);
@@ -1443,9 +1689,63 @@ export class ConversationalAgentEngine {
 
       // ── Capability 7: Cart Staging (Live Distributor Cart & POS Billing) ────
       case 'CART_STAGING': {
-        const rawMed = detected.medicineName || this.extractMedicineFromText(userText) || 'Medicine';
+        // Multi-Item Batch Staging Proposal
+        if (detected.batchItems && detected.batchItems.length > 1) {
+          const items = detected.batchItems;
+          const destination = detected.destination || 'live_cart';
+          const destTitle = destination === 'pos_cart' ? 'POS Billing Counter' : 'Pharmarack Live Cart';
+
+          replyText = `📋 *Batch Live Cart Staging Proposal*\n\n` +
+            `I have prepared *${items.length} medicines* for the ${destTitle}:\n` +
+            items.map((it: any, idx: number) => `• ${idx + 1}. *${it.medicineName}* — ${it.quantity} ${it.unit || 'strip(s)'}`).join('\n') +
+            `\n\n⚠️ *Confirmation Required (Rule 6):* Would you like to stage all ${items.length} items to the live distributor cart?`;
+
+          proposedAction = {
+            id: `batch_stage_${Date.now()}`,
+            type: 'STAGE_LIVE_CART_BATCH',
+            summary: `Stage ${items.length} items into ${destTitle}`,
+            requiresConfirmation: true,
+            status: 'PENDING_CONFIRMATION',
+            data: {
+              items,
+              destination
+            }
+          };
+
+          cards = [{
+            id: `batch_card_${Date.now()}`,
+            title: `Batch Staging: ${items.length} Medicines`,
+            subtitle: items.map((it: any) => `${it.medicineName} (${it.quantity})`).join(', ').slice(0, 80) + '...',
+            badge: 'Batch Proposal',
+            badgeColor: 'blue'
+          }];
+
+          suggestedFollowUps = ['Approve & Execute', 'Cancel', 'Open Live Cart'];
+          state = 'awaiting_confirmation';
+          break;
+        }
+
+        const rawMed = detected.medicineName || this.extractMedicineFromText(userText) || '';
         const cleanMed = rawMed.replace(/\b(?:live\s*cart|pos\s*cart|pharmarack(?:\s*cart)?|distributor\s*cart)\b/gi, '').trim();
-        const medName = cleanMed.length >= 2 ? cleanMed : 'Medicine';
+        const isPlaceholder = !cleanMed || /^(?:item|items|stage\s*item|medicine|medicines|dawa|goli|product|products)$/i.test(cleanMed);
+        if (isPlaceholder) {
+          replyText = `Which medicine would you like to stage to the Pharmarack Live Cart?\n\nYou can reply with the medicine name and quantity (e.g., "Stage 10 Dolo 650 to live cart" or "Stage 5 Augmentin 625").`;
+          cards.push({
+            id: `cart_ph_${Date.now()}`,
+            title: 'Select Medicine',
+            subtitle: 'Target: Pharmarack Live Cart',
+            badge: 'Input Required',
+            badgeColor: 'amber'
+          });
+          suggestedFollowUps = [
+            'Stage 10 Dolo 650 to live cart',
+            'Stage 5 Augmentin 625 to live cart',
+            'Check live cart status'
+          ];
+          state = 'idle';
+          break;
+        }
+        const medName = cleanMed;
         const unit = detected.unit || 'strip';
         const destination = detected.destination || (/\blive\s*cart\b/i.test(userText) ? 'live_cart' : (input.pageContext?.pathname === '/pos' ? 'pos_cart' : 'live_cart'));
 
@@ -1588,6 +1888,66 @@ export class ConversationalAgentEngine {
         break;
       }
 
+      case 'BOT_IDENTITY': {
+        replyText = `Namaste! 🙏 I am your **AI Operations & Clinical Copilot** for AI Pharmacy OS.\n\n` +
+          `I assist your pharmacy team with:\n` +
+          `• 🔍 *Medicine & Inventory:* Instant stock checks, rack locations, and salt alternatives.\n` +
+          `• 🛒 *Live Cart & Procurement:* Staging shortage items to Pharmarack Live Cart.\n` +
+          `• 📋 *Standard Operating Procedures:* Guided Schedule H dispensing, returns, and expiry audits.\n` +
+          `• 📊 *Sales & CRM:* Daily sales comparison, patient chronic refills, and UPI payment reminders.\n\n` +
+          `How can I assist you right now?`;
+
+        cards.push(
+          {
+            id: `card_med_${Date.now()}`,
+            title: 'Check Medicine Stock',
+            subtitle: 'Query live stock, rack location, and salt substitutes.',
+            badge: 'Inventory',
+            badgeColor: 'green'
+          },
+          {
+            id: `card_sales_${Date.now()}`,
+            title: 'Today Sales Summary',
+            subtitle: 'Compare today vs yesterday sales and revenue.',
+            badge: 'Sales',
+            badgeColor: 'blue'
+          }
+        );
+
+        suggestedFollowUps = ['Check Dolo 650 stock', 'Show today sales vs yesterday', 'What is the SOP for Schedule H?', 'Check live cart status'];
+        state = 'idle';
+        break;
+      }
+
+      case 'LIVE_CART_STATUS': {
+        const cartStatus = await pharmacyToolRegistry.getLiveCartStatus();
+        toolExecutions.push({ tool: 'getLiveCartStatus', result: cartStatus });
+
+        if (cartStatus.totalItems === 0) {
+          replyText = `🛒 *Pharmarack Live Cart is currently empty.*\n\nYou can stage items by typing "Stage [Medicine Name] to live cart" or click "Reorder Hub" to review distributor shortage suggestions.`;
+        } else {
+          replyText = `🛒 *Pharmarack Live Cart Status*\n\n` +
+            `• *Total Items Staged:* ${cartStatus.totalItems} item(s)\n` +
+            `• *Linked Distributors:* ${cartStatus.distributorCount} distributor(s)\n\n` +
+            `Items staged for purchase review:\n` +
+            cartStatus.items.slice(0, 5).map(it => `• *${it.name}* (Qty: ${it.qty}) ${it.distributor ? `[${it.distributor}]` : ''}`).join('\n') +
+            (cartStatus.items.length > 5 ? `\n_...and ${cartStatus.items.length - 5} more item(s)_` : '');
+        }
+
+        cards.push({
+          id: `cart_status_${Date.now()}`,
+          title: `Pharmarack Live Cart (${cartStatus.totalItems} items)`,
+          subtitle: `${cartStatus.distributorCount} distributors • Ready for review`,
+          badge: 'Open Cart',
+          badgeColor: 'blue',
+          actionUrl: '/pharmarack-cart'
+        });
+
+        suggestedFollowUps = ['Open Live Cart', 'Check distributor minimums', 'Stage 5 Pan 40 to live cart', 'Query today sales'];
+        state = 'idle';
+        break;
+      }
+
       case 'GREETING': {
         const greetingName = input.username || session.customerName || (role === 'owner' ? 'Owner' : 'Staff');
         const currPage = input.pageContext?.pathname || '/dashboard';
@@ -1614,7 +1974,7 @@ export class ConversationalAgentEngine {
         }
 
         if (currPage.includes('live-cart') || currPage.includes('pharmarack')) {
-          suggestedFollowUps = ['Explain Order Hub settings', 'Stage item to live cart', 'Check distributor minimums', 'Show due refills'];
+          suggestedFollowUps = ['Explain Order Hub settings', 'Stage 5 Pan 40 to live cart', 'Check distributor minimums', 'Show due refills'];
         } else if (currPage.includes('setting')) {
           suggestedFollowUps = ['How to connect Pharmarack', 'Configure thermal printer', 'Connect WhatsApp Web', 'View store profile'];
         } else if (currPage.includes('pos')) {
@@ -1958,30 +2318,66 @@ export class ConversationalAgentEngine {
 
       default: {
         let aiHandled = false;
+        let fallbackReason: 'UNKNOWN_INTENT' | 'LLM_TIMEOUT_OR_OFFLINE' = 'UNKNOWN_INTENT';
+
+        // 1. Retrieve procedural SOPs, policies, and manuals from shared RAG
+        const ragEvidence = await pharmacyRagService.assembleEvidence(userText, role as any, {}, db);
+        if (ragEvidence.citations.length > 0) {
+          citations.push(...ragEvidence.citations);
+        }
+
         if (isLocalAiEnabled()) {
           try {
             const pageName = input.pageContext?.pageTitle || input.pageContext?.pathname || 'Dashboard';
-            const sysPrompt = `You are Qwen, the expert clinical and operations AI copilot for AI Pharmacy OS. The user is on the "${pageName}" screen. Answer clearly, accurately, and concisely (<100 words). Do not invent false inventory data or rates.`;
+            const sysPrompt = `You are Qwen, the expert clinical and operations AI copilot for AI Pharmacy OS. The user is on the "${pageName}" screen. Answer clearly, accurately, and concisely (<100 words) using verified procedural guidance when available. Do not invent false inventory data or rates.`;
+            const promptContent = ragEvidence.documents.length > 0
+              ? `User Query: "${userText}"\n\nProcedural SOP Guidance:\n` + ragEvidence.documents.map(d => `[${d.title} - ${d.section}]:\n${d.content}`).join('\n\n')
+              : userText;
+
             const completion = await queryLocalAiChat([
               { role: 'system', content: sysPrompt },
-              { role: 'user', content: userText }
-            ], { timeoutMs: 8000, maxTokens: 250 });
+              { role: 'user', content: promptContent }
+            ], { timeoutMs: 8000, profile: 'normal' });
             if (completion && completion.success && completion.content && completion.content.trim()) {
               replyText = completion.content.trim();
               aiHandled = true;
+            } else {
+              fallbackReason = 'LLM_TIMEOUT_OR_OFFLINE';
             }
-          } catch (_) {}
+          } catch (_) {
+            fallbackReason = 'LLM_TIMEOUT_OR_OFFLINE';
+          }
         }
 
         if (!aiHandled) {
-          replyText = `I understand you are asking about: "${userText.slice(0, 80)}".\n\n` +
-            `Here are tasks you can try right away:\n` +
-            `• "Find medicines expiring next month"\n` +
-            `• "Find an alternative for [Medicine Name]"\n` +
-            `• "Show me today's sales and explain why they are lower than yesterday"\n` +
-            `• "Explain how to use the purchase entry screen"\n` +
-            `• "How can I correct the stock quantity?"\n` +
-            `• "Remind me to call Rajesh tomorrow about his refill"`;
+          if (ragEvidence.documents.length > 0) {
+            const topDoc = ragEvidence.documents[0];
+            replyText = `📋 *${topDoc.title}*\n\n${topDoc.content}\n\n_Source: Approved SOP (${topDoc.section}, v${topDoc.version})_`;
+            aiHandled = true;
+          } else {
+            replyText = `I understand you are asking about: "${userText.slice(0, 80)}".\n\n` +
+              `Here are tasks you can try right away:\n` +
+              `• "Find medicines expiring next month"\n` +
+              `• "Find an alternative for [Medicine Name]"\n` +
+              `• "Show me today's sales and explain why they are lower than yesterday"\n` +
+              `• "Explain how to use the purchase entry screen"\n` +
+              `• "How can I correct the stock quantity?"\n` +
+              `• "Remind me to call Rajesh tomorrow about his refill"`;
+
+            await this.recordAssistantFallback({
+              sessionId: session.id,
+              role,
+              userId: input.userId,
+              username: input.username || session.customerName,
+              queryText: userText,
+              pageContextTitle: input.pageContext?.pageTitle,
+              pageContextPath: input.pageContext?.pathname,
+              fallbackReason,
+              suggestedIntent: 'UNKNOWN',
+              botReplyText: replyText,
+              dbInstance: db
+            });
+          }
         }
         state = 'idle';
         suggestedFollowUps = [
@@ -2047,8 +2443,49 @@ export class ConversationalAgentEngine {
       toolExecutions,
       cards,
       suggestedFollowUps,
+      citations: citations.length > 0 ? citations : undefined,
       latencyMs: Math.round(performance.now() - startTime)
     };
+  }
+
+  /**
+   * Records an unhandled query or fallback event into ai_assistant_fallbacks
+   */
+  public async recordAssistantFallback(data: {
+    sessionId?: string;
+    role?: string;
+    userId?: number;
+    username?: string | null;
+    queryText: string;
+    pageContextTitle?: string;
+    pageContextPath?: string;
+    fallbackReason: 'UNKNOWN_INTENT' | 'LLM_TIMEOUT_OR_OFFLINE' | 'NO_MATCHING_DATA' | 'CLINICAL_ESCALATION' | 'UNHANDLED_AUTOMATION';
+    suggestedIntent?: string;
+    botReplyText: string;
+    dbInstance?: any;
+  }): Promise<void> {
+    try {
+      const db = data.dbInstance || (await dbManager.getConnection());
+      await db.run(
+        `INSERT INTO ai_assistant_fallbacks 
+         (session_id, role, user_id, username, query_text, page_context_title, page_context_path, fallback_reason, suggested_intent, bot_reply_text)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          data.sessionId || null,
+          data.role || 'staff',
+          data.userId || null,
+          data.username || null,
+          data.queryText.trim(),
+          data.pageContextTitle || null,
+          data.pageContextPath || null,
+          data.fallbackReason,
+          data.suggestedIntent || null,
+          data.botReplyText.trim()
+        ]
+      );
+    } catch (err: any) {
+      console.warn('[ConversationalAgentEngine] Failed to record fallback:', err?.message || err);
+    }
   }
 
   /**
@@ -2142,6 +2579,11 @@ export class ConversationalAgentEngine {
     notes?: string;
     targetIndex?: number;
     discountPercent?: number;
+    batchItems?: Array<{ medicineName: string; quantity: number; unit?: string }>;
+    wantsPaymentQr?: boolean;
+    wantsLiveCart?: boolean;
+    wantsCallTask?: boolean;
+    wantsSpecialOrder?: boolean;
   }> {
     const t = text.toLowerCase().trim();
 
@@ -2150,7 +2592,11 @@ export class ConversationalAgentEngine {
       return { type: 'DOCUMENT_OCR' };
     }
 
-    // 0a. Instant Fast-Path for Deterministic Greetings (sub-millisecond, zero CPU LLM load)
+    // 0a. Bot Identity & Greetings Fast-Path (sub-millisecond, zero CPU LLM load)
+    if (/\b(?:who are you|who r u|what are you|what is your name|who made you|who created you|tum kaun ho|aap kaun ho)\b/i.test(t)) {
+      return { type: 'BOT_IDENTITY' };
+    }
+
     if (
       /^(?:hi|hello|hey|namaste|namaskar|pranam|good\s+morning|good\s+afternoon|good\s+evening|salaam|kem\s+cho|kasa\s+kay)$/i.test(
         t.replace(/[!.,?]/g, '').trim()
@@ -2159,11 +2605,51 @@ export class ConversationalAgentEngine {
       return { type: 'GREETING' };
     }
 
+    // 0b. Live Cart Inquiry Fast-Path ("how many items in live cart", "what is in live cart", handling common typos)
+    if (
+      /\b(?:how many items?|how many itoms?|what.*in (?:the )?k?live cart|k?live cart status|check k?live cart|show k?live cart|kitne item.*cart|cart me kitna|view k?live cart)\b/i.test(t) ||
+      (/\b(?:how many|itoms?|kitne|kya hai|what|show|count)\b.*\b(?:cart|k?live\s*cart)\b/i.test(t) && !/\b(?:add|stage|put|load|order)\b/i.test(t)) ||
+      (/\b(?:k?live\s*cart|distributor\s*cart|pharmarack\s*cart)\b/i.test(t) && /\b(?:how many|items?|itoms?|status|what|check|show|batao|dekh|count|list)\b/i.test(t) && !/\b(?:add|stage|put|load|order)\b/i.test(t))
+    ) {
+      return { type: 'LIVE_CART_STATUS' };
+    }
+
+    // 0bb. Multi-Item Batch Staging Fast-Path ("Add 10 Dolo 650, 5 Augmentin 625, and 3 Pan 40 to live cart")
+    const batchItemsDirect = this.extractBatchStagingItems(text);
+    if (batchItemsDirect.length > 1 && (/\b(?:add|stage|put|load|order|cart|live\s*cart)\b/i.test(t) || text.includes(',') || text.includes('+'))) {
+      return {
+        type: 'CART_STAGING',
+        batchItems: batchItemsDirect,
+        destination: 'live_cart'
+      };
+    }
+
+    // 0bc. Multi-Medicine Availability Fast-Path ("Do we have Dolo 650 and Calpol 500 in stock?")
+    const isSpecialWorkflow = /\b(?:distributor\s*return|return\s*draft|supplier\s*return|wapas|sop|procedure|protocol|guideline|refill|renew|repeat|due|khata|udhar|customer|patient)\b/i.test(t);
+    const multiMedsDirect = !isSpecialWorkflow ? this.extractMultipleMedicines(text) : [];
+    if (multiMedsDirect.length > 1 && (/\b(?:have|got|stock|available|price|cost|mrp|rate|expiry)\b/i.test(t) || text.includes(',') || text.includes('+'))) {
+      return {
+        type: 'MULTI_MEDICINE_INQUIRY',
+        batchItems: multiMedsDirect.map(m => ({ medicineName: m, quantity: 1 }))
+      };
+    }
+
+    // 0c. Raw Medicine Name Input Fast-Path (e.g. "ALEX JUNIOR SYP 60ML", "DOLO 650MG STRIP", "Augmentin 625")
+    const hasDosageOrStrength = /\b(?:syp|syrup|tab|tablet|tablets|cap|capsule|capsules|inj|injection|susp|suspension|drops|ointment|cream|gel|rotacaps|respules|mg|ml|gm)\b/i.test(t);
+    const isCommandDirect = /\b(?:add|stage|put|load|book|order|remind|explain|how to|where is|run|trigger|start|execute|find an alternative|alternative for|wapas|due|balance|sop)\b/i.test(t);
+    if (!isCommandDirect && hasDosageOrStrength) {
+      const candidateMed = this.extractMedicineFromText(text) || text.replace(/[!.,?]/g, '').trim();
+      if (candidateMed.length >= 3 && !/\b(?:live cart|pos billing|order hub|inventory|settings|pharmarack|sales report)\b/i.test(candidateMed)) {
+        return { type: 'MEDICINE_INQUIRY', medicineName: candidateMed };
+      }
+    }
+
     // 0b. Prioritize Qwen Operational Local AI Intent when active/ready
     try {
       if (isLocalAiEnabled()) {
-        const { queryOperationalAiIntent } = await import('./llamaServerClient.js');
-        const opIntent = await queryOperationalAiIntent(text);
+        const { queryOperationalAiIntent, isServerProcessRunning } = await import('./llamaServerClient.js');
+        if (isServerProcessRunning()) {
+          const opIntent = await queryOperationalAiIntent(text, { timeoutMs: 1200 });
         if (opIntent && opIntent.confidence >= 0.6 && opIntent.intent !== 'UNKNOWN') {
           if (opIntent.intent === 'CART_STAGING') {
             return {
@@ -2239,6 +2725,7 @@ export class ConversationalAgentEngine {
             };
           }
         }
+        }
       }
     } catch (_) {
       // Gracefully fall back to deterministic pattern matchers below
@@ -2271,10 +2758,11 @@ export class ConversationalAgentEngine {
 
     // 0c. Customer Due Bills, Payment QR, Special Orders & Refill Onboarding Fallbacks
     if (
-      /\b(?:due|balance|khata|ledger|monthly\s*due|due\s*bill|pending\s*bill|udhar|udhari|baki|kitna\s*hai|owe|owes)\b/i.test(t) ||
+      !/\b(?:refill|renew|repeat)\b/i.test(t) &&
+      (/\b(?:due|balance|khata|ledger|monthly\s*due|due\s*bill|pending\s*bill|udhar|udhari|baki|kitna\s*hai|owe|owes)\b/i.test(t) ||
       /\b(?:share|send|generate|bhejo|bhej)\b.*\b(?:qr|payment\s*qr|due\s*qr)\b/i.test(t) ||
       /\b(?:payment\s*reminder|due\s*reminder)\b/i.test(t)
-    ) {
+      )) {
       const custMatch = text.match(/(?:for|to|of|ka|ki|ke|customer)\s+([A-Za-z0-9\s]{2,30})/i);
       const phoneMatch = text.match(/\b\d{10}\b/);
       let pat = phoneMatch ? phoneMatch[0] : (custMatch ? custMatch[1].trim() : undefined);
@@ -2337,10 +2825,10 @@ export class ConversationalAgentEngine {
 
     // 1b. Cart Staging (Live Distributor Cart & POS Billing) Fallback
     if (
-      /\b(?:live\s*cart|pharmarack|distributor\s*cart)\b/i.test(t) ||
-      (/\b(?:add|stage|put|load|insert|order)\b/i.test(t) && /\b(?:live\s*cart|pos\s*cart|bill|cart)\b/i.test(t)) ||
+      !/\b(?:refill|renew|repeat)\b/i.test(t) &&
+      ((/\b(?:add|stage|put|load|insert|order|bhejo|daalo)\b/i.test(t) && /\b(?:live\s*cart|pos\s*cart|bill|cart)\b/i.test(t)) ||
       (/\b(?:add|stage|put|load)\s+([A-Za-z0-9\s-]{2,30})\b/i.test(t) && !/\b(?:refill|user|customer|patient|reminder|call)\b/i.test(t) && (this.extractMedicineFromText(text) || session.contextData?.lastMedicine))
-    ) {
+    )) {
       const isLiveCart = /\b(?:live\s*cart|pharmarack|distributor\s*cart)\b/i.test(t) || input.pageContext?.pathname === '/live-cart' || input.pageContext?.pathname === '/pharmarack-cart';
       let parsedQty: number | undefined = undefined;
       const unitQtyMatch = text.match(/\b(\d{1,4})\s*(?:strip|strips|tablet|tablets|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units|nos)\b/i);
@@ -2422,6 +2910,37 @@ export class ConversationalAgentEngine {
       return { type: 'PURCHASE_QUERY', medicineName: med };
     }
 
+    // 2b. Multi-turn pronoun resolution for medicine ("its expiry", "their stock", "both expiries")
+    if (
+      /\b(?:it|its|this|that|iska|uska|their|unka|dono|both|all)\b/i.test(t) &&
+      (session.contextData?.lastMedicine || (session.contextData?.recentMedicines && session.contextData.recentMedicines.length > 0)) &&
+      !this.extractMedicineFromText(text)
+    ) {
+      const recentMeds: string[] = session.contextData?.recentMedicines || [];
+      if (recentMeds.length > 1 && /\b(?:their|both|dono|all|its|expiry|stock)\b/i.test(t)) {
+        return {
+          type: 'MULTI_MEDICINE_INQUIRY',
+          batchItems: recentMeds.map(m => ({ medicineName: m, quantity: 1 }))
+        };
+      }
+      const singleMed = session.contextData?.lastMedicine || recentMeds[0];
+      if (/\b(?:expir|expire|expiring|expiry|kab expire)\b/i.test(t)) {
+        return { type: 'MEDICINE_INQUIRY', medicineName: singleMed };
+      }
+      if (/\b(?:stock|available|kitna|quantity|price|mrp|rate|kitne ki hai)\b/i.test(t)) {
+        return { type: 'MEDICINE_INQUIRY', medicineName: singleMed };
+      }
+    }
+
+    // 2c. Multi-turn pronoun resolution for customer/refill ("is it ready?", "is he ready?", "ready status")
+    if (
+      /\b(?:is it ready|is he ready|ready hai kya|ready status|order ready)\b/i.test(t) &&
+      (session.contextData?.lastCustomer || session.customerName)
+    ) {
+      const patient = session.contextData?.lastCustomer || session.customerName;
+      return { type: 'REFILL', patientName: patient };
+    }
+
     // 3. Expiry Audit
     if (
       /\b(?:expir|expire|expiring|expiry|near expiry|expired)\b/i.test(t) &&
@@ -2456,10 +2975,13 @@ export class ConversationalAgentEngine {
       return { type: 'STOCK_CORRECTION', medicineName: med, quantity: qty };
     }
 
-    // 6. Application / Screen Guidance & Order Hub Settings
+    // 6. Application / Screen Guidance, SOPs & Order Hub Settings
     if (
-      /\b(?:explain how to use|how to use|how do i use|explain this screen|explain this page|explain page|where is|where are|how to set up|how to setup|setup guide|how does.*work)\b/i.test(t) ||
-      /\b(?:order hub|live cart|settings|pharmarack|printer|whatsapp|backup|purchase entry screen|pos billing|inventory screen|crm screen|dispatch screen|returns hub|sales report)\b/i.test(t)
+      !/\b(?:refill|renew|repeat)\b/i.test(t) &&
+      !/\b(?:add|stage|put|load)\b.*\b(?:cart|live\s*cart)\b/i.test(t) &&
+      (/\b(?:explain how to use|how to use|how do i use|explain this screen|explain this page|explain page|where is|where are|how to set up|how to setup|setup guide|how does.*work)\b/i.test(t) ||
+      /\b(?:sop|standard operating procedure|procedure|protocol|policy|guideline|dispensing rule)\b/i.test(t) ||
+      /\b(?:order hub|live cart|settings|pharmarack|printer|whatsapp|backup|purchase entry screen|pos billing|inventory screen|crm screen|dispatch screen|returns hub|sales report)\b/i.test(t))
     ) {
       let topic = 'general';
       let targetPage: string | undefined;
@@ -2550,19 +3072,31 @@ export class ConversationalAgentEngine {
       return { type: 'REMINDER_SCHEDULE', patientName, dueDate, notes: text };
     }
 
-    // 9. Chronic Refill signals
+    // 9. Chronic Refill signals & Compound Multi-Action Inquiries
     if (
       /\b(?:refill|repeat|renew|regular medicine|pichli dawa|pichhli|dawai khatam|goli khatam|punha havi|dawa repeat)\b/i.test(t) ||
       /(?:my|meri|majhi|what|any|check).*(?:dawa|goli|medicine|prescription|refill)/i.test(t) ||
-      /\b(?:what refills|check refill|due refill|any refill|my refill)\b/i.test(t)
+      /\b(?:what refills|check refill|due refill|any refill|my refill|manage refill)\b/i.test(t)
     ) {
+      const wantsPaymentQr = /\b(?:qr|payment|due|baki|khata|udhar)\b/i.test(t);
+      const wantsLiveCart = /\b(?:live\s*cart|distributor\s*cart|cart|order|stage)\b/i.test(t);
+      const wantsCallTask = /\b(?:call|schedule|remind|callback|task)\b/i.test(t);
+      const wantsSpecialOrder = /\b(?:special\s*order|shortage)\b/i.test(t);
+
       let patientName: string | undefined;
-      const patMatch = text.match(/\b(?:refill|renew|repeat|dawa)\s+(?:for|of|ka|ki)?\s+([A-Za-z]{3,25})\b/i) ||
+      const patMatch = text.match(/\b(?:refill|renew|repeat|dawa)\s+(?:for|of|ka|ki|to)?\s+([A-Za-z]{3,25})\b/i) ||
                        text.match(/\b([A-Za-z]{3,25})\s+(?:ka|ki|ke|s)?\s*(?:refill|dawa)\b/i);
       if (patMatch && !/^(check|add|due|any|my|all|regular|monthly)$/i.test(patMatch[1])) {
         patientName = patMatch[1];
       }
-      return { type: 'REFILL', patientName };
+      return {
+        type: 'REFILL',
+        patientName,
+        wantsPaymentQr,
+        wantsLiveCart,
+        wantsCallTask,
+        wantsSpecialOrder
+      };
     }
 
     // 10. Handover / Pharmacist
@@ -2628,6 +3162,73 @@ export class ConversationalAgentEngine {
   /**
    * Extracts probable medicine name candidate from text phrasing.
    */
+  /**
+   * Extracts multiple medicines and quantities for batch cart staging
+   */
+  public extractBatchStagingItems(text: string): Array<{ medicineName: string; quantity: number; unit?: string }> {
+    const cleaned = text
+      .replace(/\b(?:add|stage|put|load|order|to\s+live\s*cart|in\s+live\s*cart|into\s+live\s*cart|to\s*cart|in\s*cart|please)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const segments = cleaned.split(/[,+&]|\band\b|\n/i);
+    const items: Array<{ medicineName: string; quantity: number; unit?: string }> = [];
+
+    for (const seg of segments) {
+      const s = seg.trim();
+      if (!s || s.length < 3) continue;
+
+      // Pattern 1: Qty + Unit + MedicineName (e.g. "10 strips Dolo 650", "5 Augmentin 625")
+      const m1 = s.match(/^(\d{1,4})\s*(strip|strips|tab|tabs|tablet|tablets|cap|caps|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units)?s?\s+([A-Za-z0-9\s-]{2,30})$/i);
+      if (m1) {
+        const qty = parseInt(m1[1], 10);
+        const unit = (m1[2] || 'strip').toLowerCase();
+        const name = m1[3].trim();
+        if (name.length >= 2 && !/^(item|items|medicine|medicines)$/i.test(name)) {
+          items.push({ medicineName: name, quantity: qty, unit });
+        }
+        continue;
+      }
+
+      // Pattern 2: MedicineName + Qty + Unit (e.g. "Dolo 650 10", "Pan 40 - 5 strips")
+      const m2 = s.match(/^([A-Za-z0-9\s-]{2,30})[\s\-–—]+(\d{1,4})\s*(strip|strips|tab|tabs|tablet|tablets|cap|caps|capsule|capsules|box|boxes|bottle|bottles|pack|packs|unit|units)?s?$/i);
+      if (m2) {
+        const name = m2[1].trim();
+        const qty = parseInt(m2[2], 10);
+        const unit = (m2[3] || 'strip').toLowerCase();
+        if (name.length >= 2 && !/^(item|items|medicine|medicines)$/i.test(name)) {
+          items.push({ medicineName: name, quantity: qty, unit });
+        }
+        continue;
+      }
+    }
+
+    return items;
+  }
+
+  /**
+   * Extracts multiple medicine names from combined queries (e.g. "Dolo 650 and Calpol 500")
+   */
+  public extractMultipleMedicines(text: string): string[] {
+    // Only parse if text actually has multiple segments connected by commas, +, or 'and'
+    if (!text.includes(',') && !text.includes('+') && !/\b(?:and|aur|sath\s*me)\b/i.test(text)) {
+      return [];
+    }
+    // Ignore common operational phrases containing 'and'
+    if (/\b(?:rack\s*and\s*stock|stock\s*and\s*rack|sales\s*and|returns?\s*and|due\s*and|price\s*and|loss\s*and|profit\s*and)\b/i.test(text)) {
+      return [];
+    }
+    const parts = text.split(/[,+&]|\band\b/i);
+    const meds: string[] = [];
+    for (const p of parts) {
+      const candidate = this.extractMedicineFromText(p);
+      if (candidate && candidate.length >= 3 && !/^(it|this|that|its|both|dawa|medicine|all|status|cart|items?|rack|stock)$/i.test(candidate)) {
+        meds.push(candidate);
+      }
+    }
+    return meds;
+  }
+
   public extractMedicineFromText(text: string): string | undefined {
     const lower = text.toLowerCase().trim();
     if (!/\b(?:have|got|stock|available|price|cost|mrp|chahiye|milegi|mil sakti|aahe ka|tablet|strip|capsule|syrup|gel|ointment|mg|ml|gm|dolo|telma|paracetamol|augmentin|azithral|pan|pantocid|metformin|glycomet|atorva|for|add|bill|cart|give|dispense|dalo|lagao|bhejo|check|search|find|salt)\b/i.test(lower)) {

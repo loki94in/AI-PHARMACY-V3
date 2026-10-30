@@ -649,6 +649,121 @@ router.get('/dashboard-stats', async (_req, res) => {
   }
 });
 
+// GET /api/learning/assistant-fallbacks - fetch unhandled assistant queries & fallbacks
+router.get('/assistant-fallbacks', async (req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const status = req.query.status ? String(req.query.status).toLowerCase() : 'all';
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || 50), 10) || 50, 1), 200);
+    const offset = Math.max(parseInt(String(req.query.offset || 0), 10) || 0, 0);
+
+    let whereClause = '';
+    const params: any[] = [];
+    if (status !== 'all' && ['pending', 'reviewed', 'resolved', 'ignored'].includes(status)) {
+      whereClause = 'WHERE status = ?';
+      params.push(status);
+    }
+
+    const [rows, totalRow, pendingRow] = await Promise.all([
+      db.all(
+        `SELECT id, session_id, role, user_id, username, query_text, 
+                page_context_title, page_context_path, fallback_reason, 
+                suggested_intent, bot_reply_text, status, resolution_notes, 
+                created_at, resolved_at
+         FROM ai_assistant_fallbacks 
+         ${whereClause} 
+         ORDER BY id DESC LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      ).catch(() => []),
+      db.get(
+        `SELECT COUNT(*) as count FROM ai_assistant_fallbacks ${whereClause}`,
+        params
+      ).catch(() => ({ count: 0 })),
+      db.get(
+        `SELECT COUNT(*) as count FROM ai_assistant_fallbacks WHERE status = 'pending'`
+      ).catch(() => ({ count: 0 }))
+    ]);
+
+    res.json({
+      success: true,
+      fallbacks: rows || [],
+      total: totalRow?.count || 0,
+      pendingCount: pendingRow?.count || 0,
+      limit,
+      offset
+    });
+  } catch (err: any) {
+    console.error('[Learning API] Failed to fetch assistant fallbacks:', err);
+    res.status(500).json({ error: 'Failed to fetch assistant fallbacks', details: err?.message });
+  }
+});
+
+// PATCH /api/learning/assistant-fallbacks/:id - update fallback status and notes
+router.patch('/assistant-fallbacks/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id || id <= 0) {
+      return res.status(400).json({ error: 'Valid fallback id is required' });
+    }
+
+    const { status, resolution_notes } = req.body;
+    const allowedStatuses = ['pending', 'reviewed', 'resolved', 'ignored'];
+    if (status && !allowedStatuses.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${allowedStatuses.join(', ')}` });
+    }
+
+    const db = await dbManager.getConnection();
+    const existing = await db.get('SELECT id FROM ai_assistant_fallbacks WHERE id = ?', [id]);
+    if (!existing) {
+      return res.status(404).json({ error: 'Assistant fallback not found' });
+    }
+
+    const nextStatus = status || 'reviewed';
+    const resolvedAt = (nextStatus === 'resolved' || nextStatus === 'reviewed') ? new Date().toISOString() : null;
+
+    await db.run(
+      `UPDATE ai_assistant_fallbacks
+       SET status = ?,
+           resolution_notes = COALESCE(?, resolution_notes),
+           resolved_at = COALESCE(?, resolved_at)
+       WHERE id = ?`,
+      [nextStatus, resolution_notes !== undefined ? String(resolution_notes) : null, resolvedAt, id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Assistant fallback updated successfully',
+      id,
+      status: nextStatus
+    });
+  } catch (err: any) {
+    console.error('[Learning API] Failed to update assistant fallback:', err);
+    res.status(500).json({ error: 'Failed to update assistant fallback', details: err?.message });
+  }
+});
+
+// DELETE /api/learning/assistant-fallbacks/:id - dismiss or delete fallback entry
+router.delete('/assistant-fallbacks/:id', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id || id <= 0) {
+      return res.status(400).json({ error: 'Valid fallback id is required' });
+    }
+
+    const db = await dbManager.getConnection();
+    await db.run('DELETE FROM ai_assistant_fallbacks WHERE id = ?', [id]);
+
+    res.json({
+      success: true,
+      message: 'Assistant fallback removed successfully',
+      id
+    });
+  } catch (err: any) {
+    console.error('[Learning API] Failed to delete assistant fallback:', err);
+    res.status(500).json({ error: 'Failed to delete assistant fallback', details: err?.message });
+  }
+});
+
 export default router;
 
 

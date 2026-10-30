@@ -153,20 +153,25 @@ export class LocalAiLifecycleManager {
       const installed = await this.isInstalledAndVerified();
 
       if (installed) {
-        console.log('[Local AI Lifecycle] ✓ Local AI assets installed and verified. Ensuring runtime is active...');
-        const isRunning = await ensureLlamaServerRunning({
-          host: process.env.LOCAL_AI_HOST || '127.0.0.1',
-          port: parseInt(process.env.LOCAL_AI_PORT || '8089', 10),
-          timeoutMs: 4000,
-          modelsDir: getLocalAiStorageDir()
-        });
+        if (process.env.LOCAL_AI_PREWARM === 'true') {
+          console.log('[Local AI Lifecycle] ✓ Local AI assets installed and prewarm enabled. Ensuring runtime is active...');
+          const isRunning = await ensureLlamaServerRunning({
+            host: process.env.LOCAL_AI_HOST || '127.0.0.1',
+            port: parseInt(process.env.LOCAL_AI_PORT || '8089', 10),
+            timeoutMs: 4000,
+            modelsDir: getLocalAiStorageDir()
+          });
 
-        if (isRunning) {
-          console.log('[Local AI Lifecycle] ✓ Local AI runtime is healthy and ready in shadow mode.');
-          eventService.broadcast('local_ai_status_changed', { status: 'ready', runtimeHealthy: true });
+          if (isRunning) {
+            console.log('[Local AI Lifecycle] ✓ Local AI runtime is healthy and ready in shadow mode.');
+            eventService.broadcast('local_ai_status_changed', { status: 'ready', runtimeHealthy: true });
+          } else {
+            console.warn('[Local AI Lifecycle] ⚠️ Runtime failed to start or health-check failed. Deterministic chatbot remains fully operational.');
+            eventService.broadcast('local_ai_status_changed', { status: 'runtime_error', runtimeHealthy: false });
+          }
         } else {
-          console.warn('[Local AI Lifecycle] ⚠️ Runtime failed to start or health-check failed. Deterministic chatbot remains fully operational.');
-          eventService.broadcast('local_ai_status_changed', { status: 'runtime_error', runtimeHealthy: false });
+          console.log('[Local AI Lifecycle] ✓ Local AI assets verified. Deferred startup active (Qwen will load on first inference request).');
+          eventService.broadcast('local_ai_status_changed', { status: 'installed', runtimeHealthy: false });
         }
         return;
       }
