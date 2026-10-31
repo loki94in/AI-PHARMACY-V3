@@ -195,26 +195,28 @@ function Rollback-Update {
     Write-Log "Rolling back to previous version from: $BackupDir (reason: $Reason)"
     Update-UI -Step "Rolling back update..." -Detail "Restoring previous files safely..." -Percent 100
 
-    if (Test-Path (Join-Path $BackupDir "PharmacyOS.exe")) {
-        Copy-Item (Join-Path $BackupDir "PharmacyOS.exe") (Join-Path $InstallDir "PharmacyOS.exe") -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path (Join-Path $BackupDir "PharmacyBackend.exe")) {
-        Copy-Item (Join-Path $BackupDir "PharmacyBackend.exe") (Join-Path $InstallDir "PharmacyBackend.exe") -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path (Join-Path $BackupDir "dist-pkg")) {
-        Copy-Item (Join-Path $BackupDir "dist-pkg") (Join-Path $InstallDir "dist-pkg") -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path (Join-Path $BackupDir "resources\app")) {
-        Copy-Item (Join-Path $BackupDir "resources\app") (Join-Path $InstallDir "resources\app") -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path (Join-Path $BackupDir "sea-entry.cjs")) {
-        Copy-Item (Join-Path $BackupDir "sea-entry.cjs") (Join-Path $InstallDir "sea-entry.cjs") -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path (Join-Path $BackupDir "Updater.bat")) {
-        Copy-Item (Join-Path $BackupDir "Updater.bat") (Join-Path $InstallDir "Updater.bat") -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path (Join-Path $BackupDir "UpdateGUI.ps1")) {
-        Copy-Item (Join-Path $BackupDir "UpdateGUI.ps1") (Join-Path $InstallDir "UpdateGUI.ps1") -Force -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace($BackupDir) -and (Test-Path -LiteralPath $BackupDir)) {
+        if (Test-Path -LiteralPath (Join-Path $BackupDir "PharmacyOS.exe")) {
+            Copy-Item -LiteralPath (Join-Path $BackupDir "PharmacyOS.exe") -Destination (Join-Path $InstallDir "PharmacyOS.exe") -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath (Join-Path $BackupDir "PharmacyBackend.exe")) {
+            Copy-Item -LiteralPath (Join-Path $BackupDir "PharmacyBackend.exe") -Destination (Join-Path $InstallDir "PharmacyBackend.exe") -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath (Join-Path $BackupDir "dist-pkg")) {
+            Copy-Item -LiteralPath (Join-Path $BackupDir "dist-pkg") -Destination (Join-Path $InstallDir "dist-pkg") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath (Join-Path $BackupDir "resources\app")) {
+            Copy-Item -LiteralPath (Join-Path $BackupDir "resources\app") -Destination (Join-Path $InstallDir "resources\app") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath (Join-Path $BackupDir "sea-entry.cjs")) {
+            Copy-Item -LiteralPath (Join-Path $BackupDir "sea-entry.cjs") -Destination (Join-Path $InstallDir "sea-entry.cjs") -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath (Join-Path $BackupDir "Updater.bat")) {
+            Copy-Item -LiteralPath (Join-Path $BackupDir "Updater.bat") -Destination (Join-Path $InstallDir "Updater.bat") -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath (Join-Path $BackupDir "UpdateGUI.ps1")) {
+            Copy-Item -LiteralPath (Join-Path $BackupDir "UpdateGUI.ps1") -Destination (Join-Path $InstallDir "UpdateGUI.ps1") -Force -ErrorAction SilentlyContinue
+        }
     }
 
     $stagingDir = Join-Path $InstallDir "updates\staging"
@@ -275,7 +277,7 @@ $window.Add_ContentRendered({
         Update-UI -Step "Closing application..." -Detail "Waiting for file handles to release..." -Percent 18
         Write-Log "Waiting for executable file handles to release..."
         $handlesFree = $false
-        $targetExes = @(Join-Path $InstallDir "PharmacyOS.exe", Join-Path $InstallDir "PharmacyBackend.exe")
+        $targetExes = @( (Join-Path $InstallDir "PharmacyOS.exe"), (Join-Path $InstallDir "PharmacyBackend.exe") )
         for ($i = 0; $i -lt 10; $i++) {
             $busy = $false
             foreach ($f in $targetExes) {

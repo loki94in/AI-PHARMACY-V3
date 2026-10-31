@@ -241,7 +241,7 @@ begin
     StampFile := AppDir + '\node_modules\.stamp_{#NodeModulesStamp}';
 
     // If node_modules folder is missing, or the stamp file does not exist, we must install node_modules
-    if (not DirExists(AppDir + '\node_modules')) or (not FileExists(StampFile)) then
+    if (not DirExists(AppDir + '\node_modules')) or (not FileExists(StampFile)) or (not DirExists(AppDir + '\node_modules\better-sqlite3')) or (not DirExists(AppDir + '\node_modules\bindings')) then
     begin
       Log('[Setup] node_modules missing or stamp changed (.stamp_{#NodeModulesStamp} not found). Installing node_modules...');
       NodeModulesNeedInstall := True;
@@ -411,8 +411,18 @@ end;
 function InitializeSetup(): Boolean;
 var
   ResultCode: Integer;
+  PrevPath: String;
 begin
   Result := True;
+  // Purge any temporary test directory from registry so installer never defaults to a temp path
+  if RegQueryStringValue(HKCU, 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{E3A1F2B4-7C8D-4E5F-9A0B-1C2D3E4F5A6B}_is1', 'InstallLocation', PrevPath) then
+  begin
+    if Pos('\\Temp\\', PrevPath) > 0 then
+    begin
+      RegDeleteKeyIncludingSubkeys(HKCU, 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{E3A1F2B4-7C8D-4E5F-9A0B-1C2D3E4F5A6B}_is1');
+    end;
+  end;
+
   // Proactively terminate any orphaned background process from a prior crash so port 5175 and files are free
   if IsProcessRunning('PharmacyBackend.exe') then
   begin
