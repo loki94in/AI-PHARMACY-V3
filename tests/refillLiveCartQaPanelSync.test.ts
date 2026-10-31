@@ -214,5 +214,79 @@ describe('Refill Live Cart to QA Panel Synchronization', () => {
       // Patient F (id 7, fulfilled today) -> Excluded because DATE(next_refill_date) > DATE(last_refill_date) is false
       expect(returnedIds).not.toContain(7);
     });
+
+    it('strictly isolates cart attribution so Patient B and general shelf stock never hijack cart lines', () => {
+      // Mock live cart contents containing:
+      // 1. TELMA 40MG TAB added specifically for Patient A (storeId: 10, productCode: 'TELMA_A')
+      // 2. PARACETAMOL 650MG added for general shop shelf stock (storeId: 20, productCode: 'PARA_SHELF')
+      const cachedCartLines = [
+        { storeId: 10, storeName: 'ALPHA PHARMA', productCode: 'TELMA_A', productName: 'TELMA 40MG TAB', qty: 10 },
+        { storeId: 20, storeName: 'BETA PHARMA', productCode: 'PARA_SHELF', productName: 'PARACETAMOL 650MG', qty: 50 }
+      ];
+
+      // Patient A: Took Telma 40, explicitly ordered to cart
+      const rowPatientA = {
+        id: 101,
+        medicine_name: 'TELMA 40MG TAB',
+        cart_product_code: 'TELMA_A',
+        cart_store_id: 10,
+        cart_store_name: 'ALPHA PHARMA',
+        cart_qty: 10
+      };
+
+      // Patient B: Also takes Telma 40, but NOT ordered to cart (due in 2 days)
+      const rowPatientB = {
+        id: 102,
+        medicine_name: 'TELMA 40MG TAB',
+        cart_product_code: null,
+        cart_store_id: null,
+        cart_store_name: null,
+        cart_qty: null
+      };
+
+      // Patient C: Takes Paracetamol 650mg, but NOT ordered (shelf stock was bought for the shop)
+      const rowPatientC = {
+        id: 103,
+        medicine_name: 'PARACETAMOL 650MG',
+        cart_product_code: null,
+        cart_store_id: null,
+        cart_store_name: null,
+        cart_qty: null
+      };
+
+      const resolveCartHit = (row: any) => {
+        let liveCartHit: { storeName: string; qty: number } | undefined;
+        if (cachedCartLines.length > 0) {
+          if (row.cart_product_code) {
+            liveCartHit = cachedCartLines.find(c => (row.cart_store_id ? c.storeId === Number(row.cart_store_id) : true) && c.productCode === String(row.cart_product_code));
+          } else if (row.cart_product_name && row.cart_store_id) {
+            const rowClean = String(row.cart_product_name).toLowerCase().replace(/[^a-z0-9]/g, '');
+            liveCartHit = cachedCartLines.find(c => c.storeId === Number(row.cart_store_id) && String(c.productName || '').toLowerCase().replace(/[^a-z0-9]/g, '') === rowClean);
+          }
+        }
+        const finalCartStoreName = liveCartHit ? liveCartHit.storeName : (row.cart_store_name || null);
+        const finalCartQty = liveCartHit ? liveCartHit.qty : (row.cart_qty || null);
+        const inLiveCart = !!liveCartHit || Boolean(row.cart_store_name);
+        return { liveCartHit, finalCartStoreName, finalCartQty, inLiveCart };
+      };
+
+      // 1. Patient A must correctly resolve live cart
+      const resA = resolveCartHit(rowPatientA);
+      expect(resA.inLiveCart).toBe(true);
+      expect(resA.finalCartStoreName).toBe('ALPHA PHARMA');
+      expect(resA.finalCartQty).toBe(10);
+
+      // 2. Patient B has NO cart attribution -> Must NOT match Patient A's line!
+      const resB = resolveCartHit(rowPatientB);
+      expect(resB.inLiveCart).toBe(false);
+      expect(resB.finalCartStoreName).toBeNull();
+      expect(resB.finalCartQty).toBeNull();
+
+      // 3. Patient C has NO cart attribution -> Must NOT match general shelf stock!
+      const resC = resolveCartHit(rowPatientC);
+      expect(resC.inLiveCart).toBe(false);
+      expect(resC.finalCartStoreName).toBeNull();
+      expect(resC.finalCartQty).toBeNull();
+    });
   });
 });
