@@ -298,7 +298,7 @@ interface LocalPendingAdd {
 
 let pendingAddSeq = 1;
 const pendingAddsCache: LocalPendingAdd[] = [];
-let cachedDistributorStores: Array<{ storeId: number; storeName: string }> = [];
+let cachedDistributorStores: Array<{ storeId: number; storeName: string; isMapped?: boolean }> = [];
 const syncPendingAddsCache = (next: LocalPendingAdd[]) => {
   pendingAddsCache.length = 0;
   pendingAddsCache.push(...next);
@@ -366,17 +366,13 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const [lastAddedDistributor, setLastAddedDistributor] = useState<string>(() => localStorage.getItem('pharmarack_last_added_distributor') || '');
 
   // Multi-distributor & single-distributor search filter
-  const [availableStores, setAvailableStores] = useState<Array<{ storeId: number; storeName: string }>>(cachedDistributorStores);
+  const [availableStores, setAvailableStores] = useState<Array<{ storeId: number; storeName: string; isMapped?: boolean }>>(cachedDistributorStores);
   const [selectedFilterStoreIds, setSelectedFilterStoreIds] = useState<number[]>([]);
   const [isDistributorFilterOpen, setIsDistributorFilterOpen] = useState(false);
   const [distributorFilterSearch, setDistributorFilterSearch] = useState('');
   const filterDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (cachedDistributorStores.length > 0) {
-      setAvailableStores(cachedDistributorStores);
-      return;
-    }
     let cancelled = false;
     api.getPharmarackDistributorStores().then(res => {
       if (!cancelled && res && Array.isArray(res.stores)) {
@@ -518,28 +514,37 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const [cartError, setCartError] = useState<string | null>(null);
 
   const combinedDistributorList = useMemo(() => {
-    const map = new Map<number, { storeId: number; storeName: string; inCart: boolean; itemCount: number }>();
+    const map = new Map<number, { storeId: number; storeName: string; inCart: boolean; itemCount: number; isMapped?: boolean }>();
 
     cartDistributors.forEach(cd => {
-      if (cd.storeId) {
-        map.set(Number(cd.storeId), {
-          storeId: Number(cd.storeId),
+      const id = Number(cd.storeId);
+      if (id && id > 0 && id < 90000) {
+        map.set(id, {
+          storeId: id,
           storeName: cd.storeName,
           inCart: true,
           itemCount: cd.items?.length || 0,
+          isMapped: true
         });
       }
     });
 
     availableStores.forEach(as => {
       const id = Number(as.storeId);
-      if (id && !map.has(id)) {
-        map.set(id, {
-          storeId: id,
-          storeName: as.storeName,
-          inCart: false,
-          itemCount: 0,
-        });
+      // Strictly only accept authentic Pharmarack store IDs (exclude external/synthetic >= 90000)
+      if (id && id > 0 && id < 90000) {
+        const existing = map.get(id);
+        if (existing) {
+          existing.isMapped = existing.isMapped || as.isMapped;
+        } else {
+          map.set(id, {
+            storeId: id,
+            storeName: as.storeName,
+            inCart: false,
+            itemCount: 0,
+            isMapped: as.isMapped
+          });
+        }
       }
     });
 
@@ -547,17 +552,30 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     return list.sort((a, b) => {
       if (a.inCart && !b.inCart) return -1;
       if (!a.inCart && b.inCart) return 1;
+      if (a.isMapped && !b.isMapped) return -1;
+      if (!a.isMapped && b.isMapped) return 1;
       return a.storeName.localeCompare(b.storeName);
     });
   }, [cartDistributors, availableStores]);
 
+  const [distributorCategoryTab, setDistributorCategoryTab] = useState<'all' | 'mapped' | 'non-mapped'>('all');
+
+  const mappedDistributorCount = useMemo(() => combinedDistributorList.filter(d => d.isMapped).length, [combinedDistributorList]);
+  const nonMappedDistributorCount = useMemo(() => combinedDistributorList.filter(d => !d.isMapped).length, [combinedDistributorList]);
+
   const filteredDistributorOptions = useMemo(() => {
-    if (!distributorFilterSearch.trim()) return combinedDistributorList;
+    let list = combinedDistributorList;
+    if (distributorCategoryTab === 'mapped') {
+      list = list.filter(d => d.isMapped);
+    } else if (distributorCategoryTab === 'non-mapped') {
+      list = list.filter(d => !d.isMapped);
+    }
+    if (!distributorFilterSearch.trim()) return list;
     const q = distributorFilterSearch.toLowerCase().trim();
-    return combinedDistributorList.filter(d =>
+    return list.filter(d =>
       d.storeName.toLowerCase().includes(q) || String(d.storeId).includes(q)
     );
-  }, [combinedDistributorList, distributorFilterSearch]);
+  }, [combinedDistributorList, distributorCategoryTab, distributorFilterSearch]);
 
   const handleToggleStoreFilter = (storeId: number) => {
     setSelectedFilterStoreIds(prev =>
@@ -2487,7 +2505,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                 )}
 
                 {/* Distributor Filter Bar (Single & Multi-Select) */}
-                <div className="relative mb-2.5 flex items-center justify-between gap-2 text-xs" ref={filterDropdownRef}>
+                <div className={`relative mb-2.5 flex items-center justify-between gap-2 text-xs ${isDistributorFilterOpen ? 'z-[70]' : 'z-20'}`} ref={filterDropdownRef}>
                   <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                     <span className="text-[11px] font-semibold text-muted flex items-center gap-1 shrink-0">
                       <Filter size={12} className="text-muted shrink-0" />
@@ -2512,6 +2530,13 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                         )}
                         {selectedFilterStoreIds.length > 1 && `${selectedFilterStoreIds.length} Distributors Selected`}
                       </span>
+                      {selectedFilterStoreIds.length === 1 && (
+                        combinedDistributorList.find(d => d.storeId === selectedFilterStoreIds[0])?.isMapped === false && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold shrink-0">
+                            Non-Mapped
+                          </span>
+                        )
+                      )}
                       <ChevronDown size={12} className={`transition-transform duration-200 ${isDistributorFilterOpen ? 'rotate-180' : ''}`} />
                     </button>
 
@@ -2536,7 +2561,10 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
 
                   {/* Popover Dropdown */}
                   {isDistributorFilterOpen && (
-                    <div className="absolute top-full left-0 mt-1 w-84 max-w-[95vw] bg-bg border border-border rounded-xl shadow-2xl z-50 p-2 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
+                    <div
+                      className="absolute top-full left-0 mt-1.5 w-80 sm:w-96 max-w-[95vw] bg-bg2 border border-border shadow-[0_12px_40px_rgba(0,0,0,0.35)] z-[100] rounded-xl p-3 space-y-2.5"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       {/* Search inside distributors list */}
                       <div className="relative">
                         <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
@@ -2544,8 +2572,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                           type="text"
                           value={distributorFilterSearch}
                           onChange={(e) => setDistributorFilterSearch(e.target.value)}
-                          placeholder="Search distributor..."
-                          className="w-full bg-bg2 border border-border rounded-lg pl-7 pr-2.5 py-1 text-xs text-text placeholder:text-muted focus:outline-none focus:border-primary"
+                          placeholder={`Search ${distributorCategoryTab === 'mapped' ? 'mapped' : distributorCategoryTab === 'non-mapped' ? 'non-mapped' : ''} distributors...`}
+                          className="w-full bg-bg3/60 border border-border rounded-lg pl-7 pr-7 py-1 text-xs text-text placeholder:text-muted focus:outline-none focus:border-primary"
                           autoFocus
                         />
                         {distributorFilterSearch && (
@@ -2559,13 +2587,52 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                         )}
                       </div>
 
+                      {/* Sub-tab filter: All / Mapped / Non-Mapped */}
+                      <div className="flex items-center gap-1 p-0.5 bg-bg3 rounded-lg border border-border text-[11px] font-semibold">
+                        <button
+                          type="button"
+                          onClick={() => setDistributorCategoryTab('all')}
+                          className={`flex-1 py-1 rounded-md transition-all text-center cursor-pointer ${
+                            distributorCategoryTab === 'all'
+                              ? 'bg-bg text-text shadow-xs font-bold'
+                              : 'text-muted hover:text-text'
+                          }`}
+                        >
+                          All ({combinedDistributorList.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDistributorCategoryTab('mapped')}
+                          className={`flex-1 py-1 rounded-md transition-all text-center cursor-pointer flex items-center justify-center gap-1 ${
+                            distributorCategoryTab === 'mapped'
+                              ? 'bg-bg text-sky-400 shadow-xs font-bold'
+                              : 'text-muted hover:text-sky-400'
+                          }`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                          Mapped ({mappedDistributorCount})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDistributorCategoryTab('non-mapped')}
+                          className={`flex-1 py-1 rounded-md transition-all text-center cursor-pointer flex items-center justify-center gap-1 ${
+                            distributorCategoryTab === 'non-mapped'
+                              ? 'bg-bg text-amber-400 shadow-xs font-bold'
+                              : 'text-muted hover:text-amber-400'
+                          }`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                          Non-Mapped ({nonMappedDistributorCount})
+                        </button>
+                      </div>
+
                       {/* All Distributors (Clear option) */}
                       <div
                         onClick={handleResetStoreFilter}
                         className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
                           selectedFilterStoreIds.length === 0
                             ? 'bg-primary/10 text-primary font-bold'
-                            : 'hover:bg-bg2 text-text'
+                            : 'hover:bg-bg3 text-text'
                         }`}
                       >
                         <div className="flex items-center gap-2">
@@ -2576,7 +2643,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                           </div>
                           <span>All Distributors (Default)</span>
                         </div>
-                        <span className="text-[10px] text-muted">All</span>
+                        <span className="text-[10px] text-muted">Reset</span>
                       </div>
 
                       <div className="border-t border-border my-1" />
@@ -2584,7 +2651,9 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                       {/* Distributor List */}
                       <div className="max-h-56 overflow-y-auto space-y-0.5 pr-1 dropdown-scroll">
                         {filteredDistributorOptions.length === 0 ? (
-                          <div className="py-4 text-center text-xs text-muted">No matching distributors</div>
+                          <div className="py-4 text-center text-xs text-muted">
+                            No {distributorCategoryTab !== 'all' ? distributorCategoryTab : ''} distributors found
+                          </div>
                         ) : (
                           filteredDistributorOptions.map(d => {
                             const isSelected = selectedFilterStoreIds.includes(d.storeId);
@@ -2593,7 +2662,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                                 key={d.storeId}
                                 onClick={() => handleToggleStoreFilter(d.storeId)}
                                 className={`group flex items-center justify-between px-2 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
-                                  isSelected ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-bg2 text-text'
+                                  isSelected ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-bg3 text-text'
                                 }`}
                               >
                                 <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
@@ -2604,15 +2673,25 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                                   </div>
                                   <span className="truncate">{d.storeName}</span>
                                   {d.inCart && (
-                                    <span className="shrink-0 text-[9px] font-bold px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                                    <span className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
                                       In Cart{d.itemCount > 0 ? ` (${d.itemCount})` : ''}
+                                    </span>
+                                  )}
+                                  {d.isMapped && !d.inCart && (
+                                    <span className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 border border-sky-500/25">
+                                      Mapped
+                                    </span>
+                                  )}
+                                  {!d.isMapped && !d.inCart && (
+                                    <span className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                                      Non-Mapped
                                     </span>
                                   )}
                                 </div>
                                 <button
                                   type="button"
                                   onClick={(e) => handleSelectSingleStoreFilter(d.storeId, e)}
-                                  className="opacity-0 group-hover:opacity-100 text-[10px] px-1.5 py-0.5 rounded bg-bg3 hover:bg-primary hover:text-white border border-border text-muted font-bold transition-all shrink-0 cursor-pointer"
+                                  className="opacity-0 group-hover:opacity-100 text-[10px] px-1.5 py-0.5 rounded bg-bg hover:bg-primary hover:text-white border border-border text-muted font-bold transition-all shrink-0 cursor-pointer"
                                   title={`Filter only ${d.storeName}`}
                                 >
                                   Only
@@ -2624,7 +2703,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                       </div>
 
                       {/* Action Footer */}
-                      <div className="border-t border-border pt-1.5 flex items-center justify-between text-[11px]">
+                      <div className="border-t border-border pt-2 flex items-center justify-between text-[11px]">
                         <span className="text-muted">
                           {selectedFilterStoreIds.length === 0 ? 'Searching all' : `${selectedFilterStoreIds.length} selected`}
                         </span>

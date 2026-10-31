@@ -561,7 +561,15 @@ router.get('/search', async (req, res) => {
   }
 
   const storeId = req.query.storeId ? Number(req.query.storeId) : null;
-  const isMapped = req.query.isMapped === 'true';
+  let isMapped: boolean;
+  if (req.query.isMapped !== undefined) {
+    isMapped = req.query.isMapped === 'true';
+  } else if (storeId !== null) {
+    const mappedIds = await getMappedStoreIds();
+    isMapped = mappedIds.includes(storeId);
+  } else {
+    isMapped = true;
+  }
 
   // 1. Fresh OR stale disk-backed cache lookup (<1ms). Stale hits answer the
   // dropdown instantly (cold-boot resilience); a background single-flight
@@ -671,17 +679,95 @@ router.get('/distributors', async (_req, res) => {
   }
 });
 
-// Get all available Pharmarack store IDs and names from catalog cache
-router.get('/distributor-stores', async (_req, res) => {
+// In-memory cache for all connected Pharmarack stores (30-minute TTL)
+let connectedStoresCache: { stores: Array<{ storeId: number; storeName: string; isMapped?: boolean }>; cachedAt: number } | null = null;
+
+export async function getAllConnectedPharmarackStores(): Promise<Array<{ storeId: number; storeName: string; isMapped?: boolean }>> {
+  if (connectedStoresCache && Date.now() - connectedStoresCache.cachedAt < 30 * 60 * 1000 && connectedStoresCache.stores.length > 0) {
+    return connectedStoresCache.stores;
+  }
+
+  const storeMap = new Map<number, { storeId: number; storeName: string; isMapped?: boolean }>();
+
+  // 1. Fetch live connected store list directly from Pharmarack Retailer API
+  try {
+    const res = await fetchPharmarack('https://pharmretail-api.pharmarack.com/user/api/v2/store-list', {
+      method: 'GET',
+      signal: AbortSignal.timeout(10000)
+    }).catch(() => null);
+
+    if (res && res.ok) {
+      const data: any = await res.json().catch(() => null);
+      const stores = data?.data?.Stores;
+      if (Array.isArray(stores)) {
+        const checkIsMapped = (s: any) =>
+          s.Ismapped === 1 || s.IsMapped === 1 || s.isMapped === true || s.isMapped === 1 ||
+          String(s.IsMapped) === '1' || String(s.Ismapped) === '1';
+
+        for (const s of stores) {
+          const isMapped = checkIsMapped(s);
+          const id = Number(s.StoreId || s.storeId || s.Id || s.id);
+          const name = String(s.StoreName || s.storeName || s.Name || s.name || '').trim();
+          if (id && !isNaN(id) && id > 0 && id < 90000 && name) {
+            storeMap.set(id, {
+              storeId: id,
+              storeName: name,
+              isMapped
+            });
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 2. Union ONLY with genuine Pharmarack stores from local cache (distributor_catalog & medicine_distributor_links)
+  // NEVER include external local distributors or synthetic IDs
   try {
     const db = await dbManager.getConnection();
-    const rows = await db.all(`
-      SELECT DISTINCT store_id as storeId, store_name as storeName
+
+    // From distributor_catalog cache (only real Pharmarack store IDs)
+    const catalogRows: any[] = await db.all(`
+      SELECT DISTINCT store_id, store_name, is_mapped
       FROM distributor_catalog
-      WHERE store_id IS NOT NULL AND store_id > 0 AND store_name IS NOT NULL AND store_name != ''
-      ORDER BY store_name ASC
-    `);
-    return res.json({ success: true, stores: rows || [] });
+      WHERE store_id IS NOT NULL AND store_id > 0 AND store_id < 90000 AND store_name IS NOT NULL AND store_name != ''
+    `).catch(() => []);
+    for (const r of catalogRows) {
+      const id = Number(r.store_id);
+      if (id && !storeMap.has(id)) {
+        storeMap.set(id, { storeId: id, storeName: String(r.store_name).trim(), isMapped: Boolean(r.is_mapped) });
+      }
+    }
+
+    // From medicine_distributor_links (only real Pharmarack store IDs)
+    const linkRows: any[] = await db.all(`
+      SELECT DISTINCT store_id, store_name, mapped
+      FROM medicine_distributor_links
+      WHERE store_id IS NOT NULL AND store_id > 0 AND store_id < 90000 AND store_name IS NOT NULL AND store_name != ''
+    `).catch(() => []);
+    for (const r of linkRows) {
+      const id = Number(r.store_id);
+      if (id && !storeMap.has(id)) {
+        storeMap.set(id, { storeId: id, storeName: String(r.store_name).trim(), isMapped: Boolean(r.mapped) });
+      }
+    }
+  } catch (_) {}
+
+  const resultList = Array.from(storeMap.values()).sort((a, b) => {
+    return a.storeName.localeCompare(b.storeName);
+  });
+
+  if (resultList.length > 0) {
+    connectedStoresCache = { stores: resultList, cachedAt: Date.now() };
+  }
+
+  return resultList;
+}
+
+// Get all available Pharmarack store IDs and names connected to the user's retailer ID
+router.get('/distributor-stores', async (_req, res) => {
+  try {
+    const stores = await getAllConnectedPharmarackStores();
+    return res.json({ success: true, stores });
   } catch (err: any) {
     console.error('Failed to fetch distributor stores:', err);
     return res.status(500).json({ success: false, error: err.message, stores: [] });

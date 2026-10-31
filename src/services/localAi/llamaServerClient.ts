@@ -133,30 +133,11 @@ export function resetLocalAiAssetCache(): void {
 }
 
 /**
- * Checks if Local AI is explicitly enabled in environment, or auto-activates if bundled assets exist.
+ * Checks if Local AI is explicitly enabled in environment.
+ * Defaults strictly to FALSE to save CPU/RAM and prevent background slowness.
  */
 export function isLocalAiEnabled(): boolean {
-  if (process.env.LOCAL_AI_ENABLED === 'false' || process.env.LOCAL_AI_ENABLED === '0') {
-    return false;
-  }
-  if (process.env.LOCAL_AI_ENABLED === 'true' || process.env.LOCAL_AI_ENABLED === '1') {
-    return true;
-  }
-  // Auto-detect: if bundled local AI assets exist and are verified, activate automatically
-  if (cachedAssetPresence === null) {
-    try {
-      const defaultCheck = validateLocalAiAssets(DEFAULT_LOCAL_AI_DIR);
-      if (defaultCheck.valid) {
-        cachedAssetPresence = true;
-      } else {
-        const storageCheck = validateLocalAiAssets(getLocalAiStorageDir());
-        cachedAssetPresence = storageCheck.valid;
-      }
-    } catch {
-      cachedAssetPresence = false;
-    }
-  }
-  return Boolean(cachedAssetPresence);
+  return process.env.LOCAL_AI_ENABLED === 'true' || process.env.LOCAL_AI_ENABLED === '1';
 }
 
 /**
@@ -358,6 +339,11 @@ export function stopLlamaServer(reason = 'manual'): void {
     serverProcess = null;
     activeLlamaPort = null;
     console.log(`[Local AI] llama-server stopped (${reason}).`);
+  }
+  if (process.platform === 'win32') {
+    try {
+      execSync('taskkill /im llama-server.exe /f /t', { stdio: 'ignore' });
+    } catch (_) {}
   }
 }
 

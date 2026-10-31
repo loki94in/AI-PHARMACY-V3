@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react';
-import { X, MessageSquareText, CheckCircle2, XCircle, Clock, ExternalLink, Send, Check, AlertTriangle, Zap, RefreshCw, Moon, Trash2 } from 'lucide-react';
+import { useEffect, useState, useRef, useMemo } from 'react';
+import { X, MessageSquareText, CheckCircle2, XCircle, Clock, ExternalLink, Send, Check, AlertTriangle, Zap, RefreshCw, Moon, Trash2, Search } from 'lucide-react';
 import { api } from '../services/api';
 import { getFormattedFailureReason } from '../utils/whatsappFailureReason';
 import { whatsappQueueEvent, automationHubEvent, messageSendEvent, whatsappReadinessEvent } from '../services/events';
@@ -65,6 +65,33 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [clearingAll, setClearingAll] = useState<boolean>(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'failed' | 'pending' | 'sent'>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  const failedCount = useMemo(() => activity.filter(a => a.status.startsWith('failed')).length, [activity]);
+  const pendingCount = useMemo(() => activity.filter(a => a.status === 'pending').length, [activity]);
+  const sentCount = useMemo(() => activity.filter(a => a.status === 'sent').length, [activity]);
+
+  const filteredActivity = useMemo(() => {
+    return activity.filter(item => {
+      if (statusFilter === 'failed' && !item.status.startsWith('failed')) return false;
+      if (statusFilter === 'pending' && item.status !== 'pending') return false;
+      if (statusFilter === 'sent' && item.status !== 'sent') return false;
+
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const matchesType = (item.automationType || '').toLowerCase().includes(q);
+        const matchesTarget = (item.targetName || '').toLowerCase().includes(q);
+        const matchesPhone = (item.phone || '').toLowerCase().includes(q);
+        const matchesMsg = (item.message || '').toLowerCase().includes(q);
+        const matchesErr = (item.errorMessage || '').toLowerCase().includes(q);
+        if (!matchesType && !matchesTarget && !matchesPhone && !matchesMsg && !matchesErr) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [activity, statusFilter, searchQuery]);
 
   // Live in-flight animation state for currently sending WhatsApp message
   const [activeSending, setActiveSending] = useState<{
@@ -484,14 +511,101 @@ export default function AutomationHubPopover({ onClose }: AutomationHubPopoverPr
             <div className="p-4 pt-0 space-y-2">
               <div className="flex items-center justify-between">
                 <h3 className="text-[11px] font-bold text-muted uppercase tracking-wide">Automation History</h3>
-                <span className="text-[10px] text-muted font-mono">{activity.length} recorded</span>
+                <span className="text-[10px] text-muted font-mono">
+                  {filteredActivity.length} of {activity.length} shown
+                </span>
               </div>
 
-              {activity.length === 0 && (
-                <p className="text-xs text-muted p-3">No WhatsApp messages sent yet.</p>
-              )}
+              {/* Automation Activity Filtering Controls */}
+              <div className="space-y-1.5 pb-1">
+                <div className="relative">
+                  <Search size={13} className="absolute left-2.5 top-2.5 text-muted pointer-events-none" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search by customer, phone, or message..."
+                    className="w-full pl-8 pr-7 py-1.5 text-xs bg-bg2 border border-border rounded-xl text-text placeholder:text-muted focus:outline-none focus:border-sky-500/60 transition-colors"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2 top-2 text-muted hover:text-text p-0.5 cursor-pointer"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
 
-              {activity.map((item, idx) => {
+                {/* Filter Pills */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none text-[11px] font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('all')}
+                    className={`px-2.5 py-0.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
+                      statusFilter === 'all'
+                        ? 'bg-sky-500/15 border-sky-500/40 text-sky-400 font-bold'
+                        : 'bg-bg3/30 border-border text-muted hover:text-text'
+                    }`}
+                  >
+                    All ({activity.length})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('failed')}
+                    className={`px-2.5 py-0.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
+                      statusFilter === 'failed'
+                        ? 'bg-rose-500/20 border-rose-500/40 text-rose-300 font-bold'
+                        : 'bg-bg3/30 border-border text-muted hover:text-rose-400'
+                    }`}
+                  >
+                    Failed ({failedCount})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('pending')}
+                    className={`px-2.5 py-0.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
+                      statusFilter === 'pending'
+                        ? 'bg-amber-500/20 border-amber-500/40 text-amber-300 font-bold'
+                        : 'bg-bg3/30 border-border text-muted hover:text-amber-300'
+                    }`}
+                  >
+                    Pending ({pendingCount})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('sent')}
+                    className={`px-2.5 py-0.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
+                      statusFilter === 'sent'
+                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 font-bold'
+                        : 'bg-bg3/30 border-border text-muted hover:text-emerald-400'
+                    }`}
+                  >
+                    Sent ({sentCount})
+                  </button>
+                </div>
+              </div>
+
+              {activity.length === 0 ? (
+                <p className="text-xs text-muted p-3">No WhatsApp messages sent yet.</p>
+              ) : filteredActivity.length === 0 ? (
+                <div className="p-4 text-center text-xs text-muted bg-bg3/20 rounded-xl border border-border">
+                  <p>No messages match your filter.</p>
+                  <button
+                    type="button"
+                    onClick={() => { setStatusFilter('all'); setSearchQuery(''); }}
+                    className="mt-1.5 text-sky-400 hover:underline font-semibold cursor-pointer"
+                  >
+                    Reset filters
+                  </button>
+                </div>
+              ) : null}
+
+              {filteredActivity.map((item, idx) => {
                 const isFailed = item.status.startsWith('failed');
                 const isUnresolved = isFailed && item.acknowledged === 0;
 
