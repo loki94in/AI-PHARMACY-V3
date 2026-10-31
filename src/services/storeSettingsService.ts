@@ -586,4 +586,33 @@ export async function saveDeliverySchedules(schedules: DeliveryScheduleSlot[], d
   );
 }
 
+/**
+ * Returns minimum distributor stock threshold required to add a medicine to live cart (default 15).
+ * Distributors reporting stock below this count are skipped to prevent bounce and order rejections.
+ */
+export async function getMinDistributorStockThreshold(dbInstance?: any): Promise<number> {
+  try {
+    const db = dbInstance || (await dbManager.getConnection());
+    const row = await db.get("SELECT value FROM app_settings WHERE key = 'min_distributor_stock_threshold'");
+    if (!row || row.value === null || row.value === undefined) {
+      return 15; // Default 15
+    }
+    const val = parseInt(String(row.value).trim(), 10);
+    return isNaN(val) || val < 0 ? 15 : val;
+  } catch (err) {
+    console.warn('[StoreSettings] Error reading min_distributor_stock_threshold:', err);
+    return 15;
+  }
+}
 
+/**
+ * Saves configured minimum distributor stock threshold.
+ */
+export async function saveMinDistributorStockThreshold(threshold: number, dbInstance?: any): Promise<void> {
+  const db = dbInstance || (await dbManager.getConnection());
+  const safeVal = Math.max(0, isNaN(threshold) ? 15 : threshold);
+  await db.run(
+    "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('min_distributor_stock_threshold', ?)",
+    [String(safeVal)]
+  );
+}

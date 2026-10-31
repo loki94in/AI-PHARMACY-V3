@@ -1026,11 +1026,12 @@ export const QuickAssistSidebar = memo(({
       if (r.approval_status === 'required') {
         return true;
       }
+      const isOrderedOrInCart = isRefillOrdered(r) || !!r.cart_store_name || !!r.cart_product_code || (r as any).in_live_cart;
       if (
         !r.next_refill_date ||
         isRefillSettled(r) ||
         isRefillFulfilledToday(r) ||
-        checkRefillCycleBooking(r).alreadyDispensed
+        (!isOrderedOrInCart && checkRefillCycleBooking(r).alreadyDispensed)
       ) {
         return false;
       }
@@ -1038,7 +1039,7 @@ export const QuickAssistSidebar = memo(({
       if (isNaN(d.getTime())) return false;
       const dueStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const diffDays = Math.round((dueStart - todayStart) / 86400000);
-      return diffDays <= 7;
+      return diffDays <= 7 || isOrderedOrInCart;
     });
   }, [flatRefills]);
 
@@ -1053,7 +1054,7 @@ export const QuickAssistSidebar = memo(({
       customer_id?: number | null;
       next_refill_date: string;
       diffDays: number;
-      timingCategory: 'Overdue' | 'Today' | 'Tomorrow' | 'Within 7 Days';
+      timingCategory: 'Overdue' | 'Today' | 'Tomorrow' | 'Within 7 Days' | 'Upcoming';
       hasHoldStock: boolean;
       isPatientConfirmed: boolean;
       reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
@@ -1129,7 +1130,7 @@ export const QuickAssistSidebar = memo(({
           customer_id: r.customer_id ?? null,
           next_refill_date: r.next_refill_date,
           diffDays,
-          timingCategory: diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : 'Within 7 Days',
+          timingCategory: diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : diffDays <= 7 ? 'Within 7 Days' : 'Upcoming',
           hasHoldStock: false,
           isPatientConfirmed: false,
           isReady: false,
@@ -1160,7 +1161,7 @@ export const QuickAssistSidebar = memo(({
       if (r.next_refill_date && (!existing.next_refill_date || new Date(r.next_refill_date) < new Date(existing.next_refill_date))) {
         existing.next_refill_date = r.next_refill_date;
         existing.diffDays = diffDays;
-        existing.timingCategory = diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : 'Within 7 Days';
+        existing.timingCategory = diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : diffDays <= 7 ? 'Within 7 Days' : 'Upcoming';
       }
       const medReminderStatus: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' = r.reminder_status || (r.status === 'notified' ? 'SENT' : 'NOT_SENT');
       existing.medicines.push({

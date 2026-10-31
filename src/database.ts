@@ -1203,6 +1203,7 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('remote_auth_mode', 'owner_required')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cloud_sync_auto', '1')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('cloud_cart_queue_mode', 'auto')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('min_distributor_stock_threshold', '15')");
 
     let versionRow: any = null;
     // Fast-path: skip entire DDL wall if schema is already at current version AND key tables exist
@@ -4748,6 +4749,7 @@ export async function ensureSchema(dbPath: string) {
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_credit_bill', '0')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_distributor', '0')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('whatsapp_delay_delivery_boy', '0')");
+    await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('min_distributor_stock_threshold', '15')");
 
     // WhatsApp permanent delivery register & audit ledger
     await db.run(`

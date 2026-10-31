@@ -1,96 +1,88 @@
-# Implementation Plan: Reorder Hub Rate, Scheme, and MRP Storage & Propagation Fix
+# Implementation Plan: Show Refill Patients in QA Panel When Added to Live Cart from CRM (Regardless of Due Date)
 
-## Problem Statement & Root Cause Analysis
-In the Reorder Hub, medicines were losing their **rate (PTR / cost price)**, **scheme (free goods / discount scheme)**, and **MRP** across both local storage, synchronization, and UI display due to several gaps across the pipeline:
-
-1. **Frontend Payload Drop on Reorder Actions**:
-   - In `handleConfirmReorderSame` (`frontend/src/pages/PharmarackCart/index.tsx`), the `scheme` property was absent from the item payload sent to `api.addPharmarackCart(payload)`.
-   - In `handleReorderDirect` (used for 1-click shortfall filler additions in distributor cards), `scheme` was omitted from the add-to-cart payload.
-   - In optimistic cart state update (`mergeItemIntoDistributors`), `scheme` was omitted, resetting the live line's scheme badge in memory.
-
-2. **Backend Persistence Gaps**:
-   - In `autoSaveMedicineDistributorLinks` (`src/routes/pharmarack.ts`): While `medicine_distributor_links` contains columns `rate` and `mrp`, the `INSERT` and `ON CONFLICT DO UPDATE` queries never included `rate`, `mrp`, or `scheme`.
-   - In `src/database.ts`: `medicine_distributor_links` lacked a `scheme TEXT` column.
-   - In `addItemsToPharmarackCart` (`src/routes/pharmarack.ts`): Property enrichment only ran if `productCode` or `productName` was missing (`if (!item.productCode || !item.productName)`). Items with codes but missing rates, MRPs, or schemes were never enriched from `pharmarack_distributor_products`, `distributor_catalog`, `purchase_items`, or `medicines`.
-
-3. **Reorder Hub Data Sources Missing Scheme / Price Fallbacks**:
-   - `GET /api/pharmarack/purchase-reorder-history`: Did not query `free_qty` or `scheme_per` from `purchase_items`, returned `{ ptr, mrp }` without fallback to `medicines` or `distributor_catalog`, and completely omitted `scheme`.
-   - `GET /api/sales/reorder-suggestions`: Querying `purchase_items` did not retrieve `free_qty`, `scheme_per`, or link to `pharmarack_distributor_products.scheme`, omitting `scheme` from the suggestions payload.
-   - `pharmarackOrderSyncService.ts`: `fetchOrderLines()` extracted `productName`, `qty`, `productCode`, `mrp`, `rate`, and `packaging`, but ignored `Scheme`, `scheme`, and `ProductScheme`.
-
-4. **UI Display Omissions**:
-   - In `Reorder Same Confirmation Modal`: The scheme and MRP were not displayed in the medicine details panel.
-   - In Reorder Hub cards (`All Matches` and category sub-tabs):
-     - Recent & Cart items in `All Matches` did not show PTR / MRP.
-     - Past Purchase Bills in `All Matches` did not show PTR / MRP / Scheme.
-     - Special Requests cards did not display estimated Rate, MRP, or Scheme.
+## 1. Problem Statement & User Intent
+When a pharmacist adds any medicine to the Pharmarack Live Cart from the CRM Refill page (either via "+ Live Cart" on an individual medicine, "Order to Cart" for the patient, or "Confirm Refill & Add to Live Cart"):
+- The medicine is successfully added into the live Pharmarack cart.
+- However, that patient **did not appear in the Quick Assist (QA) panel** under the Refills tab if the patient's scheduled refill due date was not yet due (e.g. `diffDays > 7` days away or in the future).
+- The user's requirement:
+  > *"When user add the medicine from the Add to Live Cart from the CRM page any time (if the selected refill patient refill due is not due or come still app need to show that patient in the refill section we have absolute idea when user click the add to live from the CRM so he can see in the QA panel in the app)."*
 
 ---
 
-## Changes Implemented
-
-### 1. Database Schema (`src/database.ts`)
-- Added `scheme TEXT` column to `CREATE TABLE IF NOT EXISTS medicine_distributor_links`.
-- Added idempotent migration: `ALTER TABLE medicine_distributor_links ADD COLUMN scheme TEXT`.
-
-### 2. Backend Cart & Link Persistence (`src/routes/pharmarack.ts`)
-- **`autoSaveMedicineDistributorLinks`**: Persists `rate`, `mrp`, and `scheme` into `medicine_distributor_links` on both `INSERT` and `ON CONFLICT DO UPDATE`.
-- **`addItemsToPharmarackCart`**:
-  - Enriches missing `rate` (PTR), `mrp`, and `scheme` from `pharmarack_distributor_products`, `distributor_catalog`, `medicine_distributor_links`, `purchase_items`, and `medicines`.
-- **`purchase-reorder-history` (`GET /api/pharmarack/purchase-reorder-history`)**:
-  - Queries `pi.free_qty` and `pi.scheme_per` from `purchase_items`.
-  - Formats scheme string (e.g., `10+1` or `10%`).
-  - Fallbacks `ptr` and `mrp` to `medicine_distributor_links` or `medicines.ptr`/`mrp` if 0.
-  - Returns `ptr`, `lastRate`, `mrp`, and `scheme` in all output items.
-- **`reorder-recent` (`GET /api/pharmarack/reorder-recent`)**:
-  - Batch-enriches missing `ptr` and `mrp` from `medicines` if 0.
-
-### 3. Historical Order Sync (`src/services/pharmarackOrderSyncService.ts`)
-- In `fetchOrderLines`: Extracts `Scheme`, `scheme`, `ProductScheme` from order detail lines and attaches `scheme` to items.
-
-### 4. Sales Reorder Suggestions (`src/routes/sales.ts`)
-- In `GET /api/sales/reorder-suggestions`:
-  - Queries `free_qty` and `scheme_per` from `purchase_items`.
-  - Queries `rate, mrp, scheme` from `medicine_distributor_links`.
-  - Computes and returns `scheme` in each restock suggestion item.
-
-### 5. Frontend Reorder Hub Flow (`frontend/src/pages/PharmarackCart/index.tsx`, `frontend/src/services/api.ts`)
-- In `handleConfirmReorderSame`: Included `scheme: card.scheme || undefined` in `payload` and `mergeItemIntoDistributors`.
-- In `handleReorderDirect`: Resolved `scheme` and included `scheme: scheme || undefined` in `payload`.
-- In `openReorderModalForItem`:
-  - For Special Requests: forwards `storeId`, `productCode`, `productId`, `ptr`, `mrp`, `scheme`.
-  - For Sales Restock: forwards `scheme: sug.scheme`.
-  - For Past Purchases: forwards `scheme: item.scheme`.
-- In `Reorder Same Confirmation Modal`:
-  - Visibly renders Rate (PTR), MRP, and Scheme badge (🎁 Scheme) in the product details panel.
-- In Reorder Hub Cards:
-  - All Matches Category 4 (Recent Orders & Cart Additions): renders PTR and MRP.
-  - All Matches Category 5 (Past Purchases): renders PTR, MRP, and Scheme badge (🎁 Scheme).
-  - Past Purchases sub-tab: renders Scheme badge (🎁 Scheme).
-  - Special Requests cards: renders Est. Rate, MRP, and Scheme badge.
-- In `frontend/src/services/api.ts`:
-  - Added `scheme?: string` to `ReorderSuggestion` interface.
+## 2. Root Cause Analysis
+1. **Backend Query SQL Gate (`src/routes/refills.ts`)**:
+   - `GET /api/refills/panel?upcoming_days=7` (used by `Layout.tsx` for Quick Assist) strictly filtered with:
+     ```sql
+     WHERE pr.is_active = 1
+       AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
+       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days')
+     ```
+   - When a patient has a refill due > 7 days away (e.g., in 15 or 30 days), this SQL condition completely excluded the record, even if the medicine has been ordered or added into the live cart (`cart_store_name IS NOT NULL`).
+2. **Frontend Filter Gate in Quick Assist (`frontend/src/components/QuickAssistSidebar.tsx`)**:
+   - `actionableRefills` checked `checkRefillCycleBooking(r).alreadyDispensed` and `return diffDays <= 7;`.
+   - `checkRefillCycleBooking(r)` in `frontend/src/utils/refillSettled.ts` considered any refill `> 7 days` away as "dormant" and set `alreadyDispensed: true`.
+   - Consequently, even if the row reached the client, it was discarded from `actionableRefills`.
+3. **Refill Cart Update State (`src/services/refillCartService.ts`)**:
+   - `processRefillCartItem` recorded `cart_store_id`, `cart_store_name`, `cart_product_code`, etc., but did not explicitly update `status` from `'pending'` to `'ordered'`.
 
 ---
 
-## Verification Results
-1. **Compilation & Guardrails**:
-   - Ran `npm run guardrails` (`tsc --noEmit` and speed architecture scanner) — **PASS** (OK, exit code 0).
-2. **Knowledge Graph**:
-   - Ran `node scripts/quick-update.mjs` — **PASS** (1,338 nodes, 877 edges in 4.0s).
+## 3. Implemented Solution & Architecture
+
+### A. Backend Route Update (`src/routes/refills.ts`)
+- In `GET /panel`:
+  - When `upcoming_days` is passed (Quick Assist mode), updated the WHERE condition so that records with `cart_store_name IS NOT NULL`, `cart_product_code IS NOT NULL`, `status = 'ordered'`, `is_ready = 1`, or belonging to a patient who has an active ordered/cart-added refill are included regardless of `next_refill_date`.
+
+### B. Refill Cart Service Update (`src/services/refillCartService.ts`)
+- In `processRefillCartItem`:
+  - Updated `status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END` when the cart line is confirmed/added in both existing lines and new candidate additions.
+
+### C. Refill Settled & Cycle Booking Helper (`frontend/src/utils/refillSettled.ts`)
+- In `checkRefillCycleBooking`:
+  - Detects `isOrderedOrInCart`: if an item is already ordered or in the live cart, it is active and actionable (not dormant): `canBook: true`, `isEarly: diffDays > 0`, `daysEarly: Math.max(0, diffDays)`, and `alreadyDispensed: false`.
+
+### D. Quick Assist Sidebar Filtering (`frontend/src/components/QuickAssistSidebar.tsx`)
+- In `actionableRefills`:
+  - Allows items where `isOrderedOrInCart` is true, bypassing the strict `diffDays <= 7` cutoff.
+- In `timingCategory`:
+  - Supports `'Upcoming'` category for `diffDays > 7` so that labels like `15d` or `25d` are displayed cleanly.
+
+### E. Human-in-the-Loop Integration
+- Once visible in QA panel:
+  - The pharmacist sees the patient in Stage B (`ordered`) with `[Mark Ready] [POS] [Complete] [Edit]`.
+  - The pharmacist retains complete control to mark it ready upon delivery, bill it early at POS with a confirmation dialog, or mark it complete.
 
 ---
 
-## Tasks Progress & Status
-- [x] Task 1: Update database schema in `src/database.ts` to ensure `scheme` column exists in `medicine_distributor_links`
-  - *Completed*: Added column in table definition and idempotent `ALTER TABLE` statement.
-- [x] Task 2: Update `autoSaveMedicineDistributorLinks` and `addItemsToPharmarackCart` in `src/routes/pharmarack.ts` to persist and enrich rate, scheme, and MRP
-  - *Completed*: Saved `rate`, `mrp`, `scheme` into `medicine_distributor_links`; added multi-table enrichment fallback in `addItemsToPharmarackCart`.
-- [x] Task 3: Update `purchase-reorder-history` and `reorder-recent` in `src/routes/pharmarack.ts` to query and return scheme and price fallbacks
-  - *Completed*: Added `free_qty`, `scheme_per`, `med_ptr`, `med_mrp` to purchase query; resolved and returned `ptr`, `lastRate`, `mrp`, and `scheme`.
-- [x] Task 4: Update `fetchOrderLines` in `src/services/pharmarackOrderSyncService.ts` and `src/routes/sales.ts` to extract and forward scheme
-  - *Completed*: Extracted scheme keys from order lines and included scheme in sales suggestions.
-- [x] Task 5: Update `frontend/src/pages/PharmarackCart/index.tsx` to forward scheme in payloads, display rate/scheme/MRP in modal and Reorder Hub cards
-  - *Completed*: Forwarded scheme in add-to-cart payloads and cart cache; rendered PTR, MRP, and Scheme badges across Reorder Hub cards and confirmation modal.
-- [x] Task 6: Run `npm run guardrails` and `node scripts/quick-update.mjs`
-  - *Completed*: Verified clean TypeScript compilation and speed architecture compliance.
+## 4. Verification Plan & Results
+1. **Unit Tests**:
+   - Created `tests/refillLiveCartQaPanelSync.test.ts`:
+     - Verified `checkRefillCycleBooking` and `isRefillOrdered` treat distant ordered/in-cart refills as actionable and bookable.
+     - Verified SQLite query behavior: returns upcoming refills (<= 7 days) AND distant refills added to live cart or ordered.
+     - Result: 4/4 tests passed (`npm test -- tests/refillLiveCartQaPanelSync.test.ts`).
+2. **Performance Guardrails**:
+   - Ran `npm run guardrails`:
+     - Clean TypeScript compilation (`tsc --noEmit`).
+     - Database schema & integrity checks passed.
+     - 0 guardrail violations. Speed architecture intact.
+3. **Knowledge Graph Update**:
+   - Ran `node scripts/quick-update.mjs`:
+     - Updated knowledge graph (1340 nodes, 877 edges).
+
+---
+
+## 5. Tasks Tracking
+- [x] Update `src/routes/refills.ts` GET /panel SQL WHERE clause
+  - Included items with active cart lines, `status = 'ordered'`, `is_ready = 1`, or companion medicines for active cart patients.
+- [x] Update `src/services/refillCartService.ts` status update on live cart addition
+  - Ensured `status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END` on line updates.
+- [x] Update `frontend/src/utils/refillSettled.ts` to recognize ordered/in-cart refills as actionable
+  - Extended `isRefillOrdered` to check `cart_product_code` and `in_live_cart`.
+  - Updated `checkRefillCycleBooking` to return `alreadyDispensed: false` and `canBook: true` when ordered/in-cart.
+- [x] Update `frontend/src/components/QuickAssistSidebar.tsx` actionableRefills and timingCategory
+  - Allowed `diffDays <= 7 || isOrderedOrInCart`.
+  - Added `'Upcoming'` timing category for `diffDays > 7`.
+- [x] Add unit test suite `tests/refillLiveCartQaPanelSync.test.ts`
+  - 4 comprehensive tests verifying both frontend helpers and SQLite query logic.
+- [x] Verify `npm run guardrails` and run `node scripts/quick-update.mjs`
+  - Guardrails passed with 0 violations; knowledge graph updated.

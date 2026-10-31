@@ -159,6 +159,7 @@ Source: "packaging\RUN-PharmacyOS.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\RUN-PharmacyOS-Silent.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\STOP-PharmacyOS.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "packaging\Updater.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "packaging\UpdateGUI.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "license.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
@@ -546,6 +547,7 @@ begin
     DeleteFile(AppDir + '\RUN-PharmacyOS-Silent.vbs');
     DeleteFile(AppDir + '\STOP-PharmacyOS.bat');
     DeleteFile(AppDir + '\Updater.bat');
+    DeleteFile(AppDir + '\UpdateGUI.ps1');
     DeleteFile(AppDir + '\license.txt');
     DeleteFile(AppDir + '\README.md');
     DeleteFile(AppDir + '\eng.traineddata');

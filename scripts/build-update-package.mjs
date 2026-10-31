@@ -39,6 +39,7 @@ const UPDATE_SOURCES = [
   { src: path.join(distDir, 'PharmacyOS.exe'),        zipEntry: 'PharmacyOS.exe' },
   { src: path.join(root, 'sea-entry.cjs'),             zipEntry: 'sea-entry.cjs' },
   { src: path.join(root, 'packaging', 'Updater.bat'),  zipEntry: 'Updater.bat' },
+  { src: path.join(root, 'packaging', 'UpdateGUI.ps1'), zipEntry: 'UpdateGUI.ps1' },
 ];
 
 // frontend/dist directory (recursive)
@@ -152,6 +153,7 @@ export async function buildUpdatePackage() {
   const updateSources = [
     { src: path.join(root, 'sea-entry.cjs'), zipEntry: 'sea-entry.cjs' },
     { src: path.join(root, 'packaging', 'Updater.bat'), zipEntry: 'Updater.bat' },
+    { src: path.join(root, 'packaging', 'UpdateGUI.ps1'), zipEntry: 'UpdateGUI.ps1' },
   ];
 
   // 1. Electron runtime executable (PharmacyOS.exe - 235 MB)

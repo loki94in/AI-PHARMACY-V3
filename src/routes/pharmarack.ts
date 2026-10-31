@@ -1440,6 +1440,33 @@ export async function warmupStartupCart(): Promise<void> {
 /**
  * Checks if a distributor item has active, orderable stock (skips 0, OOS, nil).
  */
+export const DEFAULT_MIN_DISTRIBUTOR_STOCK_THRESHOLD = 15;
+
+/**
+ * Checks if a distributor's item has adequate stock to safely add to live cart (skips items < minThreshold, default 15).
+ * Prevents bounces, partial fulfillments, and distributor stockout rejections.
+ */
+export function isDistributorStockAdequate(
+  stockVal: any,
+  minThreshold: number = DEFAULT_MIN_DISTRIBUTOR_STOCK_THRESHOLD
+): boolean {
+  if (stockVal === null || stockVal === undefined || stockVal === '') return false;
+  if (typeof stockVal === 'number') {
+    return !isNaN(stockVal) && stockVal >= minThreshold;
+  }
+  const str = String(stockVal).trim().toLowerCase();
+  if (['0', 'out of stock', 'oos', 'nil', 'none', 'false', 'no', 'unavailable', 'low'].includes(str)) {
+    return false;
+  }
+  const cleanStr = str.replace(/^[><=~]+/, '').trim();
+  const num = parseFloat(cleanStr);
+  if (!isNaN(num)) {
+    if (str.startsWith('<') && num <= minThreshold) return false;
+    return num >= minThreshold;
+  }
+  return true;
+}
+
 export function isItemInStock(stockVal: any): boolean {
   if (stockVal === null || stockVal === undefined || stockVal === '') return false;
   if (typeof stockVal === 'number') {
@@ -1538,7 +1565,7 @@ export async function rankSpecialOrderDistributorCandidates(
   if (!Array.isArray(candidates) || candidates.length === 0) return [];
 
   // Filter in-stock items
-  const inStock = candidates.filter(c => isItemInStock(c.availability ?? (c as any).stock));
+  const inStock = candidates.filter(c => isDistributorStockAdequate(c.availability ?? (c as any).stock, 15));
   if (inStock.length === 0) return [];
 
   // Deduplicate by distributor name / storeId so owner doesn't see repetitive rows
@@ -1988,6 +2015,22 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
 }> {
   if (!items || !Array.isArray(items) || items.length === 0) {
     return { success: false, error: 'No items provided' };
+  }
+
+  // Auto-skip items whose distributor stock is explicitly known to be below the minimum threshold (default 15)
+  // unless skipStockCheck: true is explicitly provided (e.g. manual pharmacist override in UI).
+  for (const item of items) {
+    const itemStock = item.stock ?? item.availability ?? item.Stock ?? item.Availability;
+    if (!item.skipStockCheck && itemStock !== undefined && itemStock !== null && String(itemStock).trim() !== '') {
+      if (!isDistributorStockAdequate(itemStock, 15)) {
+        return {
+          success: false,
+          reason: 'LOW_STOCK',
+          error: `Distributor stock (${itemStock}) is below safety threshold (15). Auto-skipped to prevent bounce.`,
+          message: `Distributor stock (${itemStock}) is below 15 — skipped.`
+        };
+      }
+    }
   }
 
   const settings = await getPharmarackSettings();

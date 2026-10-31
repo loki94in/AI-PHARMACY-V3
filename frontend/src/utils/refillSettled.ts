@@ -4,9 +4,11 @@
 type RefillLike = {
   status?: string | null;
   cart_store_name?: string | null;
+  cart_product_code?: string | null;
   reminder_status?: string | null;
   last_refill_date?: string | null;
   is_ready?: number | boolean | null;
+  in_live_cart?: boolean;
 };
 
 // Returns true if this refill medicine was fulfilled today in shop local time
@@ -18,7 +20,7 @@ export const isRefillFulfilledToday = (m: { last_refill_date?: string | null } |
   return lastYmd === todayYmd;
 };
 
-export const isRefillOrdered = (m: RefillLike) => m.status === 'ordered' || !!m.cart_store_name;
+export const isRefillOrdered = (m: RefillLike) => m.status === 'ordered' || !!m.cart_store_name || !!m.cart_product_code || m.in_live_cart === true;
 export const isRefillReminded = (m: RefillLike) => m.reminder_status === 'SENT' || m.status === 'notified';
 export const isRefillReady = (m: RefillLike) =>
   m.is_ready === 1 || m.is_ready === true || m.status === 'ready' || isRefillReminded(m);
@@ -73,6 +75,9 @@ export const checkRefillCycleBooking = (med: {
   last_refill_date?: string | null;
   refill_interval_days?: number | null;
   status?: string | null;
+  cart_store_name?: string | null;
+  cart_product_code?: string | null;
+  in_live_cart?: boolean;
 }): RefillCycleBookingStatus => {
   const intervalDays = Number(med.refill_interval_days || 30);
   const now = new Date();
@@ -121,8 +126,10 @@ export const checkRefillCycleBooking = (med: {
     nextDueDay.setHours(0, 0, 0, 0);
     const diffDays = Math.round((nextDueDay.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-    // Active & actionable 7-day refill lead-time window
-    if (diffDays <= 7) {
+    const isOrderedOrInCart = isRefillOrdered(med as any) || !!med.cart_store_name || !!med.cart_product_code || med.in_live_cart === true;
+
+    // Active & actionable 7-day refill lead-time window, OR item is already ordered / in live cart
+    if (diffDays <= 7 || isOrderedOrInCart) {
       if (diffDays > 0) {
         const nextDueFormatted = nextDue.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
         return {

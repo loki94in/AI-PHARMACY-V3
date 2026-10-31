@@ -92,6 +92,16 @@ function getUpdaterPath(): string {
   return path.join(process.cwd(), 'packaging', 'Updater.bat');
 }
 
+function getUpdateGuiPath(): string {
+  // UpdateGUI.ps1 lives next to PharmacyOS.exe in the install dir
+  const appDir = path.dirname(process.execPath);
+  const isSeaBinary = !process.execPath.endsWith('node.exe') &&
+                      !process.execPath.endsWith('node') &&
+                      !process.execPath.includes('tsx');
+  if (isSeaBinary) return path.join(appDir, 'UpdateGUI.ps1');
+  return path.join(process.cwd(), 'packaging', 'UpdateGUI.ps1');
+}
+
 export function getLogPath(): string {
   const appDir = path.dirname(process.execPath);
   const isSeaBinary = !process.execPath.endsWith('node.exe') &&
@@ -782,13 +792,40 @@ class AutoUpdateService {
       ].join('\r\n');
       fs.writeFileSync(launcherBat, launcherContent, 'utf8');
 
-      // Spawn Updater.bat detached in a dedicated visible console progress window
-      const child = spawn('cmd.exe', ['/c', 'start', `AI Pharmacy OS — Updating to v${targetVersion}`, 'cmd.exe', '/c', launcherBat], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: false,
-      });
-      child.unref();
+      // Check if Apple-style native WPF Update GUI is available
+      const guiPath = getUpdateGuiPath();
+      const hasGui = fs.existsSync(guiPath);
+
+      if (hasGui) {
+        console.log('[AutoUpdate] Spawning Apple-style native UpdateGUI.ps1 (WPF)...');
+        // Spawn PowerShell STA with -WindowStyle Hidden and windowsHide: true so NO console window opens
+        const child = spawn('powershell.exe', [
+          '-Sta',
+          '-NoProfile',
+          '-ExecutionPolicy', 'Bypass',
+          '-WindowStyle', 'Hidden',
+          '-File', guiPath,
+          '-ZipPath', zipPath,
+          '-InstallDir', installDir,
+          '-TargetVersion', targetVersion,
+          '-ExpectedSha256', sha256,
+          '-LogPath', logPath,
+        ], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.unref();
+      } else {
+        // Resilient fallback to Updater.bat running silently with windowsHide: true
+        console.log('[AutoUpdate] GUI script not found, falling back to silent Updater.bat...');
+        const child = spawn('cmd.exe', ['/c', launcherBat], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.unref();
+      }
 
       return { success: true, message: 'Installing update and restarting AI Pharmacy OS...' };
     }

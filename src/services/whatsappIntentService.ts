@@ -11,7 +11,7 @@ import { ocrScanQueue } from './ocrScanQueue.js';
 import { productNameFilterService } from './productNameFilterService.js';
 import { searchCatalog, scoreProductName } from './pharmarackCatalogCache.js';
 import { waAdminEscalationService } from './waAdminEscalationService.js';
-import { isItemInStock, resolveCommonOrFrequentDistributor, addItemsToPharmarackCart } from '../routes/pharmarack.js';
+import { isItemInStock, isDistributorStockAdequate, resolveCommonOrFrequentDistributor, addItemsToPharmarackCart } from '../routes/pharmarack.js';
 import { paymentQrService } from './paymentQrService.js';
 // import { startupSyncCoordinator } from './startupSyncCoordinator.js';
 import { visualIndexService } from './visualIndexService.js';
@@ -1467,7 +1467,7 @@ export async function resolveSingleDistributorForMedicine(
     const allCatalog = [...(localCat.mapped || []), ...(localCat.nonMapped || [])];
 
     const formulationSafeCatalog = filterCandidatesByFormulation(cleanMed, allCatalog);
-    const inStockCandidates = formulationSafeCatalog.filter(c => isItemInStock(c.availability ?? (c as any).stock));
+    const inStockCandidates = formulationSafeCatalog.filter(c => isDistributorStockAdequate(c.availability ?? (c as any).stock, 15));
     const pool = inStockCandidates.length > 0 ? inStockCandidates : formulationSafeCatalog;
 
     let selectedDistName = '';
@@ -1585,7 +1585,7 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
              LIMIT 1`,
             [link.storeId, link.productName, `${link.productName}%`]
           );
-          const isOOS = catRow && !isItemInStock(catRow.availability);
+          const isOOS = catRow && !isDistributorStockAdequate(catRow.availability, 15);
           if (!isOOS) {
             chosenLink = {
               ...link,
@@ -4485,7 +4485,7 @@ async function proceedWithConfirmedProcurement(
   }
 
   // Filter out all out-of-stock items
-  const inStockCandidates = rawPharmarackItems.filter(p => isItemInStock(p.availability ?? (p as any).stock));
+  const inStockCandidates = rawPharmarackItems.filter(p => isDistributorStockAdequate(p.availability ?? (p as any).stock, 15));
 
   // Create Special Order
   const orderRes = await db.run(

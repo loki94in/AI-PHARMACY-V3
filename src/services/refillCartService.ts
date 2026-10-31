@@ -372,7 +372,7 @@ export async function processRefillCartItem(
       return fail(`Pharmarack did not confirm the new quantity (${total}) at ${hit.storeName}. Check the Live Cart, then retry.`);
     }
     await db.run(
-      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ?, status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END WHERE id = ?`,
       [after.storeId, after.storeName, after.productCode, after.productName, qty, refillId]
     );
 
@@ -461,9 +461,36 @@ export async function processRefillCartItem(
       : { ...base, status: 'not_found', message: 'No mapped Pharmarack distributor found for this name. Link it by searching another spelling.' };
   }
 
+  const thresholdRow = await db.get("SELECT value FROM app_settings WHERE key = 'min_distributor_stock_threshold'").catch(() => null);
+  const minThreshold = (opts as any)?.minStockThreshold !== undefined
+    ? Number((opts as any).minStockThreshold)
+    : (thresholdRow?.value !== undefined && thresholdRow?.value !== null && thresholdRow.value !== '' ? Number(thresholdRow.value) : 15);
+
+  const checkStockAdequate = (stk: any): boolean => {
+    if (minThreshold <= 0) return pr.isItemInStock(stk);
+    if (typeof (pr as any).isDistributorStockAdequate === 'function') {
+      return (pr as any).isDistributorStockAdequate(stk, minThreshold);
+    }
+    if (stk === null || stk === undefined || stk === '') return false;
+    const str = String(stk).trim().toLowerCase();
+    if (['0', 'out of stock', 'oos', 'nil', 'none', 'false', 'no', 'unavailable', 'low'].includes(str)) return false;
+    const clean = str.replace(/^[><=~]+/, '').trim();
+    const num = parseFloat(clean);
+    if (!isNaN(num)) {
+      if (str.startsWith('<') && num <= minThreshold) return false;
+      return num >= minThreshold;
+    }
+    return true;
+  };
+
   const linkedState = links.map(l => {
     const item = findItem(l);
-    return { link: l, item, inStock: !!item && pr.isItemInStock(item.stock) };
+    return {
+      link: l,
+      item,
+      inStock: !!item && checkStockAdequate(item.stock),
+      rawInStock: !!item && pr.isItemInStock(item.stock)
+    };
   });
   const linked = linkedState.map(s => ({
     storeName: String(s.link.store_name),
@@ -476,7 +503,12 @@ export async function processRefillCartItem(
     return {
       ...base, linked, candidates,
       status: 'linked_oos',
-      message: `Out of stock at ${linked.map(l => l.storeName).join(', ')}. Link another distributor.`
+      message: (() => {
+        const lowStores = linkedState.filter(s => s.item && !s.inStock && pr.isItemInStock(s.item.stock)).map(s => `${s.link.store_name} (stock ${s.item.stock} < ${minThreshold})`);
+        return lowStores.length > 0
+          ? `Stock below ${minThreshold} at ${lowStores.join(', ')}. Link another distributor.`
+          : `Out of stock at ${linked.map(l => l.storeName).join(', ')}. Link another distributor.`;
+      })()
     };
   }
 
@@ -535,7 +567,7 @@ export async function processRefillCartItem(
     }
 
     await db.run(
-      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ? WHERE id = ?`,
+      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ?, status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END WHERE id = ?`,
       [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
     );
     await db.run('UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cand.link.id]);
@@ -571,7 +603,14 @@ export async function processRefillCartItem(
     const firstLink = linkedState[0];
     const skipped = linkedState.filter(s => s !== cand && !s.inStock).map(s => String(s.link.store_name));
     const failedBefore = available.slice(0, available.indexOf(cand)).filter(s => s !== cand && s.inStock).map(s => String(s.link.store_name));
-    const noteParts = [...skipped.map(n => `${n} was out of stock`), ...failedBefore.map(n => `${n} did not accept it`)];
+    const skippedInfo = linkedState.filter(s => s !== cand && !s.inStock).map(s => {
+      const it = s.item;
+      if (it && pr.isItemInStock(it.stock)) {
+        return `${s.link.store_name} had low stock (${it.stock} < ${minThreshold})`;
+      }
+      return `${s.link.store_name} was out of stock`;
+    });
+    const noteParts = [...skippedInfo, ...failedBefore.map(n => `${n} did not accept it`)];
     const note = noteParts.length > 0 ? ` (${noteParts.join('; ')})` : (firstLink !== cand && !firstLink.inStock ? ` (${firstLink.link.store_name} was out of stock)` : '');
     return {
       ...base, linked, candidates,

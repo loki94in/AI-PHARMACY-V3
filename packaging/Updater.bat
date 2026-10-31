@@ -33,6 +33,18 @@ if "%INSTALL_DIR%"==""      ( echo [Updater] ERROR: No install dir provided. & p
 if "%TARGET_VERSION%"==""   set "TARGET_VERSION=unknown"
 if "%LOG_PATH%"==""         set "LOG_PATH=%INSTALL_DIR%\logs\updater.log"
 
+:: ── Delegate to Native Apple-Design GUI Updater if available ─
+if not "%~6"=="--cli" (
+    if exist "%~dp0UpdateGUI.ps1" (
+        powershell.exe -Sta -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0UpdateGUI.ps1" -ZipPath "%ZIP_PATH%" -InstallDir "%INSTALL_DIR%" -TargetVersion "%TARGET_VERSION%" -ExpectedSha256 "%EXPECTED_SHA256%" -LogPath "%LOG_PATH%"
+        exit /b !ERRORLEVEL!
+    )
+    if exist "%INSTALL_DIR%\UpdateGUI.ps1" (
+        powershell.exe -Sta -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%INSTALL_DIR%\UpdateGUI.ps1" -ZipPath "%ZIP_PATH%" -InstallDir "%INSTALL_DIR%" -TargetVersion "%TARGET_VERSION%" -ExpectedSha256 "%EXPECTED_SHA256%" -LogPath "%LOG_PATH%"
+        exit /b !ERRORLEVEL!
+    )
+)
+
 title AI Pharmacy OS — Update Installer (v%TARGET_VERSION%)
 color 0B
 cls
@@ -90,14 +102,11 @@ set /a WAIT_COUNT=0
 
     if "!APP_RUNNING!"=="1" (
         set /a WAIT_COUNT+=1
-        if !WAIT_COUNT! GEQ 2 (
-            call :LOG "Force terminating application processes for update..."
-            taskkill /F /T /IM PharmacyOS.exe >nul 2>&1
-            taskkill /F /T /IM PharmacyBackend.exe >nul 2>&1
-            ping 127.0.0.1 -n 2 >nul
-            goto :WAIT_DONE
-        )
+        call :LOG "Force terminating application processes for update..."
+        taskkill /F /T /IM PharmacyOS.exe >nul 2>&1
+        taskkill /F /T /IM PharmacyBackend.exe >nul 2>&1
         ping 127.0.0.1 -n 2 >nul
+        if !WAIT_COUNT! GEQ 3 goto :WAIT_DONE
         goto :WAIT_LOOP
     )
 :WAIT_DONE
@@ -207,6 +216,7 @@ if exist "%INSTALL_DIR%\resources\app" (
 )
 if exist "%INSTALL_DIR%\sea-entry.cjs"       copy /Y "%INSTALL_DIR%\sea-entry.cjs"       "!BACKUP_DIR!\sea-entry.cjs"       >nul 2>&1
 if exist "%INSTALL_DIR%\Updater.bat"         copy /Y "%INSTALL_DIR%\Updater.bat"         "!BACKUP_DIR!\Updater.bat"         >nul 2>&1
+if exist "%INSTALL_DIR%\UpdateGUI.ps1"       copy /Y "%INSTALL_DIR%\UpdateGUI.ps1"       "!BACKUP_DIR!\UpdateGUI.ps1"       >nul 2>&1
 
 if not exist "!BACKUP_DIR!\PharmacyOS.exe" (
     echo [ERROR] Backup of PharmacyOS.exe failed!
@@ -246,13 +256,13 @@ powershell -NoProfile -Command ^
     "    $parent = [System.IO.Path]::GetDirectoryName($dest); " ^
     "    if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }; " ^
     "    $success = $false; " ^
-    "    for ($attempt = 1; $attempt -le 5; $attempt++) { " ^
+    "    for ($attempt = 1; $attempt -le 10; $attempt++) { " ^
     "      try { " ^
     "        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true); " ^
     "        $success = $true; " ^
     "        break; " ^
     "      } catch { " ^
-    "        Start-Sleep -Milliseconds 400; " ^
+    "        Start-Sleep -Milliseconds (200 + ($attempt * 100)); " ^
     "      } " ^
     "    } " ^
     "    if (-not $success) { throw ('Failed to extract file: ' + $dest) } " ^
@@ -357,6 +367,9 @@ if exist "!RBACK_DIR!\sea-entry.cjs" (
 )
 if exist "!RBACK_DIR!\Updater.bat" (
     copy /Y "!RBACK_DIR!\Updater.bat" "%INSTALL_DIR%\Updater.bat" >nul 2>&1
+)
+if exist "!RBACK_DIR!\UpdateGUI.ps1" (
+    copy /Y "!RBACK_DIR!\UpdateGUI.ps1" "%INSTALL_DIR%\UpdateGUI.ps1" >nul 2>&1
 )
 call :WRITE_FAILURE "!RBACK_REASON!"
 echo {"version":"%TARGET_VERSION%","error":"!RBACK_REASON!","ts":"%DATE% %TIME%","rollback":"attempted"} > "%STAGING_DIR%\rollback.json"

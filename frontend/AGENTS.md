@@ -111,7 +111,7 @@ This directory contains the Single Page Application (SPA) built using Vite, Reac
 
 ## Quick Assist 7-Day Refill Workflow (added 2026-10)
 
-- QuickAssistSidebar manages 7-day actionable refills (`diffDays <= 7`, active, uncompleted) in a 3-stage workflow (`getRefillStage`):
+- QuickAssistSidebar manages actionable refills: due within 7 days (diffDays <= 7, active, uncompleted) OR any refill ordered/added to Live Cart from CRM at any time (isOrderedOrInCart, stage B 'ordered') in a 3-stage workflow (getRefillStage):
   - **Stage A (upcoming)**: `[Confirm?] [Add to Cart] [Already Added] [Snooze (+1d/+3d/+7d)] [Edit]`. `Add to Cart` opens `RefillOrderModal` (qty-editable) to start cart job; `Already Added` marks ordered (manual, no cart write); `Snooze` calls `POST /automation/notifications/snooze-patient` with optimistic hide + rollback; `Edit` opens the schedule editor.
   - **Stage B (ordered)**: `[Confirm?] [Mark Ready] [Complete]`. `Mark Ready` calls `POST /refills/patient/:phone/mark-ready` (user click only) which queues one collection WhatsApp alert (60-min dupe suppression), sets `is_ready=1`, and clears live-cart lines via `removeRefillCartLines`. `Complete` calls `POST /refills/patient/:phone/fulfill-all { refill_ids, fulfilled_via: 'quick_assist_complete' }` and navigates to `/pos` prefilled with patient and medicine metadata.
   - **Stage C (reminded)**: `[Confirm?] [Re-Send Reminder] [Complete]`. `Re-Send Reminder` re-invokes mark-ready; `Complete` acts identically to Stage B Complete.

@@ -864,7 +864,18 @@ router.get('/panel', async (req, res) => {
     if (upcomingDays && !isNaN(upcomingDays) && upcomingDays > 0) {
       query += ` WHERE pr.is_active = 1
                    AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
-                   AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days') ${storeCond ? 'AND ' + storeCond : ''}`;
+                   AND (
+                     DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days')
+                     OR pr.cart_store_name IS NOT NULL
+                     OR pr.cart_product_code IS NOT NULL
+                     OR pr.status = 'ordered'
+                     OR pr.is_ready = 1
+                     OR pr.patient_phone IN (
+                       SELECT pr2.patient_phone FROM patient_refills pr2
+                       WHERE pr2.is_active = 1
+                         AND (pr2.cart_store_name IS NOT NULL OR pr2.cart_product_code IS NOT NULL OR pr2.status = 'ordered' OR pr2.is_ready = 1)
+                     )
+                   ) ${storeCond ? 'AND ' + storeCond : ''}`;
       params.push(upcomingDays);
       if (!allStores) params.push(targetStoreId, targetStoreId);
     } else if (storeCond) {
