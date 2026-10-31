@@ -304,6 +304,9 @@ export async function checkForUpdate(): Promise<{
   latestVersion: string;
   downloadUrl?: string;
   updatePackageUrl?: string;
+  packageSizeBytes?: number | null;
+  installerSizeBytes?: number | null;
+  totalBytes?: number | null;
   sha256?: string;
   changelog?: string;
 } | null> {
@@ -331,12 +334,19 @@ export async function checkForUpdate(): Promise<{
       [now, latestVersion, currentVersion]
     );
 
+    const rawTotalBytes = typeof resp.data.totalBytes === 'number'
+      ? resp.data.totalBytes
+      : (typeof resp.data.packageSizeBytes === 'number' ? resp.data.packageSizeBytes : null);
+
     return {
       hasUpdate: !!resp.data.hasUpdate,
       currentVersion,
       latestVersion,
       downloadUrl: resp.data.downloadUrl,
       updatePackageUrl: resp.data.updatePackageUrl,
+      packageSizeBytes: resp.data.packageSizeBytes ?? null,
+      installerSizeBytes: resp.data.installerSizeBytes ?? null,
+      totalBytes: rawTotalBytes,
       sha256: resp.data.sha256,
       changelog: resp.data.changelog,
     };

@@ -40,6 +40,8 @@ async function fetchLatestGitHubRelease() {
 
     const installerAsset = data.assets?.find(a => a.name.endsWith('.exe'));
     const updateZipAsset = data.assets?.find(a => a.name.startsWith('AI-Pharmacy-OS-Update-') && a.name.endsWith('.zip'));
+    const installerSize = typeof installerAsset?.size === 'number' ? installerAsset.size : null;
+    const updateZipSize = typeof updateZipAsset?.size === 'number' ? updateZipAsset.size : null;
 
     let assetSha = null;
     if (updateZipAsset && updateZipAsset.digest) {
@@ -55,6 +57,8 @@ async function fetchLatestGitHubRelease() {
       latestVersion: tag,
       downloadUrl: installerAsset?.browser_download_url || `https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v${tag}/AI-Pharmacy-OS-Portable-Setup-v${tag}.exe`,
       updatePackageUrl: updateZipAsset?.browser_download_url || `https://github.com/loki94in/AI-PHARMACY-V3/releases/download/v${tag}/AI-Pharmacy-OS-Update-v${tag}.zip`,
+      installerSizeBytes: installerSize,
+      packageSizeBytes: updateZipSize,
       sha256: assetSha,
       changelog: data.body || `AI Pharmacy OS v${tag} Release`,
       rolloutMode: 'ALL',
@@ -109,6 +113,9 @@ export default async function handler(req, res) {
     const latestVersion = release?.latestVersion || DEFAULT_LATEST_VERSION;
     const downloadUrl = release?.downloadUrl || DEFAULT_DOWNLOAD_URL;
     const updatePackageUrl = release?.updatePackageUrl || DEFAULT_UPDATE_PACKAGE_URL;
+    const installerSizeBytes = release?.installerSizeBytes || ghRelease?.installerSizeBytes || null;
+    const packageSizeBytes = release?.packageSizeBytes || ghRelease?.packageSizeBytes || null;
+    const totalBytes = packageSizeBytes || installerSizeBytes || null;
     const sha256 = release?.sha256 || DEFAULT_SHA256;
     const changelog = release?.changelog || DEFAULT_CHANGELOG;
     const rolloutMode = release?.rolloutMode || 'ALL';
@@ -141,6 +148,9 @@ export default async function handler(req, res) {
       isPilot: isTargetEligible && rolloutMode === 'PILOT',
       downloadUrl: hasUpdate ? downloadUrl : null,
       updatePackageUrl: hasUpdate ? updatePackageUrl : null,
+      packageSizeBytes: hasUpdate ? packageSizeBytes : null,
+      installerSizeBytes: hasUpdate ? installerSizeBytes : null,
+      totalBytes: hasUpdate ? totalBytes : null,
       sha256: hasUpdate ? sha256 : null,
       changelog: hasUpdate ? changelog : null,
       checkedAt: new Date().toISOString(),

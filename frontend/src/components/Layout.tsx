@@ -2047,12 +2047,15 @@ const Topbar = memo(({
 
     // 0. Software Update Progress / Status (Top Priority when downloading or ready)
     if (updateStatus.state === 'downloading') {
-      const totalMB = updateStatus.totalMB > 0 ? updateStatus.totalMB : 39.4;
+      const totalMB = updateStatus.totalMB;
+      const sizeText = totalMB > 0
+        ? `${updateStatus.downloadedMB} of ${totalMB} MB`
+        : (updateStatus.downloadedMB > 0 ? `${updateStatus.downloadedMB} MB` : 'Connecting...');
       items.push({
         id: 'app-update',
         type: 'notification',
         title: `⏬ Update v${updateStatus.version || ''} — ${updateStatus.percent}%`,
-        subtitle: `${updateStatus.downloadedMB} of ${totalMB} MB downloading in background`,
+        subtitle: `${sizeText} downloading in background`,
         progress: updateStatus.percent,
         badge: `${updateStatus.percent}%`,
         color: 'sky',
@@ -2580,7 +2583,10 @@ const Topbar = memo(({
 
             // (Update-0) Software Update Downloading in Background (Live Progress Bar)
             if (updateStatus.state === 'downloading') {
-              const totalMB = updateStatus.totalMB > 0 ? updateStatus.totalMB : 39.4;
+              const totalMB = updateStatus.totalMB;
+      const sizeText = totalMB > 0
+        ? `${updateStatus.downloadedMB} of ${totalMB} MB`
+        : (updateStatus.downloadedMB > 0 ? `${updateStatus.downloadedMB} MB` : 'Connecting...');
               return (
                 <div
                   onClick={() => navigate('/settings?tab=license')}
@@ -2596,7 +2602,7 @@ const Topbar = memo(({
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-bold">
                       <span className="font-mono text-sky-400">
-                        {updateStatus.downloadedMB} / {totalMB} MB
+                        {totalMB > 0 ? `${updateStatus.downloadedMB} / ${totalMB} MB` : sizeText}
                       </span>
                       <button
                         type="button"

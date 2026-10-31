@@ -55,6 +55,7 @@ export interface LiveCartSearchSectionProps {
   externalQuery?: string;
   /** When set, only products of this Pharmarack store are listed. */
   restrictStoreId?: number;
+  restrictStoreIds?: number[];
   /** Bump to empty the search box (after an add / cancelled selection). 0 = never cleared. */
   clearToken?: number;
   qty: number;
@@ -119,6 +120,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
   initialValue = '',
   externalQuery,
   restrictStoreId,
+  restrictStoreIds,
   clearToken = 0,
   qty,
   sessionStatus,
@@ -260,7 +262,11 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
       return;
     }
 
-    const cacheKey = `${restrictStoreId ?? ''}|${cleanQuery.toLowerCase()}`;
+    const effectiveStoreIds = (restrictStoreIds && restrictStoreIds.length > 0)
+      ? restrictStoreIds
+      : (restrictStoreId ? [restrictStoreId] : null);
+    const storesKey = effectiveStoreIds ? [...effectiveStoreIds].sort((a, b) => a - b).join(',') : '';
+    const cacheKey = `${storesKey}|${cleanQuery.toLowerCase()}`;
     const cachedResults = clientSearchCache.get(cacheKey);
     if (cachedResults && cachedResults.length > 0) {
       setSuggestions(cachedResults);
@@ -281,7 +287,8 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
       }
 
       try {
-        const prData = await api.searchPharmarack(cleanQuery, restrictStoreId, undefined, controller.signal).catch((err: unknown): LocalPrSearchOutcome | null => {
+        const singleStoreId = effectiveStoreIds && effectiveStoreIds.length === 1 ? effectiveStoreIds[0] : (restrictStoreId || undefined);
+        const prData = await api.searchPharmarack(cleanQuery, singleStoreId, undefined, controller.signal).catch((err: unknown): LocalPrSearchOutcome | null => {
           if (controller.signal.aborted) return null;
           const apiErr = err as LocalApiError;
           const code = apiErr?.response?.data?.code;
@@ -317,7 +324,11 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
             // Strict contract: Live Cart must ONLY show live Pharmarack distributor items, never local pharmacy stock
             if ((item as any).isLocalPharmacy) return;
             // Opened from one distributor's card: never offer another store's product.
-            if (restrictStoreId && Number(item.storeId) !== Number(restrictStoreId)) return;
+            if (effectiveStoreIds && effectiveStoreIds.length > 0) {
+              if (!item.storeId || !effectiveStoreIds.includes(Number(item.storeId))) return;
+            } else if (restrictStoreId && Number(item.storeId) !== Number(restrictStoreId)) {
+              return;
+            }
 
             const displayName = item.shortName || item.name;
             const cartInfo = (item.storeId && activeCartMap.get(String(item.storeId))) ||
@@ -408,7 +419,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
     return () => {
       clearTimeout(delayDebounce);
     };
-  }, [product, restrictStoreId]);
+  }, [product, restrictStoreId, restrictStoreIds]);
 
   const handleProductChange = (val: string) => {
     isSelectingRef.current = false;

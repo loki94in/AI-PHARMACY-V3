@@ -1564,6 +1564,7 @@ export const api = {
   sendManualCartNotification: (data: { storeId: number; storeName: string; deliveryPersons: readonly unknown[]; items: readonly unknown[] }) =>
     apiClient.post('/pharmarack/cart/notify-manual', data).then(res => res.data),
   getPharmarackDistributors: () => apiClient.get('/pharmarack/distributors').then(res => res.data),
+  getPharmarackDistributorStores: () => apiClient.get<{ success: boolean; stores: Array<{ storeId: number; storeName: string }> }>('/pharmarack/distributor-stores').then(res => res.data).catch(() => ({ success: false, stores: [] })),
   getPharmarackDistributorMappings: () => apiClient.get<{ success: boolean; mappings: { store_name: string; distributor_id: number; phone?: string; distributor_name?: string }[] }>('/pharmarack/distributor-mappings').then(res => res.data),
   checkPharmarackSession: () => apiClient.get<PharmarackSessionStatusResponse>('/pharmarack/session-status').then(res => {
     const isHealthy = Boolean(res.data?.healthy);

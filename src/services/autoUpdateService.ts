@@ -102,7 +102,12 @@ function getLogPath(): string {
 }
 
 // ── Download helper ──────────────────────────────────────────────────────────
-function downloadFile(url: string, dest: string, onProgress?: (downloaded: number, total: number) => void): Promise<void> {
+function downloadFile(
+  url: string,
+  dest: string,
+  expectedTotalBytes?: number,
+  onProgress?: (downloaded: number, total: number) => void
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const tempDest = dest + '.tmp';
 
@@ -129,16 +134,21 @@ function downloadFile(url: string, dest: string, onProgress?: (downloaded: numbe
           if (res.statusCode !== 200) {
             return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
           }
-          const totalBytes = parseInt(res.headers['content-length'] || '0', 10);
+          const headerBytes = parseInt(res.headers['content-length'] || '0', 10);
+          const totalBytes = headerBytes > 0 ? headerBytes : (expectedTotalBytes && expectedTotalBytes > 0 ? expectedTotalBytes : 0);
           let downloadedBytes = 0;
           let lastReport = 0;
+
+          if (onProgress && totalBytes > 0) {
+            onProgress(0, totalBytes);
+          }
 
           const fileStream = fs.createWriteStream(tempDest);
           res.on('data', (chunk: Buffer) => {
             req.setTimeout(120_000);
             downloadedBytes += chunk.length;
             const now = Date.now();
-            if (onProgress && (now - lastReport > 600 || downloadedBytes === totalBytes)) {
+            if (onProgress && (now - lastReport > 300 || (totalBytes > 0 && downloadedBytes === totalBytes))) {
               lastReport = now;
               onProgress(downloadedBytes, totalBytes);
             }
@@ -209,7 +219,9 @@ class AutoUpdateService {
     downloading?: boolean;
     downloadProgress?: number;
     downloadedBytes?: number;
-    totalBytes?: number;
+    totalBytes?: number | null;
+    packageSizeBytes?: number | null;
+    installerSizeBytes?: number | null;
     readyToInstall?: boolean;
     lastError?: string;
   } | null = null;
@@ -408,6 +420,7 @@ class AutoUpdateService {
         currentVersion: APP_VERSION,
         downloading: Boolean(this.isDownloading && isNewer),
         downloadProgress: trulyHasUpdate ? (this.lastResult?.downloadProgress || (alreadyDownloaded ? 100 : 0)) : 0,
+        totalBytes: result.totalBytes ?? (this.lastResult?.totalBytes || 0),
         readyToInstall: alreadyDownloaded,
         lastError: undefined,
       };
@@ -524,12 +537,18 @@ class AutoUpdateService {
       return;
     }
 
+    const knownTotalBytes = (typeof target.totalBytes === 'number' && target.totalBytes > 0)
+      ? target.totalBytes
+      : ((useZip ? target.packageSizeBytes : target.installerSizeBytes) || 0);
+
     this.isDownloading = true;
     this.lastResult = {
       ...(this.lastResult || {}),
       ...target,
       downloading: true,
       downloadProgress: 0,
+      downloadedBytes: 0,
+      totalBytes: knownTotalBytes,
       readyToInstall: false,
     };
 
@@ -539,6 +558,7 @@ class AutoUpdateService {
       hasUpdate: true,
       downloadUrl: target.downloadUrl,
       updatePackageUrl: target.updatePackageUrl,
+      totalBytes: knownTotalBytes,
       changelog: target.changelog,
       downloading: true,
       downloadProgress: 0,
@@ -552,6 +572,7 @@ class AutoUpdateService {
       version: target.latestVersion,
       sha256: expectedSha256,
       changelog: target.changelog,
+      expectedTotalBytes: knownTotalBytes,
       isZip: useZip,
       reason,
     });
@@ -563,17 +584,18 @@ class AutoUpdateService {
     version: string;
     sha256?: string;
     changelog?: string;
+    expectedTotalBytes?: number;
     isZip: boolean;
     reason?: string;
   }): Promise<void> {
-    const { url, dest, version, sha256: expectedSha256, changelog, isZip, reason = 'auto' } = opts;
+    const { url, dest, version, sha256: expectedSha256, changelog, expectedTotalBytes, isZip, reason = 'auto' } = opts;
     try {
       const stagingDir = getStagingDir();
       fs.mkdirSync(stagingDir, { recursive: true });
 
       const pkgType = isZip ? 'update ZIP (fast path)' : 'full Setup EXE (fallback path)';
       console.log(`[AutoUpdate] Silently downloading ${pkgType} for v${version} to staging...`);
-      await downloadFile(url, dest, (downloaded, total) => {
+      await downloadFile(url, dest, expectedTotalBytes, (downloaded, total) => {
         const percent = total > 0 ? Math.round((downloaded / total) * 100) : 0;
         if (this.lastResult) {
           this.lastResult.downloadProgress = percent;
@@ -682,6 +704,7 @@ class AutoUpdateService {
         changelog: changelog || '',
         readyToInstall: false,
         downloading: false,
+        lastError: errorMsg,
         error: errorMsg,
         reason,
       });

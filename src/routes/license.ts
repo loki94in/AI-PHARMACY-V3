@@ -74,7 +74,7 @@ router.get('/update-status', (_req, res) => {
     downloading: isDownloading,
     downloadProgress: isDownloading || isReady ? (result?.downloadProgress ?? (isReady ? 100 : 0)) : 0,
     downloadedBytes: isDownloading || isReady ? (result?.downloadedBytes ?? (isReady ? result?.totalBytes : 0)) : 0,
-    totalBytes: isDownloading || isReady ? (result?.totalBytes ?? 0) : 0,
+    totalBytes: result?.totalBytes ?? 0,
     downloadUrl: isNewer ? result?.downloadUrl : null,
     updatePackageUrl: isNewer ? result?.updatePackageUrl : null,
     changelog: isNewer ? (result?.changelog || '') : '',

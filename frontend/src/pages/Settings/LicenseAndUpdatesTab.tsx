@@ -437,7 +437,11 @@ function SoftwareUpdateCard() {
               Downloading update v{updateStatus.version || ''} in background...
             </span>
             <span className="font-mono text-text">
-              {updateStatus.downloadedMB} MB / {updateStatus.totalMB > 0 ? updateStatus.totalMB : 39.4} MB ({updateStatus.percent}%)
+              {updateStatus.totalMB > 0
+                ? `${updateStatus.downloadedMB} MB / ${updateStatus.totalMB} MB (${updateStatus.percent}%)`
+                : (updateStatus.downloadedMB > 0
+                  ? `${updateStatus.downloadedMB} MB (${updateStatus.percent}%)`
+                  : `Connecting... (${updateStatus.percent}%)`)}
             </span>
           </div>
           <div className="w-full bg-border rounded-full h-2 overflow-hidden">

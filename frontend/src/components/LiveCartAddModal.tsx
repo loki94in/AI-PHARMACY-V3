@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Search, Plus, Minus, Sparkles, Loader2, ShoppingCart, RefreshCw, AlertCircle, EyeOff, Ban, Package, CheckCircle2, RotateCcw, RotateCw, Store, Tag, Zap, WifiOff, Trash2 } from 'lucide-react';
+import { X, Search, Plus, Minus, Sparkles, Loader2, ShoppingCart, RefreshCw, AlertCircle, EyeOff, Ban, Package, CheckCircle2, RotateCcw, RotateCw, Store, Tag, Zap, WifiOff, Trash2, Check, Filter, ChevronDown } from 'lucide-react';
 import { api, type SpecialOrder, type Refill } from '../services/api';
 import { loadDistributorPriority, priorityRankOf } from '../utils/pharmarackLinkCandidates';
 import { toastEvent } from '../services/events';
@@ -298,6 +298,7 @@ interface LocalPendingAdd {
 
 let pendingAddSeq = 1;
 const pendingAddsCache: LocalPendingAdd[] = [];
+let cachedDistributorStores: Array<{ storeId: number; storeName: string }> = [];
 const syncPendingAddsCache = (next: LocalPendingAdd[]) => {
   pendingAddsCache.length = 0;
   pendingAddsCache.push(...next);
@@ -363,6 +364,41 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const [selectedPackaging, setSelectedPackaging] = useState('');
   const [selectedMedicineName, setSelectedMedicineName] = useState('');
   const [lastAddedDistributor, setLastAddedDistributor] = useState<string>(() => localStorage.getItem('pharmarack_last_added_distributor') || '');
+
+  // Multi-distributor & single-distributor search filter
+  const [availableStores, setAvailableStores] = useState<Array<{ storeId: number; storeName: string }>>(cachedDistributorStores);
+  const [selectedFilterStoreIds, setSelectedFilterStoreIds] = useState<number[]>([]);
+  const [isDistributorFilterOpen, setIsDistributorFilterOpen] = useState(false);
+  const [distributorFilterSearch, setDistributorFilterSearch] = useState('');
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (cachedDistributorStores.length > 0) {
+      setAvailableStores(cachedDistributorStores);
+      return;
+    }
+    let cancelled = false;
+    api.getPharmarackDistributorStores().then(res => {
+      if (!cancelled && res && Array.isArray(res.stores)) {
+        cachedDistributorStores = res.stores;
+        setAvailableStores(res.stores);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!isDistributorFilterOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(e.target as Node)) {
+        setIsDistributorFilterOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [isDistributorFilterOpen]);
 
   // Stage-style pending adds (instant UI, silent upstream sync)
   const [pendingAdds, setPendingAdds] = useState<LocalPendingAdd[]>(() => pendingAddsCache.map(p => ({ ...p })));
@@ -480,6 +516,68 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const [cartDistributors, setCartDistributors] = useState<Distributor[]>(cachedCartDistributors);
   const [cartLoading, setCartLoading] = useState(cachedCartDistributors.length === 0);
   const [cartError, setCartError] = useState<string | null>(null);
+
+  const combinedDistributorList = useMemo(() => {
+    const map = new Map<number, { storeId: number; storeName: string; inCart: boolean; itemCount: number }>();
+
+    cartDistributors.forEach(cd => {
+      if (cd.storeId) {
+        map.set(Number(cd.storeId), {
+          storeId: Number(cd.storeId),
+          storeName: cd.storeName,
+          inCart: true,
+          itemCount: cd.items?.length || 0,
+        });
+      }
+    });
+
+    availableStores.forEach(as => {
+      const id = Number(as.storeId);
+      if (id && !map.has(id)) {
+        map.set(id, {
+          storeId: id,
+          storeName: as.storeName,
+          inCart: false,
+          itemCount: 0,
+        });
+      }
+    });
+
+    const list = Array.from(map.values());
+    return list.sort((a, b) => {
+      if (a.inCart && !b.inCart) return -1;
+      if (!a.inCart && b.inCart) return 1;
+      return a.storeName.localeCompare(b.storeName);
+    });
+  }, [cartDistributors, availableStores]);
+
+  const filteredDistributorOptions = useMemo(() => {
+    if (!distributorFilterSearch.trim()) return combinedDistributorList;
+    const q = distributorFilterSearch.toLowerCase().trim();
+    return combinedDistributorList.filter(d =>
+      d.storeName.toLowerCase().includes(q) || String(d.storeId).includes(q)
+    );
+  }, [combinedDistributorList, distributorFilterSearch]);
+
+  const handleToggleStoreFilter = (storeId: number) => {
+    setSelectedFilterStoreIds(prev =>
+      prev.includes(storeId) ? prev.filter(id => id !== storeId) : [...prev, storeId]
+    );
+  };
+
+  const handleSelectSingleStoreFilter = (storeId: number, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setSelectedFilterStoreIds([storeId]);
+    setIsDistributorFilterOpen(false);
+  };
+
+  const handleResetStoreFilter = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setSelectedFilterStoreIds([]);
+    setIsDistributorFilterOpen(false);
+  };
+
+
 
   // Pending Orders States and Functions
   const [pendingOrders, setPendingOrders] = useState<SpecialOrder[]>(cachedPendingOrders);
@@ -2388,11 +2486,166 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                   </div>
                 )}
 
+                {/* Distributor Filter Bar (Single & Multi-Select) */}
+                <div className="relative mb-2.5 flex items-center justify-between gap-2 text-xs" ref={filterDropdownRef}>
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                    <span className="text-[11px] font-semibold text-muted flex items-center gap-1 shrink-0">
+                      <Filter size={12} className="text-muted shrink-0" />
+                      Distributor:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsDistributorFilterOpen(prev => !prev)}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                        selectedFilterStoreIds.length > 0
+                          ? 'bg-primary/10 border-primary text-primary font-bold shadow-sm'
+                          : 'bg-bg2 border-border text-text hover:bg-bg3 hover:border-border/80'
+                      }`}
+                      title="Filter search to specific distributors"
+                    >
+                      <Store size={12} className={selectedFilterStoreIds.length > 0 ? 'text-primary' : 'text-muted'} />
+                      <span className="truncate max-w-[220px]">
+                        {selectedFilterStoreIds.length === 0 && 'All Distributors (Default)'}
+                        {selectedFilterStoreIds.length === 1 && (
+                          combinedDistributorList.find(d => d.storeId === selectedFilterStoreIds[0])?.storeName ||
+                          `Store #${selectedFilterStoreIds[0]}`
+                        )}
+                        {selectedFilterStoreIds.length > 1 && `${selectedFilterStoreIds.length} Distributors Selected`}
+                      </span>
+                      <ChevronDown size={12} className={`transition-transform duration-200 ${isDistributorFilterOpen ? 'rotate-180' : ''}`} />
+                    </button>
+
+                    {selectedFilterStoreIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleResetStoreFilter}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-bg3 hover:bg-bg border border-border text-muted hover:text-text transition-colors cursor-pointer"
+                        title="Reset back to all distributors"
+                      >
+                        <X size={11} />
+                        <span>Reset to All</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {selectedFilterStoreIds.length > 0 && (
+                    <span className="text-[10px] text-muted italic hidden sm:inline shrink-0">
+                      Showing matching products from {selectedFilterStoreIds.length} distributor{selectedFilterStoreIds.length > 1 ? 's' : ''} only
+                    </span>
+                  )}
+
+                  {/* Popover Dropdown */}
+                  {isDistributorFilterOpen && (
+                    <div className="absolute top-full left-0 mt-1 w-84 max-w-[95vw] bg-bg border border-border rounded-xl shadow-2xl z-50 p-2 space-y-2 animate-in fade-in slide-in-from-top-1 duration-150">
+                      {/* Search inside distributors list */}
+                      <div className="relative">
+                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+                        <input
+                          type="text"
+                          value={distributorFilterSearch}
+                          onChange={(e) => setDistributorFilterSearch(e.target.value)}
+                          placeholder="Search distributor..."
+                          className="w-full bg-bg2 border border-border rounded-lg pl-7 pr-2.5 py-1 text-xs text-text placeholder:text-muted focus:outline-none focus:border-primary"
+                          autoFocus
+                        />
+                        {distributorFilterSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setDistributorFilterSearch('')}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-text text-[11px]"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+
+                      {/* All Distributors (Clear option) */}
+                      <div
+                        onClick={handleResetStoreFilter}
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                          selectedFilterStoreIds.length === 0
+                            ? 'bg-primary/10 text-primary font-bold'
+                            : 'hover:bg-bg2 text-text'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${
+                            selectedFilterStoreIds.length === 0 ? 'bg-primary border-primary text-white' : 'border-border'
+                          }`}>
+                            {selectedFilterStoreIds.length === 0 && <Check size={10} strokeWidth={3} />}
+                          </div>
+                          <span>All Distributors (Default)</span>
+                        </div>
+                        <span className="text-[10px] text-muted">All</span>
+                      </div>
+
+                      <div className="border-t border-border my-1" />
+
+                      {/* Distributor List */}
+                      <div className="max-h-56 overflow-y-auto space-y-0.5 pr-1 dropdown-scroll">
+                        {filteredDistributorOptions.length === 0 ? (
+                          <div className="py-4 text-center text-xs text-muted">No matching distributors</div>
+                        ) : (
+                          filteredDistributorOptions.map(d => {
+                            const isSelected = selectedFilterStoreIds.includes(d.storeId);
+                            return (
+                              <div
+                                key={d.storeId}
+                                onClick={() => handleToggleStoreFilter(d.storeId)}
+                                className={`group flex items-center justify-between px-2 py-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                                  isSelected ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-bg2 text-text'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                                  <div className={`w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center ${
+                                    isSelected ? 'bg-primary border-primary text-white' : 'border-border'
+                                  }`}>
+                                    {isSelected && <Check size={10} strokeWidth={3} />}
+                                  </div>
+                                  <span className="truncate">{d.storeName}</span>
+                                  {d.inCart && (
+                                    <span className="shrink-0 text-[9px] font-bold px-1 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
+                                      In Cart{d.itemCount > 0 ? ` (${d.itemCount})` : ''}
+                                    </span>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleSelectSingleStoreFilter(d.storeId, e)}
+                                  className="opacity-0 group-hover:opacity-100 text-[10px] px-1.5 py-0.5 rounded bg-bg3 hover:bg-primary hover:text-white border border-border text-muted font-bold transition-all shrink-0 cursor-pointer"
+                                  title={`Filter only ${d.storeName}`}
+                                >
+                                  Only
+                                </button>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+
+                      {/* Action Footer */}
+                      <div className="border-t border-border pt-1.5 flex items-center justify-between text-[11px]">
+                        <span className="text-muted">
+                          {selectedFilterStoreIds.length === 0 ? 'Searching all' : `${selectedFilterStoreIds.length} selected`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsDistributorFilterOpen(false)}
+                          className="px-2.5 py-1 bg-primary text-white rounded-md font-bold hover:bg-primary/90 cursor-pointer text-xs"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Autocomplete Search Input (Isolated in LiveCartSearchSection for zero parent re-render & instant response) */}
                 <LiveCartSearchSection
                   initialValue={initialSearch}
                   externalQuery={externalSearchQuery}
-                  restrictStoreId={restrictStoreId}
+                  restrictStoreId={selectedFilterStoreIds.length === 1 ? selectedFilterStoreIds[0] : restrictStoreId}
+                  restrictStoreIds={selectedFilterStoreIds.length > 0 ? selectedFilterStoreIds : (restrictStoreId ? [restrictStoreId] : undefined)}
                   clearToken={searchClearToken}
                   qty={qty}
                   sessionStatus={sessionStatus}

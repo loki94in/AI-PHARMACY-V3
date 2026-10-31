@@ -106,7 +106,7 @@ export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatu
   let lastError = current.lastError;
   if (rawError) {
     lastError = rawError;
-  } else if (frame.readyToInstall || (frame.hasUpdate !== undefined && !rawError)) {
+  } else if (frame.readyToInstall || (frame.downloading === true && !rawError)) {
     lastError = undefined;
   }
 
@@ -118,8 +118,8 @@ export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatu
   let totalMB = current.totalMB;
   if (typeof frame.totalBytes === 'number' && frame.totalBytes > 0) {
     totalMB = Math.round((frame.totalBytes / 1048576) * 10) / 10;
-  } else if (!totalMB || totalMB === 0) {
-    totalMB = 39.4;
+  } else if (typeof frame.totalBytes === 'number' && frame.totalBytes === 0) {
+    totalMB = 0;
   }
 
   let downloadedMB = current.downloadedMB;
@@ -139,12 +139,20 @@ export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatu
   } else if (frame.readyToInstall && isTargetNewer) {
     state = 'ready';
     percent = 100;
-    downloadedMB = totalMB > 0 ? totalMB : 39.4;
-  } else if (frame.downloading && (hasUpdate || isTargetNewer)) {
+    if (totalMB > 0) {
+      downloadedMB = totalMB;
+    }
+  } else if (frame.downloading === false) {
+    if (current.state !== 'ready' || !isTargetNewer) {
+      state = 'idle';
+      percent = 0;
+      downloadedMB = 0;
+    }
+  } else if (frame.downloading === true && (hasUpdate || isTargetNewer)) {
     state = 'downloading';
-  } else if ((hasUpdate || isTargetNewer) && typeof frame.downloadProgress === 'number' && (current.state === 'downloading' || frame.downloadProgress > 0)) {
+  } else if ((hasUpdate || isTargetNewer) && typeof frame.downloadProgress === 'number' && frame.downloadProgress > 0) {
     state = 'downloading';
-  } else if (!hasUpdate || frame.downloading === false || frame.readyToInstall === false) {
+  } else if (!hasUpdate) {
     if (current.state !== 'ready' || !isTargetNewer) {
       state = 'idle';
       percent = 0;

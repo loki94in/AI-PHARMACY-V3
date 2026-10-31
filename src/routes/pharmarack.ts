@@ -671,6 +671,23 @@ router.get('/distributors', async (_req, res) => {
   }
 });
 
+// Get all available Pharmarack store IDs and names from catalog cache
+router.get('/distributor-stores', async (_req, res) => {
+  try {
+    const db = await dbManager.getConnection();
+    const rows = await db.all(`
+      SELECT DISTINCT store_id as storeId, store_name as storeName
+      FROM distributor_catalog
+      WHERE store_id IS NOT NULL AND store_id > 0 AND store_name IS NOT NULL AND store_name != ''
+      ORDER BY store_name ASC
+    `);
+    return res.json({ success: true, stores: rows || [] });
+  } catch (err: any) {
+    console.error('Failed to fetch distributor stores:', err);
+    return res.status(500).json({ success: false, error: err.message, stores: [] });
+  }
+});
+
 // Get all saved Pharmarack store-to-distributor mappings
 router.get('/distributor-mappings', async (_req, res) => {
   try {
