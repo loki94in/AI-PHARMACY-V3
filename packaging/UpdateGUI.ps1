@@ -228,12 +228,9 @@ function Rollback-Update {
     if (Test-Path $lockPath) { Remove-Item $lockPath -Force -ErrorAction SilentlyContinue }
 
     Start-Sleep -Seconds 1
-    $silentVbs = Join-Path $InstallDir "RUN-PharmacyOS-Silent.vbs"
     $appExe = Join-Path $InstallDir "PharmacyOS.exe"
-    if (Test-Path $silentVbs) {
-        Start-Process "wscript.exe" -ArgumentList "`"$silentVbs`""
-    } elseif (Test-Path $appExe) {
-        Start-Process $appExe
+    if (Test-Path -LiteralPath $appExe) {
+        Start-Process -FilePath $appExe -WorkingDirectory $InstallDir
     }
     Start-Sleep -Seconds 2
     $window.Close()
@@ -448,11 +445,8 @@ $window.Add_ContentRendered({
         $footerText.Text = "Update successfully installed • Starting now"
         Start-Sleep -Milliseconds 1200
 
-        $silentVbs = Join-Path $InstallDir "RUN-PharmacyOS-Silent.vbs"
-        if (Test-Path -LiteralPath $silentVbs) {
-            Start-Process "wscript.exe" -ArgumentList "`"$silentVbs`""
-        } else {
-            Start-Process $installedApp
+        if (Test-Path -LiteralPath $installedApp) {
+            Start-Process -FilePath $installedApp -WorkingDirectory $InstallDir
         }
         Write-Log "Application launched. Closing updater GUI."
         Start-Sleep -Milliseconds 800
