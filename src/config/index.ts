@@ -138,6 +138,8 @@ export const config: AppConfig = {
   port: resolvedPort,
   get dbPath() {
     if (process.env.DB_PATH) return process.env.DB_PATH;
+    const isTest = process.env.NODE_ENV === 'test' || !!process.env.JEST_WORKER_ID;
+    if (isTest) return path.join(appDataDir, 'data', 'app.test.db');
     const isDev = !isPackagedApp() && (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV);
     const dbName = isDev ? 'app.dev.db' : 'app.db';
     return path.join(appDataDir, 'data', dbName);

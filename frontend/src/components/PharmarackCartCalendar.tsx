@@ -162,7 +162,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
           if (mode === 'auto') {
             const minSec = todayAutoDelay;
             const maxSec = todayAutoDelay + 2;
-            api.updateWhatsAppPacingConfig(minSec, maxSec).catch(() => {});
+            // Pacing preserved from settings; no redundant mount POST write
           }
           if (res.data.pharmacy_weekly_off) setShopWeeklyOff(res.data.pharmacy_weekly_off);
           if (res.data.pharmacy_open_time) setShopOpenTime(res.data.pharmacy_open_time);

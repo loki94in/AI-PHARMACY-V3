@@ -1,6 +1,7 @@
 import { Router } from 'express';
+import fs from 'fs';
 import { checkLicense, activateLicense, getMachineId, APP_VERSION } from '../services/licenseService.js';
-import { autoUpdateService, compareVersions } from '../services/autoUpdateService.js';
+import { autoUpdateService, compareVersions, getLogPath } from '../services/autoUpdateService.js';
 import { getUpdateHistory } from '../services/updateHistoryService.js';
 
 const router = Router();
@@ -147,6 +148,49 @@ router.get('/update-history', async (req, res) => {
       releases: [],
       offline: true,
       error: err?.message || 'Failed to fetch release history',
+    });
+  }
+});
+
+/** GET /api/license/updater-log — tail of latest installer / updater CLI log */
+router.get('/updater-log', (_req, res) => {
+  try {
+    const logPath = getLogPath();
+    if (!fs.existsSync(logPath)) {
+      return res.json({
+        success: true,
+        exists: false,
+        logPath,
+        lines: [],
+        lastModified: null,
+      });
+    }
+
+    const stat = fs.statSync(logPath);
+    // Read up to last 64 KB of log file for fast parsing
+    const bufferSize = Math.min(stat.size, 65536);
+    const fd = fs.openSync(logPath, 'r');
+    const buffer = Buffer.alloc(bufferSize);
+    fs.readSync(fd, buffer, 0, bufferSize, Math.max(0, stat.size - bufferSize));
+    fs.closeSync(fd);
+
+    const text = buffer.toString('utf8');
+    const allLines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+    // Take up to latest 150 lines
+    const lines = allLines.slice(-150);
+
+    res.json({
+      success: true,
+      exists: true,
+      logPath,
+      lines,
+      lastModified: stat.mtime.toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to read updater log',
+      lines: [],
     });
   }
 });

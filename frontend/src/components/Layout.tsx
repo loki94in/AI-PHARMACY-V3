@@ -1216,12 +1216,6 @@ const LiveCartCountdownPill: React.FC = memo(() => {
     };
   }, [loadCartData]);
 
-  useEffect(() => {
-    if (location.pathname === '/pharmarack-cart') {
-      loadCartData();
-    }
-  }, [location.pathname, loadCartData]);
-
   const todayStr = useMemo(() => {
     const now = new Date();
     const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);

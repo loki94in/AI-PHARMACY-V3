@@ -1,54 +1,40 @@
-# Implementation Plan: Fix "Unknown Medicine" Display & Save Logic in CRM Refills
+# Implementation Plan: Additional Pharmarack Cart Redundant Query & Scan Eliminations
 
 ## Objective
-Eliminate `"Unknown Medicine"` from the CRM Refill page, ensure medicines are always saved and displayed with their true name, prevent unlinked medicine IDs or inventory ID confusion from corrupting refill records, and guarantee that any refill with an unlinked catalog ID falls back gracefully to `pr.medicine_name`.
-
----
-
-## Root Causes Addressed
-1. **Omission of `pr.medicine_name` in SQL queries in `src/routes/refills.ts`**:
-   - `patient_refills` has a `medicine_name` column storing the real medicine name.
-   - 10 queries in `src/routes/refills.ts` (including `GET /panel`, `GET /`, and reminders) selected:
-     `COALESCE(m.name, pr.cart_product_name, 'Unknown Medicine') AS medicine_name`
-   - If `pr.medicine_id` did not match a record in `medicines`, it skipped `pr.medicine_name` and displayed `'Unknown Medicine'`.
-2. **Missing `medicine_name` in `PUT /refills/patient-medicines` (`src/routes/refills.ts`)**:
-   - The frontend passes `medicine_name` in `medicines: [{ medicine_id, medicine_name, quantity_needed }]`.
-   - The backend `INSERT INTO patient_refills` omitted the `medicine_name` column and parameter, leaving `pr.medicine_name` as `NULL`.
-3. **Unlinked Medicine Resolution**:
-   - If `medId` is `0` or missing but `medName` is present, look up the master catalog or preserve `medName` directly in `patient_refills.medicine_name`.
+Eliminate all remaining redundant scans, background polls, duplicate route-change fetches, and unnecessary CRM lookups:
+1. Stop WhatsApp queue scanning on quantity changes and checkbox clicks; scan and build messages only when placing/dispatching orders.
+2. Query distributor contacts, mappings, and delivery boys once per session into module memory, updating only when a contact is edited or saved.
+3. Lazy-load secondary "Req" and "Refills" tabs so CRM special orders, refills, and POS receipts are only queried when viewing those tabs.
+4. Remove duplicate `GET /pharmarack/cart` from `Layout.tsx` on navigation to `/pharmarack-cart`, and skip redundant remote session probes when the live cart loads successfully.
+5. Remove redundant mount POST pacing writes in `PharmarackCartCalendar.tsx`.
 
 ---
 
 ## Code Changes Implemented
 
-### 1. Updated SQL queries in `src/routes/refills.ts`
-- Updated all 10 occurrences of `COALESCE` in `src/routes/refills.ts`:
-  `COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') AS medicine_name`
-- Ensures that whenever `m.name` is null (e.g. unlinked medicine or custom prescription), the query retrieves `pr.medicine_name` rather than jumping to `'Unknown Medicine'`.
+### 1. `frontend/src/pages/PharmarackCart/index.tsx`
+- **WhatsApp queue scanning**: Removed `distributors` from `syncQueueStatus` effect dependencies using `distributorsRef.current`. Queue status only checks on mount, window focus, and when SSE events arrive (`sse-wa-queue-updated`). Zero checks during quantity adjustments or checkbox toggles.
+- **Contact data caching**: Added module-level caches `cachedSavedDistributorsList`, `cachedDistributorMappings`, `cachedDeliveryBoysList`, and `cachedStoreInfo`. `fetchSavedDistributors`, `fetchDistributorMappings`, `fetchDeliveryBoys`, and `fetchStoreInfo` read from memory and only hit SQLite on cold start or when a phone number/setting is edited (`force = true`).
+- **Lazy CRM tabs**: Replaced automatic 300ms `showPendingTier` fetch with a tab guard: `fetchPendingOrders()`, `fetchPendingRefills()`, and `fetchTodaySoldMedicines()` only run when `currentTab === 'requests' || currentTab === 'refills' || currentTab === 'reorder'`.
+- **Skip redundant session probe**: Removed duplicate mount/return `checkSession()` probes. When `fetchCart` loads the live cart, `sessionStatus` is marked active directly.
 
-### 2. Upgraded `PUT /patient-medicines` in `src/routes/refills.ts`
-- Extracted `medName = (med.medicine_name || med.name || '').trim() || null;`.
-- Attempt catalog lookup if `medId` is not provided but `medName` is present.
-- Updated the `UPDATE patient_refills` query to include `medicine_name = COALESCE(?, medicine_name)`.
-- Updated the `INSERT INTO patient_refills` query to include `medicine_name` in the column and parameter list.
+### 2. `frontend/src/components/Layout.tsx`
+- Removed the route-change listener that called `loadCartData()` on navigation to `/pharmarack-cart`, cutting duplicate cart queries on route entry.
 
-### 3. Data Integrity & Verification
-- Ran database integrity check on `app.dev.db` and `app.db` to verify all existing rows have valid names.
-- Verified TypeScript compilation: `npx tsc --noEmit` passed with 0 errors.
-- Verified Performance Guardrails: `npm run guardrails` passed.
-- Updated Knowledge Graph: `node scripts/quick-update.mjs`.
+### 3. `frontend/src/components/PharmarackCartCalendar.tsx`
+- Removed redundant `api.updateWhatsAppPacingConfig` POST write from mount.
 
 ---
 
 ## Tasks & Progress Tracker
 
-- [x] Task 1: Update `COALESCE(m.name, pr.medicine_name, ...)` across all query routes in `src/routes/refills.ts`.
-  - **Completed**: Replaced all 10 query occurrences in `src/routes/refills.ts`.
-- [x] Task 2: Include `medicine_name` in `PUT /patient-medicines` INSERT and UPDATE in `src/routes/refills.ts`.
-  - **Completed**: Added `medName` extraction, auto-resolution, and updated `UPDATE` and `INSERT` queries.
-- [x] Task 3: Data reconciliation check.
-  - **Completed**: Checked both `app.dev.db` and `app.db`, confirmed all existing records are intact.
-- [x] Task 4: Verification tests and performance guardrails.
-  - **Completed**: `npx tsc --noEmit` passed; `npm run guardrails` passed.
-- [x] Task 5: Knowledge graph synchronization.
-  - **Completed**: Synced via `node scripts/quick-update.mjs`.
+- [x] Task 1: Disconnect `syncQueueStatus` from `distributors` dependency in `PharmarackCart/index.tsx`.
+  - **Completed**: Used `distributorsRef.current` and scoped effect dependencies to `[pageActive]`. Qty changes and checkbox clicks no longer trigger WhatsApp queue scans.
+- [x] Task 2: Module-level cache contacts and delivery boys in `PharmarackCart/index.tsx`.
+  - **Completed**: Cached saved distributors, mappings, delivery boys, and store info in module memory; re-queries run only when a number is explicitly saved or edited.
+- [x] Task 3: Lazy-load "Req" and "Refills" tab data in `PharmarackCart/index.tsx`.
+  - **Completed**: CRM special orders, patient refills, and POS sold items only query when viewing secondary tabs, keeping cart open instant.
+- [x] Task 4: Remove duplicate route fetch in `Layout.tsx` and duplicate mount write in `PharmarackCartCalendar.tsx`.
+  - **Completed**: Removed redundant route listener from `Layout.tsx` and redundant POST pacing write from `PharmarackCartCalendar.tsx`.
+- [x] Task 5: Run TypeScript compilation, performance guardrails, and knowledge graph update.
+  - **Completed**: `npx tsc --noEmit` passed with 0 errors; `npm run guardrails` passed; `node scripts/quick-update.mjs` synchronized knowledge graph.

@@ -92,7 +92,7 @@ function getUpdaterPath(): string {
   return path.join(process.cwd(), 'packaging', 'Updater.bat');
 }
 
-function getLogPath(): string {
+export function getLogPath(): string {
   const appDir = path.dirname(process.execPath);
   const isSeaBinary = !process.execPath.endsWith('node.exe') &&
                       !process.execPath.endsWith('node') &&

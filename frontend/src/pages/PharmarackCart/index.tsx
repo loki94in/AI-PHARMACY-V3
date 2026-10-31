@@ -926,6 +926,10 @@ function openOrReuseWhatsappTab(url: string, phone?: string, text?: string) {
   }
 }
 
+let cachedSavedDistributorsList: LocalDistributorRecord[] = [];
+let cachedDistributorMappings: Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }> = {};
+let cachedDeliveryBoysList: { id?: number; name: string; whatsapp_number: string; is_active?: number }[] = [];
+let cachedStoreInfo: { name: string; phone: string; address: string; email: string; adminPhone: string; deliveryBoyName1: string; deliveryBoyPhone: string; deliveryBoyName2: string; deliveryBoyPhone2: string; invoiceFileFormat: string } | null = null;
 export default function PharmarackCart() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -940,6 +944,8 @@ export default function PharmarackCart() {
   const [userCheckOverrides, setUserCheckOverrides] = useState<Record<string, boolean>>(() => loadUserCheckOverrides());
   const userCheckOverridesRef = useRef(userCheckOverrides);
   userCheckOverridesRef.current = userCheckOverrides;
+  const distributorsRef = useRef(distributors);
+  distributorsRef.current = distributors;
 
   // ── Silent Sequential Delete Queue & Priority Pre-emption State ──
   const deleteQueueRef = useRef<Array<{
@@ -1374,7 +1380,7 @@ export default function PharmarackCart() {
   useEffect(() => {
     distributors.forEach(d => {
       if (!d.storeId || fetchedDistributorStoreIdsRef.current.has(d.storeId)) return;
-      const hasDeficit = Boolean((d.minAmountLimit && d.minAmountLimit > 0) || (d.minItemLimit && d.minItemLimit > 0) || (d.items && d.items.length > 0));
+      const hasDeficit = getOrderLimitIssues(d).length > 0;
       if (hasDeficit) {
         fetchDistributorProducts(d.storeId);
       }
@@ -1807,7 +1813,7 @@ export default function PharmarackCart() {
         const updatedStatus: Record<number, 'queued' | 'sending' | 'success' | 'error'> = {};
         const updatedTimes: Record<number, string> = {};
 
-        distributors.forEach(dist => {
+        distributorsRef.current.forEach(dist => {
           const phoneNum = getDistributorPhoneNumber(dist);
           const cleanPhone = toWaDigits(phoneNum);
 
@@ -1874,16 +1880,14 @@ export default function PharmarackCart() {
       window.removeEventListener('sse-wa-queue-updated', handleSseQueue);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [distributors, pageActive]);
+  }, [pageActive]);
 
   useEffect(() => {
-    // Proactively pre-warm WhatsApp and Pharmarack session for instant PO dispatch
-    api.prewarmWhatsApp().catch(() => { });
-    api.warmupPharmarackSession().catch(() => { });
+    // Pre-warms are demand-driven on dispatch to keep cart page open fast and lightweight
   }, []);
 
   // Saved distributor contacts, delivery boys, and store settings
-  const [storeInfo, setStoreInfo] = useState<{ name: string; phone: string; address: string; email: string; adminPhone: string; deliveryBoyName1: string; deliveryBoyPhone: string; deliveryBoyName2: string; deliveryBoyPhone2: string; invoiceFileFormat: string }>({
+  const [storeInfo, setStoreInfo] = useState<{ name: string; phone: string; address: string; email: string; adminPhone: string; deliveryBoyName1: string; deliveryBoyPhone: string; deliveryBoyName2: string; deliveryBoyPhone2: string; invoiceFileFormat: string }>(() => cachedStoreInfo || {
     name: 'AI Pharmacy',
     phone: '',
     address: '',
@@ -1910,16 +1914,18 @@ export default function PharmarackCart() {
     } catch (_) { return {}; }
   });
 
-  const [deliveryBoysList, setDeliveryBoysList] = useState<{ id?: number; name: string; whatsapp_number: string; is_active?: number }[]>([]);
-  const [savedDistributorsList, setSavedDistributorsList] = useState<LocalDistributorRecord[]>([]);
-  const [distributorMappings, setDistributorMappings] = useState<Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>>({});
+  const [deliveryBoysList, setDeliveryBoysList] = useState<{ id?: number; name: string; whatsapp_number: string; is_active?: number }[]>(() => cachedDeliveryBoysList);
+  const [savedDistributorsList, setSavedDistributorsList] = useState<LocalDistributorRecord[]>(() => cachedSavedDistributorsList);
+  const [distributorMappings, setDistributorMappings] = useState<Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>>(() => cachedDistributorMappings);
   const [modalDeliveryBoyId, setModalDeliveryBoyId] = useState<number | null>(null);
   const [overwriteDistributorName, setOverwriteDistributorName] = useState(true);
 
-  const fetchSavedDistributors = async () => {
+  const fetchSavedDistributors = async (force = false) => {
+    if (!force && cachedSavedDistributorsList.length > 0) return;
     try {
       const res = await apiClient.get('/distributors');
       if (res.data && Array.isArray(res.data)) {
+        cachedSavedDistributorsList = res.data;
         setSavedDistributorsList(res.data);
       }
     } catch (err) {
@@ -1927,7 +1933,8 @@ export default function PharmarackCart() {
     }
   };
 
-  const fetchDistributorMappings = async () => {
+  const fetchDistributorMappings = async (force = false) => {
+    if (!force && Object.keys(cachedDistributorMappings).length > 0) return;
     try {
       const res = await apiClient.get('/pharmarack/distributor-mappings');
       if (res.data && Array.isArray(res.data.mappings)) {
@@ -1941,6 +1948,7 @@ export default function PharmarackCart() {
             };
           }
         });
+        cachedDistributorMappings = mapObj;
         setDistributorMappings(mapObj);
       }
     } catch (err) {
@@ -1948,22 +1956,25 @@ export default function PharmarackCart() {
     }
   };
 
-  const fetchDeliveryBoys = async () => {
+  const fetchDeliveryBoys = async (force = false) => {
+    if (!force && cachedDeliveryBoysList.length > 0) return cachedDeliveryBoysList;
     try {
       const res = await apiClient.get('/dispatch/delivery-boys');
       if (Array.isArray(res.data)) {
         const active = res.data.filter((b: LocalDeliveryBoyRow) => b.is_active !== 0);
+        cachedDeliveryBoysList = active;
         setDeliveryBoysList(active);
         return active as { id?: number; name: string; whatsapp_number: string; is_active?: number }[];
       }
     } catch (err) {
       console.warn('Failed to load delivery boys list for WhatsApp template:', err);
     }
-    return [];
+    return cachedDeliveryBoysList;
   };
 
-  const fetchStoreInfo = async (boys?: { id?: number; name: string; whatsapp_number: string; is_active?: number }[]) => {
-    const activeBoys = boys ?? deliveryBoysList;
+  const fetchStoreInfo = async (boys?: { id?: number; name: string; whatsapp_number: string; is_active?: number }[], force = false) => {
+    if (!force && cachedStoreInfo) return;
+    const activeBoys = boys ?? (cachedDeliveryBoysList.length > 0 ? cachedDeliveryBoysList : deliveryBoysList);
     try {
       const res = await apiClient.get('/settings');
       if (res.data) {
@@ -1971,7 +1982,7 @@ export default function PharmarackCart() {
         const windowVal = parseInt(s.pharmarack_reorder_window_months || '2', 10);
         if ([2, 4, 6, 8].includes(windowVal)) setReorderWindowMonths(windowVal);
 
-        setStoreInfo({
+        const info = {
           name: s.pharmacy_name || s.shop_name || s.store_name || s.medical_name || s.name || '',
           phone: s.phone || s.shop_phone || s.store_phone || s.whatsapp_number || s.owner_whatsapp_number || '',
           address: s.address || s.shop_address || s.store_address || '',
@@ -1982,16 +1993,18 @@ export default function PharmarackCart() {
           deliveryBoyName2: activeBoys[1]?.name || '',
           deliveryBoyPhone2: activeBoys[1]?.whatsapp_number || '',
           invoiceFileFormat: s.distributor_invoice_file_format || 'CSV File Format'
-        });
+        };
+        cachedStoreInfo = info;
+        setStoreInfo(info);
       }
     } catch (err) {
       console.warn('Failed to load store settings for WhatsApp template:', err);
     }
   };
 
-  const loadContactData = async () => {
-    const boys = await fetchDeliveryBoys();
-    await fetchStoreInfo(boys);
+  const loadContactData = async (force = false) => {
+    const boys = await fetchDeliveryBoys(force);
+    await fetchStoreInfo(boys, force);
   };
 
   const hasPharmacySettings = () => {
@@ -2005,17 +2018,11 @@ export default function PharmarackCart() {
     fetchSavedDistributors();
     fetchDistributorMappings();
     loadContactData();
-    fetchReorderSuggestions();
-    fetchReorderRecentItems();
-    fetchPurchaseHistoryItems();
 
     const handlePhoneUpdate = () => {
-      fetchSavedDistributors();
-      fetchDistributorMappings();
-      loadContactData();
-      fetchReorderSuggestions();
-      fetchReorderRecentItems();
-      fetchPurchaseHistoryItems();
+      fetchSavedDistributors(true);
+      fetchDistributorMappings(true);
+      loadContactData(true);
     };
 
     const handleClearSentHistory = () => {
@@ -2680,43 +2687,70 @@ export default function PharmarackCart() {
     return match ? match.item : null;
   };
 
-  const isMedicineInAnyCart = React.useCallback((medName?: string): boolean => {
-    if (!medName) return false;
-    const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const cleanMedKey = (s?: string) => norm(s).replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
-    const targetKey = cleanMedKey(medName);
-    if (!targetKey) return false;
-    for (const d of distributors) {
-      for (const item of (d.items || [])) {
-        const itemKey = cleanMedKey(item.productName);
-        if (itemKey === targetKey) return true;
-        if (targetKey.length >= 4 && itemKey.length >= 4 && (itemKey.includes(targetKey) || targetKey.includes(itemKey))) {
-          return true;
+  const cleanMedicineNameKey = React.useCallback((s?: string): string => {
+    if (!s) return '';
+    return (s || '').toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
+  }, []);
+
+  const cartMedicineKeys = React.useMemo(() => {
+    const keys = new Set<string>();
+    const keyArray: string[] = [];
+    distributors.forEach(d => {
+      (d.items || []).forEach(item => {
+        const k = cleanMedicineNameKey(item.productName);
+        if (k) {
+          keys.add(k);
+          keyArray.push(k);
         }
-      }
-    }
-    return false;
-  }, [distributors]);
+      });
+    });
+    return { keys, keyArray };
+  }, [distributors, cleanMedicineNameKey]);
 
-  const isMedicineInSentPO = React.useCallback((medName?: string): boolean => {
-    if (!medName) return false;
-    const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const cleanMedKey = (s?: string) => norm(s).replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
-    const targetKey = cleanMedKey(medName);
-    if (!targetKey) return false;
-
+  const sentPoMedicineKeys = React.useMemo(() => {
+    const keys = new Set<string>();
+    const keyArray: string[] = [];
     for (const sentInfo of Object.values(latestSentMap)) {
       if (sentInfo && Array.isArray(sentInfo.items)) {
         for (const it of sentInfo.items) {
-          const itKey = cleanMedKey(it.productName || it.product || it.name);
-          if (itKey === targetKey || (targetKey.length >= 4 && itKey.length >= 4 && (itKey.includes(targetKey) || targetKey.includes(itKey)))) {
-            return true;
+          const k = cleanMedicineNameKey(it.productName || it.product || it.name);
+          if (k) {
+            keys.add(k);
+            keyArray.push(k);
           }
         }
       }
     }
+    return { keys, keyArray };
+  }, [latestSentMap, cleanMedicineNameKey]);
+
+  const isMedicineInAnyCart = React.useCallback((medName?: string): boolean => {
+    if (!medName) return false;
+    const targetKey = cleanMedicineNameKey(medName);
+    if (!targetKey) return false;
+    if (cartMedicineKeys.keys.has(targetKey)) return true;
+    if (targetKey.length >= 4) {
+      for (const itemKey of cartMedicineKeys.keyArray) {
+        if (itemKey.length >= 4 && (itemKey.includes(targetKey) || targetKey.includes(itemKey))) return true;
+      }
+    }
     return false;
-  }, [latestSentMap]);
+  }, [cartMedicineKeys, cleanMedicineNameKey]);
+
+  const isMedicineInSentPO = React.useCallback((medName?: string): boolean => {
+    if (!medName) return false;
+    const targetKey = cleanMedicineNameKey(medName);
+    if (!targetKey) return false;
+    if (sentPoMedicineKeys.keys.has(targetKey)) return true;
+    if (targetKey.length >= 4) {
+      for (const itKey of sentPoMedicineKeys.keyArray) {
+        if (itKey.length >= 4 && (itKey.includes(targetKey) || targetKey.includes(itKey))) return true;
+      }
+    }
+    return false;
+  }, [sentPoMedicineKeys, cleanMedicineNameKey]);
 
   // Single source of truth for the "Req"/"Refills" tab badge counts, so they match what
   // the "Show Added" toggle actually leaves visible in the list below instead of the raw,
@@ -3770,7 +3804,7 @@ export default function PharmarackCart() {
       await broadcastContactDataChanged();
 
       // Dispatch refresh so topbar countdown & header pill update immediately
-      window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+      window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'PharmarackCart' } }));
 
       // 3. Auto-enqueue order WhatsApp directly to this newly added distributor only (skip if in batch setup queue)
       if (!wasInBatchQueue && cleanPhone && cleanPhone.replace(/\D/g, '').length >= 10 && distSnapshot && distSnapshot.items && distSnapshot.items.length > 0) {
@@ -3882,7 +3916,7 @@ export default function PharmarackCart() {
       await broadcastContactDataChanged();
 
       // Dispatch refresh so topbar countdown & cache update
-      window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+      window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'PharmarackCart' } }));
 
       // If batch setup queue was active, advance queue
       if (pendingMissingContactDistributorsRef.current.length > 0) {
@@ -4129,7 +4163,7 @@ export default function PharmarackCart() {
           persistCartCache(list, cachedPriceHistory);
           return list;
         });
-        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'PharmarackCart' } }));
 
         // Clean up confirmed deleted keys if verified absent from incoming live cart and queue is idle
         if (deleteQueueRef.current.length === 0 && pendingDeleteKeysRef.current.size > 0) {
@@ -4150,9 +4184,11 @@ export default function PharmarackCart() {
         setLastFetched(now);
         cachedLastFetched = now;
         setTimeout(() => {
-          fetchPriceHistories(rawList);
           fetchLatestSentMap();
         }, 0);
+        setTimeout(() => {
+          fetchPriceHistories(rawList);
+        }, 1500);
       } else {
         setError('Failed to retrieve cart details.');
       }
@@ -4199,7 +4235,7 @@ export default function PharmarackCart() {
           persistCartCache(list, cachedPriceHistory);
           return list;
         });
-        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'PharmarackCart' } }));
 
         if (deleteQueueRef.current.length === 0 && pendingDeleteKeysRef.current.size > 0) {
           const liveKeys = new Set<string>();
@@ -4220,7 +4256,7 @@ export default function PharmarackCart() {
         cachedLastFetched = now;
         setTimeout(() => {
           fetchPriceHistories(rawList);
-        }, 0);
+        }, 1500);
       }
     } catch (err) {
       console.error('Failed silent cart refresh:', err);
@@ -4529,7 +4565,7 @@ export default function PharmarackCart() {
             (it.productCode && String(it.productCode) === String(productCode)) || isStrictSameProduct(it.productName, medName));
           if (!present) {
             toastEvent.trigger(`${medName} was not confirmed in ${storeName}'s live cart. Please check the cart before ordering.`, 'error');
-            window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+            window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'PharmarackCart' } }));
             return;
           }
         }
@@ -4543,7 +4579,7 @@ export default function PharmarackCart() {
           return updated;
         });
         toastEvent.trigger(`Added ${medName} (x${targetQty}) to ${storeName} live cart!`, 'success');
-        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'PharmarackCart' } }));
       } else {
         const errDetail = res?.details || res?.error || 'Failed to add item to live cart';
         toastEvent.trigger(errDetail, 'error');
@@ -4616,7 +4652,7 @@ export default function PharmarackCart() {
           return next;
         });
         toastEvent.trigger(`Added ${payload.length} item${payload.length > 1 ? 's' : ''} to the live cart.`, 'success');
-        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'PharmarackCart' } }));
       } else {
         toastEvent.trigger(res?.error || 'Failed to add the selected items to the live cart', 'error');
       }
@@ -4759,14 +4795,13 @@ export default function PharmarackCart() {
   const [showSuggestionsTier, setShowSuggestionsTier] = useState(false);
 
   useEffect(() => {
-    checkSession();
     if (cachedDistributors.length === 0) {
       fetchCart();
     } else {
       fetchCartSilent();
     }
     fetchLatestSentMap();
-  }, [checkSession]);
+  }, []);
 
   // Auto-refresh on every RETURN to this page: KeepAlive keeps us mounted forever,
   // so switching away and back used to show the stale list until a manual refresh.
@@ -4778,10 +4813,8 @@ export default function PharmarackCart() {
     const wasActive = pageActiveRef.current;
     pageActiveRef.current = pageActive;
     if (!pageActive || wasActive) return;
-    checkSession();
     fetchCartSilent();
     fetchLatestSentMap();
-    fetchTodaySoldMedicines();
   }, [pageActive, checkSession, fetchTodaySoldMedicines]);
 
   // Auto-refresh when switching internal sub-tabs back to the 'cart' tab
@@ -4797,34 +4830,36 @@ export default function PharmarackCart() {
   }, [currentTab, pageActive, fetchTodaySoldMedicines]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setShowPendingTier(true), 300);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
     const timer = setTimeout(() => setShowSuggestionsTier(true), 600);
     return () => clearTimeout(timer);
   }, []);
 
+  // Lazy load secondary CRM tabs (Req / Refills / Reorder) so cart open remains instant
   useEffect(() => {
-    if (!showPendingTier) return;
+    if (currentTab !== 'requests' && currentTab !== 'refills' && currentTab !== 'reorder') return;
     fetchPendingOrders();
     fetchPendingRefills();
     fetchTodaySoldMedicines();
-  }, [showPendingTier, fetchTodaySoldMedicines]);
+  }, [currentTab, fetchTodaySoldMedicines]);
 
   useEffect(() => {
-    if (!showSuggestionsTier) return;
+    if (!showSuggestionsTier && currentTab !== 'reorder') return;
+    fetchReorderSuggestions();
+    fetchReorderRecentItems();
+    fetchPurchaseHistoryItems();
     apiClient.get('/settings').then(res => {
       const val = parseInt(res.data?.pharmarack_reorder_window_months || '2', 10);
       if ([2, 4, 6, 8].includes(val)) setReorderWindowMonths(val);
     }).catch(() => { });
-  }, [showSuggestionsTier]);
+  }, [showSuggestionsTier, currentTab]);
 
   // Card quantity overrides
   // Load batch last purchase info for candidate names
   const inFlightBatchNamesRef = useRef<Set<string>>(new Set());
-  const fetchBatchLastPurchases = async (names: string[]) => {
+  const fetchBatchLastPurchases = async (_names: string[]) => {
+    return;
+  };
+  const _disabled_fetchBatchLastPurchases = async (names: string[]) => {
     if (!names || names.length === 0) return;
     const missingNames = names.filter(n => {
       const clean = (n || '').toLowerCase().trim();
@@ -5069,7 +5104,7 @@ export default function PharmarackCart() {
         const addRes = await api.addPharmarackCart(payload);
         if (addRes && addRes.success) {
           toastEvent.trigger(`Added "${medName}" (x${qtyToAdd}) to ${storeName} live cart!`, 'success');
-          window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+          window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'PharmarackCart' } }));
 
           if (card.sourceOrderId) {
             api.updateOrder(card.sourceOrderId, { status: 'Ordered' }).catch(() => {});
@@ -5143,7 +5178,9 @@ export default function PharmarackCart() {
   // 'pharmarack-session-updated'  → re-fetch cart on session renewal
   // 'refresh-special-orders'     → re-fetch pending orders so the left sidebar count is up-to-date
   useEffect(() => {
-    const handleCartRefresh = () => {
+    const handleCartRefresh = (e?: Event) => {
+      // Do not re-fetch if this event was dispatched by PharmarackCart itself
+      if ((e as CustomEvent)?.detail?.source === 'PharmarackCart') return;
       checkSession();
       // Hidden kept-alive page must not background-fetch (P3 gating) — the
       // activation effect silently syncs the moment the user returns.
@@ -5156,7 +5193,7 @@ export default function PharmarackCart() {
       if (deleteQueueRef.current.length > 0 || isProcessingDeleteQueueRef.current) {
         return;
       }
-      scheduleCartSync(300);
+      scheduleCartSync(1000);
       fetchLatestSentMap();
     };
     const handleOrdersRefresh = () => {

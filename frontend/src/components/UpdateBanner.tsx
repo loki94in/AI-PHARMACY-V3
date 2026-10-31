@@ -115,7 +115,7 @@ export default function UpdateBanner() {
             type="button"
             onClick={handleLater}
             disabled={isInstalling}
-            className="px-3.5 py-1.5 rounded-xl font-bold text-white text-xs bg-white/15 hover:bg-white/25 border border-white/20 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+            className="px-3.5 py-1.5 rounded-xl font-bold text-white text-xs bg-white/15 hover:bg-white/25 border border-white/20 transition-all cursor-pointer active:scale-[0.97] disabled:opacity-50"
             title="Postpone update until next app restart"
           >
             Later
@@ -126,7 +126,7 @@ export default function UpdateBanner() {
             id="update-action-btn"
             onClick={handleInstallNow}
             disabled={isInstalling}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl font-black text-white text-xs bg-emerald-600 hover:bg-emerald-700 shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl font-black text-white text-xs bg-emerald-600 hover:bg-emerald-700 shadow-md transition-all cursor-pointer active:scale-[0.97] disabled:opacity-50"
             title="Install update and restart AI Pharmacy OS"
           >
             {isInstalling ? (
@@ -159,15 +159,14 @@ export default function UpdateBanner() {
       {isInstalling && (
         <div className="fixed inset-0 z-[10000] bg-black/75 flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-bg2 border border-border max-w-md w-full p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-4 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-primary/20 text-primary flex items-center justify-center">
-              <RefreshCw size={28} className="animate-spin" />
+            <div className="w-14 h-14 rounded-2xl bg-primary/15 text-primary border border-primary/25 flex items-center justify-center shadow-inner">
+              <RefreshCw size={28} className="animate-spin text-primary" />
             </div>
-            <h3 className="text-lg font-black text-text">Launching Update Installer...</h3>
+            <h3 className="text-lg font-black text-text tracking-tight">Applying Version v{targetVersion}...</h3>
             <p className="text-xs text-muted leading-relaxed">
-              AI Pharmacy OS is closing to apply version <span className="font-bold text-text">v{targetVersion}</span>. 
-              The update console window will show live installation progress and restart the application automatically in a few seconds.
+              AI Pharmacy OS is switching to the dedicated update installer. The in-app console will stream live verification, safety backup, and installation before restarting automatically.
             </p>
-            <div className="w-full bg-bg3 h-1.5 rounded-full overflow-hidden mt-2">
+            <div className="w-full bg-bg3 border border-border/60 h-2.5 rounded-full overflow-hidden mt-1 p-0.5 shadow-inner">
               <div className="bg-primary h-full w-full animate-pulse rounded-full" />
             </div>
           </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiClient, api } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import type { LocalApiError, StorageLocation, RegisteredDevice } from './settingsTypes';
-import { RefreshCw, Clock, Shield, ShieldCheck, AlertTriangle, CheckCircle2, Check, ArrowDownToLine, ExternalLink, Copy, History, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, Clock, Shield, ShieldCheck, AlertTriangle, CheckCircle2, Check, ArrowDownToLine, ExternalLink, Copy, History, ChevronDown, ChevronUp, Terminal } from 'lucide-react';
 import { useUpdateStatus, setUpdateStatus, type RawUpdateFrame } from '../../services/updateStatusStore';
 
 function LicenseManagementCard() {
@@ -296,7 +296,92 @@ function SoftwareUpdateCard() {
   const [historyLoading, setHistoryLoading] = React.useState(false);
   const [historyData, setHistoryData] = React.useState<UpdateHistoryResponse | null>(null);
 
+  // Apple-design in-app terminal console state
+  const [terminalOpen, setTerminalOpen] = React.useState(false);
+  const [terminalLines, setTerminalLines] = React.useState<string[]>([]);
+  const [terminalLoading, setTerminalLoading] = React.useState(false);
+  const [terminalAutoScroll, setTerminalAutoScroll] = React.useState(true);
+  const [copiedLog, setCopiedLog] = React.useState(false);
+  const terminalScrollRef = React.useRef<HTMLDivElement>(null);
+
   const lastCheckedStr = formatCheckTime(updateStatus.lastCheckedAt);
+
+  // Automated live polling while downloading or checking — user never has to click refresh
+  React.useEffect(() => {
+    if (updateStatus.state !== 'downloading' && !checking && !installing) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let active = true;
+
+    const pollStatus = async () => {
+      if (!active) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        try {
+          const res = await apiClient.get<RawUpdateFrame>('/license/update-status');
+          if (res.data) setUpdateStatus(res.data);
+        } catch (_) {}
+      }
+      if (active) {
+        timer = setTimeout(pollStatus, 1200);
+      }
+    };
+
+    timer = setTimeout(pollStatus, 1200);
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [updateStatus.state, checking, installing]);
+
+  // Real-time terminal log fetcher
+  const fetchTerminalLogs = React.useCallback(async (quiet = false) => {
+    if (!quiet) setTerminalLoading(true);
+    try {
+      const res = await apiClient.get<{ success: boolean; lines: string[] }>('/license/updater-log');
+      if (res.data?.lines) {
+        setTerminalLines(res.data.lines);
+      }
+    } catch (_) {
+    } finally {
+      if (!quiet) setTerminalLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!terminalOpen && !installing) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let active = true;
+
+    void fetchTerminalLogs();
+
+    const pollLogs = async () => {
+      if (!active) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        await fetchTerminalLogs(true);
+      }
+      if (active) {
+        timer = setTimeout(pollLogs, installing ? 1000 : 3000);
+      }
+    };
+
+    timer = setTimeout(pollLogs, installing ? 1000 : 3000);
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [terminalOpen, installing, fetchTerminalLogs]);
+
+  React.useEffect(() => {
+    if (terminalAutoScroll && terminalScrollRef.current) {
+      terminalScrollRef.current.scrollTop = terminalScrollRef.current.scrollHeight;
+    }
+  }, [terminalLines, terminalAutoScroll]);
+
+  const handleCopyLogs = () => {
+    if (terminalLines.length === 0) return;
+    navigator.clipboard.writeText(terminalLines.join('\n'));
+    setCopiedLog(true);
+    setTimeout(() => setCopiedLog(false), 2000);
+  };
 
   const handleCheckNow = async () => {
     setChecking(true);
@@ -337,6 +422,7 @@ function SoftwareUpdateCard() {
 
   const handleInstallAndRestart = async () => {
     setInstalling(true);
+    setTerminalOpen(true);
     const timeout = setTimeout(() => {
       setInstalling(false);
     }, 15000);
@@ -397,46 +483,112 @@ function SoftwareUpdateCard() {
     }
   };
 
+  const renderTerminalLine = (line: string, idx: number) => {
+    const tsMatch = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+    const ts = tsMatch ? tsMatch[1] : null;
+    const content = tsMatch ? tsMatch[2] : line;
+
+    const stepMatch = content.match(/^(\[\d\/4\])\s*(.*)$/);
+    const isError = /error|failed|exception/i.test(content);
+    const isSuccess = /ok|success|complete|verified/i.test(content) && !isError;
+    const isProgress = /installing update:\s*\d+%/i.test(content);
+
+    return (
+      <div key={idx} className="flex items-start gap-2 hover:bg-bg/40 px-1 py-0.5 rounded transition-colors text-[11px] font-mono leading-relaxed">
+        {ts && (
+          <span className="text-muted/60 select-none text-[10px] shrink-0 pt-0.5">{ts}</span>
+        )}
+        <div className="flex-1 break-all">
+          {stepMatch ? (
+            <span className="inline-flex items-center gap-1.5">
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-primary/20 text-primary border border-primary/30">
+                {stepMatch[1]}
+              </span>
+              <span className={isError ? 'text-red-400 font-bold' : isSuccess ? 'text-emerald-400 font-semibold' : 'text-text'}>
+                {stepMatch[2]}
+              </span>
+            </span>
+          ) : isProgress ? (
+            <span className="text-primary font-bold">{content}</span>
+          ) : isError ? (
+            <span className="text-red-400 font-semibold">{content}</span>
+          ) : isSuccess ? (
+            <span className="text-emerald-400">{content}</span>
+          ) : (
+            <span className="text-text/90">{content}</span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="bg-bg2 border border-border rounded-2xl p-5 space-y-4">
+    <div className="bg-bg2 border border-border rounded-2xl p-5 space-y-4 shadow-sm">
+      {/* Top Header */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
             <RefreshCw size={16} />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-text">Software Update</h3>
+              <h3 className="text-sm font-black text-text tracking-tight">Software Update</h3>
               <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
                 Installed: v{updateStatus.currentVersion}
               </span>
             </div>
             <p className="text-[11px] text-muted mt-0.5">
-              AI Pharmacy OS — checks on every boot, then daily in the background (only while idle)
+              AI Pharmacy OS — automatic background sync &amp; live diagnostics
               {lastCheckedStr && <span className="ml-1">· Last checked {lastCheckedStr}</span>}
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={handleCheckNow}
-          disabled={checking}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 text-primary border border-primary/20 text-xs font-bold rounded-lg hover:bg-primary/20 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <RefreshCw size={13} className={checking ? 'animate-spin' : ''} />
-          {checking ? 'Checking...' : 'Check Now'}
-        </button>
+
+        <div className="flex items-center gap-2">
+          {/* Terminal Console Toggle Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setTerminalOpen(v => !v);
+              if (!terminalOpen) void fetchTerminalLogs();
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer active:scale-[0.97] ${
+              terminalOpen
+                ? 'bg-primary text-white border-primary shadow-sm'
+                : 'bg-bg border-border text-text hover:bg-bg3'
+            }`}
+            title="Toggle macOS-style in-app Installer CLI Console"
+          >
+            <Terminal size={13} />
+            <span>{terminalOpen ? 'Hide Terminal' : 'CLI Terminal'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleCheckNow}
+            disabled={checking}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary/10 text-primary border border-primary/20 text-xs font-bold rounded-xl hover:bg-primary/20 transition-all cursor-pointer active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw size={13} className={checking ? 'animate-spin' : ''} />
+            {checking ? 'Checking...' : 'Check Now'}
+          </button>
+        </div>
       </div>
 
-      {/* Downloading State */}
+      {/* Apple-Style Fluid Progress Bar: Active Downloading State */}
       {updateStatus.state === 'downloading' && (
-        <div className="space-y-2 p-3 rounded-xl bg-bg border border-border text-xs text-text">
-          <div className="flex justify-between items-center text-[11px] font-semibold text-primary flex-wrap gap-2">
-            <span className="flex items-center gap-1.5 font-bold">
-              <ArrowDownToLine size={13} className="animate-bounce" />
-              Downloading update v{updateStatus.version || ''} in background...
-            </span>
-            <span className="font-mono text-text">
+        <div className="space-y-3 p-4 rounded-2xl bg-bg border border-border shadow-inner text-xs text-text">
+          <div className="flex justify-between items-center text-xs font-semibold flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-primary animate-ping" />
+              <span className="font-extrabold text-primary">
+                Downloading Update v{updateStatus.version || ''}
+              </span>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                Live Auto-Sync
+              </span>
+            </div>
+            <span className="font-mono text-text font-bold">
               {updateStatus.totalMB > 0
                 ? `${updateStatus.downloadedMB} MB / ${updateStatus.totalMB} MB (${updateStatus.percent}%)`
                 : (updateStatus.downloadedMB > 0
@@ -444,24 +596,27 @@ function SoftwareUpdateCard() {
                   : `Connecting... (${updateStatus.percent}%)`)}
             </span>
           </div>
-          <div className="w-full bg-border rounded-full h-2 overflow-hidden">
+
+          <div className="w-full bg-bg3 border border-border/60 rounded-full h-3 overflow-hidden p-0.5 shadow-inner">
             <div
-              className="bg-primary h-full transition-all duration-300 rounded-full"
-              style={{ width: `${Math.min(100, Math.max(2, updateStatus.percent))}%` }}
+              className="bg-primary h-full transition-[width] duration-300 ease-out rounded-full shadow-sm"
+              style={{ width: `${Math.min(100, Math.max(3, updateStatus.percent))}%` }}
             />
           </div>
-          <p className="text-[10px] text-muted">
-            You can continue working normally. Once download completes and is verified, you will be prompted to install.
-          </p>
+
+          <div className="flex items-center justify-between text-[11px] text-muted">
+            <span>Downloading in background without interrupting POS sales</span>
+            <span className="font-mono text-[10px] text-primary">{updateStatus.percent}% Completed</span>
+          </div>
         </div>
       )}
 
       {/* Ready State */}
       {updateStatus.state === 'ready' && (
-        <div className="p-3 rounded-xl border border-emerald-500/25 bg-emerald-500/10 text-xs text-text space-y-3">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <span className="flex items-center gap-1.5 font-bold text-emerald-400">
-              <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
+        <div className="p-4 rounded-2xl border border-emerald-500/25 bg-emerald-500/10 text-xs text-text space-y-3">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <span className="flex items-center gap-2 font-bold text-emerald-400">
+              <CheckCircle2 size={16} className="shrink-0 text-emerald-400" />
               Update v{updateStatus.version} has been downloaded &amp; verified. Ready to install!
             </span>
             <div className="flex items-center gap-2">
@@ -469,16 +624,16 @@ function SoftwareUpdateCard() {
                 type="button"
                 onClick={handleInstallAndRestart}
                 disabled={installing}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors disabled:opacity-60 cursor-pointer shadow-sm"
+                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-xl text-xs font-black hover:bg-emerald-700 transition-all active:scale-[0.97] disabled:opacity-60 cursor-pointer shadow-md"
               >
-                <RefreshCw size={12} className={installing ? 'animate-spin' : ''} />
+                <RefreshCw size={13} className={installing ? 'animate-spin' : ''} />
                 {installing ? 'Installing & restarting...' : 'Install & Restart Now'}
               </button>
               {!postponed && (
                 <button
                   type="button"
                   onClick={handlePostpone}
-                  className="px-2.5 py-1.5 bg-bg3 border border-border text-text rounded-lg text-xs font-semibold hover:bg-bg transition-colors cursor-pointer"
+                  className="px-3 py-2 bg-bg3 border border-border text-text rounded-xl text-xs font-semibold hover:bg-bg transition-all active:scale-[0.97] cursor-pointer"
                 >
                   Later
                 </button>
@@ -486,7 +641,7 @@ function SoftwareUpdateCard() {
             </div>
           </div>
           {updateStatus.changelog && (
-            <p className="text-[11px] text-muted whitespace-pre-line leading-relaxed border-t border-border pt-2 font-sans">
+            <p className="text-[11px] text-muted whitespace-pre-line leading-relaxed border-t border-border/50 pt-2 font-sans">
               {updateStatus.changelog}
             </p>
           )}
@@ -495,10 +650,10 @@ function SoftwareUpdateCard() {
 
       {/* Error State */}
       {(updateStatus.state === 'error' || error || updateStatus.lastError) && (
-        <div className="p-3 rounded-xl border border-red-500/20 bg-red-500/5 text-xs text-text space-y-2">
+        <div className="p-4 rounded-2xl border border-red-500/20 bg-red-500/5 text-xs text-text space-y-2">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2 text-red-500 font-semibold">
-              <AlertTriangle size={14} className="shrink-0" />
+              <AlertTriangle size={15} className="shrink-0" />
               <span>{error || updateStatus.lastError || 'Update check or download failed.'}</span>
             </div>
             {updateStatus.hasUpdate && updateStatus.state !== 'downloading' && updateStatus.state !== 'ready' && (
@@ -506,7 +661,7 @@ function SoftwareUpdateCard() {
                 type="button"
                 onClick={handleStartBackgroundDownload}
                 disabled={downloadStarting}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer shadow-sm disabled:opacity-60"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-white rounded-xl text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer active:scale-[0.97] shadow-sm disabled:opacity-60"
               >
                 <ArrowDownToLine size={13} className={downloadStarting ? 'animate-bounce' : ''} />
                 {downloadStarting ? 'Starting...' : `Download Update (${updateStatus.totalMB > 0 ? `${updateStatus.totalMB} MB` : 'Fast Path'})`}
@@ -518,7 +673,7 @@ function SoftwareUpdateCard() {
 
       {/* Idle State with Update Available or Up to Date */}
       {updateStatus.state === 'idle' && (
-        <div className={`p-3 rounded-xl border text-xs ${
+        <div className={`p-4 rounded-2xl border text-xs ${
           updateStatus.hasUpdate
             ? 'bg-primary/5 border-primary/20 text-text'
             : 'bg-emerald-500/10 border-emerald-500/25 text-text'
@@ -526,14 +681,14 @@ function SoftwareUpdateCard() {
           {updateStatus.hasUpdate ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="font-bold text-primary">
+                <span className="font-bold text-primary text-sm">
                   🎉 Update available — v{updateStatus.version} (Current: v{updateStatus.currentVersion})
                 </span>
                 <button
                   type="button"
                   onClick={handleStartBackgroundDownload}
                   disabled={downloadStarting}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all cursor-pointer shadow-sm shadow-primary/20 disabled:opacity-60"
+                  className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white rounded-xl text-xs font-black hover:bg-primary/90 transition-all cursor-pointer active:scale-[0.97] shadow-md shadow-primary/20 disabled:opacity-60"
                 >
                   <ArrowDownToLine size={13} className={downloadStarting ? 'animate-bounce' : ''} />
                   {downloadStarting ? 'Starting...' : `Download Update (${updateStatus.totalMB > 0 ? `${updateStatus.totalMB} MB` : 'Fast Path'})`}
@@ -546,11 +701,103 @@ function SoftwareUpdateCard() {
               )}
             </div>
           ) : (
-            <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
-              <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+            <span className="flex items-center gap-2 text-emerald-400 font-semibold">
+              <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
               You're up to date — Installed: v{updateStatus.currentVersion}
             </span>
           )}
+        </div>
+      )}
+
+      {/* ── Apple-Design Embedded macOS Terminal Window Console ── */}
+      {terminalOpen && (
+        <div className="rounded-2xl border border-border bg-bg3 overflow-hidden shadow-xl animate-fade-in">
+          {/* macOS Window Chrome Header */}
+          <div className="flex items-center justify-between px-4 py-2.5 bg-bg2 border-b border-border select-none">
+            {/* Traffic Light Dots */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTerminalOpen(false)}
+                className="w-3 h-3 rounded-full bg-red-500 hover:opacity-80 transition-opacity cursor-pointer border border-border/40"
+                title="Close console"
+              />
+              <button
+                type="button"
+                onClick={() => setTerminalOpen(false)}
+                className="w-3 h-3 rounded-full bg-yellow-500 hover:opacity-80 transition-opacity cursor-pointer border border-border/40"
+                title="Minimize console"
+              />
+              <button
+                type="button"
+                onClick={() => void fetchTerminalLogs()}
+                className="w-3 h-3 rounded-full bg-green-500 hover:opacity-80 transition-opacity cursor-pointer border border-border/40"
+                title="Refresh console"
+              />
+            </div>
+
+            {/* Window Title */}
+            <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-text">
+              <Terminal size={13} className="text-primary" />
+              <span>AI Pharmacy OS — Installer Console (logs/updater.log)</span>
+            </div>
+
+            {/* Right Tools */}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 text-[10px] font-mono text-muted mr-1">
+                <span className={`w-1.5 h-1.5 rounded-full ${installing ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}`} />
+                <span>{installing ? 'INSTALLING' : 'IDLE'}</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setTerminalAutoScroll(v => !v)}
+                className={`px-2 py-0.5 text-[10px] font-mono rounded border transition-colors cursor-pointer ${
+                  terminalAutoScroll
+                    ? 'bg-primary/15 text-primary border-primary/30 font-bold'
+                    : 'bg-bg text-muted border-border'
+                }`}
+                title="Toggle lock to bottom on new log lines"
+              >
+                Auto-scroll
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCopyLogs}
+                disabled={terminalLines.length === 0}
+                className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono rounded bg-bg hover:bg-bg2 text-text border border-border transition-colors cursor-pointer disabled:opacity-40"
+                title="Copy all logs to clipboard"
+              >
+                {copiedLog ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                <span>{copiedLog ? 'Copied' : 'Copy'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void fetchTerminalLogs()}
+                disabled={terminalLoading}
+                className="p-1 rounded bg-bg hover:bg-bg2 text-text border border-border transition-colors cursor-pointer disabled:opacity-50"
+                title="Reload latest logs"
+              >
+                <RefreshCw size={11} className={terminalLoading ? 'animate-spin text-primary' : ''} />
+              </button>
+            </div>
+          </div>
+
+          {/* Terminal Log Output Body */}
+          <div
+            ref={terminalScrollRef}
+            className="p-3 max-h-72 overflow-y-auto dropdown-scroll bg-bg text-text font-mono text-[11px] space-y-0.5 select-text"
+          >
+            {terminalLines.length === 0 ? (
+              <div className="py-8 text-center text-muted italic">
+                {terminalLoading ? 'Loading latest updater logs...' : 'No updater log entries found on disk.'}
+              </div>
+            ) : (
+              terminalLines.map((line, idx) => renderTerminalLine(line, idx))
+            )}
+          </div>
         </div>
       )}
 

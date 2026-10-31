@@ -257,6 +257,13 @@ class DatabaseManager {
       }
 
       const isTest = process.env.NODE_ENV === 'test' || !!process.env.JEST_WORKER_ID;
+      if (isTest && !process.env.ALLOW_PROD_TEST) {
+        const resolvedPath = path.resolve(dbPath);
+        const dataDir = path.join(getAppDataDir(), 'data');
+        if (resolvedPath === path.resolve(dataDir, 'app.db') || resolvedPath === path.resolve(dataDir, 'app.dev.db')) {
+          throw new Error(`[Database Safety Shield] CRITICAL: Tests cannot open live production/dev database (${dbPath}). Tests must use an isolated test database.`);
+        }
+      }
       const busyTimeout = isTest ? 5000 : 30000;
       const maxAttempts = 10;
       let lastError: any = null;
