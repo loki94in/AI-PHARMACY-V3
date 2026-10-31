@@ -1114,6 +1114,12 @@ router.post('/staging/finalize', async (req, res) => {
       } catch (refillReconnectErr: any) {
         console.warn('[Migration Finalize] Refill catalog reconnection warning:', refillReconnectErr?.message);
       }
+      try {
+        const { reconnectDistributorLinks } = await import('../utils/reconnectDistributorLinks.js');
+        await reconnectDistributorLinks(activeDb, backupPath);
+      } catch (distReconnectErr: any) {
+        console.warn('[Migration Finalize] Distributor link reconnection warning:', distReconnectErr?.message);
+      }
     } catch (dbErr) {
       console.error('Failed to log snapshot:', dbErr);
     }

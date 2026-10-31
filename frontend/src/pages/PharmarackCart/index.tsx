@@ -126,9 +126,9 @@ function isDistributorCandidateMatch(
   dist: Distributor,
   distributorMappings?: Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>
 ): boolean {
-  // 1. Direct storeId numeric match
-  if (r.storeId != null && dist.storeId != null && Number(r.storeId) === Number(dist.storeId)) {
-    return true;
+  // 1. Direct storeId numeric gate — strict isolation: if both have explicit storeId, they MUST match
+  if (r.storeId != null && Number(r.storeId) > 0 && dist.storeId != null && Number(dist.storeId) > 0) {
+    return Number(r.storeId) === Number(dist.storeId);
   }
 
   const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -147,25 +147,19 @@ function isDistributorCandidateMatch(
       const matchKey = Object.keys(distributorMappings).find(k => k === targetStore || targetStore.includes(k) || k.includes(targetStore));
       if (matchKey) mappedDistId = distributorMappings[matchKey]?.distributorId;
     }
-    if (mappedDistId && r.distributorId != null && Number(r.distributorId) === Number(mappedDistId)) {
-      return true;
+    if (mappedDistId && r.distributorId != null && Number(r.distributorId) > 0) {
+      return Number(r.distributorId) === Number(mappedDistId);
     }
   }
 
-  // 4. Substring inclusion if sufficiently long (at least 5 characters)
-  if (rStore && targetStore && (rStore.length >= 5 && targetStore.length >= 5)) {
-    if (rStore.includes(targetStore) || targetStore.includes(rStore)) {
-      return true;
-    }
+  // If candidate had a foreign storeId or foreign distributorId, never fall through to loose string matching
+  if ((r.storeId != null && Number(r.storeId) > 0) || (r.distributorId != null && Number(r.distributorId) > 0)) {
+    return false;
   }
 
-  // 5. Significant word token overlap (e.g. "shree ganesh" matching "shree ganesh pharma")
-  const tokenize = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length >= 3 && !['agency', 'agencies', 'pharma', 'pharmaceuticals', 'enterprises', 'distributor', 'distributors', 'pvt', 'ltd'].includes(w));
-  const rTokens = tokenize(r.storeName || r.lastDistributorName);
-  const targetTokens = tokenize(dist.storeName);
-  if (rTokens.length > 0 && targetTokens.length > 0) {
-    const common = rTokens.filter(t => targetTokens.includes(t));
-    if (common.length >= 1) {
+  // 4. Substring inclusion if sufficiently long (at least 6 characters) only for legacy unkeyed items
+  if (rStore && targetStore && (rStore.length >= 6 && targetStore.length >= 6)) {
+    if (rStore === targetStore || (rStore.length > 8 && targetStore.length > 8 && (rStore.includes(targetStore) || targetStore.includes(rStore)))) {
       return true;
     }
   }
@@ -282,6 +276,30 @@ function getDistributorShortfallFillers(
     runningTotal += amount;
     count += 1;
     if (count >= 4) break; // Display 4 medicines at a time
+  }
+
+  // Auto loop-back: if user skipped all candidates, cycle back to the beginning so shuffle never exhausts
+  if (picks.length === 0 && skippedKeys && skippedKeys.size > 0) {
+    seenMeds.clear();
+    for (const r of combined) {
+      if (!isDistributorCandidateMatch(r, dist, distributorMappings)) continue;
+      if (isAlreadyInCart(r)) continue;
+      const hasVerifiedProduct = Boolean(r.productCode && (r.productId || r.mapped));
+      if (!hasVerifiedProduct) continue;
+      const mKey = r.productCode ? `code_${dist.storeId}_${r.productCode}` : (r.medicineId ? `id_${r.medicineId}` : `name_${norm(r.medicineName)}`);
+      if (seenMeds.has(mKey)) continue;
+      seenMeds.add(mKey);
+
+      const qty = 1;
+      const amount = (r.ptr || r.lastRate || 0) * qty;
+      if (maxAmt > 0 && (runningTotal + amount) > maxAmt) continue;
+      if (maxItems > 0 && (activeItems.length + picks.length) >= maxItems) break;
+
+      picks.push({ item: r, qty, amount });
+      runningTotal += amount;
+      count += 1;
+      if (count >= 4) break;
+    }
   }
 
   return picks;
@@ -1038,7 +1056,18 @@ export default function PharmarackCart() {
   const [, setSuggestionsLoading] = useState<boolean>(false);
   const [reorderRecentItems, setReorderRecentItems] = useState<ReorderRecentItem[]>(() => cachedReorderRecentItems);
   const [reorderWindowMonths, setReorderWindowMonths] = useState<number>(2);
+  const [rawReorderSearchQuery, setRawReorderSearchQuery] = useState<string>('');
   const [reorderSearchQuery, setReorderSearchQuery] = useState<string>('');
+  const [reorderVisibleCount, setReorderVisibleCount] = useState<number>(24);
+
+  // Debounce search query to prevent main thread freezing on keystrokes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setReorderSearchQuery(rawReorderSearchQuery);
+      setReorderVisibleCount(24);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [rawReorderSearchQuery]);
   const [reorderQuantities, setReorderQuantities] = useState<Record<string, number>>({});
 
   const getReorderItemQty = (itemKey: string, defaultQty: number) => {
@@ -1311,8 +1340,8 @@ export default function PharmarackCart() {
   const [syncingExternalOrders, setSyncingExternalOrders] = useState<boolean>(false);
   const fetchedDistributorStoreIdsRef = useRef<Set<number>>(new Set());
 
-  const fetchDistributorProducts = useCallback(async (storeId: number) => {
-    if (!storeId || fetchedDistributorStoreIdsRef.current.has(storeId)) return;
+  const fetchDistributorProducts = useCallback(async (storeId: number, force = false) => {
+    if (!storeId || (!force && fetchedDistributorStoreIdsRef.current.has(storeId))) return;
     fetchedDistributorStoreIdsRef.current.add(storeId);
     try {
       const res = await api.getDistributorMedicines(storeId, 300);
@@ -1340,9 +1369,13 @@ export default function PharmarackCart() {
     }
   }, []);
 
+  // Performance Diet: Fetch only for distributors that actually have an active cart or ordering deficit,
+  // preventing 50 simultaneous parallel HTTP calls from choking SQLite and the UI thread at startup.
   useEffect(() => {
     distributors.forEach(d => {
-      if (d.storeId && !fetchedDistributorStoreIdsRef.current.has(d.storeId)) {
+      if (!d.storeId || fetchedDistributorStoreIdsRef.current.has(d.storeId)) return;
+      const hasDeficit = Boolean((d.minAmountLimit && d.minAmountLimit > 0) || (d.minItemLimit && d.minItemLimit > 0) || (d.items && d.items.length > 0));
+      if (hasDeficit) {
         fetchDistributorProducts(d.storeId);
       }
     });
@@ -1400,6 +1433,17 @@ export default function PharmarackCart() {
       const next = { ...prev };
       delete next[storeId];
       return next;
+    });
+  };
+
+  const handleShuffleFillers = (storeId: number, currentNames: string[]) => {
+    setSkippedFillerKeys(prev => {
+      const current = new Set(prev[storeId] || []);
+      currentNames.forEach(n => {
+        const key = (n || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (key) current.add(key);
+      });
+      return { ...prev, [storeId]: current };
     });
   };
 
@@ -5573,10 +5617,10 @@ export default function PharmarackCart() {
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
               <input
                 type="text"
-                value={reorderSearchQuery}
+                value={rawReorderSearchQuery}
                 onChange={(e) => {
                   const val = e.target.value;
-                  setReorderSearchQuery(val);
+                  setRawReorderSearchQuery(val);
                   if (val.trim()) {
                     setShortagesSubTab('all_matches');
                   }
@@ -5588,6 +5632,7 @@ export default function PharmarackCart() {
                 <button
                   type="button"
                   onClick={() => {
+                    setRawReorderSearchQuery('');
                     setReorderSearchQuery('');
                   }}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text p-1 cursor-pointer"
@@ -5761,7 +5806,7 @@ export default function PharmarackCart() {
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {filteredReorderSuggestions.map((sug, idx) => (
+                        {filteredReorderSuggestions.slice(0, reorderVisibleCount).map((sug, idx) => (
                           <div key={`all-sug-${sug.medicineId}-${idx}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                             <div className="space-y-2">
                               <div className="flex items-center justify-between gap-2">
@@ -5832,6 +5877,17 @@ export default function PharmarackCart() {
                           </div>
                         ))}
                       </div>
+                      {filteredReorderSuggestions.length > reorderVisibleCount && (
+                        <div className="flex justify-center pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setReorderVisibleCount(c => c + 24)}
+                            className="px-4 py-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-xs font-bold text-text hover:text-emerald-400 transition-all active:scale-95 cursor-pointer shadow-xs"
+                          >
+                            Show More Suggestions ({reorderVisibleCount} of {filteredReorderSuggestions.length})
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -5845,7 +5901,7 @@ export default function PharmarackCart() {
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {filteredReorderRecentItems.map((item, idx) => {
+                        {filteredReorderRecentItems.slice(0, reorderVisibleCount).map((item, idx) => {
                           const itemKey = `all-recent-${item.medicineName}:::${item.storeId || item.storeName || ''}:::${idx}`;
                           const rawKey = `recent-${item.medicineName}:::${item.storeId || item.storeName || ''}:::${idx}`;
                           const itemQty = getReorderItemQty(rawKey, 1);
@@ -5918,6 +5974,17 @@ export default function PharmarackCart() {
                           );
                         })}
                       </div>
+                      {filteredReorderRecentItems.length > reorderVisibleCount && (
+                        <div className="flex justify-center pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setReorderVisibleCount(c => c + 24)}
+                            className="px-4 py-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-xs font-bold text-text hover:text-purple-400 transition-all active:scale-95 cursor-pointer shadow-xs"
+                          >
+                            Show More Recent Items ({reorderVisibleCount} of {filteredReorderRecentItems.length})
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -5931,7 +5998,7 @@ export default function PharmarackCart() {
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {filteredPurchaseHistoryItems.map((item, idx) => {
+                        {filteredPurchaseHistoryItems.slice(0, reorderVisibleCount).map((item, idx) => {
                           const itemKey = `all-purchase:::${item.medicineId || item.medicineName}:::${item.distributorId || item.storeId || item.storeName || ''}:::${idx}`;
                           const rawKey = `purchase:::${item.medicineId || item.medicineName}:::${item.distributorId || item.storeId || item.storeName || ''}:::${idx}`;
                           const itemQty = getReorderItemQty(rawKey, 1);
@@ -5998,6 +6065,17 @@ export default function PharmarackCart() {
                           );
                         })}
                       </div>
+                      {filteredPurchaseHistoryItems.length > reorderVisibleCount && (
+                        <div className="flex justify-center pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setReorderVisibleCount(c => c + 24)}
+                            className="px-4 py-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-xs font-bold text-text hover:text-sky-400 transition-all active:scale-95 cursor-pointer shadow-xs"
+                          >
+                            Show More Purchase Bills ({reorderVisibleCount} of {filteredPurchaseHistoryItems.length})
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -6130,7 +6208,7 @@ export default function PharmarackCart() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredReorderSuggestions.map((sug, idx) => (
+                  {filteredReorderSuggestions.slice(0, reorderVisibleCount).map((sug, idx) => (
                     <div key={`sug-${sug.medicineId}-${idx}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
                       <div className="space-y-2">
                         <div className="flex items-center justify-between gap-2">
@@ -6237,7 +6315,7 @@ export default function PharmarackCart() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredReorderRecentItems.map((item, idx) => {
+                  {filteredReorderRecentItems.slice(0, reorderVisibleCount).map((item, idx) => {
                     const itemKey = `recent-${item.medicineName}:::${item.storeId || item.storeName || ''}:::${idx}`;
                     const itemQty = getReorderItemQty(itemKey, 1);
                     const stockInfo = checkedStockMap[item.medicineName];
@@ -6466,7 +6544,7 @@ export default function PharmarackCart() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredPurchaseHistoryItems.map((item, idx) => {
+                  {filteredPurchaseHistoryItems.slice(0, reorderVisibleCount).map((item, idx) => {
                     const itemKey = `purchase:::${item.medicineId || item.medicineName}:::${item.distributorId || item.storeId || item.storeName || ''}:::${idx}`;
                     const itemQty = getReorderItemQty(itemKey, 1);
 
@@ -7621,7 +7699,17 @@ export default function PharmarackCart() {
                                                 : `Add ₹${deficit.amtShortfall.toFixed(2)} more to fulfill minimum`}
                                           </span>
                                         </p>
-                                        {skippedCount > 0 && (
+                                        <div className="flex items-center gap-2 shrink-0">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleShuffleFillers(dist.storeId, fillers.map(f => f.item.medicineName))}
+                                            className="text-[10px] font-bold text-amber-300 hover:text-amber-100 flex items-center gap-1 cursor-pointer bg-amber-500/20 hover:bg-amber-500/30 px-2 py-0.5 rounded border border-amber-500/40 transition-all active:scale-95"
+                                            title="Shuffle to view next 4 suggestions for this distributor"
+                                          >
+                                            <RotateCw size={10} />
+                                            <span>Shuffle / Next 4</span>
+                                          </button>
+                                          {skippedCount > 0 && (
                                           <button
                                             type="button"
                                             onClick={() => handleResetSkippedFillers(dist.storeId)}
@@ -7631,6 +7719,7 @@ export default function PharmarackCart() {
                                             Reset skipped ({skippedCount})
                                           </button>
                                         )}
+                                        </div>
                                       </div>
                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 pt-0.5">
                                         {fillers.map(({ item, qty, amount }, fIdx) => (
@@ -8711,6 +8800,10 @@ export default function PharmarackCart() {
           medicineId={linkModalTarget.medicineId}
           medicineName={linkModalTarget.medicineName}
           onSaved={() => {
+            if (linkModalTarget?.storeId) {
+              fetchedDistributorStoreIdsRef.current.delete(linkModalTarget.storeId);
+              fetchDistributorProducts(linkModalTarget.storeId, true);
+            }
             fetchPurchaseHistoryItems();
             fetchReorderRecentItems();
             toastEvent.trigger(`Medicine "${linkModalTarget.medicineName}" linked to distributor! Click Add to place in cart.`, 'success');

@@ -58,20 +58,23 @@ router.get('/medicines', async (req, res) => {
     
     if (search) {
       const cleanSearch = search.trim();
-      const tokens = cleanSearch.split(/\s+/).filter(t => t.length > 0);
+      const cleanTokens = cleanSearch.replace(/[^a-zA-Z0-9 ]/g, ' ').trim().split(/\s+/).filter(t => t.length > 0);
       
-      if (tokens.length === 1) {
-        whereClauses.push('(medicines.name LIKE ? OR medicines.name LIKE ? OR medicines.item_code LIKE ? OR medicines.manufacturer LIKE ? OR medicines.api_reference LIKE ?)');
-        const prefixParam = `${cleanSearch}%`;
-        const containsParam = `%${cleanSearch}%`;
-        params.push(prefixParam, containsParam, prefixParam, containsParam, containsParam);
+      if (cleanTokens.length > 0) {
+        const ftsQuery = cleanTokens.map(t => `${t}*`).join(' AND ');
+        whereClauses.push(`medicines.id IN (
+          SELECT rowid FROM medicines_fts WHERE medicines_fts MATCH ?
+          UNION
+          SELECT id FROM medicines WHERE name LIKE ? COLLATE NOCASE
+          UNION
+          SELECT id FROM medicines WHERE item_code = ?
+          UNION
+          SELECT id FROM medicines WHERE barcode = ?
+        )`);
+        params.push(ftsQuery, `${cleanSearch}%`, cleanSearch, cleanSearch);
       } else {
-        const tokenClauses = tokens.map(() => '(medicines.name LIKE ? OR medicines.manufacturer LIKE ? OR medicines.api_reference LIKE ?)');
-        whereClauses.push(`(${tokenClauses.join(' AND ')})`);
-        for (const token of tokens) {
-          const tParam = `%${token}%`;
-          params.push(tParam, tParam, tParam);
-        }
+        whereClauses.push('medicines.name LIKE ? COLLATE NOCASE');
+        params.push(`${cleanSearch}%`);
       }
     }
 
@@ -132,29 +135,14 @@ router.get('/medicines', async (req, res) => {
     }
 
     const buildQuery = (limitVal: number, offsetVal: number) => `
-      WITH target_medicines AS (
-        SELECT * FROM medicines
-        ${whereString}
-        ${orderString}
-        LIMIT ${limitVal} OFFSET ${offsetVal}
-      ),
-      latest_purchase AS (
-        SELECT pi.medicine_id,
-               pi.cost_price,
-               pi.mrp,
-               d.name AS last_distributor_name,
-               ROW_NUMBER() OVER (PARTITION BY pi.medicine_id ORDER BY p.date DESC) AS rn
-        FROM purchase_items pi
-        JOIN purchases p ON pi.purchase_id = p.id
-        LEFT JOIN distributors d ON p.distributor_id = d.id
-        WHERE pi.medicine_id IN (SELECT id FROM target_medicines)
-      )
-      SELECT tm.*,
-             lp.cost_price AS last_purchase_rate,
-             lp.mrp AS last_purchase_mrp,
-             lp.last_distributor_name
-      FROM target_medicines tm
-      LEFT JOIN latest_purchase lp ON lp.medicine_id = tm.id AND lp.rn = 1
+      SELECT medicines.*,
+             COALESCE(medicines.last_purchase_ptr, medicines.rate, 0) AS last_purchase_rate,
+             medicines.mrp AS last_purchase_mrp,
+             medicines.last_distributor_name
+      FROM medicines
+      ${whereString}
+      ${orderString}
+      LIMIT ${limitVal} OFFSET ${offsetVal}
     `;
     
     console.log('COUNT QUERY:', countQuery, 'PARAMS:', params);
@@ -177,28 +165,39 @@ router.get('/medicines', async (req, res) => {
     const querySql = buildQuery(limit, offset);
     console.log('BUILD QUERY:', querySql, 'PARAMS:', params);
     let medicines = await db.all(querySql, ...params);
-    
-    // Fallback: if prefix search returns < 15 results, try middle-word search
-    if (search && medicines.length < 15) {
-      const fallbackParams = [...params];
-      // Replace prefix params with middle-word params (positions 0-3 in params for search)
-      for (let i = 0; i < fallbackParams.length; i++) {
-        if (fallbackParams[i] === `${search}%`) {
-          fallbackParams[i] = `%${search}%`;
+
+    // Ultra-fast targeted secondary purchase lookup only for the returned slice (< 1ms)
+    const missingPurchaseIds = medicines
+      .filter((m: any) => (!m.last_purchase_rate || !m.last_distributor_name) && m.id)
+      .map((m: any) => m.id);
+
+    if (missingPurchaseIds.length > 0) {
+      try {
+        const placeholders = missingPurchaseIds.map(() => '?').join(',');
+        const purchases = await db.all(
+          `SELECT pi.medicine_id, pi.cost_price, pi.mrp, d.name AS last_distributor_name
+           FROM purchase_items pi
+           JOIN purchases p ON pi.purchase_id = p.id
+           LEFT JOIN distributors d ON p.distributor_id = d.id
+           WHERE pi.medicine_id IN (${placeholders})
+           ORDER BY p.date DESC`,
+          ...missingPurchaseIds
+        );
+        const purchaseMap = new Map<number, any>();
+        for (const p of purchases) {
+          if (!purchaseMap.has(p.medicine_id)) purchaseMap.set(p.medicine_id, p);
         }
-      }
-      // Execute same query with fallback params
-      const fallbackMedicines = await db.all(buildQuery(limit, offset), ...fallbackParams);
-      // Merge results, avoiding duplicates by id
-      const seenIds = new Set(medicines.map((m: any) => m.id));
-      for (const med of fallbackMedicines) {
-        if (!seenIds.has(med.id)) {
-          medicines.push(med);
-          seenIds.add(med.id);
+        for (const m of medicines) {
+          const lp = purchaseMap.get(m.id);
+          if (lp) {
+            if (!m.last_purchase_rate && lp.cost_price) m.last_purchase_rate = lp.cost_price;
+            if (!m.last_purchase_mrp && lp.mrp) m.last_purchase_mrp = lp.mrp;
+            if (!m.last_distributor_name && lp.last_distributor_name) m.last_distributor_name = lp.last_distributor_name;
+          }
         }
+      } catch (err) {
+        console.warn('[Medicines] Secondary purchase lookup warning:', err);
       }
-      // Trim to limit
-      medicines = medicines.slice(0, limit);
     }
     
     if (search && (!req.query.sort || req.query.sort === 'name_asc')) {

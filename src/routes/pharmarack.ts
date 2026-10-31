@@ -133,6 +133,55 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
     const results: any[] = [];
     const seenKeys = new Set<string>();
 
+    // 0. Query real store products from pharmarack_distributor_products & links
+    try {
+      const db = await dbManager.getConnection();
+      const qClean = q.trim();
+      const firstTok = qClean.split(/\s+/)[0] || '';
+      if (firstTok.length >= 2) {
+        let storeSql = '';
+        const params: any[] = [`%${firstTok}%`, `%${qClean}%`];
+        if (storeId !== null && storeId !== undefined && !isNaN(storeId)) {
+          storeSql = ' AND p.store_id = ?';
+          params.push(storeId);
+        }
+        const matchedStoreProds = await db.all(`
+          SELECT 
+            p.store_id, p.product_code, p.product_id, p.product_name, p.packaging, p.company,
+            p.ptr, p.mrp, COALESCE(m.store_name, 'Distributor') as distributor
+          FROM pharmarack_distributor_products p
+          LEFT JOIN pharmarack_distributor_mappings m ON m.store_id = p.store_id
+          WHERE (p.product_name LIKE ? OR p.product_name LIKE ?)${storeSql}
+          ORDER BY p.last_ordered_at DESC, p.product_name ASC
+          LIMIT 25
+        `, params).catch(() => []);
+
+        for (const sp of matchedStoreProds) {
+          const key = `store_${sp.store_id}_${sp.product_code}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            results.push({
+              name: sp.product_name,
+              shortName: sp.product_name,
+              fullName: sp.product_name,
+              packaging: sp.packaging || '',
+              distributor: sp.distributor || 'Distributor',
+              rate: sp.ptr != null ? Number(sp.ptr) : null,
+              mrp: sp.mrp != null ? Number(sp.mrp) : null,
+              mapped: true,
+              stock: 'In Stock',
+              scheme: '',
+              productId: sp.product_id || sp.product_code,
+              productCode: sp.product_code,
+              company: sp.company || '',
+              storeId: sp.store_id,
+              isOffline: false
+            });
+          }
+        }
+      }
+    } catch (_) {}
+
     // 1. Check local distributor catalog cache (synced Pharmarack products)
     try {
       const offlineResults = await pharmarackCatalogCache.searchCatalog(q);
@@ -423,11 +472,21 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       if (cleanedTerm.length >= 2 && cleanedTerm.toLowerCase() !== primaryKeyword.toLowerCase() && cleanedTerm.toLowerCase() !== qRaw.toLowerCase()) {
         candidates.push(cleanedTerm);
       }
+      // Add first word token (e.g. 'Dolo' from 'Dolo 650mg' or 'Pantocid' from 'Pantocid 40')
+      const firstTok = cleanedTerm.split(/\s+/)[0];
+      if (firstTok && firstTok.length >= 3 && !candidates.includes(firstTok) && firstTok.toLowerCase() !== primaryKeyword.toLowerCase()) {
+        candidates.push(firstTok);
+      }
+      // If query has dosage form (e.g. 'tab', 'cap', 'syr', 'inj', 'susp'), strip and try base name
+      const strippedForm = cleanedTerm.replace(/\s+(tab|tablet|tablets|cap|capsule|capsules|syr|syrup|inj|injection|susp|suspension)\b/i, '').trim();
+      if (strippedForm.length >= 3 && !candidates.includes(strippedForm) && strippedForm.toLowerCase() !== primaryKeyword.toLowerCase()) {
+        candidates.push(strippedForm);
+      }
       const altCase = qRaw === qRaw.toUpperCase() ? qRaw.toLowerCase().trim() : qRaw.toUpperCase().trim();
       if (altCase.length >= 2 && altCase !== qRaw && !candidates.includes(altCase)) {
         candidates.push(altCase);
       }
-
+      
       if (candidates.length > 0) {
         const parallelFetches = candidates.map(term =>
           fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
@@ -1758,8 +1817,19 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
     for (const item of items) {
       const storeId = Number(item.storeId || item.StoreId || 0);
       const productCode = String(item.productCode || item.ProductCode || '').trim();
-      const storeName = String(item.storeName || item.StoreName || '').trim();
+      let storeName = String(item.storeName || item.StoreName || '').trim();
       if (!storeId || !productCode) continue;
+
+      if (!storeName && storeId > 0) {
+        try {
+          const mapRow = await db.get('SELECT store_name FROM pharmarack_distributor_mappings WHERE store_id = ? LIMIT 1', [storeId]);
+          if (mapRow?.store_name) storeName = String(mapRow.store_name).trim();
+          else {
+            const catRow = await db.get('SELECT store_name FROM distributor_catalog WHERE store_id = ? LIMIT 1', [storeId]);
+            if (catRow?.store_name) storeName = String(catRow.store_name).trim();
+          }
+        } catch (_) {}
+      }
 
       let medId = Number(item.medicineId || item.medicine_id || 0);
       const prodName = String(item.productName || item.product || item.name || '').trim();
@@ -1789,6 +1859,22 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
             if (exact.length === 1) medId = Number(exact[0].id);
           }
         }
+
+        // Auto-register missing medicine in medicines table so it receives a permanent ID
+        if (!medId && prodName) {
+          try {
+            const ptr = Number(item.ptr || item.rate || 0);
+            const mrp = Number(item.mrp || 0);
+            const company = String(item.company || item.Company || '').trim();
+            const packaging = String(item.packaging || item.Packing || '').trim();
+            const insertMedRes = await db.run(
+              `INSERT INTO medicines (name, manufacturer, ptr, mrp, pack_size, is_active, source, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, 1, 'pharmarack_live_cart', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [prodName, company || null, ptr, mrp, packaging || null]
+            );
+            medId = Number(insertMedRes?.lastID || 0);
+          } catch (_) {}
+        }
       }
 
       if (medId > 0) {
@@ -1798,17 +1884,18 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
 
         await db.run(
           `INSERT INTO medicine_distributor_links 
-             (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+             (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, medicine_name, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
            ON CONFLICT(medicine_id, store_id, product_code) DO UPDATE SET
              product_id = CASE WHEN excluded.product_id != '' THEN excluded.product_id ELSE medicine_distributor_links.product_id END,
              product_name = excluded.product_name,
              packaging = CASE WHEN excluded.packaging != '' THEN excluded.packaging ELSE medicine_distributor_links.packaging END,
              company = CASE WHEN excluded.company != '' THEN excluded.company ELSE medicine_distributor_links.company END,
              store_name = CASE WHEN excluded.store_name != '' THEN excluded.store_name ELSE medicine_distributor_links.store_name END,
+             medicine_name = excluded.medicine_name,
              mapped = 1,
              updated_at = CURRENT_TIMESTAMP`,
-          [medId, storeId, storeName, productCode, prodId, prodName, packaging, company]
+          [medId, storeId, storeName, productCode, prodId, prodName, packaging, company, prodName]
         ).catch((linkErr: any) => console.warn('[AutoSaveLink] Conflict/Insert error:', linkErr));
       }
     }
@@ -4606,16 +4693,45 @@ router.get('/distributor-medicines/:storeId', async (req, res) => {
     const db = await dbManager.getConnection();
 
     const rows = await db.all(
-      `SELECT p.store_id, p.product_code, p.product_id, p.product_name, p.packaging, p.company,
-              p.ptr, p.mrp, p.last_ordered_at, p.last_order_date, p.source,
-              COALESCE(l.medicine_id, 0) AS medicine_id
-       FROM pharmarack_distributor_products p
-       LEFT JOIN medicine_distributor_links l 
-         ON l.store_id = p.store_id AND l.product_code = p.product_code
-       WHERE p.store_id = ?
-       ORDER BY p.last_ordered_at DESC, p.product_name ASC
-       LIMIT ?`,
-      [storeId, limit]
+      `SELECT 
+          COALESCE(l.store_id, p.store_id) AS store_id,
+          COALESCE(l.product_code, p.product_code) AS product_code,
+          COALESCE(l.product_id, p.product_id) AS product_id,
+          COALESCE(l.product_name, m.name, p.product_name) AS product_name,
+          COALESCE(l.packaging, m.pack_size, p.packaging, '') AS packaging,
+          COALESCE(l.company, m.manufacturer, p.company, '') AS company,
+          COALESCE(p.ptr, m.ptr, 0) AS ptr,
+          COALESCE(p.mrp, m.mrp, 0) AS mrp,
+          p.last_ordered_at,
+          p.last_order_date,
+          COALESCE(p.source, 'linked') AS source,
+          COALESCE(l.medicine_id, m.id, 0) AS medicine_id
+        FROM medicine_distributor_links l
+        LEFT JOIN medicines m ON m.id = l.medicine_id
+        LEFT JOIN pharmarack_distributor_products p 
+          ON p.store_id = l.store_id AND p.product_code = l.product_code
+        WHERE l.store_id = ?
+        UNION
+        SELECT
+          p.store_id,
+          p.product_code,
+          p.product_id,
+          p.product_name,
+          COALESCE(p.packaging, '') AS packaging,
+          COALESCE(p.company, '') AS company,
+          COALESCE(p.ptr, 0) AS ptr,
+          COALESCE(p.mrp, 0) AS mrp,
+          p.last_ordered_at,
+          p.last_order_date,
+          p.source,
+          COALESCE(l.medicine_id, 0) AS medicine_id
+        FROM pharmarack_distributor_products p
+        LEFT JOIN medicine_distributor_links l 
+          ON l.store_id = p.store_id AND l.product_code = p.product_code
+        WHERE p.store_id = ?
+        ORDER BY last_ordered_at DESC, product_name ASC
+        LIMIT ?`,
+      [storeId, storeId, limit]
     );
 
     const items = rows.map((r: any) => ({

@@ -23,7 +23,8 @@ type LocalApiError = { response?: { data?: { error?: string } }; message?: strin
 
 const toPick = (c: RefillCartCandidate): RefillCartPick => ({
   storeId: c.storeId, storeName: c.storeName, productCode: c.productCode, productId: c.productId,
-  productName: c.productName, packaging: c.packaging, company: c.company, mapped: c.mapped
+  productName: c.productName, packaging: c.packaging, company: c.company, mapped: c.mapped,
+  rate: c.rate, mrp: c.mrp
 });
 
 export const MedicineLinkModal: React.FC<{
@@ -191,32 +192,41 @@ export const MedicineLinkModal: React.FC<{
               ) : (
                 <ul className="space-y-1.5">
                   {selected.map((p, i) => (
-                    <li key={linkKeyOf(p)} className="flex items-start gap-2 rounded-lg border border-border bg-bg px-2.5 py-1.5">
-                      <span className="text-[10px] font-bold text-primary mt-0.5">#{i + 1}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-start flex-wrap gap-1.5 min-w-0">
+                    <li key={linkKeyOf(p)} className="rounded-xl border border-border bg-bg p-2.5 space-y-1 hover:border-primary/40 transition-colors shadow-2xs">
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center flex-wrap gap-1.5 min-w-0">
+                          <span className="text-[11px] font-black text-primary font-mono shrink-0">#{i + 1}</span>
                           <span className="font-bold text-text break-words leading-tight" title={p.storeName}>{p.storeName}</span>
                           {p.company && (
-                            <span className="px-1.5 py-0.5 rounded bg-bg3 text-[8.5px] font-medium text-muted border border-border shrink-0 truncate max-w-[110px]" title={p.company}>
+                            <span className="px-1.5 py-0.5 rounded bg-bg3 text-[9px] font-semibold text-muted border border-border shrink-0 truncate max-w-[120px]" title={p.company}>
                               {p.company}
                             </span>
                           )}
                         </div>
-                        <div className="text-[10px] text-muted truncate mt-0.5">
-                          <span className="font-medium text-text">{p.productName}</span>{p.packaging ? ` (${p.packaging})` : ''} · bought {bought(p.storeName)}×
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button type="button" disabled={i === 0} onClick={() => move(i, -1)} className="p-1 rounded text-muted hover:text-text disabled:opacity-30 cursor-pointer" title="Higher priority">
+                            <ChevronUp size={13} />
+                          </button>
+                          <button type="button" disabled={i === selected.length - 1} onClick={() => move(i, 1)} className="p-1 rounded text-muted hover:text-text disabled:opacity-30 cursor-pointer" title="Lower priority">
+                            <ChevronDown size={13} />
+                          </button>
+                          <button type="button" onClick={() => setSelected(prev => prev.filter(x => linkKeyOf(x) !== linkKeyOf(p)))} className="p-1 rounded text-muted hover:text-red-400 cursor-pointer ml-0.5" title="Remove this link">
+                            <X size={13} />
+                          </button>
                         </div>
                       </div>
-                      <div className="flex flex-col">
-                        <button type="button" disabled={i === 0} onClick={() => move(i, -1)} className="p-0.5 rounded text-muted hover:text-text disabled:opacity-30 cursor-pointer" title="Higher priority">
-                          <ChevronUp size={12} />
-                        </button>
-                        <button type="button" disabled={i === selected.length - 1} onClick={() => move(i, 1)} className="p-0.5 rounded text-muted hover:text-text disabled:opacity-30 cursor-pointer" title="Lower priority">
-                          <ChevronDown size={12} />
-                        </button>
+                      <div className="text-[11px] text-text font-medium break-words">
+                        {p.productName}{p.packaging ? <span className="text-muted font-normal"> ({p.packaging})</span> : ''}
                       </div>
-                      <button type="button" onClick={() => setSelected(prev => prev.filter(x => linkKeyOf(x) !== linkKeyOf(p)))} className="p-0.5 rounded text-muted hover:text-red-400 cursor-pointer" title="Remove this link">
-                        <X size={12} />
-                      </button>
+                      <div className="text-[10px] text-muted font-mono flex items-center flex-wrap gap-x-2 gap-y-0.5 pt-0.5">
+                        {p.rate != null && (
+                          <span className="text-emerald-400 font-semibold">PTR ₹{p.rate}</span>
+                        )}
+                        {p.rate != null && p.mrp != null && <span className="text-muted font-sans">·</span>}
+                        {p.mrp != null && (
+                          <span className="text-muted">MRP ₹{p.mrp}</span>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -308,56 +318,53 @@ export const MedicineLinkModal: React.FC<{
                     const k = linkKeyOf(c);
                     return (
                       <li key={k}>
-                        <label className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-bg3/60 transition-colors">
-                          <input type="checkbox" checked={selectedKeys.has(k)} onChange={() => toggle(c)} className="accent-primary shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="text-[11.5px] font-bold text-text truncate">
-                                {c.productName}
+                        <label className="flex items-start gap-2.5 px-3 py-2 cursor-pointer hover:bg-bg3/60 transition-colors">
+                          <input type="checkbox" checked={selectedKeys.has(k)} onChange={() => toggle(c)} className="accent-primary shrink-0 mt-1" />
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <div className="flex items-center justify-between gap-1.5 min-w-0">
+                              <div className="flex items-center gap-1.5 min-w-0 truncate">
+                                <span className="text-[11.5px] font-bold text-text truncate">
+                                  {c.productName}
+                                </span>
+                                {c.packaging && (
+                                  <span className="text-muted text-[10px] shrink-0 font-normal">
+                                    ({c.packaging})
+                                  </span>
+                                )}
+                                {c.company && (
+                                  <span className="px-1.5 py-0.5 rounded bg-bg3 text-[9px] font-semibold text-text border border-border shrink-0 truncate max-w-[130px]" title={c.company}>
+                                    {c.company}
+                                  </span>
+                                )}
+                              </div>
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${c.inStock ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
+                                {c.inStock ? `stock ${c.stock}` : 'out of stock'}
                               </span>
-                              {c.packaging && (
-                                <span className="text-muted text-[10px] shrink-0 font-normal">
-                                  ({c.packaging})
-                                </span>
-                              )}
-                              {c.company && (
-                                <span className="px-1.5 py-0.5 rounded bg-bg3 text-[9px] font-semibold text-text border border-border shrink-0 truncate max-w-[130px]" title={c.company}>
-                                  {c.company}
-                                </span>
-                              )}
                             </div>
-                            <div className="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 text-[10px] text-muted mt-0.5">
-                              <span className="font-semibold text-text" title={c.storeName}>{c.storeName}</span>
+                            <div className="flex items-center flex-wrap gap-1.5 text-[10.5px] text-muted">
+                              <span className="font-semibold text-text break-words" title={c.storeName}>{c.storeName}</span>
                               {c.mapped === false && (
                                 <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[8.5px] font-semibold text-amber-600 dark:text-amber-400 border border-amber-500/30 shrink-0">
                                   Unmapped
                                 </span>
                               )}
-                              <span>·</span>
-                              <span className="shrink-0">bought {bought(c.storeName)}×</span>
+                            </div>
+                            <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5 text-[10px] font-mono">
                               {c.rate != null && (
-                                <>
-                                  <span>·</span>
-                                  <span className="font-mono font-medium text-emerald-400 shrink-0">PTR ₹{c.rate}</span>
-                                </>
+                                <span className="text-emerald-400 font-semibold shrink-0">PTR ₹{c.rate}</span>
                               )}
+                              {c.rate != null && c.mrp != null && <span className="text-muted font-sans">·</span>}
                               {c.mrp != null && (
-                                <>
-                                  <span>·</span>
-                                  <span className="font-mono text-muted shrink-0">MRP ₹{c.mrp}</span>
-                                </>
+                                <span className="text-muted shrink-0">MRP ₹{c.mrp}</span>
                               )}
                               {c.scheme && (
                                 <>
-                                  <span>·</span>
-                                  <span className="text-amber-400 font-medium shrink-0">{c.scheme}</span>
+                                  <span className="text-muted font-sans">·</span>
+                                  <span className="text-amber-400 font-medium font-sans shrink-0">Scheme {c.scheme}</span>
                                 </>
                               )}
                             </div>
                           </div>
-                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${c.inStock ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
-                            {c.inStock ? `stock ${c.stock}` : 'out of stock'}
-                          </span>
                         </label>
                       </li>
                     );

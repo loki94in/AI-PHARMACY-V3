@@ -32,6 +32,8 @@ export interface RefillCartPick {
   packaging?: string;
   company?: string;
   mapped?: boolean;
+  rate?: number | null;
+  mrp?: number | null;
 }
 
 export interface RefillCartCandidate extends RefillCartPick {
@@ -95,7 +97,9 @@ export async function getMedicineLinks(medicineId: number): Promise<RefillCartPi
     productName: r.product_name || '',
     packaging: r.packaging || '',
     company: r.company || '',
-    mapped: r.mapped !== 0
+    mapped: r.mapped !== 0,
+    rate: r.rate != null ? Number(r.rate) : null,
+    mrp: r.mrp != null ? Number(r.mrp) : null
   }));
 }
 
@@ -119,11 +123,12 @@ export async function saveMedicineLinks(medicineId: number, picks: RefillCartPic
       const p = clean[i];
       await db.run(
         `INSERT OR REPLACE INTO medicine_distributor_links
-           (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+           (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, pick_order, rate, mrp, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         [medicineId, Number(p.storeId), String(p.storeName).trim(), String(p.productCode).trim(),
          p.productId != null ? String(p.productId) : null, p.productName || null, p.packaging || null,
-         p.company || null, p.mapped === false ? 0 : 1, i]
+         p.company || null, p.mapped === false ? 0 : 1, i,
+         p.rate != null ? Number(p.rate) : null, p.mrp != null ? Number(p.mrp) : null]
       );
     }
     // Clear stale cart snapshots on patient_refills for this medicine so CRM truth reflects updated links

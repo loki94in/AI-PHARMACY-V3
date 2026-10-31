@@ -584,9 +584,11 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   };
 
   const handleSelectSingleStoreFilter = (storeId: number, e?: React.MouseEvent) => {
+    e?.preventDefault();
     e?.stopPropagation();
     setSelectedFilterStoreIds([storeId]);
     setIsDistributorFilterOpen(false);
+    setTimeout(() => productInputRef.current?.focus(), 50);
   };
 
   const handleResetStoreFilter = (e?: React.MouseEvent) => {
@@ -2709,8 +2711,13 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                         </span>
                         <button
                           type="button"
-                          onClick={() => setIsDistributorFilterOpen(false)}
-                          className="px-2.5 py-1 bg-primary text-white rounded-md font-bold hover:bg-primary/90 cursor-pointer text-xs"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setIsDistributorFilterOpen(false);
+                            setTimeout(() => productInputRef.current?.focus(), 50);
+                          }}
+                          className="px-2.5 py-1 bg-primary text-white rounded-md font-bold hover:bg-primary/90 cursor-pointer text-xs active:scale-95 transition-all"
                         >
                           Done
                         </button>

@@ -514,6 +514,8 @@ export interface RefillCartPick {
   packaging?: string;
   company?: string;
   mapped?: boolean;
+  rate?: number | null;
+  mrp?: number | null;
 }
 
 export interface BillLinkRow {

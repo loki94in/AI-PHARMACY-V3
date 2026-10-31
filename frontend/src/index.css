@@ -590,7 +590,7 @@ html body input[type="text"].bare-field.bare-field.bare-field.bare-field:focus {
 }
 
 .animate-pulse-subtle {
-  animation: pulseSubtle 2.5s ease-in-out infinite;
+  animation: pulseSubtle 2.5s ease-in-out 3;
 }
 
 /* ──────────────────────────────────────────────
@@ -645,7 +645,7 @@ html body input[type="text"].bare-field.bare-field.bare-field.bare-field:focus {
 }
 
 .animate-pulse-glow {
-  animation: pulseAmberGlow 2s ease-in-out infinite;
+  animation: pulseAmberGlow 2s ease-in-out 3;
 }
 
 /* ──────────────────────────────────────────────
