@@ -52,7 +52,7 @@ export interface RefillCartResult {
   refillId: number;
   medicineName: string;
   qty: number;
-  line?: { storeName: string; productName: string; qty: number };
+  line?: { storeName: string; productName: string; qty: number; distributorStock?: string | number };
   linked: Array<{ storeName: string; productName: string; stock: string; inStock: boolean }>;
   candidates: RefillCartCandidate[];
 }
@@ -327,7 +327,7 @@ export async function processRefillCartItem(
       ...base,
       status: 'in_cart',
       message: `Already in the cart at ${mine.storeName} (qty ${mine.qty}).`,
-      line: { storeName: mine.storeName, productName: mine.productName, qty: mine.qty }
+      line: { storeName: mine.storeName, productName: mine.productName, qty: mine.qty, distributorStock: (mine.raw as any)?.stock }
     };
   }
   let hit: CartLine | undefined;
@@ -338,7 +338,7 @@ export async function processRefillCartItem(
   }
   if (hit) {
     const total = hit.qty + qty;
-    const lineInfo = { storeName: hit.storeName, productName: hit.productName, qty: total };
+    const lineInfo = { storeName: hit.storeName, productName: hit.productName, qty: total, distributorStock: (hit.raw as any)?.stock };
     if (opts.dryRun) {
       return { ...base, status: 'ready', message: `Ready: ${hit.storeName} already has ${hit.qty}; Add makes it ${total}.`, line: lineInfo };
     }
@@ -492,7 +492,7 @@ export async function processRefillCartItem(
       ...base, linked, candidates,
       status: 'ready',
       message: `Ready: ${qty} will go to ${chosen.link.store_name} (stock ${it.stock ?? '?'}). Press Add.`,
-      line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ''), qty }
+      line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ''), qty, distributorStock: it.stock }
     };
   }
 
@@ -577,7 +577,7 @@ export async function processRefillCartItem(
       ...base, linked, candidates,
       status: 'added',
       message: `Added ${qty} to ${added.storeName}${note}.`,
-      line: { storeName: added.storeName, productName: added.productName, qty: added.qty }
+      line: { storeName: added.storeName, productName: added.productName, qty: added.qty, distributorStock: candItem.stock }
     };
   }
 
@@ -603,6 +603,7 @@ export interface RefillCartSummaryRow {
   status: string;
   storeName?: string;
   qty?: number;
+  distributorStock?: string | number;
   message?: string;
 }
 
@@ -647,7 +648,8 @@ export async function sendRefillCartSummary(
     if (confirmed || r.status === 'in_cart') {
       const store = String((confirmed ? (r.storeName || db_.cart_store_name) : r.storeName) || 'Distributor').trim();
       const qty = r.qty ?? (confirmed ? db_.cart_qty : undefined);
-      const line = `• ${name} × ${qty ?? '?'}${r.status === 'in_cart' ? ' (already in cart)' : ''}`;
+      const stockStr = r.distributorStock != null && String(r.distributorStock).trim() !== '' ? ` (${r.distributorStock})` : '';
+      const line = `• ${name} × ${qty ?? '?'}${stockStr}${r.status === 'in_cart' ? ' (already in cart)' : ''}`;
       byStore.set(store, [...(byStore.get(store) || []), line]);
     } else {
       needs.push(`• ${name} — ${r.message || r.status}`);

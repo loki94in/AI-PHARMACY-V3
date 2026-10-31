@@ -81,7 +81,7 @@ async function sendSummaryIfDone(jobId: number): Promise<void> {
   try {
     const out = await api.sendRefillCartSummary(job.patientName, job.rows.map(r => ({
       refillId: r.refillId, medicineName: r.medicineName, status: r.state,
-      storeName: r.line?.storeName, qty: r.line?.qty, message: r.message
+      storeName: r.line?.storeName, qty: r.line?.qty, distributorStock: (r.line as any)?.distributorStock, message: r.message
     })));
     patchJob(jobId, j => ({ ...j, whatsapp: { queued: out.queued, reason: out.reason } }));
   } catch {

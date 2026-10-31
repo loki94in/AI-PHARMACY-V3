@@ -3491,6 +3491,7 @@ router.get('/reorder-suggestions', async (_req, res) => {
       rate: number;
       mrp: number;
       quantity: number;
+      scheme?: string;
       lastDate: string;
     }> = {};
 
@@ -3498,10 +3499,10 @@ router.get('/reorder-suggestions', async (_req, res) => {
       const placeholders = candidateIds.map(() => '?').join(',');
       const purchaseRows = await db.all(
         `SELECT pi.medicine_id, p.distributor_id, d.name AS distributor_name,
-                pdm.store_id, pdm.store_name, pi.cost_price, pi.mrp, pi.quantity,
+                pdm.store_id, pdm.store_name, pi.cost_price, pi.mrp, pi.quantity, pi.free_qty, pi.scheme_per,
                 p.date AS last_purchase_date
          FROM (
-           SELECT pi.medicine_id, pi.purchase_id, pi.cost_price, pi.mrp, pi.quantity,
+           SELECT pi.medicine_id, pi.purchase_id, pi.cost_price, pi.mrp, pi.quantity, pi.free_qty, pi.scheme_per,
                   ROW_NUMBER() OVER (PARTITION BY pi.medicine_id ORDER BY pi.id DESC) as rn
            FROM purchase_items pi
            WHERE pi.medicine_id IN (${placeholders})
@@ -3521,16 +3522,17 @@ router.get('/reorder-suggestions', async (_req, res) => {
           rate: Number(pr.cost_price || 0),
           mrp: Number(pr.mrp || 0),
           quantity: Number(pr.quantity || 1),
+          scheme: Number(pr.free_qty || 0) > 0 && Number(pr.quantity || 0) > 0 ? (pr.quantity + '+' + pr.free_qty) : (Number(pr.scheme_per || 0) > 0 ? (pr.scheme_per + '%') : ''),
           lastDate: pr.last_purchase_date ? String(pr.last_purchase_date).slice(0, 10) : ''
         };
       }
     }
 
-    const linksByMed: Record<number, { storeId: number; storeName: string; productCode: string; productId: number }> = {};
+    const linksByMed: Record<number, { storeId: number; storeName: string; productCode: string; productId: number; rate?: number; mrp?: number; scheme?: string }> = {};
     if (candidateIds.length > 0) {
       const placeholders = candidateIds.map(() => '?').join(',');
       const linkRows = await db.all(
-        `SELECT medicine_id, store_id, store_name, product_code, product_id
+        `SELECT medicine_id, store_id, store_name, product_code, product_id, rate, mrp, scheme
          FROM medicine_distributor_links
          WHERE medicine_id IN (${placeholders})
          ORDER BY pick_order, id`,
@@ -3543,7 +3545,10 @@ router.get('/reorder-suggestions', async (_req, res) => {
             storeId: Number(lr.store_id || 0),
             storeName: lr.store_name || '',
             productCode: lr.product_code || '',
-            productId: Number(lr.product_id || 0)
+            productId: Number(lr.product_id || 0),
+            rate: Number(lr.rate || 0),
+            mrp: Number(lr.mrp || 0),
+            scheme: String(lr.scheme || '').trim()
           };
         }
       }
@@ -3581,6 +3586,7 @@ router.get('/reorder-suggestions', async (_req, res) => {
         packaging: row.packaging || '',
         ptr: finalPtr,
         mrp: finalMrp,
+        scheme: (link?.scheme) || lp?.scheme || '',
         storeId: finalStoreId,
         storeName: finalStoreName,
         distributorId: lp?.distributorId || null,

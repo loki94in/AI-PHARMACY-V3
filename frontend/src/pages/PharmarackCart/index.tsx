@@ -4498,9 +4498,10 @@ export default function PharmarackCart() {
     let company = item.manufacturer || '';
     let rate = item.ptr || item.lastRate || 0;
     let mrp = item.mrp || 0;
+    let scheme = item.scheme || '';
 
-    // Resolve Pharmarack ids ONLY by strict same-product equality (Plus/DS/M/H variants never match).
-    if ((!productCode || !productId) && storeId) {
+    // Resolve Pharmarack ids & prices strictly from memory if missing
+    if (storeId) {
       const storeProducts = distributorProductsMap[storeId] || [];
       const match = storeProducts.find(p => isStrictSameProduct(p.medicineName, medName));
       if (match) {
@@ -4510,6 +4511,7 @@ export default function PharmarackCart() {
         company = company || match.manufacturer || '';
         rate = rate || match.ptr || 0;
         mrp = mrp || match.mrp || 0;
+        scheme = scheme || match.scheme || '';
       }
     }
 
@@ -4550,6 +4552,7 @@ export default function PharmarackCart() {
         packaging: packaging || '',
         rate: rate || undefined,
         mrp: mrp || undefined,
+        scheme: scheme || undefined,
         storeName: storeName,
         mapped: item.mapped ?? true,
         medicineId: item.medicineId || undefined
@@ -5064,6 +5067,7 @@ export default function PharmarackCart() {
         qty: qtyToAdd,
         ptr: rate,
         mrp: mrp,
+        scheme: card.scheme || '',
         company: company,
         productName: medName,
         storeName: storeName,
@@ -5096,6 +5100,7 @@ export default function PharmarackCart() {
           packaging: packaging || '',
           rate: rate || undefined,
           mrp: mrp || undefined,
+          scheme: card.scheme || undefined,
           storeName: storeName,
           mapped: true,
           medicineId: card.medicineId || undefined
@@ -5758,6 +5763,13 @@ export default function PharmarackCart() {
                                   <div>Required Qty: <strong className="text-primary font-mono">{order.qty || 1}</strong></div>
                                   {order.advance_payment ? <div>Advance Paid: <strong className="text-emerald-400 font-mono">₹{order.advance_payment}</strong></div> : null}
                                   {order.pharmarack_distributor && <div>Assigned Dist: <strong className="text-text">{order.pharmarack_distributor}</strong></div>}
+                                  {order.pharmarack_rate ? (
+                                    <div className="text-[11px]">
+                                      Est. Rate: <strong className="text-emerald-400 font-mono">₹{order.pharmarack_rate.toFixed(2)}</strong>
+                                      {order.pharmarack_mrp ? <span className="text-muted ml-1.5">MRP: ₹{order.pharmarack_mrp.toFixed(2)}</span> : null}
+                                      {order.pharmarack_scheme ? <span className="text-emerald-400 ml-1.5 font-bold">🎁 {order.pharmarack_scheme}</span> : null}
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                               <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
@@ -5767,7 +5779,13 @@ export default function PharmarackCart() {
                                     medicineName: order.product,
                                     suggestedQty: order.qty || 1,
                                     sourceOrderId: order.id,
-                                    storeName: order.pharmarack_distributor
+                                    storeName: order.pharmarack_distributor,
+                                    storeId: order.pharmarack_store_id ? Number(order.pharmarack_store_id) : undefined,
+                                    productCode: order.pharmarack_product_code || undefined,
+                                    productId: order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined,
+                                    ptr: order.pharmarack_rate,
+                                    mrp: order.pharmarack_mrp,
+                                    scheme: order.pharmarack_scheme
                                   })}
                                   disabled={inCart}
                                   className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
@@ -5892,6 +5910,7 @@ export default function PharmarackCart() {
                                       company: sug.company,
                                       ptr: sug.ptr,
                                       mrp: sug.mrp,
+                                      scheme: sug.scheme,
                                       storeId: sug.storeId ? Number(sug.storeId) : undefined,
                                       storeName: sug.storeName || sug.lastDistributorName,
                                       productCode: sug.productCode,
@@ -5980,6 +5999,12 @@ export default function PharmarackCart() {
                                     <Store size={12} className="text-violet-400 shrink-0" />
                                     <span className="truncate">Supplied by: <strong className="text-text font-bold">{item.storeName || item.lastDistributorName || 'Distributor'}</strong></span>
                                   </div>
+                                  {(item.ptr || item.lastRate) ? (
+                                    <div className="text-[11px]">
+                                      Last PTR: <strong className="text-emerald-400 font-mono">₹{(item.ptr || item.lastRate || 0).toFixed(2)}</strong>
+                                      {item.mrp ? <span className="text-muted ml-1.5">MRP: ₹{item.mrp.toFixed(2)}</span> : null}
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                               <div className="pt-2.5 border-t border-glass-border/30 flex items-center justify-between gap-2">
@@ -6064,6 +6089,19 @@ export default function PharmarackCart() {
                                     <Store size={12} className="text-sky-400 shrink-0" />
                                     <span className="truncate">Distributor: <strong className="text-text font-bold">{item.lastDistributorName || item.storeName || 'Distributor'}</strong></span>
                                   </div>
+                                  {(item.ptr || item.lastRate) ? (
+                                    <div className="text-[11px]">
+                                      Last PTR: <strong className="text-emerald-400 font-mono">₹{(item.ptr || item.lastRate || 0).toFixed(2)}</strong>
+                                      {item.mrp ? <span className="text-muted ml-1.5">MRP: ₹{item.mrp.toFixed(2)}</span> : null}
+                                    </div>
+                                  ) : null}
+                                  {item.scheme ? (
+                                    <div className="text-[11px]">
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">
+                                        🎁 {item.scheme}
+                                      </span>
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                               <div className="pt-2.5 border-t border-glass-border/30 flex items-center justify-between gap-2">
@@ -6160,6 +6198,13 @@ export default function PharmarackCart() {
                               <div>Required Qty: <strong className="text-primary font-mono">{order.qty || 1}</strong></div>
                               {order.advance_payment ? <div>Advance Paid: <strong className="text-emerald-400 font-mono">₹{order.advance_payment}</strong></div> : null}
                               {order.pharmarack_distributor && <div>Assigned Dist: <strong className="text-text">{order.pharmarack_distributor}</strong></div>}
+                              {order.pharmarack_rate ? (
+                                <div className="text-[11px]">
+                                  Est. Rate: <strong className="text-emerald-400 font-mono">₹{order.pharmarack_rate.toFixed(2)}</strong>
+                                  {order.pharmarack_mrp ? <span className="text-muted ml-1.5">MRP: ₹{order.pharmarack_mrp.toFixed(2)}</span> : null}
+                                  {order.pharmarack_scheme ? <span className="text-emerald-400 ml-1.5 font-bold">🎁 {order.pharmarack_scheme}</span> : null}
+                                </div>
+                              ) : null}
                             </div>
                           </div>
 
@@ -6170,7 +6215,13 @@ export default function PharmarackCart() {
                                 medicineName: order.product,
                                 suggestedQty: order.qty || 1,
                                 sourceOrderId: order.id,
-                                storeName: order.pharmarack_distributor
+                                storeName: order.pharmarack_distributor,
+                                storeId: order.pharmarack_store_id ? Number(order.pharmarack_store_id) : undefined,
+                                productCode: order.pharmarack_product_code || undefined,
+                                productId: order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined,
+                                ptr: order.pharmarack_rate,
+                                mrp: order.pharmarack_mrp,
+                                scheme: order.pharmarack_scheme
                               })}
                               disabled={inCart}
                               className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
@@ -6412,6 +6463,13 @@ export default function PharmarackCart() {
                               <div className="text-[11px]">
                                 Last PTR: <strong className="text-emerald-400 font-mono">₹{item.ptr.toFixed(2)}</strong>
                                 {item.mrp ? <span className="text-muted ml-1.5">MRP: ₹{item.mrp.toFixed(2)}</span> : null}
+                              </div>
+                            ) : null}
+                            {item.scheme ? (
+                              <div className="text-[11px]">
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">
+                                  🎁 {item.scheme}
+                                </span>
                               </div>
                             ) : null}
                           </div>
@@ -6664,6 +6722,7 @@ export default function PharmarackCart() {
                                     mrp: item.mrp,
                                     packaging: item.packaging,
                                     ptr: item.ptr,
+                                    scheme: item.scheme,
                                     storeId: item.storeId ? Number(item.storeId) : undefined,
                                     storeName: item.lastDistributorName || item.storeName,
                                     suggestedQty: itemQty,
@@ -8633,15 +8692,27 @@ export default function PharmarackCart() {
                     <div className="space-y-1 text-xs">
                       <div>Supplier: <strong className="text-text font-bold">{reorderSameModalTarget.previousPurchase.supplierName}</strong></div>
                       <div>Previous Qty: <strong className="font-mono text-text">{reorderSameModalTarget.previousPurchase.quantity} units</strong></div>
-                      <div>Price Paid: <strong className="font-mono text-emerald-400 font-bold">₹{reorderSameModalTarget.previousPurchase.price?.toFixed(2)}</strong></div>
+                      <div>Price Paid (PTR): <strong className="font-mono text-emerald-400 font-bold">₹{reorderSameModalTarget.previousPurchase.price?.toFixed(2)}</strong></div>
+                      {(reorderSameModalTarget.mrp || reorderSameModalTarget.previousPurchase?.mrp) ? (
+                        <div>MRP: <strong className="font-mono text-muted">₹{(reorderSameModalTarget.mrp || reorderSameModalTarget.previousPurchase?.mrp || 0).toFixed(2)}</strong></div>
+                      ) : null}
+                      {reorderSameModalTarget.scheme ? (
+                        <div>Scheme: <strong className="font-mono text-emerald-400 font-bold">🎁 {reorderSameModalTarget.scheme}</strong></div>
+                      ) : null}
                       <div>Date: <strong className="font-mono text-muted">{formatDisplayDate(reorderSameModalTarget.previousPurchase.purchaseDate)}</strong></div>
                     </div>
                   ) : (
-                    <div className="text-xs text-muted italic py-2 space-y-1">
-                      <div className="text-amber-400 font-bold flex items-center gap-1">
-                        <AlertCircle size={12} /> No previous purchase found
-                      </div>
-                      <p className="text-[11px]">Select a supplier below to restock this medicine.</p>
+                    <div className="text-xs text-muted space-y-1 py-1">
+                      {reorderSameModalTarget.ptr ? (
+                        <div>Est. Rate (PTR): <strong className="font-mono text-emerald-400 font-bold">₹{reorderSameModalTarget.ptr.toFixed(2)}</strong></div>
+                      ) : null}
+                      {reorderSameModalTarget.mrp ? (
+                        <div>MRP: <strong className="font-mono text-muted">₹{reorderSameModalTarget.mrp.toFixed(2)}</strong></div>
+                      ) : null}
+                      {reorderSameModalTarget.scheme ? (
+                        <div>Scheme: <strong className="font-mono text-emerald-400 font-bold">🎁 {reorderSameModalTarget.scheme}</strong></div>
+                      ) : null}
+                      <p className="text-[11px] text-muted italic">Click confirm below to add this medicine directly into the distributor reorder batch.</p>
                     </div>
                   )}
                 </div>

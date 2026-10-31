@@ -144,13 +144,15 @@ export async function fetchOrderLines(db: any, token: string, orderId: number | 
       const mrp = Number(pickFirst(r, ['MRP', 'mrp']));
       const rate = Number(pickFirst(r, ['PTR', 'ptr']));
       const pack = pickFirst(r, ['Packing', 'packing', 'Packaging']);
+      const scheme = pickFirst(r, ['Scheme', 'scheme', 'ProductScheme']);
       return {
         productName: String(pickFirst(r, NAME_KEYS)).trim(),
         qty: Number.isFinite(q) && q > 0 ? q : null,
         ...(code !== undefined ? { productCode: String(code) } : {}),
         ...(Number.isFinite(mrp) && mrp > 0 ? { mrp } : {}),
         ...(Number.isFinite(rate) && rate > 0 ? { rate } : {}),
-        ...(pack !== undefined ? { packaging: String(pack).trim() } : {})
+        ...(pack !== undefined ? { packaging: String(pack).trim() } : {}),
+        ...(scheme !== undefined && String(scheme).trim() ? { scheme: String(scheme).trim() } : {})
       };
     });
   } catch (err: any) {

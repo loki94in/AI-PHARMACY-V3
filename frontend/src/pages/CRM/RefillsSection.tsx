@@ -2032,18 +2032,6 @@ export const RefillsSection: React.FC = () => {
                       </button>
                     );
                     const isConfirmed = (selectedPatient.medicines || []).some(m => m.patient_confirmed === 1);
-                    const confirmBtn = !isConfirmed ? (
-                      <button
-                        key="confirm-refill-btn"
-                        onClick={() => handleConfirmRefillPatient(selectedPatient)}
-                        disabled={confirmingPatient}
-                        title="Confirm refill and automatically add prescribed medicines directly to Pharmarack Live Cart"
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all active:scale-95 disabled:opacity-50 cursor-pointer shadow-xs"
-                      >
-                        <Check size={13} className={confirmingPatient ? 'animate-spin' : ''} />
-                        <span>{confirmingPatient ? 'Adding to Cart…' : 'Confirm & Cart'}</span>
-                      </button>
-                    ) : null;
                     const markReadyBtn = (
                       <button
                         onClick={() => handleMarkReadyPatient(selectedPatient)}
@@ -2069,9 +2057,6 @@ export const RefillsSection: React.FC = () => {
                     if (stage === 'upcoming') {
                       return (
                         <>
-                          {confirmBtn}
-                          {posBtn}
-                          {markReadyBtn}
                           {addToCartBtn}
                           <button
                             onClick={() => handleMarkAllOrdered(selectedPatient)}
@@ -2089,7 +2074,6 @@ export const RefillsSection: React.FC = () => {
                     if (stage === 'ordered') {
                       return (
                         <>
-                          {confirmBtn}
                           {posBtn}
                           {markReadyBtn}
                           {completeBtn}
@@ -2099,7 +2083,6 @@ export const RefillsSection: React.FC = () => {
                     }
                     return (
                       <>
-                        {confirmBtn}
                         {posBtn}
                         <button
                           onClick={() => handleMarkReadyPatient(selectedPatient)}
@@ -2142,6 +2125,21 @@ export const RefillsSection: React.FC = () => {
                     </button>
                     {showMoreMenu && (
                       <div className="absolute right-0 top-full mt-1 z-dropdown bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] p-1.5 min-w-[170px] flex flex-col gap-1 animate-in fade-in">
+                        {!isConfirmed && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowMoreMenu(false);
+                              handleConfirmRefillPatient(selectedPatient);
+                            }}
+                            disabled={confirmingPatient}
+                            className="px-3 py-1.5 text-left text-xs font-semibold hover:bg-emerald-500/10 rounded-lg text-emerald-400 transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                            title="Confirm refill and add medicines to Pharmarack Live Cart"
+                          >
+                            <Check size={11} className={confirmingPatient ? 'animate-spin' : ''} />
+                            <span>{confirmingPatient ? 'Adding…' : 'Confirm & Cart'}</span>
+                          </button>
+                        )}
                         {selectedPatient.patient_phone && (
                           <a
                             href={`/api/customer-portal/guide-pdf?phone=${selectedPatient.patient_phone}`}

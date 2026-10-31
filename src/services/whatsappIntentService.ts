@@ -4914,7 +4914,7 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
 
     // Ack to owner (owner-facing, allowed to stay automatic)
     const ownerFinalAck = ownerConfirmCartOk
-      ? `✅ Payment verified for Special Order #${soCode}!\n\nAdded *${order.medicine_name || order.product}* × ${order.qty} to Live Cart.\n🚚 Distributor: *${order.pharmarack_distributor || 'Standard Distributor'}*\nCustomer *${order.requester || 'Customer'}* has been sent their confirmation receipt.`
+      ? `✅ Payment verified for Special Order #${soCode}!\n\nAdded *${order.medicine_name || order.product}* × ${order.qty}${order.pharmarack_stock ? ` (${order.pharmarack_stock})` : ''} to Live Cart.\n🚚 Distributor: *${order.pharmarack_distributor || 'Standard Distributor'}*\nCustomer *${order.requester || 'Customer'}* has been sent their confirmation receipt.`
       : `⚠️ Payment verified for Special Order #${soCode}, but Live Cart add FAILED (${ownerConfirmCartError || 'cart error'}).\n\n*${order.medicine_name || order.product}* × ${order.qty} was NOT added.\n🚚 Distributor: *${order.pharmarack_distributor || 'Standard Distributor'}*\nNo receipt was sent to *${order.requester || 'Customer'}* to avoid a false confirmation. Please add it manually.`;
     await whatsappQueueWorker.enqueue(phone, ownerFinalAck, 'admin_escalation', 'Owner');
 
@@ -5200,7 +5200,8 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
           qty: targetRow.quantity > 0 ? targetRow.quantity : 1,
           rate: selectedDist.distributorPrice ?? selectedDist.ptr ?? selectedDist.PTR ?? selectedDist.rate ?? 0,
           mrp: selectedDist.mrp ?? selectedDist.MRP ?? 0,
-          packaging: selectedDist.packaging || targetRow.unit || '1 strip'
+          packaging: selectedDist.packaging || targetRow.unit || '1 strip',
+          stock: selectedDist.stock || selectedDist.availability || ''
         };
 
         const { addItemsToPharmarackCart } = await import('../routes/pharmarack.js');
@@ -5238,7 +5239,7 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
           [targetRow.id]
         );
 
-        const ownerAck = `✅ *Special Order #${targetRow.req_code} Processed!*\n\nAdded *${cartItem.productName}* × ${cartItem.qty} ${targetRow.unit}\nDistributor: *${cartItem.storeName}* (PTR ₹${cartItem.rate.toFixed(2)})\ndirectly into your *Pharmarack Live Cart*.\n\nCreated Special Order #${specialOrderId} for customer *${targetRow.customer_name}*.`;
+        const ownerAck = `✅ *Special Order #${targetRow.req_code} Processed!*\n\nAdded *${cartItem.productName}* × ${cartItem.qty} ${targetRow.unit}${cartItem.stock ? ` (${cartItem.stock})` : ''}\nDistributor: *${cartItem.storeName}* (PTR ₹${cartItem.rate.toFixed(2)})\ndirectly into your *Pharmarack Live Cart*.\n\nCreated Special Order #${specialOrderId} for customer *${targetRow.customer_name}*.`;
         const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
         await whatsappQueueWorker.enqueue(phone, ownerAck, 'admin_escalation', 'Owner');
         return true;
@@ -5731,7 +5732,7 @@ export async function handleInbound(msg: any): Promise<void> {
           // Automatically add confirmed refill medicines directly to Pharmarack Live Cart
           // (same workflow as manual CRM "Order to Cart": processRefillCartItem ->
           // addItemsToPharmarackCart -> verified re-read -> patient_refills.cart_*).
-          const cartSummaryRows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; message?: string }> = [];
+          const cartSummaryRows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; distributorStock?: string | number; message?: string }> = [];
           try {
             const { processRefillCartItem, sendRefillCartSummary } = await import('./refillCartService.js');
             for (const r of pendingRefills) {
@@ -5747,6 +5748,7 @@ export async function handleInbound(msg: any): Promise<void> {
                   status: cartRes.status,
                   storeName: cartRes.line?.storeName,
                   qty: cartRes.qty,
+                  distributorStock: cartRes.line?.distributorStock,
                   message: cartRes.message
                 });
               } catch (itemErr: any) {

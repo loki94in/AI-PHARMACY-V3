@@ -1881,11 +1881,14 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
         const prodId = String(item.productId || item.ProductId || item.PrProductId || '');
         const packaging = String(item.packaging || item.Packing || '');
         const company = String(item.company || item.Company || '');
+        const rate = Number(item.ptr || item.rate || item.PTR || item.cost_price || 0);
+        const mrp = Number(item.mrp || item.MRP || 0);
+        const scheme = String(item.scheme || item.Scheme || item.ProductScheme || '').trim();
 
         await db.run(
           `INSERT INTO medicine_distributor_links 
-             (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, medicine_name, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
+             (medicine_id, store_id, store_name, product_code, product_id, product_name, packaging, company, mapped, medicine_name, rate, mrp, scheme, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
            ON CONFLICT(medicine_id, store_id, product_code) DO UPDATE SET
              product_id = CASE WHEN excluded.product_id != '' THEN excluded.product_id ELSE medicine_distributor_links.product_id END,
              product_name = excluded.product_name,
@@ -1893,9 +1896,12 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
              company = CASE WHEN excluded.company != '' THEN excluded.company ELSE medicine_distributor_links.company END,
              store_name = CASE WHEN excluded.store_name != '' THEN excluded.store_name ELSE medicine_distributor_links.store_name END,
              medicine_name = excluded.medicine_name,
+             rate = CASE WHEN excluded.rate > 0 THEN excluded.rate ELSE medicine_distributor_links.rate END,
+             mrp = CASE WHEN excluded.mrp > 0 THEN excluded.mrp ELSE medicine_distributor_links.mrp END,
+             scheme = CASE WHEN excluded.scheme != '' THEN excluded.scheme ELSE medicine_distributor_links.scheme END,
              mapped = 1,
              updated_at = CURRENT_TIMESTAMP`,
-          [medId, storeId, storeName, productCode, prodId, prodName, packaging, company, prodName]
+          [medId, storeId, storeName, productCode, prodId, prodName, packaging, company, prodName, rate, mrp, scheme]
         ).catch((linkErr: any) => console.warn('[AutoSaveLink] Conflict/Insert error:', linkErr));
       }
     }
@@ -2267,6 +2273,83 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
       } catch (err) {
         console.error('On-the-fly search enrichment failed:', err);
       }
+    }
+  }
+
+  // Enrich missing rate, mrp, scheme from memory & tables if missing
+  for (const item of items) {
+    const sId = Number(item.storeId || 0);
+    const pCode = String(item.productCode || '').trim();
+    const pName = String(item.productName || item.product || item.name || '').trim();
+    const medId = Number(item.medicineId || item.medicine_id || 0);
+
+    if ((!item.rate || !item.mrp || !item.scheme) && (sId > 0 || pCode || pName || medId > 0)) {
+      try {
+        const db = await dbManager.getConnection();
+        if (sId > 0 && pCode) {
+          const dp = await db.get(
+            `SELECT ptr, mrp, scheme FROM pharmarack_distributor_products WHERE store_id = ? AND product_code = ? LIMIT 1`,
+            [sId, pCode]
+          );
+          if (dp) {
+            if (!item.rate && dp.ptr > 0) item.rate = Number(dp.ptr);
+            if (!item.mrp && dp.mrp > 0) item.mrp = Number(dp.mrp);
+            if (!item.scheme && dp.scheme) item.scheme = String(dp.scheme).trim();
+          }
+        }
+        if ((!item.rate || !item.mrp || !item.scheme) && medId > 0 && sId > 0) {
+          const ml = await db.get(
+            `SELECT rate, mrp, scheme FROM medicine_distributor_links WHERE medicine_id = ? AND store_id = ? LIMIT 1`,
+            [medId, sId]
+          );
+          if (ml) {
+            if (!item.rate && ml.rate > 0) item.rate = Number(ml.rate);
+            if (!item.mrp && ml.mrp > 0) item.mrp = Number(ml.mrp);
+            if (!item.scheme && ml.scheme) item.scheme = String(ml.scheme).trim();
+          }
+        }
+        if ((!item.rate || !item.mrp) && sId > 0 && pName) {
+          const dc = await db.get(
+            `SELECT distributor_price, mrp FROM distributor_catalog WHERE store_id = ? AND LOWER(TRIM(product_name)) = LOWER(TRIM(?)) LIMIT 1`,
+            [sId, pName]
+          );
+          if (dc) {
+            if (!item.rate && dc.distributor_price > 0) item.rate = Number(dc.distributor_price);
+            if (!item.mrp && dc.mrp > 0) item.mrp = Number(dc.mrp);
+          }
+        }
+        if ((!item.rate || !item.mrp || !item.scheme) && (medId > 0 || pName)) {
+          const pi = await db.get(
+            `SELECT pi.cost_price, pi.mrp, pi.quantity, pi.free_qty, pi.scheme_per
+             FROM purchase_items pi
+             JOIN purchases p ON p.id = pi.purchase_id
+             WHERE ${medId > 0 ? 'pi.medicine_id = ?' : 'pi.medicine_id = (SELECT id FROM medicines WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1)'}
+             ORDER BY p.date DESC, pi.id DESC LIMIT 1`,
+            [medId > 0 ? medId : pName]
+          );
+          if (pi) {
+            if (!item.rate && pi.cost_price > 0) item.rate = Number(pi.cost_price);
+            if (!item.mrp && pi.mrp > 0) item.mrp = Number(pi.mrp);
+            if (!item.scheme) {
+              if (Number(pi.free_qty || 0) > 0 && Number(pi.quantity || 0) > 0) {
+                item.scheme = `${pi.quantity}+${pi.free_qty}`;
+              } else if (Number(pi.scheme_per || 0) > 0) {
+                item.scheme = `${pi.scheme_per}%`;
+              }
+            }
+          }
+        }
+        if ((!item.rate || !item.mrp) && (medId > 0 || pName)) {
+          const m = await db.get(
+            `SELECT ptr, mrp FROM medicines WHERE ${medId > 0 ? 'id = ?' : 'LOWER(TRIM(name)) = LOWER(TRIM(?))'} LIMIT 1`,
+            [medId > 0 ? medId : pName]
+          );
+          if (m) {
+            if (!item.rate && m.ptr > 0) item.rate = Number(m.ptr);
+            if (!item.mrp && m.mrp > 0) item.mrp = Number(m.mrp);
+          }
+        }
+      } catch (_) {}
     }
   }
 
@@ -4888,6 +4971,23 @@ router.get('/reorder-recent', async (req, res) => {
 
     // Batch enrich receipt status from purchases & highest stock from distributor_catalog
     if (itemsList.length > 0) {
+      // Enrich missing ptr/mrp from medicines if 0
+      const medNames = Array.from(new Set(itemsList.map(it => (it.medicineName || '').trim()).filter(Boolean)));
+      if (medNames.length > 0) {
+        const placeholders = medNames.map(() => '?').join(',');
+        const medRows = await db.all(
+          `SELECT name, ptr, mrp FROM medicines WHERE name IN (${placeholders})`,
+          medNames
+        ).catch(() => []);
+        const medPriceMap = new Map((medRows || []).map((m: any) => [(m.name || '').toLowerCase().trim(), m]));
+        for (const it of itemsList) {
+          const mp = medPriceMap.get((it.medicineName || '').toLowerCase().trim());
+          if (mp) {
+            if (!it.ptr && mp.ptr > 0) it.ptr = Number(mp.ptr);
+            if (!it.mrp && mp.mrp > 0) it.mrp = Number(mp.mrp);
+          }
+        }
+      }
       // 1. Fetch recent purchase receipts
       const purchaseRows = await db.all(
         `SELECT pi.quantity, p.invoice_no, p.date, LOWER(m.name) as med_name
@@ -4985,7 +5085,9 @@ router.get('/purchase-reorder-history', async (req, res) => {
               d.id AS distributor_id, d.name AS distributor_name,
               l.cost_price AS last_rate, l.mrp AS last_mrp, l.batch_no AS last_batch,
               l.expiry_date AS last_expiry, l.cgst_per AS last_cgst, l.sgst_per AS last_sgst,
-              l.hsn_code AS last_hsn, l.quantity AS last_qty
+              l.hsn_code AS last_hsn, l.quantity AS last_qty,
+              l.free_qty AS last_free_qty, l.scheme_per AS last_scheme_per,
+              m.ptr AS med_ptr, m.mrp AS med_mrp
        FROM (
          SELECT pi.medicine_id AS mid, p.distributor_id AS did,
                 COUNT(DISTINCT p.id) AS bill_count,
@@ -5000,6 +5102,7 @@ router.get('/purchase-reorder-history', async (req, res) => {
          SELECT pi.medicine_id AS mid2, p.distributor_id AS did2,
                 pi.cost_price, pi.mrp, pi.batch_no, pi.expiry_date,
                 pi.cgst_per, pi.sgst_per, pi.hsn_code, pi.quantity,
+                pi.free_qty, pi.scheme_per,
                 ROW_NUMBER() OVER (PARTITION BY pi.medicine_id, p.distributor_id ORDER BY p.date DESC, pi.id DESC) AS rn
          FROM purchase_items pi
          JOIN purchases p ON p.id = pi.purchase_id
@@ -5033,7 +5136,7 @@ router.get('/purchase-reorder-history', async (req, res) => {
     if (medIds.length > 0) {
       const placeholders = medIds.map(() => '?').join(',');
       const linkRows = await db.all(
-        `SELECT medicine_id, store_id, store_name, product_code, product_id, packaging, company
+        `SELECT medicine_id, store_id, store_name, product_code, product_id, packaging, company, rate, mrp, scheme
          FROM medicine_distributor_links
          WHERE medicine_id IN (${placeholders})
          ORDER BY pick_order, id`,
@@ -5108,6 +5211,18 @@ router.get('/purchase-reorder-history', async (req, res) => {
       const avail = catKey ? (catalogAvailByStoreAndName.get(catKey) || 0) : 0;
       const highestStock = highestStockByName.get(pNameNorm) || null;
 
+      let resolvedScheme = '';
+      if (Number(r.last_free_qty || 0) > 0 && Number(r.last_qty || 0) > 0) {
+        resolvedScheme = `${r.last_qty}+${r.last_free_qty}`;
+      } else if (Number(r.last_scheme_per || 0) > 0) {
+        resolvedScheme = `${r.last_scheme_per}%`;
+      } else if (matchedLink?.scheme) {
+        resolvedScheme = String(matchedLink.scheme).trim();
+      }
+
+      const finalRate = Number(r.last_rate || matchedLink?.rate || r.med_ptr || 0);
+      const finalMrp = Number(r.last_mrp || matchedLink?.mrp || r.med_mrp || 0);
+
       return {
         medicineId: r.medicine_id,
         medicineName: r.medicine_name,
@@ -5120,8 +5235,10 @@ router.get('/purchase-reorder-history', async (req, res) => {
         distributorId: r.distributor_id || null,
         storeId: matchedStoreId,
         storeName: matchedStoreName,
-        ptr: r.last_rate ? Number(r.last_rate) : 0,
-        mrp: r.last_mrp ? Number(r.last_mrp) : 0,
+        ptr: finalRate,
+        lastRate: finalRate,
+        mrp: finalMrp,
+        scheme: resolvedScheme,
         productCode: matchedProductCode,
         productId: matchedProductId,
         mapped: isMapped,

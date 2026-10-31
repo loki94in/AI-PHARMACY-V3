@@ -515,6 +515,7 @@ async function ensureRefillCartLinkSchema(db: any) {
       pick_order INTEGER DEFAULT 0,
       rate REAL,
       mrp REAL,
+      scheme TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(medicine_id, store_id, product_code)
@@ -522,6 +523,7 @@ async function ensureRefillCartLinkSchema(db: any) {
   `);
   try { await db.run('ALTER TABLE medicine_distributor_links ADD COLUMN rate REAL'); } catch (_) {}
   try { await db.run('ALTER TABLE medicine_distributor_links ADD COLUMN mrp REAL'); } catch (_) {}
+  try { await db.run('ALTER TABLE medicine_distributor_links ADD COLUMN scheme TEXT'); } catch (_) {}
   // Pharmacist's one priority list of distributors (CRM -> Distributor Priority). Keyed by the
   // normalized store name so Pharmarack links and mapped distributors resolve to the same row.
   await db.run(`
