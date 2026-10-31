@@ -2125,7 +2125,7 @@ export const RefillsSection: React.FC = () => {
                     </button>
                     {showMoreMenu && (
                       <div className="absolute right-0 top-full mt-1 z-dropdown bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] p-1.5 min-w-[170px] flex flex-col gap-1 animate-in fade-in">
-                        {!isConfirmed && (
+                        {!(selectedPatient.medicines || []).some(m => m.patient_confirmed === 1) && (
                           <button
                             type="button"
                             onClick={() => {

@@ -2341,7 +2341,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
         }
         if ((!item.rate || !item.mrp) && (medId > 0 || pName)) {
           const m = await db.get(
-            `SELECT ptr, mrp FROM medicines WHERE ${medId > 0 ? 'id = ?' : 'LOWER(TRIM(name)) = LOWER(TRIM(?))'} LIMIT 1`,
+            `SELECT COALESCE(last_purchase_ptr, rate, 0) as ptr, mrp FROM medicines WHERE ${medId > 0 ? 'id = ?' : 'LOWER(TRIM(name)) = LOWER(TRIM(?))'} LIMIT 1`,
             [medId > 0 ? medId : pName]
           );
           if (m) {
@@ -4976,7 +4976,7 @@ router.get('/reorder-recent', async (req, res) => {
       if (medNames.length > 0) {
         const placeholders = medNames.map(() => '?').join(',');
         const medRows = await db.all(
-          `SELECT name, ptr, mrp FROM medicines WHERE name IN (${placeholders})`,
+          `SELECT name, COALESCE(last_purchase_ptr, rate, 0) as ptr, mrp FROM medicines WHERE name IN (${placeholders})`,
           medNames
         ).catch(() => []);
         const medPriceMap = new Map((medRows || []).map((m: any) => [(m.name || '').toLowerCase().trim(), m]));
@@ -5087,7 +5087,7 @@ router.get('/purchase-reorder-history', async (req, res) => {
               l.expiry_date AS last_expiry, l.cgst_per AS last_cgst, l.sgst_per AS last_sgst,
               l.hsn_code AS last_hsn, l.quantity AS last_qty,
               l.free_qty AS last_free_qty, l.scheme_per AS last_scheme_per,
-              m.ptr AS med_ptr, m.mrp AS med_mrp
+              COALESCE(m.last_purchase_ptr, m.rate, 0) AS med_ptr, m.mrp AS med_mrp
        FROM (
          SELECT pi.medicine_id AS mid, p.distributor_id AS did,
                 COUNT(DISTINCT p.id) AS bill_count,
