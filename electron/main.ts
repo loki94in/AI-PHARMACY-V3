@@ -145,6 +145,10 @@ function waitForBackend(timeoutMs = 90_000): Promise<void> {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     function probe() {
+      if (backendProcess && backendProcess.exitCode !== null) {
+        reject(new Error(`Backend exited prematurely with code ${backendProcess.exitCode}`));
+        return;
+      }
       http
         .get(HEALTH_URL, (res) => {
           res.resume(); // drain
@@ -157,6 +161,10 @@ function waitForBackend(timeoutMs = 90_000): Promise<void> {
         .on('error', () => retry());
     }
     function retry() {
+      if (backendProcess && backendProcess.exitCode !== null) {
+        reject(new Error(`Backend exited prematurely with code ${backendProcess.exitCode}`));
+        return;
+      }
       if (Date.now() - start > timeoutMs) {
         reject(new Error(`Backend did not start within ${timeoutMs}ms`));
         return;
@@ -429,7 +437,13 @@ app.whenReady().then(async () => {
     mainWindow?.loadURL(BACKEND_URL); // no window = it was closed on the splash and the app is quitting
   } catch (err) {
     console.error('[ElectronMain] Backend failed to start:', err);
-    app.quit();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const escapedErr = String(err).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const errHtml = 'data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><html><body style="background:#0f172a;color:#ef4444;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;padding:24px;box-sizing:border-box;"><div style="text-align:center;max-width:540px;"><h2 style="margin:0 0 8px;color:#f87171;font-size:20px;">AI Pharmacy OS — Startup Failure</h2><p style="color:#94a3b8;font-size:13px;margin:0 0 16px;">The backend process exited prematurely during initialization.</p><pre style="text-align:left;background:#1e293b;padding:12px;border-radius:6px;color:#fca5a5;font-size:12px;overflow:auto;max-height:160px;">${escapedErr}</pre><p style="color:#64748b;font-size:12px;margin:16px 0 0;">Please check data/backend.log for detailed failure reasons.</p></div></body></html>`);
+      mainWindow.loadURL(errHtml);
+    } else {
+      app.quit();
+    }
   }
 });
 

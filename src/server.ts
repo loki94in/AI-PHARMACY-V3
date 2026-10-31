@@ -1090,7 +1090,15 @@ server.on('error', (err: any) => {
           const { isLocalAiEnabled, ensureLlamaServerRunning } = await import('./services/localAi/llamaServerClient.js');
           if (isLocalAiEnabled()) {
             console.log('[Boot:LocalAI] Local AI enabled. Pre-warming llama-server on CPU...');
-            ensureLlamaServerRunning().catch((err: any) => console.warn('[Boot:LocalAI] Warm-up notice:', err?.message || err));
+            ensureLlamaServerRunning()
+              .then(async (started) => {
+                if (started) {
+                  const { qwenReadinessService } = await import('./services/localAi/qwenReadinessService.js');
+                  await qwenReadinessService.getStatus(true);
+                  console.log('[Boot:LocalAI] ✓ Qwen readiness refreshed and broadcasted to clients.');
+                }
+              })
+              .catch((err: any) => console.warn('[Boot:LocalAI] Warm-up notice:', err?.message || err));
           }
         } catch (_) {}
       }, 12_000);

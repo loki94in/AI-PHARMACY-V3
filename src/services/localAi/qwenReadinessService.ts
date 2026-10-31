@@ -60,7 +60,7 @@ export class QwenReadinessService {
    * Retrieves the current readiness status.
    * Uses cached status if fresh (<45s), otherwise triggers a single-flight probe.
    */
-  public async getStatus(forceRefresh = false): Promise<QwenDetailedStatus> {
+  public async getStatus(forceRefresh = false, forceInferenceProbe = false): Promise<QwenDetailedStatus> {
     const isStale =
       !this.lastCheckedAt ||
       Date.now() - this.lastCheckedAt.getTime() > this.CACHE_TTL_MS;
@@ -73,7 +73,7 @@ export class QwenReadinessService {
       return this.activeProbePromise;
     }
 
-    this.activeProbePromise = this.executeProbe()
+    this.activeProbePromise = this.executeProbe(forceInferenceProbe)
       .finally(() => {
         this.activeProbePromise = null;
       });
@@ -84,7 +84,7 @@ export class QwenReadinessService {
   /**
    * Executes a bounded 5-level health evaluation.
    */
-  private async executeProbe(): Promise<QwenDetailedStatus> {
+  private async executeProbe(forceInferenceProbe = false): Promise<QwenDetailedStatus> {
     const previousState = this.currentState;
     this.lastCheckedAt = new Date();
     this.lastErrorCode = null;
@@ -162,24 +162,37 @@ export class QwenReadinessService {
       return this.buildStatusPayload();
     }
 
-    // LEVEL 4: BOUNDED NON-DESTRUCTIVE INFERENCE PROBE
-    // Probe with a minimal 1-token test prompt bounded by a 6000ms timeout
-    const testResult = await queryLocalAiChat(
-      [{ role: 'user', content: 'test' }],
-      { maxTokens: 1, timeoutMs: 6000 }
-    );
+    // LEVEL 4: READY STATE CONFIRMATION
+    // When endpointStatus === 'ok', native llama-server is healthy and weights are loaded in memory.
+    // Routine probes use this zero-CPU health check to avoid starving the system.
+    // Full inference probe is only run if explicitly requested (forceInferenceProbe=true).
+    if (endpointStatus === 'ok') {
+      if (forceInferenceProbe) {
+        const testResult = await queryLocalAiChat(
+          [{ role: 'user', content: 'test' }],
+          { maxTokens: 1, timeoutMs: 6000 }
+        );
 
-    if (testResult.success) {
-      this.currentState = 'READY';
-      this.lastSuccessfulInferenceAt = new Date();
-      this.lastLatencyMs = testResult.latencyMs;
-      this.lastErrorMessage = null;
-      this.lastErrorCode = null;
-    } else {
-      this.currentState = 'DEGRADED';
-      this.lastErrorCode = 'INFERENCE_FAILED';
-      this.lastErrorMessage = `Server answered health check but inference failed or timed out (${testResult.latencyMs}ms).`;
-      this.lastLatencyMs = testResult.latencyMs;
+        if (testResult.success) {
+          this.currentState = 'READY';
+          this.lastSuccessfulInferenceAt = new Date();
+          this.lastLatencyMs = testResult.latencyMs;
+          this.lastErrorMessage = null;
+          this.lastErrorCode = null;
+        } else {
+          this.currentState = 'DEGRADED';
+          this.lastErrorCode = 'INFERENCE_FAILED';
+          this.lastErrorMessage = `Server answered health check but inference failed or timed out (${testResult.latencyMs}ms).`;
+          this.lastLatencyMs = testResult.latencyMs;
+        }
+      } else {
+        this.currentState = 'READY';
+        if (!this.lastSuccessfulInferenceAt) {
+          this.lastSuccessfulInferenceAt = new Date();
+        }
+        this.lastErrorMessage = null;
+        this.lastErrorCode = null;
+      }
     }
 
     this.notifyIfStateChanged(previousState);
@@ -191,10 +204,20 @@ export class QwenReadinessService {
    */
   public isReady(): boolean {
     if (this.currentState !== 'READY') return false;
-    if (!this.lastSuccessfulInferenceAt) return false;
-    // Stale protection: max 90s without successful verification
-    const ageMs = Date.now() - this.lastSuccessfulInferenceAt.getTime();
-    return ageMs < 90000;
+    if (!this.lastCheckedAt) return false;
+    // Stale protection: max 120s without health check verification
+    const ageMs = Date.now() - this.lastCheckedAt.getTime();
+    return ageMs < 120000;
+  }
+
+  /**
+   * Records a successful operational inference to update latency and freshness.
+   */
+  public recordSuccessfulInference(latencyMs?: number): void {
+    this.lastSuccessfulInferenceAt = new Date();
+    if (typeof latencyMs === 'number') {
+      this.lastLatencyMs = latencyMs;
+    }
   }
 
   /**

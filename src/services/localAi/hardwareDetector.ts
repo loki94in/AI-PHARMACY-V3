@@ -40,7 +40,7 @@ export function detectHardwareAccelerationProfile(): HardwareProfile {
       const output = execSync('wmic path win32_VideoController get name,adapterram', {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 3000
+        timeout: 1200
       });
 
       const lines = output.split('\n').map(l => l.trim()).filter(Boolean);
@@ -89,7 +89,10 @@ export function detectHardwareAccelerationProfile(): HardwareProfile {
   }
 
   // CPU threads allocation: leave at least 2 cores free for Windows & POS UI
-  const cpuThreads = Math.max(1, Math.min(4, os.cpus().length - 2));
+  // In CPU_SMART mode, strictly cap at 2 threads (or 1 on dual-core) to ensure zero mouse or UI freeze
+  const totalCores = os.cpus()?.length || 4;
+  const maxThreadsAllowed = hasDedicatedGpu ? 4 : Math.min(2, Math.max(1, totalCores - 2));
+  const cpuThreads = Math.max(1, maxThreadsAllowed);
 
   cachedProfile = {
     hasDedicatedGpu,

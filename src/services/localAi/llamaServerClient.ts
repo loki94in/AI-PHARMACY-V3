@@ -300,6 +300,17 @@ async function doStartLlamaServer(initialCfg: LlamaServerConfig, config?: Partia
       windowsHide: true
     });
 
+    if (process.platform === 'win32' && serverProcess.pid) {
+      try {
+        if (os.constants?.priority?.PRIORITY_BELOW_NORMAL) {
+          os.setPriority(serverProcess.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+          console.log(`[Local AI] llama-server (PID ${serverProcess.pid}) set to Below Normal priority diet.`);
+        }
+      } catch (pErr: any) {
+        console.warn('[Local AI] Could not set below-normal priority on llama-server:', pErr?.message || pErr);
+      }
+    }
+
     serverProcess.on('exit', (code) => {
       console.log(`[Local AI] llama-server exited with code ${code}`);
       serverProcess = null;
@@ -426,11 +437,14 @@ export async function queryLocalAiChat(
       }
     }
 
+    const latencyMs = Math.round(performance.now() - start);
+    import('./qwenReadinessService.js').then(m => m.qwenReadinessService.recordSuccessfulInference(latencyMs)).catch(() => {});
+
     return {
       content: rawContent,
       parsedJson,
       success: true,
-      latencyMs: Math.round(performance.now() - start)
+      latencyMs
     };
   } catch {
     return {

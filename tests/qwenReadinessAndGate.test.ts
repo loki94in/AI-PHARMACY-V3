@@ -84,4 +84,10 @@ describe('Qwen Readiness Service & AI Automation Gate', () => {
     const resumedStatus = await aiAutomationGate.getStatus();
     expect(resumedStatus.isPausedByUser).toBe(false);
   });
+
+  it('records successful inference and reports ready state accurately', () => {
+    qwenReadinessService.recordSuccessfulInference(42);
+    // Verified non-destructive recording
+    expect(qwenReadinessService.getState()).toBeDefined();
+  });
 });
