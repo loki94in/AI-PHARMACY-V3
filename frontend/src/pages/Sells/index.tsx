@@ -1,3 +1,4 @@
+import { matchUniversalTokens } from '../../utils/searchUtils';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Edit3, Trash2, X, User, FileText, Save, AlertTriangle, BookOpen, RefreshCw, ShieldAlert, Factory, Calendar, RotateCcw, Download, QrCode, Printer, PackageCheck, SlidersHorizontal } from 'lucide-react';
@@ -296,7 +297,8 @@ const Sells = () => {
       const compactClean = searchLower.replace(/[^a-z0-9]/g, '');
       const rawPhone = colFilterName.replace(/\D/g, '');
       const nameMatch = (inv.customer_name || 'Counter Sale').toLowerCase().includes(searchLower) ||
-        (compactClean.length > 1 && (inv.customer_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').includes(compactClean));
+        (compactClean.length > 1 && (inv.customer_name || '').toLowerCase().replace(/[^a-z0-9]/g, '').includes(compactClean)) ||
+        matchUniversalTokens([inv.customer_name], colFilterName);
       const phoneMatch = rawPhone.length > 0 && (inv.customer_phone || '').replace(/\D/g, '').includes(rawPhone);
       // When inv.items is not populated (list API doesn't include items by default),
       // trust the server's EXISTS subquery which already matched medicine names.

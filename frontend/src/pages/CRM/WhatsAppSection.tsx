@@ -1,3 +1,4 @@
+import { matchUniversalTokens } from '../../utils/searchUtils';
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import {

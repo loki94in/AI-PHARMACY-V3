@@ -187,6 +187,14 @@ export const SalutationNameInput: React.FC<SalutationNameInputProps> = ({
 
   const handleNameInput = (val: string) => {
     justSelectedRef.current = false;
+    // Auto-detect if user typed or pasted a salutation prefix directly into the name field
+    const match = val.match(/^(MR\.|MRS\.|MISS|MS\.|DR\.|SHRI|SMT\.)\s+(.*)$/i);
+    if (match) {
+      const parsed = parseSalutationAndName(val);
+      onSalutationChange(parsed.salutation, parsed.customSalutation);
+      onNameChange(parsed.name);
+      return;
+    }
     // Strictly force UPPERCASE for all customer/patient names
     onNameChange(val.toUpperCase());
   };

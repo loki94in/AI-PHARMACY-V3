@@ -1,3 +1,4 @@
+import { matchUniversalTokens } from '../../utils/searchUtils';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   MessageSquare,

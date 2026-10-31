@@ -14,6 +14,7 @@ import { toastEvent, refillEvent, messageSendEvent, whatsappQueueEvent, automati
 import { useModalEscape } from '../../services/keyboardShortcuts';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
+import { matchUniversalTokens } from '../../utils/searchUtils';
 import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
 import { DelayNoticeModal } from '../../components/DelayNoticeModal';
@@ -62,6 +63,38 @@ export const RefillsSection: React.FC = () => {
   const [showUnlinked, setShowUnlinked] = useState(false);
   const [loading, setLoading] = useState(cachedRefillsData.length === 0);
   const [search, setSearch] = useState('');
+  const prevSearchRef = useRef(search);
+  useEffect(() => {
+    const wasSearching = Boolean(prevSearchRef.current.trim());
+    const isNowEmpty = !search.trim();
+    prevSearchRef.current = search;
+
+    if (wasSearching && isNowEmpty) {
+      if (filtered.length > 0) {
+        const stillMatches = selectedPatient && filtered.some(p =>
+          p.customer_id && selectedPatient.customer_id
+            ? p.customer_id === selectedPatient.customer_id
+            : p.patient_phone === selectedPatient.patient_phone
+        );
+        if (!stillMatches) {
+          selectPatientAndLoadDetails(filtered[0]);
+        }
+      }
+    } else if (search.trim()) {
+      if (filtered.length > 0) {
+        const stillMatches = selectedPatient && filtered.some(p =>
+          p.customer_id && selectedPatient.customer_id
+            ? p.customer_id === selectedPatient.customer_id
+            : p.patient_phone === selectedPatient.patient_phone
+        );
+        if (!stillMatches) {
+          selectPatientAndLoadDetails(filtered[0]);
+        }
+      } else {
+        setSelectedPatient(null);
+      }
+    }
+  }, [search]);
   const [markingOrdered, setMarkingOrdered] = useState(false);
   const [markingReady, setMarkingReady] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -1230,43 +1263,45 @@ export const RefillsSection: React.FC = () => {
     } finally { setSubmitting(false); }
   };
 
-  // Filter calculation
+  // Filter calculation with universal token search & smart tab auto-expansion
+  const isSearching = search.trim().length >= 2;
   const filtered = data.filter(p => {
-    const q = search.toLowerCase().trim();
+    const q = search.trim();
     const matchesMedicine = p.medicines?.some(m =>
-      (m.medicine_name && m.medicine_name.toLowerCase().includes(q)) ||
-      (m.batch_no && m.batch_no.toLowerCase().includes(q))
+      matchUniversalTokens([m.medicine_name, m.batch_no], q)
     );
     const matchesSearch = !q ||
-      (p.patient_name?.toLowerCase().includes(q)) ||
-      (p.patient_phone?.includes(q)) ||
+      matchUniversalTokens([p.patient_name, p.patient_phone], q) ||
       Boolean(matchesMedicine);
     if (!matchesSearch) return false;
 
-    const today = new Date();
-    const dueDate = new Date(p.next_refill_date);
-    const isOverdue = dueDate < today;
-    const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
-    const isLeadWindow = !isOverdue && diffDays <= 6 && diffDays >= 0;
+    // When actively searching, search across all prescription tabs so non-overdue matches are never hidden
+    if (!isSearching) {
+      const today = new Date();
+      const dueDate = new Date(p.next_refill_date);
+      const isOverdue = dueDate < today;
+      const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
+      const isLeadWindow = !isOverdue && diffDays <= 6 && diffDays >= 0;
 
-    const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
-    const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
+      const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
+      const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
 
-    // Action tabs hide patients already fully handled (ordered + reminder sent, or fulfilled today); master tabs keep everyone
-    if (filterTab === 'overdue' && !showSettledOverdue && (isSettled || isFulfilledToday)) return false;
-    if (filterTab === 'lead' && (isSettled || isFulfilledToday)) return false;
-    if (filterTab === 'overdue') return isOverdue;
-    if (filterTab === 'lead') return isLeadWindow;
-    if (filterTab === 'active') {
-      return p.medicines.some(m => m.is_active !== 0 && m.status !== 'canceled');
+      // Action tabs hide patients already fully handled (ordered + reminder sent, or fulfilled today); master tabs keep everyone
+      if (filterTab === 'overdue' && !showSettledOverdue && (isSettled || isFulfilledToday)) return false;
+      if (filterTab === 'lead' && (isSettled || isFulfilledToday)) return false;
+      if (filterTab === 'overdue') return isOverdue;
+      if (filterTab === 'lead') return isLeadWindow;
+      if (filterTab === 'active') {
+        return p.medicines.some(m => m.is_active !== 0 && m.status !== 'canceled');
+      }
+      if (filterTab === 'paused') {
+        return p.medicines.some(m => m.is_active === 0 || m.status === 'paused');
+      }
+      if (filterTab === 'canceled') {
+        return p.medicines.some(m => m.status === 'canceled');
+      }
     }
-    if (filterTab === 'paused') {
-      return p.medicines.some(m => m.is_active === 0 || m.status === 'paused');
-    }
-    if (filterTab === 'canceled') {
-      return p.medicines.some(m => m.status === 'canceled');
-    }
-    return true; // 'all'
+    return true; // 'all' or when searching
   });
 
   // Top metric stats
@@ -1315,6 +1350,7 @@ export const RefillsSection: React.FC = () => {
   const handleFilterChange = (newTab: 'all' | 'overdue' | 'lead' | 'active' | 'paused' | 'canceled') => {
     const targetTab = filterTab === newTab && newTab !== 'all' ? 'all' : newTab;
     setFilterTab(targetTab);
+    if (search.trim()) setSearch('');
 
     const today = new Date();
     const matching = data.filter(p => {
@@ -1664,8 +1700,18 @@ export const RefillsSection: React.FC = () => {
                   const val = e.target.value;
                   setSearch(val.includes('|') ? val.split('|')[0].trim() : val);
                 }}
-                className="w-full pl-8 pr-2.5 py-1.5 bg-bg2 border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary"
+                className="w-full pl-8 pr-7 py-1.5 bg-bg2 border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary"
               />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-2 top-2 text-muted hover:text-text cursor-pointer p-0.5 rounded-full hover:bg-bg3"
+                  title="Clear search"
+                >
+                  <X size={12} />
+                </button>
+              )}
             </div>
             {unlinkedPatients.length > 0 && (
               <div className="relative shrink-0" ref={unlinkedDropdownRef}>
@@ -1740,7 +1786,20 @@ export const RefillsSection: React.FC = () => {
               </div>
             ) : filtered.length === 0 ? (
               <div className="p-8 text-center text-xs text-muted space-y-2">
-                <div>No refill patients found for this filter.</div>
+                {search.trim() ? (
+                  <div className="space-y-1.5">
+                    <div>No refill patients found matching &ldquo;{search}&rdquo;.</div>
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      className="px-2.5 py-1 rounded-lg bg-primary/10 border border-primary/20 text-primary text-[11px] font-bold hover:bg-primary/20 cursor-pointer"
+                    >
+                      Clear search
+                    </button>
+                  </div>
+                ) : (
+                  <div>No refill patients found for this filter.</div>
+                )}
                 {filterTab === 'overdue' && settledOverdueCount > 0 && !showSettledOverdue && (
                   <button
                     type="button"
@@ -1823,7 +1882,7 @@ export const RefillsSection: React.FC = () => {
                         </div>
                         {(() => {
                           const q = search.toLowerCase().trim();
-                          const matchedMed = q ? patient.medicines?.find(m => m.medicine_name?.toLowerCase().includes(q)) : null;
+                          const matchedMed = q ? patient.medicines?.find(m => matchUniversalTokens([m.medicine_name, m.batch_no], q)) : null;
                           return matchedMed ? (
                             <div className="text-[10px] text-primary flex items-center gap-1 mt-0.5 truncate font-medium">
                               <span>💊 {matchedMed.medicine_name}</span>

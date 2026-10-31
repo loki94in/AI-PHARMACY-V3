@@ -18,6 +18,7 @@ import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
 import { getTodayString, getNDaysAgoString, toDateInputValue } from '../../utils/date';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
+import { matchUniversalTokens } from '../../utils/searchUtils';
 import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName } from '../../components/SalutationNameInput';
 import { SpecialOrderArrivalModal } from '../../components/SpecialOrderArrivalModal';
 import { DelayNoticeModal } from '../../components/DelayNoticeModal';
@@ -751,25 +752,24 @@ export const SpecialOrdersSection: React.FC = () => {
   const isSearching = searchQuery.trim().length >= 2;
 
   const filteredOrders = orders.filter(o => {
-    const q = searchQuery.toLowerCase().trim();
-    const matchesSearch = !q || 
-      (o.product && o.product.toLowerCase().includes(q)) ||
-      (o.requester && o.requester.toLowerCase().includes(q)) ||
-      (o.phone && o.phone.includes(q)) ||
-      (o.pharmarack_distributor && o.pharmarack_distributor.toLowerCase().includes(q));
+    const q = searchQuery.trim();
+    const matchesSearch = !q ||
+      matchUniversalTokens([o.product, o.requester, o.phone, o.pharmarack_distributor], q);
     
     if (!matchesSearch) return false;
 
-    let matchesStatus = true;
-    if (statusFilter === 'Inquiries') matchesStatus = o.status === 'Inquiry';
-    else if (statusFilter === 'Pending') matchesStatus = o.status === 'Pending';
-    else if (statusFilter === 'Ordered') matchesStatus = o.status === 'Ordered';
-    else if (statusFilter === 'Waiting') matchesStatus = o.status === 'Waiting';
-    else if (statusFilter === 'Arrived') matchesStatus = o.status === 'Ready' || o.status === 'Arrived';
-    else if (statusFilter === 'Not Arrived') matchesStatus = o.status !== 'Ready' && o.status !== 'Arrived' && o.status !== 'Fulfilled' && o.status !== 'Cancelled' && o.status !== 'Inquiry';
-    else if (statusFilter === 'Cancelled') matchesStatus = o.status === 'Cancelled';
-
-    if (!matchesStatus) return false;
+    // When actively searching, search across all statuses so matches are never hidden
+    if (!isSearching) {
+      let matchesStatus = true;
+      if (statusFilter === 'Inquiries') matchesStatus = o.status === 'Inquiry';
+      else if (statusFilter === 'Pending') matchesStatus = o.status === 'Pending';
+      else if (statusFilter === 'Ordered') matchesStatus = o.status === 'Ordered';
+      else if (statusFilter === 'Waiting') matchesStatus = o.status === 'Waiting';
+      else if (statusFilter === 'Arrived') matchesStatus = o.status === 'Ready' || o.status === 'Arrived';
+      else if (statusFilter === 'Not Arrived') matchesStatus = o.status !== 'Ready' && o.status !== 'Arrived' && o.status !== 'Fulfilled' && o.status !== 'Cancelled' && o.status !== 'Inquiry';
+      else if (statusFilter === 'Cancelled') matchesStatus = o.status === 'Cancelled';
+      if (!matchesStatus) return false;
+    }
 
     let matchesDate = true;
     // Smart range expansion: search term auto-expands across all database history unless manual date is pinned
@@ -1256,14 +1256,24 @@ export const SpecialOrdersSection: React.FC = () => {
                 const val = e.target.value;
                 setSearchQuery(val.includes('|') ? val.split('|')[0].trim() : val);
               }}
-              className="w-full pl-9 pr-3 py-1.5 bg-bg border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary font-medium"
+              className="w-full pl-9 pr-8 py-1.5 bg-bg border border-border rounded-xl text-xs text-text focus:outline-none focus:border-primary font-medium"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-text cursor-pointer p-0.5 rounded-full hover:bg-bg3"
+                title="Clear search"
+              >
+                <X size={12} />
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-1 bg-bg3/60 p-1 rounded-xl border border-border">
             {['All', 'Inquiries', 'Pending', 'Ordered', 'Waiting', 'Arrived', 'Not Arrived', 'Cancelled'].map(st => (
               <button
                 key={st}
-                onClick={() => setStatusFilter(st)}
+                onClick={() => { setStatusFilter(st); if (searchQuery.trim()) setSearchQuery(''); }}
                 className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
                   statusFilter === st ? 'bg-primary text-white shadow-sm' : 'text-muted hover:text-text'
                 }`}

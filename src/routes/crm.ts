@@ -73,6 +73,14 @@ router.get('/patients', async (req, res) => {
     let query = 'SELECT * FROM customers';
     const params = [];
     
+    const rawQ = String(q || '').trim();
+    const cleanedQ = rawQ.replace(/[^\w\s]/g, ' ');
+    const rawTokens = cleanedQ.split(/\s+/).filter(Boolean);
+    const nonSalutationTokens = rawTokens.length > 1
+      ? rawTokens.filter(t => !/^(mr|mrs|ms|miss|dr|shri|smt)$/i.test(t))
+      : rawTokens;
+    const coreTerm = nonSalutationTokens.join(' ').trim();
+
     if (isPosMode) {
       query = `
         SELECT c.* FROM customers c
@@ -81,18 +89,28 @@ router.get('/patients', async (req, res) => {
           OR EXISTS (SELECT 1 FROM patient_refills pr WHERE pr.customer_id = c.id AND pr.is_active = 1)
         )
       `;
-      if (q) {
-        query += ' AND (c.name LIKE ? OR c.phone LIKE ?)';
-        params.push(`%${q}%`, `%${q}%`);
+      if (rawQ) {
+        if (coreTerm && coreTerm !== rawQ) {
+          query += ' AND (c.name LIKE ? OR c.name LIKE ? OR c.phone LIKE ?)';
+          params.push('%' + rawQ + '%', '%' + coreTerm + '%', '%' + rawQ + '%');
+        } else {
+          query += ' AND (c.name LIKE ? OR c.phone LIKE ?)';
+          params.push('%' + rawQ + '%', '%' + rawQ + '%');
+        }
       }
       query += ' ORDER BY c.id DESC';
     } else {
-      if (q) {
-        query += ' WHERE name LIKE ? OR phone LIKE ?';
-        params.push(`%${q}%`, `%${q}%`);
-        const qStr = String(q).trim();
-        query += ' ORDER BY CASE WHEN phone = ? THEN 0 WHEN phone LIKE ? THEN 1 WHEN name LIKE ? THEN 2 ELSE 3 END, id DESC';
-        params.push(qStr, `${qStr}%`, `${qStr}%`);
+      if (rawQ) {
+        if (coreTerm && coreTerm !== rawQ) {
+          query += ' WHERE (name LIKE ? OR name LIKE ? OR phone LIKE ?)';
+          params.push('%' + rawQ + '%', '%' + coreTerm + '%', '%' + rawQ + '%');
+        } else {
+          query += ' WHERE (name LIKE ? OR phone LIKE ?)';
+          params.push('%' + rawQ + '%', '%' + rawQ + '%');
+        }
+        const matchTerm = coreTerm || rawQ;
+        query += ' ORDER BY CASE WHEN phone = ? THEN 0 WHEN phone LIKE ? THEN 1 WHEN name LIKE ? THEN 2 WHEN name LIKE ? THEN 3 ELSE 4 END, id DESC';
+        params.push(matchTerm, matchTerm + '%', matchTerm + '%', '%' + matchTerm + '%');
       } else {
         query += ' ORDER BY id DESC';
       }
@@ -172,7 +190,7 @@ router.get('/patients', async (req, res) => {
         const allCustomers = await db.all(candidateQuery);
         const candidateNames = allCustomers.map((c: any) => c.name);
         const { findSimilarNames } = await import('../services/similarityService.js');
-        const similarNames = findSimilarNames(q as string, candidateNames, 4, 0.25);
+        const similarNames = findSimilarNames((coreTerm || q) as string, candidateNames, 4, 0.25);
         const suggestions = allCustomers.filter((c: any) => similarNames.includes(c.name));
         return res.json({ data: [], suggestions, isSuggestion: true });
       } catch (sugErr) {
