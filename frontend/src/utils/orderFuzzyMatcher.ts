@@ -134,44 +134,22 @@ export function evaluateOrderCartMatch(
     }
   }
 
-  // Weight title score out of 75 points
-  let score = titleScore * 75;
+  // Weight title score out of 85 points (pure medicine name matching without volatile rate/MRP checks)
+  let score = titleScore * 85;
 
-  // 2. Price / Rate Proximity (+15 pts max)
-  const orderRate = order.pharmarack_rate ? Number(order.pharmarack_rate) : 0;
-  const itemRate = Number(cartItem.rate || cartItem.ptr || cartItem.PTR || 0);
-
-  if (orderRate > 0 && itemRate > 0) {
-    const diffRatio = Math.abs(orderRate - itemRate) / Math.max(orderRate, itemRate);
-    if (diffRatio <= 0.03) {
-      score += 15;
-      matchReasons.push(`Exact PTR match (₹${itemRate.toFixed(2)})`);
-    } else if (diffRatio <= 0.08) {
-      score += 10;
-      matchReasons.push(`Similar PTR (₹${itemRate.toFixed(2)})`);
-    }
-  }
-
-  // 3. Distributor Name Match (+10 pts max)
+  // 2. Distributor Name Match (+15 pts max)
   const orderDist = normalizeStr(order.pharmarack_distributor);
   const cartDist = normalizeStr(cartItem.distributor || cartItem.storeName);
 
   if (orderDist && cartDist) {
     if (orderDist === cartDist || cartDist.includes(orderDist) || orderDist.includes(cartDist)) {
-      score += 10;
+      score += 15;
       matchReasons.push(`Distributor match (${cartItem.distributor || cartItem.storeName})`);
     }
   }
 
-  // 4. MRP Match (+5 pts max)
-  const orderMrp = order.pharmarack_mrp ? Number(order.pharmarack_mrp) : 0;
-  const itemMrp = Number(cartItem.mrp || cartItem.MRP || 0);
-
-  if (orderMrp > 0 && itemMrp > 0 && Math.abs(orderMrp - itemMrp) <= 1.0) {
-    score += 5;
-    matchReasons.push(`MRP match (₹${itemMrp.toFixed(2)})`);
-  }
-
+  // NOTE: Rate / PTR and MRP matching are explicitly excluded because market prices are volatile.
+  // Reordering matches strictly on Medicine Name and Distributor availability.
   const finalScore = Math.min(100, Math.round(score));
   const isMatch = finalScore >= 75;
 

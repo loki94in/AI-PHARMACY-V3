@@ -496,11 +496,26 @@ export async function processRefillCartItem(
 
   const linkedState = links.map(l => {
     const item = findItem(l);
+    // When medicine is linked, use live stock if returned; if not in search results, use the saved link directly.
+    const isAdequate = item ? checkStockAdequate(item.stock) : true;
+    const resolvedItem = item || {
+      storeId: Number(l.store_id),
+      productCode: String(l.product_code),
+      productId: l.product_id ?? null,
+      name: String(l.product_name || medicineName),
+      distributor: String(l.store_name),
+      company: l.company || '',
+      packaging: l.packaging || '',
+      mapped: l.mapped !== 0,
+      stock: 'Available',
+      rate: l.rate,
+      mrp: l.mrp
+    };
     return {
       link: l,
-      item,
-      inStock: !!item && checkStockAdequate(item.stock),
-      rawInStock: !!item && pr.isItemInStock(item.stock)
+      item: resolvedItem,
+      inStock: isAdequate,
+      rawInStock: item ? pr.isItemInStock(item.stock) : true
     };
   });
   const linked = linkedState.map(s => ({

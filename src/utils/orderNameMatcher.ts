@@ -123,22 +123,17 @@ export function scoreOrderNameMatch(
     }
   }
 
-  let score = titleScore * 75;
+  let score = titleScore * 85;
 
-  // Distributor match (+10)
+  // Distributor match (+15 max)
   const distA = normalizeStr(ctx.incomingDistributor);
   const distB = normalizeStr(ctx.orderDistributor);
   if (distA && distB && (distA === distB || distB.includes(distA) || distA.includes(distB))) {
-    score += 10;
+    score += 15;
   }
 
-  // MRP proximity (+5 within Rs 1)
-  const mrpA = Number(ctx.incomingMrp) || 0;
-  const mrpB = Number(ctx.orderMrp) || 0;
-  if (mrpA > 0 && mrpB > 0 && Math.abs(mrpA - mrpB) <= 1.0) {
-    score += 5;
-  }
-
+  // NOTE: Rate / PTR and MRP matching are explicitly excluded because market prices are volatile.
+  // Matching relies strictly on Medicine Name and Distributor without price gating.
   const finalScore = Math.min(100, Math.round(score));
   return {
     score: finalScore,
