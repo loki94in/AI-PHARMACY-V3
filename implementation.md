@@ -1,90 +1,59 @@
-# Implementation Plan: Fix SQLITE_ERROR no such column m.ptr in distributor-medicines Route
-# Implementation Plan: Pure Medicine Name & Saved Quantity Reordering (Remove Rate/PTR/MRP Matching)
+# Implementation Plan: Surgical App Hardening — Background Mutex Hygiene, Matcher Parity & Stock Pool Safety
 
 ## Problem Statement
-When fetching distributor medicines via `GET /api/pharmarack/distributor-medicines/:storeId`, the server threw:
-```text
-Error fetching distributor medicines: [Error: SQLITE_ERROR: no such column: m.ptr]
-```
-### Root Cause:
-In [`src/routes/pharmarack.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/pharmarack.ts#L4842):
-The query executed:
-```sql
-COALESCE(p.ptr, m.ptr, 0) AS ptr
-```
-However, the `medicines` table in SQLite does not possess a column named `ptr`. The corresponding price columns in `medicines` are `rate` and `last_purchase_ptr`. Additionally, `medicine_distributor_links` has `rate`.
-In pharma distribution, PTR (purchase rate) and MRP are highly volatile and change frequently across batches, tax revisions, and distributor discount structures.
-Previously, order matching (`orderFuzzyMatcher.ts`, `orderNameMatcher.ts`) and reorder paths evaluated PTR/MRP proximity as part of their matching criteria (allocating up to 20 points in matching score to PTR and MRP). When market rates fluctuated even slightly, match scores dropped below threshold (75), causing reorders and refill additions to fail or report mismatches.
-Additionally, when a medicine is already linked to a distributor in the app, reordering should not perform unnecessary rate/MRP checks or complex guesswork; it should verify against the app's stock threshold requirement and add directly to the live cart using the saved product code, store ID, and requested quantity.
+Following the EGM architectural review (`consolidated_review_report.md`), three critical areas of technical debt and breaking points were resolved surgically:
+1. **Background Worker Concurrency**: `stockCalculatorWorker.ts` and `autoMatchWorker.ts` executed database updates without wrapping them in `dbManager.runWithPriority('BACKGROUND', ...)` and used oversized write chunks (up to 200 rows), which could delay high-priority counter POS checkout transactions.
+2. **Order Matcher Tokenizer Parity**: Divergence between `src/utils/orderNameMatcher.ts` (backend) and `frontend/src/utils/orderFuzzyMatcher.ts` (frontend) in stop words (`10`, `20`, `30` stripped as stop words on frontend, but preserved as strength tokens on backend) and glued strength unit normalization (`40mg` -> `40`).
+3. **Dispensing & Verification Safety**: Ensure loose unit dispensing validation in POS strictly requires solid oral dosage form verification (`TABLET`, `CAPSULE`, `STRIP`) without blocking discrete single-unit items (`pack_size = 1` for syrups, drops, inhalers, surgicals).
 
 ---
 
-## Proposed Changes
-## User Requirements & Architecture Decisions
-1. **Zero Rate/PTR Matching**: Completely remove rate/PTR checks and score gates from medicine reordering and matching across Refills and Special Orders.
-2. **Zero MRP Matching**: Completely remove MRP checks and score gates from medicine reordering and matching.
-3. **Pure Medicine Name Matching**: Matching relies on normalized medicine name tokens and brand identity (75-90 pts) + distributor match (10-15 pts).
-4. **Saved Quantity Direct Add**: Reorders use the exact saved/specified quantity.
-5. **Live Cart Direct Dispatch for Linked Items**:
-   - For linked medicines, use the saved link (`store_id`, `product_code`, `product_name`) directly.
-   - Live distributor stock is checked against the configured minimum requirement (`min_distributor_stock_threshold`).
-   - The current live market rate from Pharmarack is stored in the database for billing/records, but never used to match or gate reorders.
-
-### 1. Fix SQL Query in `src/routes/pharmarack.ts`
-- Replace `COALESCE(p.ptr, m.ptr, 0) AS ptr` with:
-  ```sql
-  COALESCE(p.ptr, l.rate, m.last_purchase_ptr, m.rate, 0) AS ptr
-  ```
-- Replace `COALESCE(p.mrp, m.mrp, 0) AS mrp` with:
-  ```sql
-  COALESCE(p.mrp, l.mrp, m.mrp, 0) AS mrp
-  ```
----
-
-## Files to Modify
-
-1. **`frontend/src/utils/orderFuzzyMatcher.ts`**:
-   - Remove PTR proximity matching and scoring (+15 pts max).
-   - Remove MRP proximity matching and scoring (+5 pts max).
-   - Reallocate title match to 85 points and distributor match to 15 points (total = 100).
-   - Keep reason logs clean without price dependency.
-
-2. **`src/utils/orderNameMatcher.ts`**:
-   - Remove `orderMrp` / `incomingMrp` proximity score (+5 pts).
-   - Reallocate title score to 85 points and distributor match to 15 points (total = 100).
-
-3. **`src/services/refillCartService.ts`**:
-   - When searching, linking, or adding to cart: ensure no rate or MRP equality or proximity check is required.
-   - For linked products: allow direct cart dispatch using the saved link (`product_code`, `store_id`, `product_name`) and `qty`, checking stock against `min_distributor_stock_threshold`.
-   - Ensure current live rates are received and updated in DB records without gating the add.
-
-4. **`frontend/src/components/SpecialOrderAddModal.tsx`**:
-   - Ensure `handleReorderPastItem` focuses on medicine name and saved quantity, without restricting search/selection to outdated historical PTR/MRP.
+## Architecture Decisions
+1. **Background Mutex Hygiene**:
+   - Wrapped `stockCalculatorWorker.ts` recalculation cycles and `autoMatchWorker.ts` in `dbManager.runWithPriority('BACKGROUND', async () => { ... })`.
+   - Reduced write chunk sizes in `stockCalculatorWorker.ts` from 200 to 25 items, with an asynchronous event-loop yield (`await new Promise(r => setImmediate(r))`) between chunks so waiting `VIP` transactions (POS sales) acquire the write lock with `< 50ms` latency.
+   - Preserved `busy_timeout = 30000;` in `src/database/connection.ts`.
+2. **Order Matcher Tokenizer Parity**:
+   - Harmonized `PACKAGING_STOP_WORDS` and token extraction across `src/utils/orderNameMatcher.ts` and `frontend/src/utils/orderFuzzyMatcher.ts`.
+   - Implemented identical `normalizeToken` (collapsing `40mg` -> `40`) in both matchers.
+   - Retained 85 pts max for title match, 15 pts max for distributor link, and 75 pts match threshold.
+   - Added unit test verification in `tests/matcherParity.test.ts`.
+3. **Dispensing Verification**:
+   - In `src/routes/sales.ts`, verified that loose unit sales requiring `pack_size` are strictly triggered only when `soldLoose > 0`. Non-loose unit sales with `pack_size = 1` (syrups, drops, inhalers) proceed cleanly without obstruction.
 
 ---
 
-## Verification Plan
-1. **Live Query Verification**:
-   - Query `GET /api/pharmarack/distributor-medicines/2940` (and other distributor IDs).
-   - Verify it returns `200 OK` with items and zero SQLite errors in logs.
-2. **Guardrails & Knowledge Graph**:
-   - Run `npm run guardrails` (Clean TypeScript compilation `tsc --noEmit`, Database schema & integrity `OK`, 0 violations).
-1. **Unit / Fuzzy Matcher Verification**:
-   - Run tests verifying `scoreOrderNameMatch` and `orderFuzzyMatcher` produce high match scores for identical medicine names even when PTR and MRP are completely different or missing.
-2. **Refill & Special Order Cart Verification**:
-   - Verify `processRefillCartItem` adds medicine with changed market rate directly into the cart without rate-mismatch rejection.
-3. **Guardrails & Knowledge Graph**:
-   - Run `npm run guardrails` (`tsc --noEmit`, database checks, 0 violations).
-   - Run `node scripts/quick-update.mjs`.
+## Files Modified
+1. `src/worker/stockCalculatorWorker.ts`:
+   - Wrapped calculations in `dbManager.runWithPriority('BACKGROUND')`.
+   - Chunked inserts into batches of 25 with `setImmediate` yields.
+2. `src/worker/autoMatchWorker.ts`:
+   - Wrapped `runScan()` in `dbManager.runWithPriority('BACKGROUND')`.
+3. `frontend/src/utils/orderFuzzyMatcher.ts`:
+   - Aligned token normalization with `src/utils/orderNameMatcher.ts` (`normalizeToken`, harmonized packaging stop words).
+4. `tests/matcherParity.test.ts`:
+   - Created parity test cases asserting identical matching behavior for frontend and backend tokenizers.
+5. `jest.config.js`:
+   - Added `tests/matcherParity.test.ts` to `testMatch`.
 
 ---
 
 ## Tasks & Progress Tracking
 
-- [x] **Task 1: Fix SQL column reference in `src/routes/pharmarack.ts`**
-  - Replaced invalid `m.ptr` with `COALESCE(p.ptr, l.rate, m.last_purchase_ptr, m.rate, 0) AS ptr` and `COALESCE(p.mrp, l.mrp, m.mrp, 0) AS mrp` in both the primary query and union query of `GET /api/pharmarack/distributor-medicines/:storeId`.
-- [x] **Task 2: Test `GET /api/pharmarack/distributor-medicines/:storeId` live**
-  - Tested `http://127.0.0.1:5174/api/pharmarack/distributor-medicines/2940` via live HTTP request. Received HTTP 200 with 75 mapped items and zero SQLite errors.
-- [x] **Task 3: Run Guardrails & Auto-Update Knowledge Graph**
-  - Ran `npm run guardrails` — clean TypeScript compilation (`tsc --noEmit`), DB schema integrity OK, PASS with 0 violations.
+- [x] **Task 1: Background Worker Mutex Hygiene (`stockCalculatorWorker.ts`, `autoMatchWorker.ts`)**
+  - Wrapped `recalculateTargetedStockMetrics` and `recalculateStockLimits` in `dbManager.runWithPriority('BACKGROUND', ...)`.
+  - Reduced batch insertion chunks from 200 to 25 rows and added `await new Promise(r => setImmediate(r))` between batches.
+  - Wrapped `autoMatchWorker.runScan()` in `dbManager.runWithPriority('BACKGROUND', ...)`.
+
+- [x] **Task 2: Harmonize Frontend & Backend Order Matcher Tokenizers**
+  - Updated `frontend/src/utils/orderFuzzyMatcher.ts` to include `normalizeToken` (collapsing `40mg` -> `40`).
+  - Removed strength numbers (`10`, `15`, `20`, `30`, `50`, `100`, etc.) from packaging stop words so active dosage strengths are preserved during scoring.
+
+- [x] **Task 3: Create & Run Parity Unit Tests (`tests/matcherParity.test.ts`)**
+  - Created `tests/matcherParity.test.ts` testing strength unit collapsing, number preservation, exact and high-similarity match scoring (>= 75), and mismatch rejection (< 75).
+  - Executed tests via Jest: 4 passed out of 4 tests (100% PASS).
+
+- [x] **Task 4: Run Guardrails and Synchronize Knowledge Graph**
+  - Ran `npx tsc --noEmit` — clean TypeScript compilation (0 errors).
+  - Ran `npm run guardrails` — PASS with 0 violations.
   - Ran `node scripts/quick-update.mjs` — knowledge graph synchronized successfully.

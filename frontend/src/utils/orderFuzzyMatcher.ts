@@ -45,17 +45,26 @@ function normalizeStr(str: string | undefined | null): string {
     .trim();
 }
 
-const PACKAGING_STOP_WORDS = new Set([
+export const PACKAGING_STOP_WORDS = new Set([
   'strip', 'strips', 'of', 'tab', 'tabs', 'tablet', 'tablets', 'cap', 'caps', 'capsule', 'capsules',
   'syp', 'syrup', 'susp', 'suspension', 'inj', 'injection', 'oint', 'ointment', 'crm', 'cream', 'gel',
   'drop', 'drops', 'sol', 'solution', 'lot', 'lotion', 'respule', 'respules', 'sachet', 'sachets',
   'soap', 'wash', 'shampoo', 'spray', 'powder', 'drg', 'oil', 'emulsion', 'pc', 'pcs', 'pack', 'pck',
   'box', 'btl', 'bottle', 'vial', 'amp', 'ampoule', 'gm', 'mg', 'ml', 'mcg', 'iu', 'kg', 'ltr',
-  '10s', '15s', '20s', '30s', '5s', '1s', '6s', '10', '15', '20', '30', '50', '100', '200', '500'
+  '10s', '15s', '20s', '30s', '5s', '1s', '6s'
 ]);
 
-function getCoreMedicineTokens(str: string): Set<string> {
-  const words = normalizeStr(str).split(' ').filter(w => w.length > 0 && !PACKAGING_STOP_WORDS.has(w));
+// Collapse glued strength units onto their number so "40mg" == "40" during token matching
+export function normalizeToken(w: string): string {
+  return w.replace(/^(\d+)(mg|mcg|ml|gm|g|iu)$/, '$1');
+}
+
+export function getCoreMedicineTokens(str: string): Set<string> {
+  const words = normalizeStr(str)
+    .split(' ')
+    .filter(w => w.length > 0)
+    .map(normalizeToken)
+    .filter(w => w.length > 0 && !PACKAGING_STOP_WORDS.has(w) && !/^\d+(s|tab|tabs|cap|caps|strip|strips)$/.test(w));
   return new Set(words.length > 0 ? words : normalizeStr(str).split(' ').filter(w => w.length > 0));
 }
 

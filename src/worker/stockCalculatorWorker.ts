@@ -56,7 +56,8 @@ export async function recalculateTargetedStockMetrics(affectedMedicineIds?: numb
   }
 
   activeStockRecalcPromise = (async () => {
-    const db = await dbManager.getConnection();
+    return await dbManager.runWithPriority('BACKGROUND', async () => {
+      const db = await dbManager.getConnection();
     try {
       let medicineIdsToUpdate: number[] = [];
       const isTargeted = affectedMedicineIds && affectedMedicineIds.length > 0 && affectedMedicineIds.length <= 100;
@@ -290,7 +291,7 @@ export async function recalculateTargetedStockMetrics(affectedMedicineIds?: numb
         }
 
         // Write in chunks of 200 to stay well within SQLite parameter limits
-        const chunkSize = 200;
+        const chunkSize = 25;
         for (let i = 0; i < insertBatch.length; i += chunkSize) {
           const chunk = insertBatch.slice(i, i + chunkSize);
           const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').join(', ');
@@ -335,6 +336,7 @@ export async function recalculateTargetedStockMetrics(affectedMedicineIds?: numb
     } finally {
       activeStockRecalcPromise = null;
     }
+    });
   })();
 
   return activeStockRecalcPromise;
@@ -346,7 +348,8 @@ export async function recalculateStockLimits(): Promise<void> {
   }
 
   activeStockLimitsPromise = (async () => {
-    const db = await dbManager.getConnection();
+    return await dbManager.runWithPriority('BACKGROUND', async () => {
+      const db = await dbManager.getConnection();
     try {
       try {
         const { deactivateExpiredInventory } = await import('../utils/inventoryActive.js');
@@ -432,7 +435,7 @@ export async function recalculateStockLimits(): Promise<void> {
       }
 
       // Batch insert into stock_config in chunks of 200
-      const chunkSize = 200;
+      const chunkSize = 25;
       for (let i = 0; i < configItems.length; i += chunkSize) {
         const chunk = configItems.slice(i, i + chunkSize);
         const placeholders = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)').join(', ');
@@ -464,6 +467,7 @@ export async function recalculateStockLimits(): Promise<void> {
     } finally {
       activeStockLimitsPromise = null;
     }
+    });
   })();
 
   return activeStockLimitsPromise;
