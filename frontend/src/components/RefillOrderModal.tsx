@@ -33,8 +33,8 @@ export interface RefillOrderModalProps {
   onConfirm?: (items: RefillCartItemInput[]) => void | Promise<void>;
   onClose: () => void;
   onMedicineLinked?: (medicineId: number, linked: string[]) => void;
-  onMarkReady?: () => Promise<void> | void;
-  onPostAndComplete?: () => Promise<void> | void;
+  onMarkReady?: (selectedIds?: number[]) => Promise<void> | void;
+  onPostAndComplete?: (selectedIds?: number[]) => Promise<void> | void;
 }
 
 interface ItemState {
@@ -66,6 +66,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
 
   // Status & Feedback States
   const [isUpdatingCart, setIsUpdatingCart] = useState(false);
+  const [cartProgress, setCartProgress] = useState<{ current: number; total: number; medicineName: string } | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [cartError, setCartError] = useState<string | null>(null);
   const [isCartUpdated, setIsCartUpdated] = useState(false);
@@ -177,6 +178,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     setValidationError(null);
     setCartError(null);
     setIsUpdatingCart(true);
+    setCartProgress({ current: 0, total: selectedList.length, medicineName: selectedList[0]?.medicine_name || '' });
 
     const payload: RefillCartItemInput[] = selectedList.map(m => ({
       refillId: m.id,
@@ -191,19 +193,39 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     }));
 
     try {
-      // Execute live cart addition for each selected medicine
-      const updatePromises = selectedList.map(item => {
-        const qty = itemStates[item.id]?.orderQty || 1;
-        return api.addRefillToCart(item.id, { qty }).then(res => ({ item, res }));
-      });
+      // Execute live cart addition sequentially to prevent session locks and timeouts
+      const results: Array<{ item: RefillMedicineItem; res: any }> = [];
 
-      const results = await Promise.all(updatePromises);
-      const anySuccess = results.some(r => r.res.status === 'added' || r.res.status === 'in_cart');
-      const failures = results.filter(r => r.res.status === 'failed' || r.res.status === 'not_found');
+      for (let i = 0; i < selectedList.length; i++) {
+        const item = selectedList[i];
+        const qty = itemStates[item.id]?.orderQty || 1;
+        setCartProgress({ current: i + 1, total: selectedList.length, medicineName: item.medicine_name });
+
+        try {
+          const res = await api.addRefillToCart(item.id, { qty });
+          results.push({ item, res });
+        } catch (itemErr: any) {
+          console.warn(`[RefillOrderModal] Add to cart failed for "${item.medicine_name}":`, itemErr);
+          const errMsg = itemErr?.response?.data?.error || itemErr?.message || 'Failed to add item to live cart';
+          results.push({
+            item,
+            res: {
+              status: 'failed',
+              message: errMsg,
+              refillId: item.id,
+              medicineName: item.medicine_name,
+              qty
+            }
+          });
+        }
+      }
+
+      const anySuccess = results.some(r => r.res?.status === 'added' || r.res?.status === 'in_cart');
+      const failures = results.filter(r => r.res?.status === 'failed' || r.res?.status === 'not_found' || r.res?.status === 'needs_link' || r.res?.status === 'linked_oos');
 
       if (!anySuccess && failures.length > 0) {
         // Node Q: Show failure; preserve existing cart and retain user edits
-        setCartError(failures[0]?.res.message || 'Failed to update live cart. Existing cart was preserved.');
+        setCartError(failures[0]?.res?.message || 'Failed to update live cart. Existing cart was preserved.');
         setIsUpdatingCart(false);
         return;
       }
@@ -218,12 +240,12 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
       // Node R: Refresh popup and cart status
       setLocalMeds(prev => prev.map(m => {
         const match = results.find(r => r.item.id === m.id);
-        if (match && (match.res.status === 'added' || match.res.status === 'in_cart')) {
+        if (match && (match.res?.status === 'added' || match.res?.status === 'in_cart')) {
           return {
             ...m,
             in_live_cart: true,
             cart_qty: itemStates[m.id]?.orderQty || m.cart_qty || 1,
-            cart_store_name: match.res.line?.storeName || m.cart_store_name || 'Live Cart'
+            cart_store_name: match.res?.line?.storeName || m.cart_store_name || 'Live Cart'
           };
         }
         return m;
@@ -233,7 +255,17 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
       refillEvent.triggerRefresh();
       queryClient.invalidateQueries({ queryKey: ['refills'] });
       queryClient.invalidateQueries({ queryKey: ['pharmarack-cart'] });
-      toastEvent.trigger(`Live cart updated with ${selectedList.length} refill item(s)!`, 'success', '/pharmarack-cart');
+
+      const successes = results.filter(r => r.res?.status === 'added' || r.res?.status === 'in_cart');
+      if (failures.length > 0) {
+        toastEvent.trigger(
+          `Added ${successes.length} item(s) to live cart. ${failures.length} item(s) need attention (${failures[0].res?.message || 'check links'}).`,
+          'info',
+          '/pharmarack-cart'
+        );
+      } else {
+        toastEvent.trigger(`Live cart updated with ${selectedList.length} refill item(s)!`, 'success', '/pharmarack-cart');
+      }
     } catch (err: unknown) {
       // Node Q: Show failure; preserve existing cart
       console.error('Failed to update live cart for refills:', err);
@@ -241,6 +273,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
       setCartError(apiErr.response?.data?.error || apiErr.message || 'Failed to update live cart. Existing cart was preserved.');
     } finally {
       setIsUpdatingCart(false);
+      setCartProgress(null);
     }
   };
 
@@ -248,10 +281,13 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   const handleRunMarkReady = async () => {
     setIsMarkingReady(true);
     try {
+      const selectedIds = selectedList.map(m => m.id);
       if (onMarkReady) {
-        await onMarkReady();
+        await onMarkReady(selectedIds);
       } else if (patientPhone) {
-        const res = await apiClient.post(`/refills/patient/${encodeURIComponent(patientPhone)}/mark-ready`);
+        const res = await apiClient.post(`/refills/patient/${encodeURIComponent(patientPhone)}/mark-ready`, {
+          refill_ids: selectedIds
+        });
         if (res.data?.whatsapp_queued) {
           toastEvent.trigger(`Marked ready & pickup WhatsApp queued for "${patientName}"!`, 'success');
         } else {
@@ -274,12 +310,13 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   const handleRunPostAndComplete = async () => {
     setIsCompleting(true);
     try {
+      const selectedIds = selectedList.map(m => m.id);
       if (onPostAndComplete) {
-        await onPostAndComplete();
+        await onPostAndComplete(selectedIds);
       } else if (patientPhone) {
         const cleanPhone = patientPhone.trim();
         const res = await api.fulfillAllRefills(cleanPhone, {
-          refill_ids: activeMeds.map(m => m.id),
+          refill_ids: selectedIds,
           fulfilled_via: 'refill_order_modal_complete',
           patient_phone: cleanPhone
         });
@@ -574,24 +611,35 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
             >
               {isCartUpdated ? 'Done / Close' : 'Cancel'}
             </button>
-            <button
-              type="button"
-              disabled={selectedList.length === 0 || isUpdatingCart}
-              onClick={handleUpdateCart}
-              className="px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-extrabold shadow-md shadow-primary/25 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
-            >
-              {isUpdatingCart ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  <span>Updating Cart…</span>
-                </>
-              ) : (
-                <>
-                  <ShoppingCart size={14} />
-                  <span>Update Cart ({selectedList.length})</span>
-                </>
-              )}
-            </button>
+            {(() => {
+              const allSelectedAlreadyInCart = selectedList.length > 0 && selectedList.every(m => m.in_live_cart || m.cart_store_name);
+              const actionVerb = allSelectedAlreadyInCart ? 'Update Cart' : 'Add to Cart';
+
+              return (
+                <button
+                  type="button"
+                  disabled={selectedList.length === 0 || isUpdatingCart}
+                  onClick={handleUpdateCart}
+                  className="px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-extrabold shadow-md shadow-primary/25 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                >
+                  {isUpdatingCart ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>
+                        {cartProgress
+                          ? `Adding (${cartProgress.current}/${cartProgress.total})…`
+                          : `${allSelectedAlreadyInCart ? 'Updating' : 'Adding to'} Cart…`}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <ShoppingCart size={14} />
+                      <span>{actionVerb} ({selectedList.length})</span>
+                    </>
+                  )}
+                </button>
+              );
+            })()}
           </div>
         </div>
       </div>

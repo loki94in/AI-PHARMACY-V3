@@ -3177,6 +3177,16 @@ router.post('/patient/:phone/mark-ready', async (req, res) => {
   try {
     db = await dbManager.getConnection();
     const last10 = cleanPhone.slice(-10);
+    const targetRefillIds = Array.isArray(req.body?.refill_ids) && req.body.refill_ids.length > 0
+      ? req.body.refill_ids.map(Number).filter((n: number) => !isNaN(n) && n > 0)
+      : null;
+
+    let idFilterSql = '';
+    const queryParams: any[] = [`%${last10}`, `%${cleanPhone}`];
+    if (targetRefillIds && targetRefillIds.length > 0) {
+      idFilterSql = ` AND pr.id IN (${targetRefillIds.map(() => '?').join(',')})`;
+      queryParams.push(...targetRefillIds);
+    }
 
     const refills = await db.all(`
       SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, pr.quantity_needed, pr.language,
@@ -3186,8 +3196,9 @@ router.post('/patient/:phone/mark-ready', async (req, res) => {
       WHERE (pr.patient_phone LIKE ? OR pr.patient_phone LIKE ?)
         AND pr.is_active = 1
         AND pr.status NOT IN ('completed', 'canceled')
+        ${idFilterSql}
       ORDER BY pr.id ASC
-    `, [`%${last10}`, `%${cleanPhone}`]);
+    `, queryParams);
 
     if (refills.length === 0) {
       return res.status(404).json({ error: 'No active refills found for this patient' });

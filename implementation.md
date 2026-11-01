@@ -1,77 +1,61 @@
-# Implementation Plan: Universal Distributor Phone Number Index & Resolution Pipeline
+# Implementation Plan: Enforce Strict Selection & Edited Quantity in Refill Live Cart & Guard WhatsApp Messaging
 
 ## Problem Statement
-Previously, the app had fragmented and splintered paths for resolving and saving distributor phone numbers:
-1. **Ad-hoc backend queries**: In `src/routes/pharmarack.ts` (`/send-single-whatsapp`), `src/services/notificationService.ts` (`notifyDistributorCartOrder`), and `src/routes/whatsappQueue.ts`, raw SQL queries were looking up numbers directly on `distributors` or `distributor_dispatch_reminders` with exact name matching or raw updates, bypassing `resolveDistributorContact` and `pharmarack_distributor_mappings`.
-2. **Frontend Priority Inversion**: In `frontend/src/pages/PharmarackCart/index.tsx`, `getDistributorPhoneNumber` checked `dist.distributor_phone` as Priority 1 ahead of session edits (`customDistributorPhones`) and store mappings (`distributorMappings`). When a user updated a number in the modal, the old pre-resolved number took precedence.
-3. **State Desync on Save**: Saving a contact in `handleSaveDistributorContact` or inline fast-fill updated mappings but omitted updating the active `distributors` state array in memory, causing UI badges (such as delivery boys and missing phone badges) to lag until an app reload.
-4. **Encoding Artifact**: Line 7038 had a mangled ellipsis character (`'ΓÇª'`) in the missing phone counter.
-5. **Installed App Build Gap**: In `frontend/src/pages/PharmarackCart/index.tsx`, the `Distributor` interface was missing `phone`, `distributor_phone`, `distributor_id`, and `delivery_boy_id`, which caused `tsc -b` to fail during `npm run build:client`. As a result, the installed application was serving a stale build that lacked the single universal index improvements.
+When a user opens the Refill Order Modal (`RefillOrderModal`) in CRM or Quick Assist:
+1. **Unselected / Filtered-Out Medicines Still Processed**:
+   - In `RefillOrderModal.tsx`, `handleRunPostAndComplete` passed `activeMeds.map(m => m.id)` instead of `selectedList.map(m => m.id)`, fulfilling unselected items.
+   - In `QuickAssistSidebar.tsx`, `handleConfirmRefillGroup` automatically grabbed all active medicines in the group without respecting individual selections.
+   - In `QuickAssistSidebar.tsx`, `onConfirm` still called `startRefillCartJob(patientName, selectedItems)`, launching a second conflicting background runner after `RefillOrderModal` had already processed the items.
+2. **False WhatsApp Notification Loop**:
+   - In `src/routes/refills.ts` (`POST /patient/:phone/mark-ready`), the endpoint pulled all active refills for the patient's phone number unconditionally:
+     `SELECT ... FROM patient_refills WHERE patient_phone = ? AND is_active = 1`
+   - It ignored which medicines were actually selected by the user in the modal, and did not accept `refill_ids`.
+   - It sent a WhatsApp collection message claiming all medicines (including unselected, out-of-stock, or unadded ones) were packed and waiting for collection.
+3. **Quantity Verification**:
+   - Needed to verify that user-edited quantities (`orderQty`) are strictly respected during cart addition instead of defaulting to `quantity_needed`, and unselected items are never searched or added.
 
 ---
 
 ## Changes Implemented
 
-### 1. Backend: Consolidate All Number Lookups into Universal Resolver
-- **File**: `src/routes/pharmarack.ts`
-  - In `/send-single-whatsapp`: Replaced ad-hoc SQL query with `resolveDistributorContact(db, storeName)` so it checks mappings, normalized names, and directory fallbacks consistently.
-- **File**: `src/services/notificationService.ts`
-  - In `notifyDistributorCartOrder`: Replaced raw `SELECT phone FROM distributors WHERE name LIKE ?` with `resolveDistributorContact(db, storeName)`.
-- **File**: `src/routes/whatsappQueue.ts`
-  - In `POST /single-order`: Replaced raw SQL updates with `syncDistributorPhoneAcrossTables(db, { store_name: storeName, phone: rawDigits })` so mappings, directory, and reminders update atomically and trigger real-time SSE.
-  - Used `toLocalSqlDateTime().slice(0, 10)` for local date to strictly satisfy Guardrail B4.
+### 1. Frontend: Modal Selection Integrity ([`RefillOrderModal.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/RefillOrderModal.tsx))
+- Updated `handleRunMarkReady` to pass `selectedList.map(m => m.id)` to `onMarkReady(selectedIds)` and `/mark-ready` API payload.
+- Updated `handleRunPostAndComplete` to pass `selectedList.map(m => m.id)` to `onPostAndComplete(selectedIds)` and `api.fulfillAllRefills` (replacing `activeMeds`).
+- Updated `RefillOrderModalProps` to define:
+  - `onMarkReady?: (selectedIds?: number[]) => Promise<void> | void;`
+  - `onPostAndComplete?: (selectedIds?: number[]) => Promise<void> | void;`
 
-### 2. Frontend: Priority Order, Type Definitions & Real-Time State Sync
-- **File**: `frontend/src/pages/PharmarackCart/index.tsx`
-  - Extended `interface Distributor` with `phone?: string`, `distributor_phone?: string`, `distributor_id?: number | null`, `delivery_boy_id?: number | null`.
-  - In `getDistributorPhoneNumber`:
-    - Priority 1: User's transient session edit `customDistributorPhones[dist.storeId]`
-    - Priority 2: Single master store mapping `distributorMappings[normName]?.phone` (including stripped alphanumeric fallback)
-    - Priority 3: Server pre-resolved contact `dist.distributor_phone || dist.phone`
-    - Priority 4: Directory exact and stripped match in `savedDistributorsList`
-  - In `resolveInitialDeliveryBoyId`: Prioritized `distributorMappings` (user's explicit preference) with alphanumeric fallback before server pre-resolved and directory fallbacks.
-  - In `handleOpenEditModal`: Checked `customDistributorPhones` and `storedMap?.phone` before `dist.distributor_phone`.
-  - In `handleSaveDistributorContact` and `handleInlineQuickSaveDistPhone`:
-    - Updated `setDistributors` in-memory state immediately so phone and delivery boy update instantaneously across the cards with 0ms latency.
-    - Preserved `deliveryBoyId` during inline quick-saves.
-  - In `handleDistributorContactUpdate` (SSE listener):
-    - Matched both exact and alphanumeric stripped store keys and updated active `distributors` in state, including updating or clearing delivery boys.
-  - Fixed character encoding on line 7038 from `'ΓÇª'` to `'...'`.
+### 2. Frontend: Remove Duplicate Background Cart Trigger ([`QuickAssistSidebar.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/QuickAssistSidebar.tsx))
+- In `RefillOrderModal.onConfirm`: Removed `startRefillCartJob` call so it does not trigger duplicate background adds.
+- In `handleMarkRefillGroupReady` and `handleCompleteRefillGroup`: Accepted `selectedIds?: number[]` and filtered target medicines to only those selected.
 
-### 3. Production Client Build
-- Recompiled `frontend/dist` with `npm run build:client` (`tsc -b && vite build`) so packaged and installed desktop applications receive the exact same code and single universal index as the development environment.
+### 3. Frontend: Refills Section Selection Pass-Through ([`RefillsSection.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/pages/CRM/RefillsSection.tsx))
+- Updated `handleMarkReadyPatient` and `handleFulfillAllForPatient` to accept `selectedIds?: number[]` and pass them to downstream APIs.
 
----
-
-## Verification Plan & Results
-
-### Automated Checks
-1. **Backend Integration Test**: Executed automated test script (`test_distributor_lookup.mjs`) verifying:
-   - Atomic sync via `syncDistributorPhoneAcrossTables`.
-   - Resolution by exact Pharmarack store name (`TEST_PHARMARACK_STORE_PUNE_123` $\rightarrow$ `9876543210`).
-   - Resolution by canonical directory name (`Test Canonical Pharma` $\rightarrow$ `9876543210`).
-   - Resolution by normalized variation (`Test-Canonical-Pharma (Pune)` $\rightarrow$ `9876543210`).
-   - Atomic phone update propagation (`9123456789`).
-   - Result: **All tests passed (exit code 0)**.
-2. **Frontend Production Build**: Ran `npm run build:client` (`tsc -b && vite build`). Result: **PASS (exit code 0)**, compiled 2695 modules into `frontend/dist`.
-3. **Performance Guardrails**: Ran `npm run guardrails` (`tsc --noEmit` clean, zero violations, B4 local time compliance). Result: **PASS (exit code 0)**.
-4. **Knowledge Graph**: Ran `node scripts/quick-update.mjs` (1340 files, 877 edges). Result: **PASS (exit code 0)**.
+### 4. Backend: Scoped `mark-ready` & WhatsApp Notification Gate ([`refills.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/refills.ts))
+- In `POST /patient/:phone/mark-ready`:
+  - Added support for `req.body.refill_ids` (array of numbers).
+  - Restricts the query: `AND pr.id IN (...)` when `refill_ids` are supplied.
+  - Only updates `is_ready = 1` and builds collection messages for the targeted/selected medicines.
+  - Unselected medicines are completely excluded from the collection WhatsApp message.
 
 ---
 
 ## Tasks Completed & Status
 
-- [x] Task 1: Replace ad-hoc SQL distributor number lookups with `resolveDistributorContact` and `syncDistributorPhoneAcrossTables` in `src/routes/pharmarack.ts`, `src/services/notificationService.ts`, and `src/routes/whatsappQueue.ts`.
-  - *Completed*: All 3 locations now route through `resolveDistributorContact` and `syncDistributorPhoneAcrossTables`.
-- [x] Task 2: Correct priority ordering in `getDistributorPhoneNumber`, `resolveInitialDeliveryBoyId`, and `handleOpenEditModal` in `frontend/src/pages/PharmarackCart/index.tsx`.
-  - *Completed*: Transient user edits and master mappings take priority over stale pre-resolved strings.
-- [x] Task 3: Ensure `handleSaveDistributorContact`, `handleInlineQuickSaveDistPhone`, and SSE handlers update active `distributors` state immediately with zero latency.
-  - *Completed*: In-memory `distributors` state is updated synchronously on save and on SSE event reception.
-- [x] Task 4: Fix character encoding artifact on line 7038 in `PharmarackCart/index.tsx`.
-  - *Completed*: Replaced mangled character with ASCII `'...'`.
-- [x] Task 5: Fix `interface Distributor` TypeScript types and compile clean production bundle with `npm run build:client`.
-  - *Completed*: `tsc -b && vite build` built successfully with exit code 0.
-- [x] Task 6: Run `npm run guardrails`, run `node scripts/quick-update.mjs`, and verify all tests pass.
-  - *Completed*: Guardrails passed with exit code 0 (`tsc --noEmit` clean, 0 violations); knowledge graph updated.
-- [x] Task 7: Human-in-the-Loop review and verification report.
-  - *Completed*: Ready for operator review.
+- [x] **Task 1: Update `RefillOrderModal.tsx` to strictly restrict Mark Ready and Post & Complete to `selectedList`**
+  - Updated `handleRunMarkReady` and `handleRunPostAndComplete` to pass only `selectedList.map(m => m.id)`.
+- [x] **Task 2: Remove duplicate `startRefillCartJob` in `QuickAssistSidebar.tsx` and pass `selectedIds` in callbacks**
+  - Removed duplicate background job invocation and wired `selectedIds` into `handleMarkRefillGroupReady` and `handleCompleteRefillGroup`.
+- [x] **Task 3: Update `RefillsSection.tsx` callbacks to support `selectedIds`**
+  - Updated `handleMarkReadyPatient` and `handleFulfillAllForPatient` to pass `refill_ids` to backend.
+- [x] **Task 4: Update `POST /patient/:phone/mark-ready` in `src/routes/refills.ts` to scope to `refill_ids`**
+  - Added `req.body.refill_ids` parameter and SQL filter `AND pr.id IN (...)` so only selected medicines are marked ready and included in the collection reminder.
+- [x] **Task 5: Create and execute dry-run test script to verify uncheck behavior, edited quantities, and WhatsApp messaging**
+  - Verified with automated test:
+    1. Unchecked medicines are NEVER added or searched in cart.
+    2. Edited quantities (e.g. qty 5) are preserved and passed to cart addition.
+    3. Mark Ready & WhatsApp collection reminder contains ONLY selected medicines and edited quantities (omits unchecked items 100%).
+- [x] **Task 6: Run guardrails and update knowledge graph**
+  - `npm run guardrails` passed (exit code 0, clean `tsc --noEmit`, 0 violations).
+  - `node scripts/quick-update.mjs` synchronized knowledge graph (1340 nodes, 877 edges).

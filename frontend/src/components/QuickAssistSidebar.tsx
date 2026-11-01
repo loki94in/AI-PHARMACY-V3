@@ -326,7 +326,7 @@ export const QuickAssistSidebar = memo(({
     patient_name: string;
     patient_phone?: string;
     medicines: Array<{ id: number; medicine_name: string }>;
-  }) => {
+  }, selectedIds?: number[]) => {
     const phone = (group.patient_phone || '').trim();
     if (!phone) {
       toastEvent.trigger('Patient has no phone number stored', 'error');
@@ -334,7 +334,9 @@ export const QuickAssistSidebar = memo(({
     }
     setMarkingReadyRefillPhones(prev => new Set(prev).add(phone));
     try {
-      const res = await apiClient.post(`/refills/patient/${encodeURIComponent(phone)}/mark-ready`);
+      const res = await apiClient.post(`/refills/patient/${encodeURIComponent(phone)}/mark-ready`, {
+        refill_ids: selectedIds && selectedIds.length > 0 ? selectedIds : undefined
+      });
       if (res?.data?.success) {
         toastEvent.trigger(
           res.data.whatsapp_queued
@@ -566,7 +568,7 @@ export const QuickAssistSidebar = memo(({
     // and pending call tasks close, ensuring the patient is removed from Quick Assist until the next cycle
     // even if the bill is not ultimately saved in POS.
     api.fulfillAllRefills(group.patient_phone, {
-      refill_ids: group.medicines.map(m => m.id),
+      refill_ids: selectedIds && selectedIds.length > 0 ? selectedIds : group.medicines.map(m => m.id),
       fulfilled_via: 'quick_assist_pos',
       patient_phone: group.patient_phone,
       customer_id: group.customer_id || group.medicines[0]?.customer_id || undefined
@@ -650,7 +652,7 @@ export const QuickAssistSidebar = memo(({
       status?: string | null;
       is_active?: number | null;
     }>;
-  }) => {
+  }, selectedIds?: number[]) => {
     if (fulfillingRefillKeys.has(group.key)) return;
     setFulfillingRefillKeys(prev => new Set(prev).add(group.key));
 
@@ -3136,13 +3138,13 @@ export const QuickAssistSidebar = memo(({
               linked_distributors: m.linked_distributors
             }))}
             onClose={() => setRefillOrderModalGroup(null)}
-            onConfirm={(selectedItems) => {
-              const patientName = refillOrderModalGroup.patient_name;
-              startRefillCartJob(patientName, selectedItems);
-              toastEvent.trigger(`Adding ${selectedItems.length} refill item(s) for ${patientName} to Live Cart...`, 'info', '/pharmarack-cart');
+            onConfirm={(_selectedItems) => {
+              refillEvent.triggerRefresh();
+              queryClient.invalidateQueries({ queryKey: ['refills'] });
+              queryClient.invalidateQueries({ queryKey: ['pharmarack-cart'] });
             }}
-            onMarkReady={() => handleMarkRefillGroupReady(refillOrderModalGroup)}
-            onPostAndComplete={() => handleCompleteRefillGroup(refillOrderModalGroup)}
+            onMarkReady={(selectedIds) => handleMarkRefillGroupReady(refillOrderModalGroup, selectedIds)}
+            onPostAndComplete={(selectedIds) => handleCompleteRefillGroup(refillOrderModalGroup, selectedIds)}
             onMedicineLinked={() => {
               queryClient.invalidateQueries({ queryKey: ['refills'] });
               refillEvent.triggerRefresh();

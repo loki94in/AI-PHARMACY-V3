@@ -717,10 +717,11 @@ export const RefillsSection: React.FC = () => {
     }
   };
 
-  const handleFulfillAllForPatient = async (patient: RefillPatient) => {
+  const handleFulfillAllForPatient = async (patient: RefillPatient, selectedIds?: number[]) => {
     setFulfillingAll(true);
     try {
       const res = await apiClient.post(`/refills/patient/${encodeURIComponent(patient.patient_phone)}/fulfill-all`, {
+        refill_ids: selectedIds && selectedIds.length > 0 ? selectedIds : undefined,
         fulfilled_via: 'crm_batch_complete'
       });
       toastEvent.trigger(res.data?.message || `All active refills fulfilled for ${patient.patient_name}!`, 'success', '/crm');
@@ -816,7 +817,7 @@ export const RefillsSection: React.FC = () => {
   };
 
   // ── Send / Re-Send Collection Reminder: collection-only WhatsApp (due date + store hours auto from Settings) ──
-  const handleMarkReadyPatient = async (patient: RefillPatient) => {
+  const handleMarkReadyPatient = async (patient: RefillPatient, selectedIds?: number[]) => {
     const phone = (patient.patient_phone || '').trim();
     if (!phone) {
       toastEvent.trigger('Patient has no phone number stored', 'error', '/crm');
@@ -825,7 +826,9 @@ export const RefillsSection: React.FC = () => {
     setMarkingReady(true);
     try {
       messageSendEvent.triggerSendProgress(patient.patient_name || 'Patient', 'Dispatching WhatsApp collection reminder...', 10);
-      const res = await apiClient.post(`/refills/patient/${encodeURIComponent(phone)}/mark-ready`);
+      const res = await apiClient.post(`/refills/patient/${encodeURIComponent(phone)}/mark-ready`, {
+        refill_ids: selectedIds && selectedIds.length > 0 ? selectedIds : undefined
+      });
       if (res?.data?.success) {
         toastEvent.trigger(
           res.data.whatsapp_queued
@@ -3327,10 +3330,10 @@ export const RefillsSection: React.FC = () => {
           medicines={orderingPatient.medicines}
           onClose={() => setOrderingPatient(null)}
           onConfirm={(selectedItems) => {
-            startRefillCartJob(orderingPatient.patient_name, selectedItems);
+            refillEvent.triggerRefresh();
           }}
-          onMarkReady={() => handleMarkReadyPatient(orderingPatient)}
-          onPostAndComplete={() => handleFulfillAllForPatient(orderingPatient)}
+          onMarkReady={(selectedIds) => handleMarkReadyPatient(orderingPatient, selectedIds)}
+          onPostAndComplete={(selectedIds) => handleFulfillAllForPatient(orderingPatient, selectedIds)}
           onMedicineLinked={(medId, links) => {
             setSelectedPatient(prev => {
               if (!prev) return prev;
