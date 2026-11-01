@@ -204,6 +204,14 @@ class TriggerSchedulerService {
                 console.error('[Trigger: Daily Check] Morning briefing error:', bErr);
               }
 
+              // Evaluate 1st / 15th of month executive report dispatch
+              try {
+                const { monthlyReportService } = await import('./monthlyReportService.js');
+                await monthlyReportService.checkAndRunScheduledReports();
+              } catch (mErr) {
+                console.error('[Trigger: Daily Check] Monthly report check error:', mErr);
+              }
+
               await database.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('last_daily_check_date', ?)", [todayStr]);
             } catch (err) {
               console.error('[Trigger: Daily Check] Execution failed:', err);

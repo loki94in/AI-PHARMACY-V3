@@ -21,6 +21,13 @@ By default, when the user asks to release/build, the agent MUST:
 3. **Trigger Build**: Run `npm run release:pilot` (or `npm run release`).
 4. **Report to User**: Confirm the build succeeded and the local installer/exe path.
 
+## Strict Vercel Deployment Freeze (MANDATORY)
+- **NEVER deploy the website to Vercel during release or git push.**
+- Unless the user explicitly and personally commands "deploy vercel" or "deploy to vercel" as an explicit instruction in chat, agents MUST NEVER deploy the website to Vercel.
+- Vercel automatic git builds are suppressed via `ignoreCommand` in `vercel.json` and `website/vercel.json` (exits `0` on standard commits, preserving the current/old deployed site).
+- Agents must NEVER add `[deploy-vercel]` to git commit messages or execute any Vercel deployment CLI unless personally directed by the user.
+- The cloud website will permanently remain on the old stable deployment.
+
 > 💡 **VERSION AUTO-BUMPING (updated 2026-09-23):**
 > Every `npm run build:exe` and `npm run release` automatically increments the patch version in `package.json`
 > so that the executable and in-app update checks always reflect the newly built version.

@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "ignoreCommand": "node -e \"process.exit(process.env.VERCEL_GIT_COMMIT_MESSAGE && process.env.VERCEL_GIT_COMMIT_MESSAGE.includes('[deploy-vercel]') ? 1 : 0)\"",
   "functions": {
     "api/*.js": {
       "maxDuration": 10

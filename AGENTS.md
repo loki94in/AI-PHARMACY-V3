@@ -293,6 +293,10 @@ When the user asks to deploy or release (e.g. "pilot deploy", "deploy pilot", "d
    - Commit & push changes (`git add .`, `git commit`, `git push`).
    - Run the respective release command.
    - Confirm to the user the new version number and rollout status.
+4. **Vercel Deployment Freeze (MANDATORY)**:
+   - Agents must NEVER deploy the website to Vercel during release or normal git pushes.
+   - Automatic Vercel git builds are suppressed by `ignoreCommand` in `vercel.json` and `website/vercel.json`.
+   - Vercel stays on the old deployed site unless the user personally and explicitly commands "deploy vercel" in chat. Never add `[deploy-vercel]` to release commit messages.
 
 ---
 

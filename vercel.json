@@ -1,6 +1,7 @@
 {
   "version": 2,
   "outputDirectory": "website/public",
+  "ignoreCommand": "node -e \"process.exit(process.env.VERCEL_GIT_COMMIT_MESSAGE && process.env.VERCEL_GIT_COMMIT_MESSAGE.includes('[deploy-vercel]') ? 1 : 0)\"",
   "installCommand": "npm_config_cache_dir=\"\" NPM_CONFIG_CACHE_DIR=\"\" npm --prefix website install",
   "buildCommand": "echo 'No build required for static website'",
   "functions": {

@@ -316,7 +316,7 @@ if (!isRemote) {
   console.log('    • Promote PILOT to ALL       : npm run release -- --promote');
   console.log('    • Force fresh full build     : npm run release -- --clean');
   console.log('    • Maximum compression        : npm run release -- --max-compression');
-  console.log('    • Publish to GitHub & Vercel : npm run release -- git vercel');
+  console.log('    • Publish installer & updates : npm run release -- --remote');
   console.log('=============================================================\n');
   process.exit(0);
 }

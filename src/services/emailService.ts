@@ -2971,6 +2971,25 @@ export function isNonMedicineNoise(name: string): boolean {
     return true;
   }
 
+  // Boilerplate / Email text / Greetings / Auto-generated disclaimers
+  if (/auto[\s\-]generated|computer[\/\s]auto|greetings\s+from|warm\s+regards|yours?\s+sincerely|dear\s+sir|enclosing\s+here|attached\s+herewith|reply\s+to\s+this|voucher\s+has\s+been|powered\s+by|this\s+is\s+a\s+computer|sent\s+via|medivision|care\s+software|marg\s+erp|pdf\s+file\s+of|sale\s+bill\s+no|sale\s+entry/i.test(clean)) {
+    return true;
+  }
+
+  // Distributor corporate entity names without medicine dosage form or strength
+  if (/\b(pharma|pharmaceutical|pharmaceuticals|agency|agencies|distributor|distributors|cosmetics|cosmetic|cosmatics|cosmatic|surgical|surgicals|medico|medilink|homoeo|ayurved|ayurvedic|pvt\s*ltd|private\s*limited|limited)\b/i.test(clean)) {
+    if (!/\b(tab|tablets?|caps?|capsules?|syrup|syp|inj|injection|gel|cream|drops?|ointment|suspension|powder|infusion|solution|lotion|resp|respules?|\d+\s*(mg|ml|gm|g|mcg))\b/i.test(clean)) {
+      return true;
+    }
+  }
+
+  // Common email sentences starting with from/for/we/kindly/please
+  if (/^(from|for|we\s+are|please\s+find|kindly\s+find|find\s+attached)\b/i.test(clean)) {
+    if (!/\b(tab|caps?|syrup|syp|inj|gel|cream|drops?|ointment|\d+\s*(mg|ml|gm))\b/i.test(clean)) {
+      return true;
+    }
+  }
+
   const exactNoise = [
     'total', 'subtotal', 'sub total', 'grand total', 'net total', 'net amount', 'amount', 'payable', 'round off',
     'tax', 'cgst', 'sgst', 'igst', 'gst', 'gstin', 'pan', 'dl no', 'dl no :', 'dl :', 'drug license', 'licence', 'license',

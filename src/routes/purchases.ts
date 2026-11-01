@@ -2389,6 +2389,34 @@ router.get('/reconciliation', async (_req, res) => {
           }
         }
 
+        if (medNames.length === 0 && attachments.length > 0) {
+          for (const att of attachments) {
+            if (att.local_path && fs.existsSync(att.local_path)) {
+              try {
+                const resParse = await emailService.parseAndImportAttachment(att.local_path, false);
+                if (resParse && resParse.success && Array.isArray(resParse.items) && resParse.items.length > 0) {
+                  const attMeds = Array.from(new Set(
+                    resParse.items
+                      .map((i: any) => cleanMedicineName(i.name))
+                      .filter((n: string) => Boolean(n) && !isNonMedicineNoise(n))
+                  ));
+                  if (attMeds.length > 0) {
+                    medNames = attMeds;
+                    needsDbUpdate = true;
+                    if (resParse.distributor_name && (!distributorName || distributorName === 'Unknown Distributor' || distributorName === 'Default Distributor')) {
+                      distributorName = resParse.distributor_name;
+                    }
+                    if (resParse.invoice_no && (!extractedInvoiceNo || extractedInvoiceNo === 'N/A')) {
+                      extractedInvoiceNo = resParse.invoice_no;
+                    }
+                    break;
+                  }
+                }
+              } catch (_) {}
+            }
+          }
+        }
+
         if (medNames.length === 0 && email.body) {
           const lines = (email.body || '').split('\n').slice(0, 50);
           for (const line of lines) {
@@ -2411,7 +2439,10 @@ router.get('/reconciliation', async (_req, res) => {
         }
 
         if (needsDbUpdate) {
-          void db.run('UPDATE emails SET medicine_names = ? WHERE uid = ?', [JSON.stringify(medNames), email.uid]).catch(() => {});
+          void db.run(
+            'UPDATE emails SET medicine_names = ?, extracted_invoice_no = COALESCE(?, extracted_invoice_no), extracted_distributor = COALESCE(?, extracted_distributor) WHERE uid = ?',
+            [JSON.stringify(medNames), extractedInvoiceNo || null, distributorName || null, email.uid]
+          ).catch(() => {});
         }
 
         // Construct canonical unique key for distributor + invoice

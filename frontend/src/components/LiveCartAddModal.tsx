@@ -979,7 +979,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     return null;
   }, [cartLookup, cartDistributors]);
 
-  const isMedicineInSentPO = useCallback((medName?: string, storeId?: string | number, storeName?: string): boolean => {
+  const isMedicineInSentPO = useCallback((medName?: string, storeId?: string | number, storeName?: string, minPlacedAt?: number): boolean => {
     if (!medName) return false;
     const norm = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const cleanMedKey = (s?: string) => norm(s).replace(/(tablet|tablets|tab|capsule|capsules|cap|injection|inj|syrup|syr|drops|suspension|susp|cream|ointment|gel|lotion|\d+s|\d+tab|\d+cap)/g, '');
@@ -990,7 +990,9 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       const sId = storeId ? String(storeId) : '';
       const sName = (storeName || '').toLowerCase().trim();
       const normDistName = sName.replace(/[^a-z0-9]/g, '');
-      let sentInfo = (sId ? latestSentMap[sId] : null) || latestSentMap[sName] || (normDistName ? latestSentMap[normDistName] : null);
+      let sentInfo = (sName && Object.prototype.hasOwnProperty.call(latestSentMap, sName) ? latestSentMap[sName] : null)
+        || (normDistName && Object.prototype.hasOwnProperty.call(latestSentMap, normDistName) ? latestSentMap[normDistName] : null)
+        || (sId && Object.prototype.hasOwnProperty.call(latestSentMap, sId) ? latestSentMap[sId] : null);
       if (!sentInfo && normDistName) {
         const matchKey = Object.keys(latestSentMap).find(k => {
           const normK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1000,6 +1002,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       }
       if (sentInfo && Array.isArray(sentInfo.items)) {
         for (const it of sentInfo.items) {
+          if (minPlacedAt && it.placedAt && Number(it.placedAt) < minPlacedAt) continue;
           const itKey = cleanMedKey(it.productName || it.product || it.name);
           if (itKey === targetKey || (targetKey.length >= 4 && itKey.length >= 4 && (itKey.includes(targetKey) || targetKey.includes(itKey)))) {
             return true;
@@ -1012,6 +1015,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     for (const sentInfo of Object.values(latestSentMap)) {
       if (sentInfo && Array.isArray(sentInfo.items)) {
         for (const it of sentInfo.items) {
+          if (minPlacedAt && it.placedAt && Number(it.placedAt) < minPlacedAt) continue;
           const itKey = cleanMedKey(it.productName || it.product || it.name);
           if (itKey === targetKey || (targetKey.length >= 4 && itKey.length >= 4 && (itKey.includes(targetKey) || targetKey.includes(itKey)))) {
             return true;
@@ -1590,7 +1594,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       return medNames
         .filter((medName: string) => 
           !isSoldAtPOSToday(medName) &&
-          !isMedicineInSentPO(medName, restrictStoreId, recon.extracted_distributor || undefined)
+          !isMedicineInSentPO(medName, undefined, recon.extracted_distributor || undefined, (reconDateStr ? new Date(reconDateStr).getTime() : 0) > 0 ? new Date(reconDateStr).getTime() + 60000 : undefined)
         )
         .map((medName: string) => {
           const normName = medName.trim().toLowerCase();
