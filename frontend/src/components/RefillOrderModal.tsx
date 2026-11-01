@@ -1,15 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ShoppingCart, X, Check, AlertCircle, Link2, Plus, Minus,
-  Package, Layers, Loader2, BellRing, CheckCheck
+  Package, Layers, Loader2, BellRing, CheckCheck, Clock, AlertTriangle, MessageSquare
 } from 'lucide-react';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import { MedicineLinkModal } from './MedicineLinkModal';
 import { api, apiClient } from '../services/api';
 import { toastEvent, refillEvent, whatsappQueueEvent } from '../services/events';
 import { queryClient } from '../lib/queryClient';
-import type { RefillCartItemInput } from '../services/refillCartJobs';
+import { subscribeRefillCartJobs, getRefillCartJobs, startRefillCartJob, isRefillJobRunning, type RefillCartItemInput } from '../services/refillCartJobs';
 
 export interface RefillMedicineItem {
   id: number;
@@ -65,13 +65,37 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   const [linkingMed, setLinkingMed] = useState<{ id: number; name: string } | null>(null);
 
   // Status & Feedback States
-  const [isUpdatingCart, setIsUpdatingCart] = useState(false);
-  const [cartProgress, setCartProgress] = useState<{ current: number; total: number; medicineName: string } | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [cartError, setCartError] = useState<string | null>(null);
   const [isCartUpdated, setIsCartUpdated] = useState(false);
   const [isMarkingReady, setIsMarkingReady] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
+  const [isNotifyingBooking, setIsNotifyingBooking] = useState(false);
+
+  // Background Live Cart Job coordination
+  const jobs = useSyncExternalStore(subscribeRefillCartJobs, getRefillCartJobs);
+  const activeJob = jobs.find(j => j.patientName === patientName);
+  const isJobRunning = activeJob ? isRefillJobRunning(activeJob) : false;
+
+  useEffect(() => {
+    if (!activeJob) return;
+    const finishedRows = activeJob.rows.filter(r => r.state === 'added' || r.state === 'in_cart');
+    if (finishedRows.length > 0) {
+      setLocalMeds(prev => prev.map(m => {
+        const matchingRow = activeJob.rows.find(r => r.refillId === m.id);
+        if (matchingRow && (matchingRow.state === 'added' || matchingRow.state === 'in_cart')) {
+          return {
+            ...m,
+            in_live_cart: true,
+            cart_qty: matchingRow.qty || m.cart_qty || 1,
+            cart_store_name: matchingRow.line?.storeName || m.cart_store_name || 'Live Cart'
+          };
+        }
+        return m;
+      }));
+      setIsCartUpdated(true);
+    }
+  }, [activeJob]);
 
   // Initialize selection and quantities
   const [itemStates, setItemStates] = useState<Record<number, ItemState>>(() => {
@@ -158,7 +182,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   const selectedList = activeMeds.filter(m => itemStates[m.id]?.selected);
   const totalSelectedQty = selectedList.reduce((sum, m) => sum + (itemStates[m.id]?.orderQty || 1), 0);
 
-  // Node L, M, O, P, Q, R: Validate, Update Cart with selected medicines only, preserve existing cart on failure
+  // Node L, M, O, P, Q, R: Validate and trigger background live cart addition with selected medicines only
   const handleUpdateCart = async () => {
     // Node J: At least one valid medicine selected?
     if (selectedList.length === 0) {
@@ -177,8 +201,6 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
 
     setValidationError(null);
     setCartError(null);
-    setIsUpdatingCart(true);
-    setCartProgress({ current: 0, total: selectedList.length, medicineName: selectedList[0]?.medicine_name || '' });
 
     const payload: RefillCartItemInput[] = selectedList.map(m => ({
       refillId: m.id,
@@ -193,87 +215,52 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     }));
 
     try {
-      // Execute live cart addition sequentially to prevent session locks and timeouts
-      const results: Array<{ item: RefillMedicineItem; res: any }> = [];
+      // Trigger background addition without forcing legacy modal so this modal handles live updates
+      startRefillCartJob(patientName, payload, { openModal: false });
+      toastEvent.trigger(`Adding ${payload.length} refill medicine(s) to live cart in the background…`, 'info', '/pharmarack-cart');
 
-      for (let i = 0; i < selectedList.length; i++) {
-        const item = selectedList[i];
-        const qty = itemStates[item.id]?.orderQty || 1;
-        setCartProgress({ current: i + 1, total: selectedList.length, medicineName: item.medicine_name });
-
-        try {
-          const res = await api.addRefillToCart(item.id, { qty });
-          results.push({ item, res });
-        } catch (itemErr: any) {
-          console.warn(`[RefillOrderModal] Add to cart failed for "${item.medicine_name}":`, itemErr);
-          const errMsg = itemErr?.response?.data?.error || itemErr?.message || 'Failed to add item to live cart';
-          results.push({
-            item,
-            res: {
-              status: 'failed',
-              message: errMsg,
-              refillId: item.id,
-              medicineName: item.medicine_name,
-              qty
-            }
-          });
-        }
-      }
-
-      const anySuccess = results.some(r => r.res?.status === 'added' || r.res?.status === 'in_cart');
-      const failures = results.filter(r => r.res?.status === 'failed' || r.res?.status === 'not_found' || r.res?.status === 'needs_link' || r.res?.status === 'linked_oos');
-
-      if (!anySuccess && failures.length > 0) {
-        // Node Q: Show failure; preserve existing cart and retain user edits
-        setCartError(failures[0]?.res?.message || 'Failed to update live cart. Existing cart was preserved.');
-        setIsUpdatingCart(false);
-        return;
-      }
-
-      // If callback was provided, notify consumer as well
       if (onConfirm) {
         try {
           await onConfirm(payload);
         } catch (_) {}
       }
-
-      // Node R: Refresh popup and cart status
-      setLocalMeds(prev => prev.map(m => {
-        const match = results.find(r => r.item.id === m.id);
-        if (match && (match.res?.status === 'added' || match.res?.status === 'in_cart')) {
-          return {
-            ...m,
-            in_live_cart: true,
-            cart_qty: itemStates[m.id]?.orderQty || m.cart_qty || 1,
-            cart_store_name: match.res?.line?.storeName || m.cart_store_name || 'Live Cart'
-          };
-        }
-        return m;
-      }));
-
-      setIsCartUpdated(true);
-      refillEvent.triggerRefresh();
-      queryClient.invalidateQueries({ queryKey: ['refills'] });
-      queryClient.invalidateQueries({ queryKey: ['pharmarack-cart'] });
-
-      const successes = results.filter(r => r.res?.status === 'added' || r.res?.status === 'in_cart');
-      if (failures.length > 0) {
-        toastEvent.trigger(
-          `Added ${successes.length} item(s) to live cart. ${failures.length} item(s) need attention (${failures[0].res?.message || 'check links'}).`,
-          'info',
-          '/pharmarack-cart'
-        );
-      } else {
-        toastEvent.trigger(`Live cart updated with ${selectedList.length} refill item(s)!`, 'success', '/pharmarack-cart');
-      }
     } catch (err: unknown) {
-      // Node Q: Show failure; preserve existing cart
-      console.error('Failed to update live cart for refills:', err);
+      console.error('Failed to start background cart job:', err);
       const apiErr = err as { response?: { data?: { error?: string } }; message?: string };
-      setCartError(apiErr.response?.data?.error || apiErr.message || 'Failed to update live cart. Existing cart was preserved.');
+      setCartError(apiErr.response?.data?.error || apiErr.message || 'Failed to start background cart addition.');
+    }
+  };
+
+  // Send one consolidated booking / re-order notification WhatsApp message to patient
+  const handleNotifyBooking = async () => {
+    if (!patientPhone) {
+      toastEvent.trigger('Patient phone number missing', 'error');
+      return;
+    }
+    const selectedIds = selectedList.map(m => m.id);
+    if (selectedIds.length === 0) {
+      setValidationError('Please select at least one medicine to notify.');
+      return;
+    }
+
+    setIsNotifyingBooking(true);
+    try {
+      const res = await apiClient.post(`/refills/patient/${encodeURIComponent(patientPhone)}/notify-booked`, {
+        refill_ids: selectedIds,
+        is_reorder: true
+      });
+      if (res.data?.whatsapp_queued) {
+        toastEvent.trigger(`Re-order booking WhatsApp queued for "${patientName}" (${selectedIds.length} medicine(s))!`, 'success');
+      } else {
+        toastEvent.trigger(res.data?.message || `Booking alert already sent recently for "${patientName}"`, 'info');
+      }
+      whatsappQueueEvent.triggerUpdated();
+    } catch (err: any) {
+      console.error('Failed to notify booking WhatsApp:', err);
+      const errMsg = err?.response?.data?.error || err?.message || 'Failed to send booking WhatsApp';
+      toastEvent.trigger(errMsg, 'error');
     } finally {
-      setIsUpdatingCart(false);
-      setCartProgress(null);
+      setIsNotifyingBooking(false);
     }
   };
 
@@ -425,8 +412,24 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
           </div>
         )}
 
+        {/* Live Background Progress Banner */}
+        {isJobRunning && (
+          <div className="mx-4 mt-3 p-3 rounded-xl bg-primary/10 border border-primary/30 text-primary text-xs flex items-center justify-between gap-3 shrink-0 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <Loader2 size={16} className="animate-spin text-primary shrink-0" />
+              <div>
+                <div className="font-extrabold text-sm">Adding to Live Cart in Background</div>
+                <div className="text-[11px] text-muted">Checking stock across distributors and updating cart. You can close this window at any time.</div>
+              </div>
+            </div>
+            <span className="px-2.5 py-0.5 rounded-full bg-primary/20 text-primary font-bold text-[11px]">
+              Background Active
+            </span>
+          </div>
+        )}
+
         {/* Node R & S: Post-Update Success Guidance & Next Actions Banner */}
-        {isCartUpdated && (
+        {isCartUpdated && !isJobRunning && (
           <div className="mx-4 mt-3 p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs flex items-center justify-between gap-3 shrink-0 flex-wrap">
             <div className="flex items-center gap-2">
               <CheckCheck size={16} className="shrink-0" />
@@ -435,7 +438,17 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                 <div className="text-[11px] text-emerald-300">Choose a next action below or keep in cart:</div>
               </div>
             </div>
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-2 ml-auto flex-wrap">
+              <button
+                type="button"
+                disabled={isNotifyingBooking}
+                onClick={handleNotifyBooking}
+                className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50 transition-all"
+                title="Send one consolidated WhatsApp message confirming medicines are booked"
+              >
+                {isNotifyingBooking ? <Loader2 size={12} className="animate-spin" /> : <MessageSquare size={12} />}
+                <span>Notify Booking</span>
+              </button>
               <button
                 type="button"
                 disabled={isMarkingReady}
@@ -471,6 +484,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
               const isAlreadyInCart = !!med.in_live_cart || !!med.cart_store_name;
               const shortage = Math.max(0, Number(med.quantity_needed || 3) - Number(med.in_stock_qty || 0));
               const hasDistributor = med.linked_distributors && med.linked_distributors.length > 0;
+              const jobRow = activeJob?.rows.find(r => r.refillId === med.id);
 
               return (
                 <div
@@ -533,6 +547,37 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                             </span>
                           )}
                         </div>
+
+                        {/* Live Background Row State */}
+                        {jobRow && (
+                          <div className="pt-1 flex items-center gap-2 flex-wrap">
+                            {jobRow.state === 'working' && (
+                              <span className="px-2 py-0.5 rounded-md bg-primary/15 border border-primary/30 text-primary text-[10px] font-bold flex items-center gap-1">
+                                <Loader2 size={10} className="animate-spin" /> {jobRow.message || 'Checking stock…'}
+                              </span>
+                            )}
+                            {jobRow.state === 'queued' && (
+                              <span className="px-2 py-0.5 rounded-md bg-bg3 border border-border text-muted text-[10px] font-semibold flex items-center gap-1">
+                                <Clock size={10} /> Queued in background…
+                              </span>
+                            )}
+                            {jobRow.state === 'added' && (
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold flex items-center gap-1">
+                                <Check size={10} /> {jobRow.message || 'Added to Cart'}
+                              </span>
+                            )}
+                            {jobRow.state === 'in_cart' && (
+                              <span className="px-2 py-0.5 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-400 text-[10px] font-bold flex items-center gap-1">
+                                <ShoppingCart size={10} /> {jobRow.message || 'In Live Cart'}
+                              </span>
+                            )}
+                            {(jobRow.state === 'failed' || jobRow.state === 'linked_oos' || jobRow.state === 'needs_link') && (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-bold flex items-center gap-1">
+                                <AlertTriangle size={10} /> {jobRow.message}
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         {/* Distributor Status */}
                         <div className="pt-1 flex items-center gap-2">
@@ -618,18 +663,14 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
               return (
                 <button
                   type="button"
-                  disabled={selectedList.length === 0 || isUpdatingCart}
+                  disabled={selectedList.length === 0 || isJobRunning}
                   onClick={handleUpdateCart}
                   className="px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-extrabold shadow-md shadow-primary/25 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
                 >
-                  {isUpdatingCart ? (
+                  {isJobRunning ? (
                     <>
                       <Loader2 size={14} className="animate-spin" />
-                      <span>
-                        {cartProgress
-                          ? `Adding (${cartProgress.current}/${cartProgress.total})…`
-                          : `${allSelectedAlreadyInCart ? 'Updating' : 'Adding to'} Cart…`}
-                      </span>
+                      <span>Adding in Background…</span>
                     </>
                   ) : (
                     <>

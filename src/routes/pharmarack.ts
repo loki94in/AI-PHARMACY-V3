@@ -1936,6 +1936,12 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
         const rate = Number(item.ptr || item.rate || item.PTR || item.cost_price || 0);
         const mrp = Number(item.mrp || item.MRP || 0);
         const scheme = String(item.scheme || item.Scheme || item.ProductScheme || '').trim();
+        const medRow = await db.get('SELECT name FROM medicines WHERE id = ?', [medId]).catch(() => null);
+        const targetMedName = medRow?.name || prodName;
+
+        try {
+          await db.run('ALTER TABLE medicine_distributor_links ADD COLUMN medicine_name TEXT');
+        } catch (_) {}
 
         await db.run(
           `INSERT INTO medicine_distributor_links 
@@ -1953,7 +1959,7 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
              scheme = CASE WHEN excluded.scheme != '' THEN excluded.scheme ELSE medicine_distributor_links.scheme END,
              mapped = 1,
              updated_at = CURRENT_TIMESTAMP`,
-          [medId, storeId, storeName, productCode, prodId, prodName, packaging, company, prodName, rate, mrp, scheme]
+          [medId, storeId, storeName, productCode, prodId, prodName, packaging, company, targetMedName, rate, mrp, scheme]
         ).catch((linkErr: any) => console.warn('[AutoSaveLink] Conflict/Insert error:', linkErr));
       }
     }
@@ -4833,8 +4839,8 @@ router.get('/distributor-medicines/:storeId', async (req, res) => {
           COALESCE(l.product_name, m.name, p.product_name) AS product_name,
           COALESCE(l.packaging, m.pack_size, p.packaging, '') AS packaging,
           COALESCE(l.company, m.manufacturer, p.company, '') AS company,
-          COALESCE(p.ptr, m.ptr, 0) AS ptr,
-          COALESCE(p.mrp, m.mrp, 0) AS mrp,
+          COALESCE(p.ptr, l.rate, m.last_purchase_ptr, m.rate, 0) AS ptr,
+          COALESCE(p.mrp, l.mrp, m.mrp, 0) AS mrp,
           p.last_ordered_at,
           p.last_order_date,
           COALESCE(p.source, 'linked') AS source,
@@ -4852,8 +4858,8 @@ router.get('/distributor-medicines/:storeId', async (req, res) => {
           p.product_name,
           COALESCE(p.packaging, '') AS packaging,
           COALESCE(p.company, '') AS company,
-          COALESCE(p.ptr, 0) AS ptr,
-          COALESCE(p.mrp, 0) AS mrp,
+          COALESCE(p.ptr, l.rate, 0) AS ptr,
+          COALESCE(p.mrp, l.mrp, 0) AS mrp,
           p.last_ordered_at,
           p.last_order_date,
           p.source,

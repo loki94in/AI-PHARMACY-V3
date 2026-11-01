@@ -3296,6 +3296,105 @@ router.post('/patient/:phone/mark-ready', async (req, res) => {
   }
 });
 
+// Notify patient that their refill re-order medicines have been booked in the live cart (one consolidated message)
+router.post('/patient/:phone/notify-booked', async (req, res) => {
+  const { phone } = req.params;
+  const cleanPhone = normalizeWhatsAppPhone(phone);
+  if (!cleanPhone || cleanPhone.length < 10) {
+    return res.status(400).json({ error: 'Valid 10+ digit patient phone is required' });
+  }
+
+  let db;
+  try {
+    db = await dbManager.getConnection();
+    const last10 = cleanPhone.slice(-10);
+    const targetRefillIds = Array.isArray(req.body?.refill_ids) && req.body.refill_ids.length > 0
+      ? req.body.refill_ids.map(Number).filter((n: number) => !isNaN(n) && n > 0)
+      : null;
+
+    let idFilterSql = '';
+    const queryParams: any[] = [`%${last10}`, `%${cleanPhone}`];
+    if (targetRefillIds && targetRefillIds.length > 0) {
+      idFilterSql = ` AND pr.id IN (${targetRefillIds.map(() => '?').join(',')})`;
+      queryParams.push(...targetRefillIds);
+    }
+
+    const refills = await db.all(`
+      SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, pr.quantity_needed, pr.cart_qty, pr.language,
+             COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name
+      FROM patient_refills pr
+      LEFT JOIN medicines m ON pr.medicine_id = m.id
+      WHERE (pr.patient_phone LIKE ? OR pr.patient_phone LIKE ?)
+        AND pr.is_active = 1
+        AND pr.status NOT IN ('completed', 'canceled')
+        ${idFilterSql}
+      ORDER BY pr.id ASC
+    `, queryParams);
+
+    if (refills.length === 0) {
+      return res.status(404).json({ error: 'No matching active refills found for this patient' });
+    }
+
+    const patientName = refills[0].patient_name || 'Customer';
+    const custRow = await db.get('SELECT language FROM customers WHERE phone LIKE ? OR phone LIKE ? LIMIT 1', [`%${last10}`, `%${cleanPhone}`]);
+    const lang = refills[0].language || custRow?.language || 'mr';
+    const medicalName = (await getConfiguredPharmacyName(db)) || 'Pharmacy';
+
+    const { formatMultiItemBookingConfirmationMessage } = await import('../services/whatsappLocalizer.js');
+    const msg = formatMultiItemBookingConfirmationMessage({
+      storeName: medicalName,
+      patientName,
+      items: refills.map(r => ({
+        name: r.medicine_name,
+        qty: r.cart_qty || r.quantity_needed || 1
+      })),
+      lang,
+      isReorder: req.body?.is_reorder !== false
+    });
+
+    // 15-minute duplicate suppression safeguard
+    const fifteenMinutesAgoMs = Date.now() - 15 * 60 * 1000;
+    const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+    const recentQueue = await db.get(
+      `SELECT id FROM whatsapp_send_queue
+       WHERE (number LIKE ? OR number LIKE ?)
+         AND type = 'refill_booking'
+         AND status NOT IN ('cancelled', 'failed_perm')
+         AND created_at >= ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [`%${last10}%`, `%${formattedPhone}%`, fifteenMinutesAgoMs]
+    );
+
+    let queueId: number | null = null;
+    let whatsappQueued = false;
+
+    if (!recentQueue) {
+      queueId = await whatsappQueueWorker.enqueue(
+        cleanPhone,
+        msg,
+        'refill_booking',
+        patientName
+      );
+      whatsappQueued = true;
+    } else {
+      console.log(`[Refill Notify-Booked] Suppressed duplicate booking WhatsApp for ${cleanPhone} (queued within 15m).`);
+    }
+
+    res.json({
+      success: true,
+      whatsapp_queued: whatsappQueued,
+      queueId,
+      item_count: refills.length,
+      message: whatsappQueued
+        ? `Queued re-order booking WhatsApp for ${patientName} (${refills.length} item(s))`
+        : `Booking WhatsApp already sent or queued recently for ${patientName}`
+    });
+  } catch (err: any) {
+    console.error('Failed to notify patient of booked refill medicines:', err);
+    res.status(500).json({ error: 'Internal server error: ' + err.message });
+  }
+});
+
 // Mark an individual refill item as Ready, queue pickup WhatsApp, and arm auto-remind
 router.post('/:id/mark-ready', async (req, res) => {
   const { id } = req.params;

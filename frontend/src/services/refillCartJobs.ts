@@ -147,11 +147,16 @@ export function queueRefillRow(jobId: number, refillId: number, mode: 'add' | 'p
 }
 
 /** Order to Cart / + Live Cart click. Reuses this patient's live run instead of starting a second one. */
-export function startRefillCartJob(patientName: string, items: RefillCartItemInput[]): void {
+export function startRefillCartJob(
+  patientName: string,
+  items: RefillCartItemInput[],
+  options: { openModal?: boolean } = {}
+): number {
+  const shouldOpen = options.openModal !== false;
   const busy = new Set(jobs.flatMap(j => j.rows.filter(r => r.state === 'queued' || r.state === 'working').map(r => r.refillId)));
   let job = jobs.find(j => j.patientName === patientName && isRefillJobRunning(j));
   if (!job) {
-    job = { id: jobSeq++, patientName, rows: [], open: true, summaryPending: false };
+    job = { id: jobSeq++, patientName, rows: [], open: shouldOpen, summaryPending: false };
     // A finished run for the same patient is replaced by the new one.
     publish([...jobs.filter(j => j.patientName !== patientName || isRefillJobRunning(j)), job]);
   }
@@ -159,8 +164,19 @@ export function startRefillCartJob(patientName: string, items: RefillCartItemInp
   const fresh: RefillCartRow[] = items
     .filter(i => !busy.has(i.refillId) && !job!.rows.some(r => r.refillId === i.refillId))
     .map(i => ({ ...i, state: 'queued', message: 'Waiting…', linked: [], candidates: [] }));
-  publish(jobs.map(j => (j.id === jobId ? { ...j, open: true, rows: [...j.rows, ...fresh] } : { ...j, open: false })));
+
+  const updatedExisting = job.rows.map(r => {
+    const matchingInput = items.find(i => i.refillId === r.refillId);
+    if (matchingInput && matchingInput.qty !== r.qty) {
+      return { ...r, qty: matchingInput.qty, state: 'queued' as const, message: 'Re-checking quantity…' };
+    }
+    return r;
+  });
+
+  publish(jobs.map(j => (j.id === jobId ? { ...j, open: shouldOpen, rows: [...updatedExisting, ...fresh] } : { ...j, open: false })));
   fresh.forEach(r => runRow(jobId, r, 'add'));
+  updatedExisting.filter(r => r.state === 'queued').forEach(r => runRow(jobId, r, 'add'));
+  return jobId;
 }
 
 export function openRefillCartJob(jobId: number): void {

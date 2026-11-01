@@ -54,6 +54,55 @@ export function formatBookingConfirmationMessage(params: BookingConfirmParams): 
     `धन्यवाद! 🙏`;
 }
 
+export interface MultiItemBookingConfirmParams {
+  storeName: string;
+  patientName: string;
+  items: Array<{ name: string; qty: number | string }>;
+  orderId?: string;
+  lang?: string;
+  isReorder?: boolean;
+}
+
+export function formatMultiItemBookingConfirmationMessage(params: MultiItemBookingConfirmParams): string {
+  const lang = normalizeLanguage(params.lang);
+  const name = params.patientName || 'Customer';
+  const store = params.storeName || 'Pharmacy';
+  const orderRef = params.orderId ? ` (#${params.orderId})` : '';
+  const isReorder = params.isReorder ?? true;
+
+  if (lang === 'hi') {
+    const title = isReorder ? 'दवा पुनः ऑर्डर (Re-Order) कन्फर्म' : 'दवा बुकिंग कन्फर्म';
+    const medList = params.items.map(it => `• *${it.name}* (मात्रा: ${it.qty})`).join('\n');
+    return `🔔 *${title} — ${store}*\n\n` +
+      `नमस्ते *${name}*,\n` +
+      `आपकी नियमित दवाइयों की पुनः बुकिंग (Re-Order) सफलतापूर्वक दर्ज कर ली गई है:${orderRef} 🚀\n\n` +
+      `${medList}\n\n` +
+      `दवाई दुकान पर उपलब्ध होते ही हम आपको लेने के लिए मैसेज भेजेंगे।\n\n` +
+      `धन्यवाद! 🙏`;
+  }
+
+  if (lang === 'en') {
+    const title = isReorder ? 'Refill Re-Order Confirmed' : 'Order Confirmed';
+    const medList = params.items.map(it => `• *${it.name}* (Qty: ${it.qty})`).join('\n');
+    return `🔔 *${title} — ${store}*\n\n` +
+      `Dear *${name}*,\n` +
+      `Your regular medicine refill re-order has been confirmed and booked for procurement:${orderRef} 🚀\n\n` +
+      `${medList}\n\n` +
+      `We will notify you as soon as your medicines are ready at our counter for pickup.\n\n` +
+      `Thank you! 🙏`;
+  }
+
+  // Default: Marathi
+  const title = isReorder ? 'औषध पुन्हा ऑर्डर (Re-Order) नोंद' : 'औषध बुकिंग कन्फर्म';
+  const medList = params.items.map(it => `• *${it.name}* (प्रमाण: ${it.qty})`).join('\n');
+  return `🔔 *${title} — ${store}*\n\n` +
+    `नमस्कार *${name}*,\n` +
+    `आपल्या नियमित औषधांची पुन्हा नोंद (Re-Order) यशस्वीरीत्या केली असून ती मागवण्यात आली आहेत:${orderRef} 🚀\n\n` +
+    `${medList}\n\n` +
+    `औषधे दुकानात उपलब्ध होताच आम्ही आपल्याला घेऊन जाण्यासाठी मेसेज पाठवू.\n\n` +
+    `धन्यवाद! 🙏`;
+}
+
 export interface CollectionReminderParams {
   storeName: string;
   patientName: string;

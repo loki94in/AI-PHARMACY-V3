@@ -262,7 +262,7 @@ function cartErrorMessage(err: any): string {
 
 export async function processRefillCartItem(
   refillId: number,
-  opts: { qty?: number; pick?: RefillCartPick[]; dryRun?: boolean } = {}
+  opts: { qty?: number; pick?: RefillCartPick[]; dryRun?: boolean; notifyPatient?: boolean } = {}
 ): Promise<RefillCartResult> {
   const db = await dbManager.getConnection();
   const refill = await db.get(
@@ -322,7 +322,7 @@ export async function processRefillCartItem(
   //    medicine is in the cart from anything else (the pharmacist, another refill) -> INCREASE that
   //    line by this refill's qty (cart qty + refill qty); nothing is reduced or replaced.
   const mine = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : undefined;
-  if (mine) {
+  if (mine && (!opts.qty || Number(opts.qty) === mine.qty)) {
     return {
       ...base,
       status: 'in_cart',
@@ -331,13 +331,19 @@ export async function processRefillCartItem(
     };
   }
   let hit: CartLine | undefined;
-  for (const l of links) hit = hit || findLine(lines, l.store_id, l.product_code);
-  if (!hit) {
-    const want = norm(medicineName);
-    hit = lines.find(l => want && norm(l.productName) === want);
+  let isMineUpdate = false;
+  if (mine && opts.qty && Number(opts.qty) !== mine.qty) {
+    hit = mine;
+    isMineUpdate = true;
+  } else {
+    for (const l of links) hit = hit || findLine(lines, l.store_id, l.product_code);
+    if (!hit) {
+      const want = norm(medicineName);
+      hit = lines.find(l => want && norm(l.productName) === want);
+    }
   }
   if (hit) {
-    const total = hit.qty + qty;
+    const total = isMineUpdate ? qty : hit.qty + qty;
     const lineInfo = { storeName: hit.storeName, productName: hit.productName, qty: total, distributorStock: (hit.raw as any)?.stock };
     if (opts.dryRun) {
       return { ...base, status: 'ready', message: `Ready: ${hit.storeName} already has ${hit.qty}; Add makes it ${total}.`, line: lineInfo };
@@ -355,7 +361,9 @@ export async function processRefillCartItem(
       scheme: raw.scheme || undefined,
       packaging: raw.packaging || undefined,
       mapped: true,
-      qty: total
+      qty: total,
+      isUpdate: true,
+      mode: 'set'
     }]);
     if (!inc.success || inc.offline) {
       return fail(`Pharmarack did not accept the quantity change: ${inc.details || inc.error || inc.message || 'offline'}`);
@@ -373,12 +381,12 @@ export async function processRefillCartItem(
     }
     await db.run(
       `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ?, status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END WHERE id = ?`,
-      [after.storeId, after.storeName, after.productCode, after.productName, qty, refillId]
+      [after.storeId, after.storeName, after.productCode, after.productName, total, refillId]
     );
 
-    // Automatically send localized booking confirmation WhatsApp message to the patient
+    // Automatically send localized booking confirmation WhatsApp message to the patient ONLY when explicitly opted in
     const patientPhone = refill.customer_phone ? String(refill.customer_phone).replace(/\D/g, '').slice(-10) : '';
-    if (patientPhone.length === 10) {
+    if (opts.notifyPatient && patientPhone.length === 10) {
       setImmediate(async () => {
         try {
           const { formatBookingConfirmationMessage } = await import('./whatsappLocalizer.js');
@@ -404,10 +412,13 @@ export async function processRefillCartItem(
       });
     }
 
+    const successMsg = isMineUpdate
+      ? `Updated at ${after.storeName}: quantity set to ${total}.`
+      : `Increased at ${after.storeName}: ${hit.qty} + ${qty} = ${total}.`;
     return {
       ...base,
       status: 'added',
-      message: `Increased at ${after.storeName}: ${hit.qty} + ${qty} = ${total}.`,
+      message: successMsg,
       line: { storeName: after.storeName, productName: after.productName, qty: total }
     };
   }
@@ -572,9 +583,9 @@ export async function processRefillCartItem(
     );
     await db.run('UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cand.link.id]);
 
-    // Automatically send localized booking confirmation WhatsApp message to the patient
+    // Automatically send localized booking confirmation WhatsApp message to the patient ONLY when explicitly opted in
     const patientPhone = refill.customer_phone ? String(refill.customer_phone).replace(/\D/g, '').slice(-10) : '';
-    if (patientPhone.length === 10) {
+    if (opts.notifyPatient && patientPhone.length === 10) {
       setImmediate(async () => {
         try {
           const { formatBookingConfirmationMessage } = await import('./whatsappLocalizer.js');
