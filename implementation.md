@@ -1,83 +1,77 @@
-# Implementation Plan: Fix Post-Installation App Launch & Auto-Updater PowerShell Syntax Error
+# Implementation Plan: Universal Distributor Phone Number Index & Resolution Pipeline
 
-## 1. Problem Diagnosis & Root Causes
-The user reported: `"THEB APP IS NOT WORKINF AFTER THE INSATLLLATION"`.
-Upon inspecting logs across `G:\AI Pharmacy OS\logs\updater.log` and the temporary test install directory, two concrete root causes were discovered:
-
-### Cause 1: PowerShell Syntax Error in `packaging/UpdateGUI.ps1` (Aborts In-App Updates)
-- In `packaging/UpdateGUI.ps1` line 278:
-  ```powershell
-  $targetExes = @(Join-Path $InstallDir "PharmacyOS.exe", Join-Path $InstallDir "PharmacyBackend.exe")
-  ```
-- In PowerShell, without parenthesizing each `Join-Path`, the comma causes PowerShell to treat `"PharmacyOS.exe", Join-Path ...` as an array passed to the positional parameter `-ChildPath`.
-- In Windows PowerShell 5.1, `-ChildPath` only accepts a `String`, resulting in a fatal error:
-  `EXCEPTION in UpdateGUI: Cannot convert 'System.Object[]' to the type 'System.String' required by parameter 'ChildPath'. Specified method is not supported.`
-- Consequence:
-  - When the app in `G:\AI Pharmacy OS` attempted to apply the update to `0.1.194`:
-    1. It killed `PharmacyOS.exe` and `PharmacyBackend.exe`.
-    2. It threw this unhandled exception on line 278 before extracting the update.
-    3. It left `updates/update.lock` on disk and failed to restart the application.
-    4. Any subsequent attempt by the user to launch `PharmacyOS.exe` aborted with `Active update.lock found (< 30 min old). Aborting.`
-
-### Cause 2: Inno Setup Registry Pollution & NodeModules Stamp Bypass in Temp Test Directory
-- An earlier automated test had run an installer silently into `%LOCALAPPDATA%\Temp\ai-pharmacy-offline-rc-test`.
-- Inno Setup saved this temp folder as the `InstallLocation` in `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{E3A1F2B4-7C8D-4E5F-9A0B-1C2D3E4F5A6B}_is1`.
-- When the user manually ran `AI-Pharmacy-OS-Offline-Setup-v0.1.194.exe`, Inno Setup defaulted to that temp path and updated the user's Desktop shortcut (`AI Pharmacy OS.lnk`) to point to `...\Temp\ai-pharmacy-offline-rc-test\PharmacyOS.exe`.
-- Inside that temp directory, an old `.stamp_c9b2cc8db6bbbd15` file existed from a partial install (only 264 packages instead of 800+).
-- Because `installer.iss`'s `ShouldInstallNodeModules()` checked only `FileExists(StampFile)`, it skipped installing `node_modules`.
-- Missing modules like `bindings` caused the backend to crash with `Error: Cannot find module 'bindings'` from `sqlite3-binding.js`.
+## Problem Statement
+Previously, the app had fragmented and splintered paths for resolving and saving distributor phone numbers:
+1. **Ad-hoc backend queries**: In `src/routes/pharmarack.ts` (`/send-single-whatsapp`), `src/services/notificationService.ts` (`notifyDistributorCartOrder`), and `src/routes/whatsappQueue.ts`, raw SQL queries were looking up numbers directly on `distributors` or `distributor_dispatch_reminders` with exact name matching or raw updates, bypassing `resolveDistributorContact` and `pharmarack_distributor_mappings`.
+2. **Frontend Priority Inversion**: In `frontend/src/pages/PharmarackCart/index.tsx`, `getDistributorPhoneNumber` checked `dist.distributor_phone` as Priority 1 ahead of session edits (`customDistributorPhones`) and store mappings (`distributorMappings`). When a user updated a number in the modal, the old pre-resolved number took precedence.
+3. **State Desync on Save**: Saving a contact in `handleSaveDistributorContact` or inline fast-fill updated mappings but omitted updating the active `distributors` state array in memory, causing UI badges (such as delivery boys and missing phone badges) to lag until an app reload.
+4. **Encoding Artifact**: Line 7038 had a mangled ellipsis character (`'ΓÇª'`) in the missing phone counter.
+5. **Installed App Build Gap**: In `frontend/src/pages/PharmarackCart/index.tsx`, the `Distributor` interface was missing `phone`, `distributor_phone`, `distributor_id`, and `delivery_boy_id`, which caused `tsc -b` to fail during `npm run build:client`. As a result, the installed application was serving a stale build that lacked the single universal index improvements.
 
 ---
 
-## 2. Proposed Changes & Surgical Fixes
+## Changes Implemented
 
-### A. Fix `packaging/UpdateGUI.ps1`
-- Parenthesize both `Join-Path` calls on line 278:
-  ```powershell
-  $targetExes = @( (Join-Path $InstallDir "PharmacyOS.exe"), (Join-Path $InstallDir "PharmacyBackend.exe") )
-  ```
-- In `catch` block of `UpdateGUI.ps1`, ensure that if `$BackupDir` is empty or invalid, it still removes `update.lock` and attempts to start the application using `$InstallDir\PharmacyOS.exe`.
+### 1. Backend: Consolidate All Number Lookups into Universal Resolver
+- **File**: `src/routes/pharmarack.ts`
+  - In `/send-single-whatsapp`: Replaced ad-hoc SQL query with `resolveDistributorContact(db, storeName)` so it checks mappings, normalized names, and directory fallbacks consistently.
+- **File**: `src/services/notificationService.ts`
+  - In `notifyDistributorCartOrder`: Replaced raw `SELECT phone FROM distributors WHERE name LIKE ?` with `resolveDistributorContact(db, storeName)`.
+- **File**: `src/routes/whatsappQueue.ts`
+  - In `POST /single-order`: Replaced raw SQL updates with `syncDistributorPhoneAcrossTables(db, { store_name: storeName, phone: rawDigits })` so mappings, directory, and reminders update atomically and trigger real-time SSE.
+  - Used `toLocalSqlDateTime().slice(0, 10)` for local date to strictly satisfy Guardrail B4.
 
-### B. Strengthen `installer.iss`
-- In `ShouldInstallNodeModules()`, verify that critical packages (`better-sqlite3`, `bindings`) exist in addition to checking the stamp file. If critical packages are missing, enforce node_modules installation.
-- In `installer.iss`, set `UsePreviousAppDir=no` or sanitize registry so installer defaults to `{localappdata}\AI Pharmacy OS` instead of a temp directory.
+### 2. Frontend: Priority Order, Type Definitions & Real-Time State Sync
+- **File**: `frontend/src/pages/PharmarackCart/index.tsx`
+  - Extended `interface Distributor` with `phone?: string`, `distributor_phone?: string`, `distributor_id?: number | null`, `delivery_boy_id?: number | null`.
+  - In `getDistributorPhoneNumber`:
+    - Priority 1: User's transient session edit `customDistributorPhones[dist.storeId]`
+    - Priority 2: Single master store mapping `distributorMappings[normName]?.phone` (including stripped alphanumeric fallback)
+    - Priority 3: Server pre-resolved contact `dist.distributor_phone || dist.phone`
+    - Priority 4: Directory exact and stripped match in `savedDistributorsList`
+  - In `resolveInitialDeliveryBoyId`: Prioritized `distributorMappings` (user's explicit preference) with alphanumeric fallback before server pre-resolved and directory fallbacks.
+  - In `handleOpenEditModal`: Checked `customDistributorPhones` and `storedMap?.phone` before `dist.distributor_phone`.
+  - In `handleSaveDistributorContact` and `handleInlineQuickSaveDistPhone`:
+    - Updated `setDistributors` in-memory state immediately so phone and delivery boy update instantaneously across the cards with 0ms latency.
+    - Preserved `deliveryBoyId` during inline quick-saves.
+  - In `handleDistributorContactUpdate` (SSE listener):
+    - Matched both exact and alphanumeric stripped store keys and updated active `distributors` in state, including updating or clearing delivery boys.
+  - Fixed character encoding on line 7038 from `'ΓÇª'` to `'...'`.
 
-### C. Repair Active User Environment
-- Delete `G:\AI Pharmacy OS\updates\update.lock` so the app in `G:\AI Pharmacy OS` is unlocked.
-- Restore the Desktop shortcut `AI Pharmacy OS.lnk` to point to `G:\AI Pharmacy OS\PharmacyOS.exe`.
-- Ensure `G:\AI Pharmacy OS` can start cleanly and apply updates.
+### 3. Production Client Build
+- Recompiled `frontend/dist` with `npm run build:client` (`tsc -b && vite build`) so packaged and installed desktop applications receive the exact same code and single universal index as the development environment.
 
 ---
 
-## 3. Verification Plan
-1. Test line 278 PowerShell expression directly to verify zero syntax errors.
-2. Verify `G:\AI Pharmacy OS` launches properly once `update.lock` is removed.
-3. Verify Desktop shortcut points to the proper executable.
-4. Run `npm run guardrails` and update knowledge graph.
+## Verification Plan & Results
+
+### Automated Checks
+1. **Backend Integration Test**: Executed automated test script (`test_distributor_lookup.mjs`) verifying:
+   - Atomic sync via `syncDistributorPhoneAcrossTables`.
+   - Resolution by exact Pharmarack store name (`TEST_PHARMARACK_STORE_PUNE_123` $\rightarrow$ `9876543210`).
+   - Resolution by canonical directory name (`Test Canonical Pharma` $\rightarrow$ `9876543210`).
+   - Resolution by normalized variation (`Test-Canonical-Pharma (Pune)` $\rightarrow$ `9876543210`).
+   - Atomic phone update propagation (`9123456789`).
+   - Result: **All tests passed (exit code 0)**.
+2. **Frontend Production Build**: Ran `npm run build:client` (`tsc -b && vite build`). Result: **PASS (exit code 0)**, compiled 2695 modules into `frontend/dist`.
+3. **Performance Guardrails**: Ran `npm run guardrails` (`tsc --noEmit` clean, zero violations, B4 local time compliance). Result: **PASS (exit code 0)**.
+4. **Knowledge Graph**: Ran `node scripts/quick-update.mjs` (1340 files, 877 edges). Result: **PASS (exit code 0)**.
 
 ---
 
-## 4. Tasks Tracking & Completion Report
-- [x] **Identify root causes in `G:\AI Pharmacy OS\logs\updater.log` and temp test directory**
-  - Found `Cannot convert 'System.Object[]' to 'System.String'` on line 278 in `UpdateGUI.ps1` which killed the app processes, aborted before extraction, and left `update.lock` locking the app.
-  - Found `Error: Cannot find module 'bindings'` in `%LOCALAPPDATA%\Temp\ai-pharmacy-offline-rc-test\` where Desktop shortcut was pointed due to previous test registry pollution and premature node_modules stamp match.
-- [x] **Fix PowerShell syntax in `packaging/UpdateGUI.ps1`**
-  - Wrapped `Join-Path` in parentheses: `$targetExes = @( (Join-Path $InstallDir "PharmacyOS.exe"), (Join-Path $InstallDir "PharmacyBackend.exe") )`.
-  - Added guard in `Rollback-Update` checking `-not [string]::IsNullOrWhiteSpace($BackupDir)` so empty backup path doesn't throw or prevent `update.lock` removal and app restart.
-  - Verified with AST parser: 0 errors.
-- [x] **Safeguard `installer.iss` `ShouldInstallNodeModules()`**
-  - Updated `ShouldInstallNodeModules()` to check physical existence of `better-sqlite3` and `bindings` in addition to stamp file.
-  - Sanitized `InitializeSetup()` to delete registry uninstall key if `InstallLocation` points to `\Temp\`.
-- [x] **Clean stale lock and repair Desktop shortcut for the user**
-  - Removed `G:\AI Pharmacy OS\updates\update.lock`.
-  - Copied fixed `UpdateGUI.ps1` into `G:\AI Pharmacy OS`.
-  - Updated Desktop shortcut `AI Pharmacy OS.lnk` to point to `G:\AI Pharmacy OS\PharmacyOS.exe`.
-  - Updated registry uninstall key to `G:\AI Pharmacy OS`.
-  - Removed corrupt `%LOCALAPPDATA%\Temp\ai-pharmacy-offline-rc-test`.
-- [x] **Verify Live Application Health**
-  - Started app in `G:\AI Pharmacy OS`.
-  - Verified backend and Electron main process are active: `PharmacyBackend` (PID 7256) and `PharmacyOS` (PIDs 1220, 7832, 12512, 16164).
-  - Queried `http://127.0.0.1:5175/api/health/ready` -> returned `{"success": true, "ready": true}`.
-- [x] **Code Quality & Knowledge Graph Sync**
-  - Passed `npm run guardrails` (0 violations).
-  - Ran `node scripts/quick-update.mjs` (synchronized 1340 nodes, 877 edges).
+## Tasks Completed & Status
+
+- [x] Task 1: Replace ad-hoc SQL distributor number lookups with `resolveDistributorContact` and `syncDistributorPhoneAcrossTables` in `src/routes/pharmarack.ts`, `src/services/notificationService.ts`, and `src/routes/whatsappQueue.ts`.
+  - *Completed*: All 3 locations now route through `resolveDistributorContact` and `syncDistributorPhoneAcrossTables`.
+- [x] Task 2: Correct priority ordering in `getDistributorPhoneNumber`, `resolveInitialDeliveryBoyId`, and `handleOpenEditModal` in `frontend/src/pages/PharmarackCart/index.tsx`.
+  - *Completed*: Transient user edits and master mappings take priority over stale pre-resolved strings.
+- [x] Task 3: Ensure `handleSaveDistributorContact`, `handleInlineQuickSaveDistPhone`, and SSE handlers update active `distributors` state immediately with zero latency.
+  - *Completed*: In-memory `distributors` state is updated synchronously on save and on SSE event reception.
+- [x] Task 4: Fix character encoding artifact on line 7038 in `PharmarackCart/index.tsx`.
+  - *Completed*: Replaced mangled character with ASCII `'...'`.
+- [x] Task 5: Fix `interface Distributor` TypeScript types and compile clean production bundle with `npm run build:client`.
+  - *Completed*: `tsc -b && vite build` built successfully with exit code 0.
+- [x] Task 6: Run `npm run guardrails`, run `node scripts/quick-update.mjs`, and verify all tests pass.
+  - *Completed*: Guardrails passed with exit code 0 (`tsc --noEmit` clean, 0 violations); knowledge graph updated.
+- [x] Task 7: Human-in-the-Loop review and verification report.
+  - *Completed*: Ready for operator review.

@@ -1101,6 +1101,10 @@ interface ServerCartCacheEntry {
   ts: number;
 }
 let serverCartCache: ServerCartCacheEntry | null = null;
+export function clearServerCartCache(): void {
+  serverCartCache = null;
+  userCartProbeCache = null;
+}
 
 // Short-TTL micro-cache for the raw GetUserCartDetails probe. The Live Cart
 // modal and session checks hit this upstream endpoint 3x per open
@@ -1365,6 +1369,27 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
   );
 
   const totalItems = distributors.reduce((s: number, d: any) => s + d.items.length, 0);
+
+  // Pre-resolve distributor contacts directly from single master index
+  try {
+    const db = await dbManager.getConnection();
+    await Promise.all(distributors.map(async (dist: any) => {
+      if (!dist.storeName) return;
+      try {
+        const contact = await resolveDistributorContact(db, dist.storeName);
+        if (contact && contact.distributor_phone) {
+          dist.phone = contact.distributor_phone;
+          dist.distributor_phone = contact.distributor_phone;
+        }
+        if (contact && contact.distributor_id) {
+          dist.distributor_id = contact.distributor_id;
+        }
+        if (contact && contact.delivery_boy_id !== undefined && contact.delivery_boy_id !== null) {
+          dist.delivery_boy_id = contact.delivery_boy_id;
+        }
+      } catch (_) {}
+    }));
+  } catch (_) {}
 
   // Background auto-ingest live cart medicines into store-scoped product registry
   try {
@@ -4145,6 +4170,7 @@ router.get('/live-cart-summary', async (_req, res) => {
       const sLower = String(dist.storeName || '').toLowerCase().trim();
       const mappedPhone = phoneMap.get(sLower) || '';
       dist.phone = mappedPhone;
+      dist.distributor_phone = mappedPhone;
       if (!isValidIndianMobile(mappedPhone)) {
         missingDistributorsCount++;
       }
@@ -4517,8 +4543,7 @@ router.post('/sent-orders/:id/send-dispatch', async (req, res) => {
     const rawOrderNo = placedOrder?.order_no || syncedOrder?.order_no || '';
     const cleanOrderNo = String(rawOrderNo).trim().replace(/^#+/, '');
 
-    // 2. Resolve distributor phone
-    // Check reminder row first, then distributor mappings -> distributors table
+    // 2. Resolve distributor phone via universal single master index
     let distPhone = '';
     let reminder = await db.get(
       `SELECT * FROM distributor_dispatch_reminders
@@ -4527,29 +4552,11 @@ router.post('/sent-orders/:id/send-dispatch', async (req, res) => {
       [orderDate, storeName]
     );
 
-    if (reminder?.distributor_phone && String(reminder.distributor_phone).trim()) {
+    const resolvedContact = await resolveDistributorContact(db, storeName);
+    if (resolvedContact && resolvedContact.distributor_phone) {
+      distPhone = resolvedContact.distributor_phone;
+    } else if (reminder?.distributor_phone && String(reminder.distributor_phone).trim()) {
       distPhone = String(reminder.distributor_phone).trim();
-    } else {
-      // Check mapped distributor
-      const mapping = await db.get(
-        `SELECT d.phone FROM pharmarack_distributor_mappings m
-         JOIN distributors d ON m.distributor_id = d.id
-         WHERE LOWER(TRIM(m.store_name)) = LOWER(TRIM(?))
-         LIMIT 1`,
-        [storeName]
-      );
-      if (mapping?.phone && String(mapping.phone).trim()) {
-        distPhone = String(mapping.phone).trim();
-      } else {
-        // Direct name lookup in distributors table
-        const directDist = await db.get(
-          `SELECT phone FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1`,
-          [storeName]
-        );
-        if (directDist?.phone && String(directDist.phone).trim()) {
-          distPhone = String(directDist.phone).trim();
-        }
-      }
     }
 
     const clean10Digits = distPhone.replace(/\D/g, '').slice(-10);

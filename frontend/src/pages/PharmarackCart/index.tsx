@@ -57,6 +57,10 @@ interface Distributor {
   maxItemLimit?: number | null;
   maxAmountLimit?: number | null;
   isUnpricedStore?: boolean;
+  phone?: string;
+  distributor_phone?: string;
+  distributor_id?: number | null;
+  delivery_boy_id?: number | null;
 }
 
 function getCartLineItemValue(item: { amount?: number; ptr?: number; rate?: number; qty?: number; quantity?: number }): number {
@@ -926,10 +930,37 @@ function openOrReuseWhatsappTab(url: string, phone?: string, text?: string) {
   }
 }
 
-let cachedSavedDistributorsList: LocalDistributorRecord[] = [];
-let cachedDistributorMappings: Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }> = {};
+const DISTRIBUTOR_MAPPINGS_STORAGE_KEY = 'pharmarack_distributor_mappings_cache';
+const SAVED_DISTRIBUTORS_STORAGE_KEY = 'pharmarack_saved_distributors_cache';
+
+const loadPersistedDistributorMappings = (): Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }> => {
+  try {
+    const raw = localStorage.getItem(DISTRIBUTOR_MAPPINGS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch (_) { }
+  return {};
+};
+
+const loadPersistedSavedDistributors = (): LocalDistributorRecord[] => {
+  try {
+    const raw = localStorage.getItem(SAVED_DISTRIBUTORS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (_) { }
+  return [];
+};
+
+let cachedSavedDistributorsList: LocalDistributorRecord[] = loadPersistedSavedDistributors();
+let cachedDistributorMappings: Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }> = loadPersistedDistributorMappings();
 let cachedDeliveryBoysList: { id?: number; name: string; whatsapp_number: string; is_active?: number }[] = [];
 let cachedStoreInfo: { name: string; phone: string; address: string; email: string; adminPhone: string; deliveryBoyName1: string; deliveryBoyPhone: string; deliveryBoyName2: string; deliveryBoyPhone2: string; invoiceFileFormat: string } | null = null;
+let lastSavedDistributorsFetchedAt = 0;
+let lastDistributorMappingsFetchedAt = 0;
 export default function PharmarackCart() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -1917,16 +1948,22 @@ export default function PharmarackCart() {
   const [deliveryBoysList, setDeliveryBoysList] = useState<{ id?: number; name: string; whatsapp_number: string; is_active?: number }[]>(() => cachedDeliveryBoysList);
   const [savedDistributorsList, setSavedDistributorsList] = useState<LocalDistributorRecord[]>(() => cachedSavedDistributorsList);
   const [distributorMappings, setDistributorMappings] = useState<Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>>(() => cachedDistributorMappings);
+  const [isInitialMappingsLoading, setIsInitialMappingsLoading] = useState<boolean>(() => Object.keys(cachedDistributorMappings).length === 0);
   const [modalDeliveryBoyId, setModalDeliveryBoyId] = useState<number | null>(null);
   const [overwriteDistributorName, setOverwriteDistributorName] = useState(true);
 
   const fetchSavedDistributors = async (force = false) => {
-    if (!force && cachedSavedDistributorsList.length > 0) return;
+    const isStale = Date.now() - lastSavedDistributorsFetchedAt > 60_000;
+    if (!force && cachedSavedDistributorsList.length > 0 && !isStale) return;
     try {
       const res = await apiClient.get('/distributors');
       if (res.data && Array.isArray(res.data)) {
         cachedSavedDistributorsList = res.data;
+        lastSavedDistributorsFetchedAt = Date.now();
         setSavedDistributorsList(res.data);
+        try {
+          localStorage.setItem(SAVED_DISTRIBUTORS_STORAGE_KEY, JSON.stringify(res.data));
+        } catch (_) { }
       }
     } catch (err) {
       console.warn('Failed to load saved distributors list:', err);
@@ -1934,7 +1971,11 @@ export default function PharmarackCart() {
   };
 
   const fetchDistributorMappings = async (force = false) => {
-    if (!force && Object.keys(cachedDistributorMappings).length > 0) return;
+    const isStale = Date.now() - lastDistributorMappingsFetchedAt > 60_000;
+    if (!force && Object.keys(cachedDistributorMappings).length > 0 && !isStale) {
+      setIsInitialMappingsLoading(false);
+      return;
+    }
     try {
       const res = await apiClient.get('/pharmarack/distributor-mappings');
       if (res.data && Array.isArray(res.data.mappings)) {
@@ -1949,10 +1990,16 @@ export default function PharmarackCart() {
           }
         });
         cachedDistributorMappings = mapObj;
+        lastDistributorMappingsFetchedAt = Date.now();
         setDistributorMappings(mapObj);
+        try {
+          localStorage.setItem(DISTRIBUTOR_MAPPINGS_STORAGE_KEY, JSON.stringify(mapObj));
+        } catch (_) { }
       }
     } catch (err) {
       console.warn('Failed to load distributor mappings:', err);
+    } finally {
+      setIsInitialMappingsLoading(false);
     }
   };
 
@@ -2041,6 +2088,8 @@ export default function PharmarackCart() {
       cachedLastFetched = null;
       try {
         localStorage.removeItem(CART_CACHE_STORAGE_KEY);
+        localStorage.removeItem(DISTRIBUTOR_MAPPINGS_STORAGE_KEY);
+        localStorage.removeItem(SAVED_DISTRIBUTORS_STORAGE_KEY);
         localStorage.removeItem('pharmacart_sent_wa_history');
         localStorage.removeItem('pharmarack_last_sent_wa_time_map');
         localStorage.removeItem('pharmarack_last_batch_sent_time');
@@ -2056,14 +2105,55 @@ export default function PharmarackCart() {
       loadSentDates();
     };
 
+    const handleDistributorContactUpdate = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const payload = detail?.payload || detail;
+      if (!payload) return;
+      const sName = payload.store_name || payload.distributor_name;
+      const phone = payload.phone;
+      const boyId = payload.delivery_boy_id;
+      if (sName) {
+        const normKey = String(sName).toLowerCase().trim();
+        setDistributorMappings(prev => ({
+          ...prev,
+          [normKey]: {
+            distributorId: payload.distributor_id || prev[normKey]?.distributorId || null,
+            phone: phone || prev[normKey]?.phone || '',
+            deliveryBoyId: boyId !== undefined && boyId !== null ? Number(boyId) : prev[normKey]?.deliveryBoyId
+          }
+        }));
+        const cleanNormKey = normKey.replace(/[^a-z0-9]/g, '');
+        setDistributors(prev => prev.map(d => {
+          const dNorm = (d.storeName || '').toLowerCase().trim();
+          const dClean = dNorm.replace(/[^a-z0-9]/g, '');
+          if (dNorm === normKey || (cleanNormKey && dClean === cleanNormKey)) {
+            return {
+              ...d,
+              phone: phone || d.phone,
+              distributor_phone: phone || d.distributor_phone,
+              distributor_id: payload.distributor_id || d.distributor_id,
+              delivery_boy_id: boyId !== undefined ? (boyId !== null ? Number(boyId) : null) : d.delivery_boy_id
+            };
+          }
+          return d;
+        }));
+      }
+      void fetchDistributorMappings(true);
+      void fetchSavedDistributors(true);
+    };
+
     window.addEventListener('phone-numbers-updated', handlePhoneUpdate);
     window.addEventListener('settings-updated', handlePhoneUpdate);
+    window.addEventListener('distributors-updated', handlePhoneUpdate);
+    window.addEventListener('sse-distributor-contact-updated', handleDistributorContactUpdate);
     window.addEventListener('clear-sent-history', handleClearSentHistory);
     window.addEventListener('clear-app-cache', handleClearSentHistory);
     window.addEventListener('refresh-sent-orders', handleSentOrdersUpdate);
     return () => {
       window.removeEventListener('phone-numbers-updated', handlePhoneUpdate);
       window.removeEventListener('settings-updated', handlePhoneUpdate);
+      window.removeEventListener('distributors-updated', handlePhoneUpdate);
+      window.removeEventListener('sse-distributor-contact-updated', handleDistributorContactUpdate);
       window.removeEventListener('clear-sent-history', handleClearSentHistory);
       window.removeEventListener('clear-app-cache', handleClearSentHistory);
       window.removeEventListener('refresh-sent-orders', handleSentOrdersUpdate);
@@ -2275,60 +2365,6 @@ export default function PharmarackCart() {
       .replace(/[^a-z0-9]/g, '');
   };
 
-  const findSavedDistributorMatch = (distName: string) => {
-    if (!distName || !Array.isArray(savedDistributorsList)) return null;
-
-    const normCart = normalizeDistName(distName);
-    const rawCartNorm = distName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (!normCart && !rawCartNorm) return null;
-
-    const getPhone = (d: LocalDistributorRecord) => {
-      const p = d.phone || d.mobile || d.whatsapp || d.contact || '';
-      return p.trim();
-    };
-
-    // 1. Highest Priority: EXACT match WITH a non-empty phone number
-    const exactWithPhone = savedDistributorsList.find((d) => {
-      if (!d || !d.name || !getPhone(d)) return false;
-      const normSaved = normalizeDistName(d.name);
-      const rawSavedNorm = d.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return (rawCartNorm && rawCartNorm === rawSavedNorm) || (normCart && normSaved && normCart === normSaved);
-    });
-    if (exactWithPhone) return exactWithPhone;
-
-    // 2. Second Priority: EXACT match ANY record (even if phone not yet set)
-    const exactAny = savedDistributorsList.find((d) => {
-      if (!d || !d.name) return false;
-      const normSaved = normalizeDistName(d.name);
-      const rawSavedNorm = d.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return (rawCartNorm && rawCartNorm === rawSavedNorm) || (normCart && normSaved && normCart === normSaved);
-    });
-    if (exactAny) return exactAny;
-
-    // 3. Third Priority: Fuzzy substring match WITH a non-empty phone number
-    const fuzzyWithPhone = savedDistributorsList.find((d) => {
-      if (!d || !d.name || !getPhone(d)) return false;
-      const normSaved = normalizeDistName(d.name);
-      const rawSavedNorm = d.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return (
-        (normCart && normSaved && normSaved.length >= 4 && normCart.length >= 4 && (normCart.includes(normSaved) || normSaved.includes(normCart))) ||
-        (rawCartNorm && rawSavedNorm && rawSavedNorm.length >= 5 && rawCartNorm.length >= 5 && (rawCartNorm.includes(rawSavedNorm) || rawSavedNorm.includes(rawCartNorm)))
-      );
-    });
-    if (fuzzyWithPhone) return fuzzyWithPhone;
-
-    // 4. Fourth Priority: Any fuzzy match fallback
-    return savedDistributorsList.find((d) => {
-      if (!d || !d.name) return false;
-      const normSaved = normalizeDistName(d.name);
-      const rawSavedNorm = d.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return (
-        (normCart && normSaved && normSaved.length >= 4 && normCart.length >= 4 && (normCart.includes(normSaved) || normSaved.includes(normCart))) ||
-        (rawCartNorm && rawSavedNorm && rawSavedNorm.length >= 5 && rawCartNorm.length >= 5 && (rawCartNorm.includes(rawSavedNorm) || rawSavedNorm.includes(rawCartNorm)))
-      );
-    });
-  };
-
   const resolveInitialDeliveryBoyId = (
     dist: Distributor,
     mappings?: Record<string, { distributorId: number | null; phone: string; deliveryBoyId?: number | null }>,
@@ -2336,77 +2372,86 @@ export default function PharmarackCart() {
   ): number | null => {
     const activeBoys = boys && boys.length > 0 ? boys : deliveryBoysList;
     const activeMappings = mappings || distributorMappings;
-    const normName = normalizeDistName(dist.storeName);
-    const rawTrim = dist.storeName ? dist.storeName.toLowerCase().trim() : '';
 
-    // 1. Check saved distributor mapping
-    const cleanStoreNorm = dist.storeName ? dist.storeName.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
-    const mapped = (activeMappings && (activeMappings[normName] || activeMappings[rawTrim] || activeMappings[cleanStoreNorm])) || null;
+    // 1. Direct from single master store mapping (user's explicit preference)
+    const rawTrim = dist.storeName ? dist.storeName.toLowerCase().trim() : '';
+    const cleanStoreNorm = rawTrim.replace(/[^a-z0-9]/g, '');
+    let mapped = activeMappings && activeMappings[rawTrim];
+    if (!mapped && cleanStoreNorm && activeMappings) {
+      const matchKey = Object.keys(activeMappings).find(k => k.replace(/[^a-z0-9]/g, '') === cleanStoreNorm);
+      if (matchKey) mapped = activeMappings[matchKey];
+    }
     if (mapped?.deliveryBoyId !== undefined && mapped?.deliveryBoyId !== null) {
       if (mapped.deliveryBoyId === 0) return 0;
-      if (activeBoys.some(b => b.id === mapped.deliveryBoyId)) {
-        return mapped.deliveryBoyId;
-      }
+      if (activeBoys.some(b => b.id === mapped.deliveryBoyId)) return mapped.deliveryBoyId;
     }
 
-    // 2. Check saved distributors list
-    const savedMatch = findSavedDistributorMatch(dist.storeName);
-    if (savedMatch?.delivery_boy_id !== undefined && savedMatch?.delivery_boy_id !== null) {
-      if (savedMatch.delivery_boy_id === 0) return 0;
-      if (activeBoys.some(b => b.id === savedMatch.delivery_boy_id)) {
-        return savedMatch.delivery_boy_id;
-      }
+    // 2. Direct from server pre-resolved distributor record
+    if (dist.delivery_boy_id !== undefined && dist.delivery_boy_id !== null) {
+      if (dist.delivery_boy_id === 0) return 0;
+      if (activeBoys.some(b => b.id === dist.delivery_boy_id)) return dist.delivery_boy_id;
     }
 
-    // 3. Check dist.deliveryPersons matched by name
+    // 3. Fallback to matching directory name (exact or alphanumeric)
+    let dirMatch = savedDistributorsList.find(d => d.name && d.name.toLowerCase().trim() === rawTrim);
+    if (!dirMatch && cleanStoreNorm) {
+      dirMatch = savedDistributorsList.find(d => d.name && d.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanStoreNorm);
+    }
+    if (dirMatch?.delivery_boy_id !== undefined && dirMatch?.delivery_boy_id !== null) {
+      if (dirMatch.delivery_boy_id === 0) return 0;
+      if (activeBoys.some(b => b.id === dirMatch.delivery_boy_id)) return dirMatch.delivery_boy_id;
+    }
+
+    // 4. Check dist.deliveryPersons matched by name
     if (dist.deliveryPersons && dist.deliveryPersons.length > 0 && dist.deliveryPersons[0].name && dist.deliveryPersons[0].name !== 'Not assigned yet') {
       const match = activeBoys.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()));
       if (match?.id) return match.id;
     }
 
-    // 4. Do not silently pick a delivery boy - return null so the explicit badge prompts assignment
     return null;
   };
 
   const getDistributorPhoneNumber = (dist: Distributor): string => {
-    // 1. Primary priority: Transient memory session override (user explicitly edited/saved number in modal)
+    // 1. Transient session override (if edited in modal during current checkout)
     const custom = customDistributorPhones[dist.storeId];
-    if (custom && custom.trim().length > 0) return custom.trim();
+    if (custom && custom.trim().length > 0 && isValidPhoneNumber(custom.replace(/\D/g, ''))) return custom.trim();
 
-    // 2. Persistent store-to-distributor mapping from SQLite DB
+    // 2. Persistent store-to-distributor mapping from single SQLite master index
     const normName = dist.storeName ? dist.storeName.toLowerCase().trim() : '';
-    const cleanStoreNorm = dist.storeName ? dist.storeName.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+    const cleanStoreNorm = normName.replace(/[^a-z0-9]/g, '');
 
     let mapping = normName ? distributorMappings[normName] : null;
     if (!mapping && cleanStoreNorm) {
-      const matchKey = Object.keys(distributorMappings).find(k => {
-        const kNorm = k.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return kNorm === cleanStoreNorm;
-      });
-      if (matchKey) {
-        mapping = distributorMappings[matchKey];
-      }
+      const matchKey = Object.keys(distributorMappings).find(k => k.replace(/[^a-z0-9]/g, '') === cleanStoreNorm);
+      if (matchKey) mapping = distributorMappings[matchKey];
     }
 
     if (mapping) {
+      if (mapping.phone && isValidPhoneNumber(mapping.phone.replace(/\D/g, ''))) {
+        return mapping.phone.trim();
+      }
       if (mapping.distributorId) {
         const found = savedDistributorsList.find((d) => d.id === mapping.distributorId);
         const latestPhone = found?.phone || found?.mobile || found?.whatsapp || found?.contact || '';
-        if (latestPhone && latestPhone.trim().length > 0) {
+        if (latestPhone && isValidPhoneNumber(latestPhone.replace(/\D/g, ''))) {
           return latestPhone.trim();
         }
       }
-      if (mapping.phone && mapping.phone.trim().length > 0) {
-        return mapping.phone.trim();
-      }
     }
 
-    // 3. Central Database (distributors table) match
-    const matched = findSavedDistributorMatch(dist.storeName);
-    const dbPhone = matched?.phone || matched?.mobile || matched?.whatsapp || matched?.contact || '';
-    if (dbPhone && dbPhone.trim().length > 0) return dbPhone.trim();
+    // 3. Server pre-resolved verified phone directly on store object
+    const directPhone = (dist.distributor_phone || dist.phone || '').trim();
+    if (isValidPhoneNumber(directPhone.replace(/\D/g, ''))) return directPhone;
 
-    return '';
+    // 4. Match directory by exact or stripped alphanumeric name
+    let dirMatch = savedDistributorsList.find((d) => d.name && d.name.toLowerCase().trim() === normName);
+    if (!dirMatch && cleanStoreNorm) {
+      dirMatch = savedDistributorsList.find((d) => d.name && d.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanStoreNorm);
+    }
+    const dbPhone = dirMatch?.phone || dirMatch?.mobile || dirMatch?.whatsapp || dirMatch?.contact || '';
+    if (dbPhone && isValidPhoneNumber(dbPhone.replace(/\D/g, ''))) return dbPhone.trim();
+
+    return directPhone || '';
   };
 
   const isDistributorMapped = (dist: Distributor) => {
@@ -3614,34 +3659,22 @@ export default function PharmarackCart() {
 
     const normName = dist.storeName ? dist.storeName.toLowerCase().trim() : '';
     const storedMap = distributorMappings[normName];
+    const initialPhone = (customDistributorPhones[dist.storeId] || storedMap?.phone || dist.distributor_phone || dist.phone || '').trim();
+    const dirMatch = savedDistributorsList.find(d => d.name && d.name.toLowerCase().trim() === normName);
+    const initialDistId = dist.distributor_id || storedMap?.distributorId || dirMatch?.id || null;
 
-    if (storedMap && storedMap.distributorId) {
-      setSelectedSavedDistId(storedMap.distributorId);
-      setModalPhoneInput(storedMap.phone || '');
-    } else {
-      const custom = customDistributorPhones[dist.storeId];
-      const matched = findSavedDistributorMatch(dist.storeName);
+    setSelectedSavedDistId(initialDistId);
+    setModalPhoneInput(initialPhone);
 
-      if (custom) {
-        setModalPhoneInput(custom);
-        setSelectedSavedDistId(matched?.id || null);
-      } else if (matched?.phone || matched?.mobile || matched?.whatsapp) {
-        setModalPhoneInput(matched.phone || matched.mobile || matched.whatsapp || '');
-        setSelectedSavedDistId(matched.id as number | null);
-      } else {
-        setModalPhoneInput('');
-        setSelectedSavedDistId(null);
-      }
-    }
-
-    const matchedDist = findSavedDistributorMatch(dist.storeName);
     const currentBoyId = (storedMap?.deliveryBoyId !== undefined && storedMap?.deliveryBoyId !== null)
       ? storedMap.deliveryBoyId
-      : ((matchedDist?.delivery_boy_id !== undefined && matchedDist?.delivery_boy_id !== null)
-        ? matchedDist.delivery_boy_id
-        : (dist.deliveryPersons && dist.deliveryPersons.length > 0
-          ? deliveryBoysList.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()))?.id ?? null
-          : null));
+      : (dist.delivery_boy_id !== undefined && dist.delivery_boy_id !== null
+        ? dist.delivery_boy_id
+        : (dirMatch?.delivery_boy_id !== undefined && dirMatch?.delivery_boy_id !== null
+          ? dirMatch.delivery_boy_id
+          : (dist.deliveryPersons && dist.deliveryPersons.length > 0
+            ? deliveryBoysList.find(b => b.name && b.name.toLowerCase().includes(dist.deliveryPersons[0].name.toLowerCase()))?.id ?? null
+            : null)));
     setModalDeliveryBoyId(currentBoyId);
   };
 
@@ -3700,6 +3733,18 @@ export default function PharmarackCart() {
           phone: cleanPhone,
           deliveryBoyId: modalDeliveryBoyId ?? null
         }
+      }));
+      setDistributors(prev => prev.map(d => {
+        if (d.storeId === storeId || (d.storeName && d.storeName.toLowerCase().trim() === normName)) {
+          return {
+            ...d,
+            phone: cleanPhone,
+            distributor_phone: cleanPhone,
+            distributor_id: selectedSavedDistId || d.distributor_id,
+            delivery_boy_id: modalDeliveryBoyId !== undefined ? modalDeliveryBoyId : d.delivery_boy_id
+          };
+        }
+        return d;
       }));
     }
     toastEvent.trigger(`Saved WhatsApp contact for ${distName}`, 'success');
@@ -3860,9 +3905,20 @@ export default function PharmarackCart() {
       setDistributorMappings(prev => ({
         ...prev,
         [normName]: {
-          distributorId: null,
-          phone: cleanPhone
+          distributorId: prev[normName]?.distributorId || null,
+          phone: cleanPhone,
+          deliveryBoyId: prev[normName]?.deliveryBoyId
         }
+      }));
+      setDistributors(prev => prev.map(d => {
+        if (d.storeId === storeId || (d.storeName && d.storeName.toLowerCase().trim() === normName)) {
+          return {
+            ...d,
+            phone: cleanPhone,
+            distributor_phone: cleanPhone
+          };
+        }
+        return d;
       }));
     }
     setSessionResolvedCount(prev => prev + 1);
@@ -3871,17 +3927,25 @@ export default function PharmarackCart() {
     // 2. Persist to database in background
     try {
       let targetDistId: number | null = null;
-      const matched = findSavedDistributorMatch(distName);
-      if (matched?.id) {
-        targetDistId = matched.id;
+      const normName = distName ? distName.toLowerCase().trim() : '';
+      const dirMatch = savedDistributorsList.find(d => d.name && d.name.toLowerCase().trim() === normName);
+      if (dist.distributor_id) {
+        targetDistId = dist.distributor_id;
+      } else if (distributorMappings[normName]?.distributorId) {
+        targetDistId = distributorMappings[normName].distributorId;
+      } else if (dirMatch?.id) {
+        targetDistId = dirMatch.id;
+      }
+
+      if (targetDistId) {
         try {
-          await apiClient.put(`/distributors/${matched.id}`, {
-            name: matched.name || distName,
+          await apiClient.put(`/distributors/${targetDistId}`, {
+            name: dirMatch?.name || distName,
             phone: cleanPhone
           });
         } catch (_) {
           await apiClient.post('/distributors', {
-            name: matched.name || distName,
+            name: dirMatch?.name || distName,
             phone: cleanPhone
           });
         }
@@ -4144,6 +4208,10 @@ export default function PharmarackCart() {
 
   const fetchCart = async (forceFresh?: unknown) => {
     const isFresh = forceFresh === true;
+    if (isFresh) {
+      void fetchDistributorMappings(true);
+      void fetchSavedDistributors(true);
+    }
     // Only show loading spinner on cold cache (first visit)
     if (cachedDistributors.length === 0) {
       setLoading(true);
@@ -4207,8 +4275,12 @@ export default function PharmarackCart() {
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await fetchCart(true);
-      await checkSession();
+      await Promise.allSettled([
+        fetchCart(true),
+        fetchDistributorMappings(true),
+        fetchSavedDistributors(true),
+        checkSession()
+      ]);
       await new Promise(r => setTimeout(r, 600));
     } finally {
       setIsRefreshing(false);
@@ -7011,7 +7083,7 @@ export default function PharmarackCart() {
                         <Phone size={13} className="text-amber-400" />
                         <span>Missing Phone</span>
                         <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-mono font-bold">
-                          {unmappedDistributors.length}
+                          {isInitialMappingsLoading && Object.keys(distributorMappings).length === 0 ? '...' : unmappedDistributors.length}
                         </span>
                       </button>
                     </div>
@@ -7093,7 +7165,7 @@ export default function PharmarackCart() {
                     )}
 
                     {/* ── Missing Distributor Phone Alert: Concept 2 Inline Fast-Fill Resolution Hub ── */}
-                    {unmappedDistributors.length > 0 && (() => {
+                    {!isInitialMappingsLoading && unmappedDistributors.length > 0 && (() => {
                       const totalUnmappedInitially = unmappedDistributors.length + sessionResolvedCount;
                       const progressPercent = totalUnmappedInitially > 0 ? Math.round((sessionResolvedCount / totalUnmappedInitially) * 100) : 0;
 

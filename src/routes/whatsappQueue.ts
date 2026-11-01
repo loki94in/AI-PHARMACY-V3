@@ -341,17 +341,14 @@ router.post('/enqueue-single-distributor-order', async (req, res) => {
       storeName
     );
 
-    // Save/sync phone to master distributors table and today's active reminder record
-    const today = new Date().toISOString().split('T')[0];
+    // Save/sync phone to single universal master index and today's active reminder record
+    const today = toLocalSqlDateTime().slice(0, 10);
     const rawDigits = cleanPhone.slice(-10);
-    await db.run(
-      `UPDATE distributors SET phone = ? WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) OR (id = ? AND id > 0)`,
-      [rawDigits, storeName, storeId || 0]
-    );
-    await db.run(
-      `UPDATE distributor_dispatch_reminders SET distributor_phone = ? WHERE LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) AND date = ?`,
-      [rawDigits, storeName, today]
-    );
+    await syncDistributorPhoneAcrossTables(db, {
+      id: storeId ? Number(storeId) : undefined,
+      store_name: storeName,
+      phone: rawDigits
+    });
 
     // If items provided, log placed order history
     if (Array.isArray(items) && items.length > 0) {

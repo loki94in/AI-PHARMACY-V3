@@ -698,12 +698,14 @@ const Dispatch = () => {
     window.addEventListener('phone-numbers-updated', handlePhoneUpdate);
     window.addEventListener('settings-updated', handlePhoneUpdate);
     window.addEventListener('distributors-updated', handleDistributorsUpdate);
+    window.addEventListener('sse-distributor-contact-updated', handleDistributorsUpdate);
     window.addEventListener('refresh-pharmarack-cart', handleDistributorsUpdate);
     return () => {
       unsubWs();
       window.removeEventListener('phone-numbers-updated', handlePhoneUpdate);
       window.removeEventListener('settings-updated', handlePhoneUpdate);
       window.removeEventListener('distributors-updated', handleDistributorsUpdate);
+      window.removeEventListener('sse-distributor-contact-updated', handleDistributorsUpdate);
       window.removeEventListener('refresh-pharmarack-cart', handleDistributorsUpdate);
     };
   }, [fetchAll, fetchDistributorReminders, fetchMessageDates]);

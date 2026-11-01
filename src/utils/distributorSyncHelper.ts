@@ -636,6 +636,26 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
       await db.run('COMMIT');
     }
 
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('distributor_contact_updated', {
+        distributor_id: targetId,
+        distributor_name: effectiveName,
+        store_name: storeMappingKey,
+        phone: effectivePhone,
+        delivery_boy_id: params.delivery_boy_id !== undefined ? params.delivery_boy_id : null,
+        at: Date.now()
+      });
+      eventService.broadcast('distributors_updated', { at: Date.now() });
+      eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'distributor_sync', store_name: storeMappingKey });
+      eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
+    } catch (_) {}
+
+    try {
+      const { clearServerCartCache } = await import('../routes/pharmarack.js');
+      clearServerCartCache();
+    } catch (_) {}
+
     return finalDistributor;
   } catch (err) {
     if (isTxOwner) {

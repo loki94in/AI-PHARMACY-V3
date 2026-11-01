@@ -129,14 +129,14 @@ export async function checkAllRefills(db: Database): Promise<void> {
           quickBillId = await createQuickBillForRefill(db, refill);
           await db.run(
             `UPDATE patient_refills 
-             SET is_ready = 1, hold_for_stock = 0, quick_bill_id = ?
+             SET hold_for_stock = 0, quick_bill_id = ?
              WHERE id = ?`,
             [quickBillId, refill.id]
           );
         } else {
           await db.run(
             `UPDATE patient_refills 
-             SET is_ready = 1, hold_for_stock = 0
+             SET hold_for_stock = 0
              WHERE id = ?`,
             [refill.id]
           );

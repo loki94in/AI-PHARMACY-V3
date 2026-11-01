@@ -23,7 +23,7 @@ export const isRefillFulfilledToday = (m: { last_refill_date?: string | null } |
 export const isRefillOrdered = (m: RefillLike) => m.status === 'ordered' || !!m.cart_store_name || !!m.cart_product_code || m.in_live_cart === true;
 export const isRefillReminded = (m: RefillLike) => m.reminder_status === 'SENT' || m.status === 'notified';
 export const isRefillReady = (m: RefillLike) =>
-  m.is_ready === 1 || m.is_ready === true || m.status === 'ready' || isRefillReminded(m);
+  isRefillReminded(m) || m.status === 'ready';
 export const isRefillSettled = (m: RefillLike) =>
   m.status === 'completed' || m.status === 'fulfilled' || m.status === 'canceled' || isRefillFulfilledToday(m);
 

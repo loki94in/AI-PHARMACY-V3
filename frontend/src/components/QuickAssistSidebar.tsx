@@ -2067,32 +2067,11 @@ export const QuickAssistSidebar = memo(({
                                     e.stopPropagation();
                                     handleBookRefillToPos(group);
                                   }}
-                                  className="h-6.5 px-2.5 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs shrink-0"
+                                  className="flex-1 h-6.5 px-2 rounded-lg bg-bg3 hover:bg-emerald-600 hover:text-white text-muted border border-border text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs truncate"
                                   title={`Open POS to bill refill for ${group.patient_name}`}
                                 >
                                   <ShoppingCart size={10} className="shrink-0" />
-                                  <span>PO</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isFulfillingGroup}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCompleteRefillGroup(group);
-                                  }}
-                                  className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
-                                  title={`Mark refill complete and remove from Quick Assist`}
-                                >
-                                  {isFulfillingGroup ? <Loader2 size={10} className="animate-spin shrink-0" /> : <CheckCircle2 size={11} className="shrink-0" />}
-                                  <span className="truncate">Complete</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={openEdit}
-                                  className="h-6.5 w-7 rounded-lg bg-bg3 hover:bg-sky-600 hover:text-white text-muted border border-border transition-colors flex items-center justify-center cursor-pointer shrink-0"
-                                  title={`Edit refill details for ${group.patient_name}`}
-                                >
-                                  <Edit3 size={11} className="shrink-0" />
+                                  <span>POS</span>
                                 </button>
                               </>
                             );
@@ -2110,7 +2089,7 @@ export const QuickAssistSidebar = memo(({
                                 title={`Open POS to bill refill for ${group.patient_name}`}
                               >
                                 <ShoppingCart size={10} className="shrink-0" />
-                                <span>PO</span>
+                                <span>POS</span>
                               </button>
                               <button
                                 type="button"

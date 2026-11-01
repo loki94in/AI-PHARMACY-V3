@@ -465,13 +465,9 @@ export class NotificationService {
         return { ok: false, sentCount: 0, suppressedCount: 0 };
       }
 
-      // 1. Find distributor phone from database
-      const distributor = await db.get(
-        "SELECT phone FROM distributors WHERE name LIKE ? OR name = ?",
-        [`%${storeName}%`, storeName]
-      );
-
-      rawPhone = distributor?.phone || '';
+      // 1. Find distributor phone from database via universal contact resolver
+      const resolvedDist = await resolveDistributorContact(db, storeName);
+      rawPhone = resolvedDist?.distributor_phone || '';
       if (!rawPhone.trim()) {
         console.warn(`[CartOrderNotif] Distributor ${storeName} has no phone number in database.`);
       }
