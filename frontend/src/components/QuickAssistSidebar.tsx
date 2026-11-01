@@ -102,6 +102,7 @@ export const QuickAssistSidebar = memo(({
     group: any;
     daysEarly: number;
     nextDueDate: string | null;
+    selectedIds?: number[];
   } | null>(null);
 
   // Expand / collapse state for grouped patients (collapsed by default)
@@ -511,7 +512,7 @@ export const QuickAssistSidebar = memo(({
       status?: string | null;
       is_active?: number | null;
     }>;
-  }, isConfirmedEarly = false) => {
+  }, isConfirmedEarly = false, selectedIds?: number[]) => {
     // 1. One per cycle guard: block if already dispensed
     const cycleStatus = checkPatientRefillCycleBooking(group.medicines);
     if (cycleStatus.alreadyDispensed) {
@@ -524,7 +525,8 @@ export const QuickAssistSidebar = memo(({
       setEarlyBookingConfirm({
         group,
         daysEarly: cycleStatus.daysEarly,
-        nextDueDate: (group as any).next_refill_date || cycleStatus.nextDueDate
+        nextDueDate: (group as any).next_refill_date || cycleStatus.nextDueDate,
+        selectedIds
       });
       return;
     }
@@ -3242,7 +3244,7 @@ export const QuickAssistSidebar = memo(({
                   onClick={() => {
                     const group = earlyBookingConfirm.group;
                     setEarlyBookingConfirm(null);
-                    handleBookRefillToPos(group, true);
+                    handleBookRefillToPos(group, true, earlyBookingConfirm.selectedIds);
                   }}
                   className="px-4 py-1.5 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
                   title="Open POS and transfer items to bill"
