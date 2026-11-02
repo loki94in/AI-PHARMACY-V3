@@ -84,6 +84,24 @@ function parseIntervalDays(val: any): number {
   return Math.max(7, days);
 }
 
+// Safe helper to deduplicate refill items by medicine name and prevent duplicate lines
+function deduplicateRefillItems(items: Array<{ medicine_name?: string; quantity_needed?: number }>): Array<{ medicine_name?: string; quantity_needed?: number }> {
+  if (!Array.isArray(items) || items.length <= 1) return items || [];
+  const map = new Map<string, { medicine_name: string; quantity_needed: number }>();
+  for (const it of items) {
+    const rawName = (it.medicine_name || '').trim();
+    if (!rawName) continue;
+    const key = rawName.toLowerCase();
+    const existing = map.get(key);
+    if (existing) {
+      existing.quantity_needed = Math.max(existing.quantity_needed, it.quantity_needed || 1);
+    } else {
+      map.set(key, { medicine_name: rawName, quantity_needed: it.quantity_needed || 1 });
+    }
+  }
+  return Array.from(map.values());
+}
+
 // Multilingual refill reminder message builder
 function formatTime12h(timeStr: string): string {
   if (!timeStr) return '';
@@ -106,6 +124,7 @@ export function buildRefillReminderMessage(
 ): string {
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || 'en').toLowerCase();
+  const cleanItems = deduplicateRefillItems(items);
 
   const rawOpen = scheduleOpts?.openTime || '09:00';
   const rawClose = scheduleOpts?.closeTime || '22:00';
@@ -117,7 +136,7 @@ export function buildRefillReminderMessage(
 
   let message = '';
   if (cleanLang === 'hi') {
-    const medList = items
+    const medList = cleanItems
       .map(m => `• ${m.medicine_name || 'दवाई'} (मात्रा: ${m.quantity_needed || 1})`)
       .join('\n');
     const dueSuffix = dueDateStr ? `\n\nतारीख: ${dueDateStr}` : '';
@@ -131,7 +150,7 @@ export function buildRefillReminderMessage(
     }
     message = `🔔 *दवाई रिफ़िल रिमाइंडर — ${pharmacyName}*\n\nनमस्ते ${pName},\nआपकी नियमित दवाई का रिफ़िल समय आ गया है:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else if (cleanLang === 'mr') {
-    const medList = items
+    const medList = cleanItems
       .map(m => `• ${m.medicine_name || 'औषध'} (प्रमाण: ${m.quantity_needed || 1})`)
       .join('\n');
     const dueSuffix = dueDateStr ? `\n\nदिनांक: ${dueDateStr}` : '';
@@ -145,7 +164,7 @@ export function buildRefillReminderMessage(
     }
     message = `🔔 *औषध रिफिल स्मरणपत्र — ${pharmacyName}*\n\nनमस्कार ${pName},\nआपल्या नियमित औषधांची रिफिल करण्याची वेळ झाली आहे:\n\n${medList}${dueSuffix}${timingSection}${cta}`;
   } else {
-    const medList = items
+    const medList = cleanItems
       .map(m => `• ${m.medicine_name || 'Medicine'} (Qty: ${m.quantity_needed || 1})`)
       .join('\n');
     const dueSuffix = dueDateStr ? `\n\nDue Date: ${dueDateStr}` : '';
@@ -177,6 +196,7 @@ export function buildRefillCollectionMessage(
 ): string {
   const pName = formatCustomerName(patientName);
   const cleanLang = (lang || 'en').toLowerCase();
+  const cleanItems = deduplicateRefillItems(items);
 
   const rawOpen = scheduleOpts?.openTime || '09:00';
   const rawClose = scheduleOpts?.closeTime || '22:00';
@@ -188,7 +208,7 @@ export function buildRefillCollectionMessage(
 
   let message = '';
   if (cleanLang === 'hi') {
-    const medList = items
+    const medList = cleanItems
       .map(m => `• *${m.medicine_name || 'दवाई'}* (मात्रा: ${m.quantity_needed || 1})`)
       .join('\n');
     let timingSection = `\n🕒 दुकान का समय: ${openT} से ${closeT}`;
@@ -198,7 +218,7 @@ export function buildRefillCollectionMessage(
     const cta = `\n\n👉 *कृपया अपनी सुविधानुसार दवाई ले जाएं।*`;
     message = `🔔 *तैयार दवाई संग्रह रिमाइंडर — ${pharmacyName}*\n\nनमस्ते ${pName},\nआपकी तैयार की गई दवाई फार्मेसी पर आपके लिए उपलब्ध है:\n\n${medList}${timingSection}${cta}`;
   } else if (cleanLang === 'mr') {
-    const medList = items
+    const medList = cleanItems
       .map(m => `• *${m.medicine_name || 'औषध'}* (प्रमाण: ${m.quantity_needed || 1})`)
       .join('\n');
     let timingSection = `\n🕒 दुकानाची वेळ: ${openT} ते ${closeT}`;
@@ -208,7 +228,7 @@ export function buildRefillCollectionMessage(
     const cta = `\n\n👉 *कृपया आपल्या सोयीनुसार औषध घेऊन जावे.*`;
     message = `🔔 *तयार औषध संकलन स्मरणपत्र — ${pharmacyName}*\n\nनमस्कार ${pName},\nआपली तयार केलेली औषधे फार्मसीमध्ये उपलब्ध आहेत:\n\n${medList}${timingSection}${cta}`;
   } else {
-    const medList = items
+    const medList = cleanItems
       .map(m => `• *${m.medicine_name || 'Medicine'}* (Qty: ${m.quantity_needed || 1})`)
       .join('\n');
     let timingSection = `\n🕒 Store Hours: ${openT} to ${closeT}`;

@@ -213,6 +213,60 @@ const Reports = () => {
   const [exportSplitMode, setExportSplitMode] = useState<boolean>(false);
   const [, setIsExporting] = useState(false);
 
+  // Monthly Purchase & Inventory Audit Modal State
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const [auditList, setAuditList] = useState<Array<{
+    filename: string;
+    monthKey: string;
+    monthLabel: string;
+    sizeBytes: number;
+    sizeFormatted: string;
+    generatedAt: string;
+    filePath: string;
+  }>>([]);
+  const [loadingAudits, setLoadingAudits] = useState(false);
+  const [generatingAudit, setGeneratingAudit] = useState(false);
+  const [selectedAuditMonth, setSelectedAuditMonth] = useState('2026-10');
+
+  const fetchArchivedAudits = async () => {
+    setLoadingAudits(true);
+    try {
+      const res = await apiClient.get('/reports/monthly-audits');
+      if (res.data?.success) {
+        setAuditList(res.data.audits || []);
+      }
+    } catch (err) {
+      console.error('Error fetching archived audits:', err);
+    } finally {
+      setLoadingAudits(false);
+    }
+  };
+
+  const handleDownloadAuditPdf = (filename: string) => {
+    const url = `${apiClient.defaults.baseURL || '/api'}/reports/monthly-audits/download/${encodeURIComponent(filename)}`;
+    window.open(url, '_blank');
+  };
+
+  const handleGenerateAudit = async (monthKey?: string, sendWhatsApp: boolean = false) => {
+    setGeneratingAudit(true);
+    try {
+      const res = await apiClient.post('/reports/monthly-audits/generate', {
+        monthKey: monthKey || selectedAuditMonth,
+        sendWhatsApp
+      });
+      if (res.data?.success) {
+        toastEvent.trigger(res.data.message || 'Audit generated successfully!', 'success', '/reports');
+        await fetchArchivedAudits();
+      } else {
+        toastEvent.trigger(res.data?.error || 'Failed to generate audit', 'error', '/reports');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err.response?.data?.error || 'Failed to generate audit', 'error', '/reports');
+    } finally {
+      setGeneratingAudit(false);
+    }
+  };
+
   const handleDownloadExport = async () => {
     setIsExporting(true);
     try {
@@ -931,6 +985,19 @@ const Reports = () => {
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
+              onClick={() => {
+                setShowAuditModal(true);
+                void fetchArchivedAudits();
+              }}
+              className="bg-sky-600 hover:bg-sky-700 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer shrink-0"
+              title="Monthly Purchase & Inventory Audit Reports (PDF Archive)"
+            >
+              <FileText size={13} />
+              <span>Monthly Audits</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleGenerate}
               className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer shrink-0"
               title="Generate Report Data"
@@ -1512,6 +1579,183 @@ const Reports = () => {
         </div>
 
       {/* EXPORT COMPLETE REPORT MODAL DIALOG */}
+      {/* Monthly Purchase & Inventory Audit Modal */}
+      {showAuditModal && (
+        <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
+          <div className="bg-bg2 border border-glass-border rounded-2xl p-6 w-[95vw] max-w-2xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-5 animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-glass-border/40 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-sky-500/10 text-sky-500 border border-sky-500/20">
+                  <FileText size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-text">Monthly Purchase & Inventory Audits</h3>
+                  <p className="text-[10px] text-muted font-medium">Automatic 1st-of-month executive PDF report generation & permanent archive</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAuditModal(false)}
+                className="text-muted hover:text-text p-1.5 rounded-lg hover:bg-bg3/60 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Fast Action Card: Latest Audit Available */}
+            {auditList.length > 0 && (
+              <div className="bg-bg3/40 border border-glass-border/40 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-primary font-mono">Latest Archived Audit</span>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold px-2 py-0.5 rounded-full border border-emerald-500/20">Ready</span>
+                  </div>
+                  <h4 className="text-sm font-bold text-text mt-1">{auditList[0].monthLabel} Audit Report</h4>
+                  <p className="text-[11px] text-muted">File: {auditList[0].filename} • {auditList[0].sizeFormatted}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadAuditPdf(auditList[0].filename)}
+                    className="bg-primary hover:bg-primary/90 text-white font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                  >
+                    <Download size={13} />
+                    <span>Download PDF</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleGenerateAudit(auditList[0].monthKey, true)}
+                    disabled={generatingAudit}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                    title="Resend to WhatsApp"
+                  >
+                    <Send size={13} />
+                    <span>WhatsApp</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* On-Demand Generator Box (Human-in-the-Loop) */}
+            <div className="bg-bg3/30 border border-glass-border/30 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-text">Generate / Refresh Audit for Specific Month</label>
+                <span className="text-[10px] text-muted">Auto-runs on 1st of every month</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <input
+                  type="month"
+                  value={selectedAuditMonth}
+                  onChange={(e) => setSelectedAuditMonth(e.target.value)}
+                  className="px-3 py-1.5 bg-bg2 border border-border rounded-xl text-text text-xs focus:outline-none focus:border-primary"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleGenerateAudit(selectedAuditMonth, false)}
+                  disabled={generatingAudit}
+                  className="bg-primary hover:bg-primary/90 text-white font-bold px-4 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  {generatingAudit ? <Loader2 size={13} className="animate-spin" /> : <BarChart3 size={13} />}
+                  <span>{generatingAudit ? 'Generating PDF...' : 'Generate & Archive PDF'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleGenerateAudit(selectedAuditMonth, true)}
+                  disabled={generatingAudit}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  <Send size={13} />
+                  <span>Generate & Send WhatsApp</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Archive History Table */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted">Archived Monthly Audits ({auditList.length})</h4>
+                <button
+                  type="button"
+                  onClick={fetchArchivedAudits}
+                  className="text-[11px] text-primary hover:underline cursor-pointer font-semibold"
+                >
+                  Refresh List
+                </button>
+              </div>
+
+              {loadingAudits ? (
+                <div className="flex items-center justify-center p-8 text-muted gap-2 text-xs">
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Loading archived audit records...</span>
+                </div>
+              ) : auditList.length === 0 ? (
+                <div className="bg-bg3/20 border border-glass-border/20 rounded-xl p-6 text-center text-muted text-xs">
+                  No archived monthly audit PDFs found yet. Generate your first audit above or wait for the automatic 1st-of-month run.
+                </div>
+              ) : (
+                <div className="border border-glass-border/40 rounded-xl overflow-hidden">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-bg3/60 border-b border-glass-border/40 text-[10px] font-bold text-muted uppercase tracking-wider">
+                      <tr>
+                        <th className="py-2 px-3">Audit Month</th>
+                        <th className="py-2 px-3">Filename</th>
+                        <th className="py-2 px-3">Size</th>
+                        <th className="py-2 px-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-glass-border/30">
+                      {auditList.map((item) => (
+                        <tr key={item.filename} className="hover:bg-bg3/30 transition-colors">
+                          <td className="py-2 px-3 font-semibold text-text">{item.monthLabel}</td>
+                          <td className="py-2 px-3 text-muted text-[11px] font-mono">{item.filename}</td>
+                          <td className="py-2 px-3 text-muted">{item.sizeFormatted}</td>
+                          <td className="py-2 px-3 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleDownloadAuditPdf(item.filename)}
+                                className="px-2.5 py-1 bg-bg3 hover:bg-bg3/80 text-text rounded-lg text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer border border-border"
+                                title="Download PDF"
+                              >
+                                <Download size={11} />
+                                <span>PDF</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleGenerateAudit(item.monthKey, true)}
+                                disabled={generatingAudit}
+                                className="px-2.5 py-1 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-600 dark:text-emerald-400 rounded-lg text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer border border-emerald-500/20"
+                                title="Send to WhatsApp"
+                              >
+                                <Send size={11} />
+                                <span>WhatsApp</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-glass-border/40 pt-3">
+              <p className="text-[10px] text-muted">
+                All audits are permanently saved to <code className="font-mono text-[10px] text-text">data/reports/monthly_audits/</code>
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowAuditModal(false)}
+                className="px-4 py-1.5 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3/60 transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showExportModal && (
         <div className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4">
           <div className="bg-bg2 border border-glass-border rounded-2xl p-6 w-[95vw] max-w-md shadow-[0_4px_24px_rgba(0,0,0,0.12)] space-y-5 animate-in fade-in zoom-in-95 duration-200">

@@ -326,6 +326,7 @@ const Sidebar = memo(({
   const routeLoc = useLocation();
   const hoverPrefetchControl = useFetchMode('layout.hoverPrefetch');
   const { userMode, terminalName } = useTerminal();
+  const updateStatus = useUpdateStatus();
   const menuItems = [
     { path: '/pos', label: 'Sales / POS', icon: <ShoppingCart size={18} /> },
     { path: '/sells', label: 'Sell', icon: <Receipt size={18} /> },
@@ -394,7 +395,11 @@ const Sidebar = memo(({
               </h1>
               <p className="text-[9px] text-muted tracking-wider uppercase font-bold mt-1.5 leading-none flex items-center gap-1.5">
                 <span>OS 2.0</span>
-                <span className="text-primary font-mono text-[9.5px]">v0.1.27</span>
+                <span className="text-primary font-mono text-[9.5px]">
+                  {updateStatus.currentVersion && updateStatus.currentVersion !== '0.0.0'
+                    ? `v${updateStatus.currentVersion}`
+                    : 'v0.1.200'}
+                </span>
               </p>
             </div>
             <div className="shrink-0 pl-2 flex items-center gap-2">

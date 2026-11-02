@@ -16,6 +16,16 @@ if (-not $ZipPath -or -not $InstallDir) {
     exit 1
 }
 
+if ($InstallDir) {
+    $InstallDir = $InstallDir.Trim('"', "'").TrimEnd('\', '/')
+}
+if ($ZipPath) {
+    $ZipPath = $ZipPath.Trim('"', "'")
+}
+if ($ExpectedSha256 -and ($ExpectedSha256 -eq "none" -or $ExpectedSha256 -eq "NONE" -or $ExpectedSha256 -eq "SKIP")) {
+    $ExpectedSha256 = ""
+}
+
 if (-not $LogPath) {
     $LogPath = Join-Path $InstallDir "logs\updater.log"
 }
@@ -237,6 +247,7 @@ function Rollback-Update {
 }
 
 $window.Add_ContentRendered({
+    $backupDir = ""
     try {
         # 1. Update Lock
         Update-UI -Step "Preparing installation..." -Detail "Securing update lock..." -Percent 5
@@ -247,35 +258,53 @@ $window.Add_ContentRendered({
 
         $lockPath = Join-Path $updatesDir "update.lock"
         if (Test-Path $lockPath) {
+            $isAlive = $false
+            $lockingPid = $null
+            try {
+                $rawLock = Get-Content -LiteralPath $lockPath -Raw -ErrorAction SilentlyContinue
+                if ($rawLock) {
+                    $lockData = ConvertFrom-Json $rawLock -ErrorAction SilentlyContinue
+                    if ($lockData.pid) {
+                        $lockingPid = [int]$lockData.pid
+                        $lockProc = Get-Process -Id $lockingPid -ErrorAction SilentlyContinue
+                        if ($lockProc -and $lockProc.Id -ne $PID) {
+                            $isAlive = $true
+                        }
+                    }
+                }
+            } catch {}
+
             $lockAge = (Get-Date) - (Get-Item $lockPath).LastWriteTime
-            if ($lockAge.TotalMinutes -lt 30) {
-                Write-Log "Active update.lock found (< 30 min old). Aborting."
+            if ($isAlive -and $lockAge.TotalMinutes -lt 30) {
+                Write-Log "Active updater process with PID ($lockingPid) is running. Aborting duplicate."
                 Update-UI -Step "Update already in progress" -Detail "Another updater instance is running." -Percent 100
                 Start-Sleep -Seconds 3
                 $window.Close()
                 return
             } else {
-                Write-Log "Stale lock detected (> 30 min). Removing and continuing."
+                Write-Log "Stale or orphan lock detected (age: $([Math]::Round($lockAge.TotalMinutes, 1))m, alive: $isAlive). Evicting lock and continuing."
                 Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
             }
         }
-        $lockPayload = @{ ts = (Get-Date).ToString("dd-MM-yyyy HH:mm:ss"); targetVersion = $TargetVersion; operation = "update" } | ConvertTo-Json
+        $lockPayload = @{ pid = $PID; ts = (Get-Date).ToString("dd-MM-yyyy HH:mm:ss"); targetVersion = $TargetVersion; operation = "update" } | ConvertTo-Json
         Set-Content -Path $lockPath -Value $lockPayload -Encoding UTF8
-        Write-Log "update.lock written."
+        Write-Log "update.lock written (PID: $PID)."
 
         # 2. Terminate Running Processes & Verify File Handles
         Update-UI -Step "Closing application..." -Detail "Terminating running background services..." -Percent 12
-        Write-Log "Terminating PharmacyOS.exe and PharmacyBackend.exe..."
+        Write-Log "Terminating PharmacyOS.exe and PharmacyBackend.exe process trees..."
+        & taskkill.exe /F /T /IM PharmacyOS.exe 2>&1 | Out-Null
+        & taskkill.exe /F /T /IM PharmacyBackend.exe 2>&1 | Out-Null
         Stop-Process -Name "PharmacyOS" -Force -ErrorAction SilentlyContinue
         Stop-Process -Name "PharmacyBackend" -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Milliseconds 600
+        Start-Sleep -Milliseconds 800
 
-        # Probe file handles for up to 10 seconds to ensure kernel release
+        # Probe file handles for up to 12 seconds to ensure kernel release
         Update-UI -Step "Closing application..." -Detail "Waiting for file handles to release..." -Percent 18
         Write-Log "Waiting for executable file handles to release..."
         $handlesFree = $false
         $targetExes = @( (Join-Path $InstallDir "PharmacyOS.exe"), (Join-Path $InstallDir "PharmacyBackend.exe") )
-        for ($i = 0; $i -lt 10; $i++) {
+        for ($i = 0; $i -lt 12; $i++) {
             $busy = $false
             foreach ($f in $targetExes) {
                 if (Test-Path -LiteralPath $f) {
@@ -292,9 +321,9 @@ $window.Add_ContentRendered({
                 $handlesFree = $true
                 break
             }
-            # Fallback: repeat taskkill if still locked
-            Stop-Process -Name "PharmacyBackend" -Force -ErrorAction SilentlyContinue
-            Stop-Process -Name "PharmacyOS" -Force -ErrorAction SilentlyContinue
+            # Fallback: repeat taskkill process tree
+            & taskkill.exe /F /T /IM PharmacyBackend.exe 2>&1 | Out-Null
+            & taskkill.exe /F /T /IM PharmacyOS.exe 2>&1 | Out-Null
             Start-Sleep -Milliseconds 800
         }
         Write-Log "Executable file handles free status: $handlesFree"
@@ -370,20 +399,29 @@ $window.Add_ContentRendered({
                 }
 
                 $extracted = $false
+                $lastErr = ""
                 for ($attempt = 1; $attempt -le 10; $attempt++) {
                     try {
                         [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
                         $extracted = $true
                         break
                     } catch {
+                        $lastErr = $_.Exception.Message
+                        # If destination exists and might be locked by a lingering handle, attempt to rename it out of the way
+                        if ($attempt -ge 3 -and (Test-Path -LiteralPath $dest)) {
+                            $oldFile = "$dest.old-$([Guid]::NewGuid().ToString().Substring(0,8))"
+                            try {
+                                Move-Item -LiteralPath $dest -Destination $oldFile -Force -ErrorAction SilentlyContinue
+                            } catch {}
+                        }
                         Start-Sleep -Milliseconds (200 + ($attempt * 100))
                     }
                 }
 
                 if (-not $extracted) {
-                    Write-Log "ERROR: Failed to extract $dest after 10 attempts."
+                    Write-Log "ERROR: Failed to extract $dest after 10 attempts. Last error: $lastErr"
                     $zip.Dispose()
-                    Rollback-Update -BackupDir $backupDir -Reason "FILE_REPLACEMENT_FAILED"
+                    Rollback-Update -BackupDir $backupDir -Reason "FILE_REPLACEMENT_FAILED: $lastErr"
                     return
                 }
             }

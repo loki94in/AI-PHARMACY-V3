@@ -765,15 +765,35 @@ class AutoUpdateService {
     const exeFileName = `AI-Pharmacy-OS-Portable-Setup-v${this.lastResult.latestVersion}.exe`;
     const exePath     = path.join(stagingDir, exeFileName);
 
+    // Evict stale or dead update.lock so user is never blocked by a previously crashed updater
+    const updatesBaseDir = path.dirname(stagingDir);
+    const lockPath = path.join(updatesBaseDir, 'update.lock');
+    if (fs.existsSync(lockPath)) {
+      try {
+        const raw = fs.readFileSync(lockPath, 'utf8');
+        const data = JSON.parse(raw);
+        if (data?.pid) {
+          try {
+            process.kill(data.pid, 0); // Throws ESRCH if process is dead
+          } catch {
+            fs.unlinkSync(lockPath);
+            console.log('[AutoUpdate] Evicted stale update.lock from dead process PID:', data.pid);
+          }
+        }
+      } catch {
+        try { fs.unlinkSync(lockPath); } catch {}
+      }
+    }
+
     if (fs.existsSync(zipPath)) {
       const updaterPath = getUpdaterPath();
       if (!fs.existsSync(updaterPath)) {
         throw new Error(`Updater.bat not found at: ${updaterPath}`);
       }
 
-      const installDir = path.dirname(process.execPath);
+      const installDir = path.dirname(process.execPath).replace(/[\\/]+$/, '');
       const logPath    = getLogPath();
-      const sha256     = this.lastResult.sha256 || '';
+      const sha256     = this.lastResult.sha256 || 'NONE';
 
       console.log('[AutoUpdate] Spawning dedicated Updater.bat (ZIP fast path)...');
       console.log(`[AutoUpdate]   ZIP      : ${zipPath}`);
@@ -836,7 +856,7 @@ class AutoUpdateService {
       console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
 
       const targetVersion = this.lastResult.latestVersion;
-      const installDir = path.dirname(process.execPath);
+      const installDir = path.dirname(process.execPath).replace(/[\\/]+$/, '');
       const launcherBat = path.join(stagingDir, 'launch-setup.bat');
       const launcherContent = [
         '@echo off',
@@ -863,7 +883,10 @@ class AutoUpdateService {
       return { success: true, message: 'Installing update package via Setup and restarting...' };
     }
 
-    throw new Error('Update file has not finished downloading yet.');
+    // Resilient fallback: if the expected package is missing on disk, automatically re-trigger background download
+    console.warn(`[AutoUpdate] Staged update package missing (${zipFileName}). Triggering fresh download...`);
+    this.startBackgroundDownload(this.lastResult, 'redownload-missing');
+    return { success: false, message: 'Update package was missing or corrupted. Fresh download initiated...' };
   }
 
   getLastResult() { return this.lastResult; }

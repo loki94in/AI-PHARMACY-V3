@@ -1103,6 +1103,14 @@ export class MonthlyReportService {
 
       // Check 1st of month schedule
       if (currentDay === 1) {
+        // 1. Trigger Inventory & Purchase Audit PDF Archiving
+        try {
+          const { purchaseAuditService } = await import('./purchaseAuditService.js');
+          await purchaseAuditService.runScheduledFirstOfMonthAudit();
+        } catch (paErr) {
+          console.error('[Monthly Report Scheduler] Purchase audit error:', paErr);
+        }
+
         const lastSentRow = await db.get("SELECT value FROM app_settings WHERE key = 'last_monthly_report_sent_month'");
         const lastSentMonth = lastSentRow ? lastSentRow.value : '';
         const thisMonthKey = `${currentYear}-${monthStr}`;

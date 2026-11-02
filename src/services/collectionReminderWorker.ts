@@ -81,7 +81,12 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
              COALESCE(pr.language, c.preferred_language, c.language, 'mr') as language
       FROM patient_refills pr
       JOIN medicines m ON pr.medicine_id = m.id
-      LEFT JOIN customers c ON (c.phone = pr.patient_phone OR c.name = pr.patient_name)
+      LEFT JOIN customers c ON c.id = (
+        SELECT c2.id FROM customers c2 
+        WHERE (pr.patient_phone IS NOT NULL AND pr.patient_phone != '' AND c2.phone = pr.patient_phone)
+           OR (c2.name = pr.patient_name)
+        LIMIT 1
+      )
       WHERE pr.auto_remind = 1
         AND pr.is_ready = 1
         AND pr.is_active = 1
@@ -113,11 +118,16 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
         };
         refillGroups.set(key, group);
       }
-      group.items.push({
-        id: r.id,
-        medicine_name: r.medicine_name || 'Prescribed Medicine',
-        quantity: Number(r.quantity_needed || 1)
-      });
+      const isDuplicate = group.items.some(
+        it => it.id === r.id || it.medicine_name.trim().toLowerCase() === (r.medicine_name || '').trim().toLowerCase()
+      );
+      if (!isDuplicate) {
+        group.items.push({
+          id: r.id,
+          medicine_name: r.medicine_name || 'Prescribed Medicine',
+          quantity: Number(r.quantity_needed || 1)
+        });
+      }
     }
 
     for (const group of refillGroups.values()) {
@@ -193,7 +203,12 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
              so.last_collection_reminder_at, so.notification_count,
              COALESCE(c.preferred_language, c.language, 'mr') as language
       FROM special_orders so
-      LEFT JOIN customers c ON (c.phone = so.phone OR c.name = so.requester)
+      LEFT JOIN customers c ON c.id = (
+        SELECT c2.id FROM customers c2 
+        WHERE (so.phone IS NOT NULL AND so.phone != '' AND c2.phone = so.phone)
+           OR (c2.name = so.requester)
+        LIMIT 1
+      )
       WHERE so.auto_remind = 1
         AND so.status IN ('Ready', 'ORDER_READY_FOR_PICKUP')
         AND (so.last_collection_reminder_at IS NULL OR DATE(so.last_collection_reminder_at) < DATE('now', 'localtime'))
@@ -223,11 +238,16 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
         };
         orderGroups.set(key, group);
       }
-      group.items.push({
-        id: so.id,
-        product: so.product || 'Medicine',
-        qty: Number(so.qty || 1)
-      });
+      const isDuplicate = group.items.some(
+        it => it.id === so.id || it.product.trim().toLowerCase() === (so.product || '').trim().toLowerCase()
+      );
+      if (!isDuplicate) {
+        group.items.push({
+          id: so.id,
+          product: so.product || 'Medicine',
+          qty: Number(so.qty || 1)
+        });
+      }
     }
 
     for (const group of orderGroups.values()) {

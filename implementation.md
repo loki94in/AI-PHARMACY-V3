@@ -1,82 +1,80 @@
-# Implementation Plan: Live Cart Bounced Items Visibility & Email Invoice Parser Fix
+# Implementation Plan: Automated 1st-of-the-Month Inventory Purchase Audit PDF & Archiving
 
-**Plan Name:** `live_cart_bounced_items_and_reconciliation_parser_fix`  
+**Plan Name:** `automated_monthly_inventory_audit_pdf`  
 **Target:** 
-1. Fix `LiveCartAddModal.tsx` so unreconciled/bounced distributor email orders appear consistently whether the modal is opened manually via `Alt+L` or from the Reorder Hub.
-2. Fix backend `src/routes/purchases.ts` and `src/services/emailService.ts` so email invoice attachments (CSV/PDF) are parsed for real medicines instead of saving email body greetings/disclaimers (`Bajaj Pharma`, `*** This is a computer/auto generated email...`) into `medicine_names`.
-3. Clean existing corrupted `medicine_names` in the `emails` table so bills in Purchase History Reconciliation show actual medicines instead of email boilerplate text.
+1. Enable the application to automatically generate an executive multi-page **Monthly Inventory & Purchase Audit PDF** on the 1st day of every month (for the elapsed month).
+2. Automatically archive the generated PDF permanently to `data/reports/monthly_audits/` (and optional mirror to `D:\redbook\reports\`) so records are preserved month-over-month.
+3. Automatically enqueue the audit PDF and concise executive summary to the Store Owner's WhatsApp (if enabled).
+4. Provide full **Human-in-the-Loop** control in `frontend/src/pages/Reports/index.tsx` so the store owner can manually view, download, re-generate, and dispatch any monthly audit PDF on demand.
 
 ---
 
-## User Review Required
+## Architecture & Data Flow
 
-> [!IMPORTANT]
-> - In `LiveCartAddModal.tsx`, distributor email orders (`bouncedRows`) were being hidden when opened with `Alt+L` because `isMedicineInSentPO` treated any medicine ordered in the last 7 days as already placed, even if the distributor sent an invoice that hasn't been checked in yet.
-> - In `purchases.ts`, email parsing fell back to treating raw email body lines as medicine names when attachments weren't parsed into `email.medicine_names`, creating fake medicines from greetings/disclaimers.
-
----
-
-## Proposed Changes
-
-### 1. Frontend: Fix `LiveCartAddModal.tsx` Filter Logic
-- **File:** [`frontend/src/components/LiveCartAddModal.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartAddModal.tsx)
-- In `bouncedRows`:
-  - When evaluating `isMedicineInSentPO`, only suppress reconciliation items if they were ordered after the invoice email was received (`minPlacedAt = reconTimestamp + 60000`), rather than a blanket 7-day suppression across all historical POs.
-  - Prioritize `storeName` over store ID so cross-distributor items are checked against the specific distributor who sent the bill.
-  - When opened manually (`Alt+L`), ensure all unreconciled distributor email items remain visible under `Pending` / `Bounced`.
-
-### 2. Backend: Fix Reconciliation Email Medicine Name Extraction & Noise Filtering
-- **File:** [`src/routes/purchases.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/routes/purchases.ts)
-- In `GET /reconciliation`:
-  - When `email.medicine_names` is empty or only contains noise, check `email_attachments` for structured CSV/XLS/PDF files. If an attachment exists, extract medicine names from the attachment using `emailService.parseAndImportAttachment` rather than raw email body text.
-- **File:** [`src/services/emailService.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/src/services/emailService.ts)
-- In `isNonMedicineNoise()`:
-  - Add strict checks against email signatures, greetings, and disclaimers (`greetings from`, `computer/auto generated`, `your sincerely`, `thanks & warm regards`, `dear sir/madam`, `invoice date`, `we are enclosing`, `reply to this`, `voucher has been created`).
-  - Filter out distributor company entity names (`pharma`, `distributors`, `agency`, `pvt ltd`) that do not contain a pharmaceutical dosage form or strength.
+```mermaid
+flowchart TD
+    A["1st of Every Month (09:00 AM) or App Boot on 1st"] --> B["triggerSchedulerService / server.ts"]
+    B --> C["monthlyReportService.checkAndRunScheduledReports()"]
+    C --> D["Compile Last Month: Purchases, Returns, MRP, Margins, Top Vendors"]
+    D --> E["Generate Executive Audit PDF (KPIs, Trends, MoM %, Vendor Share)"]
+    E --> F["Save Permanent File to data/reports/monthly_audits/Monthly_Audit_YYYY_MM.pdf"]
+    E --> G["Enqueue Document to Store Owner WhatsApp (if enabled)"]
+    E --> H["Broadcast Realtime Notification to UI"]
+    H --> I["Reports Page: 1-Click View, Download & WhatsApp Dispatch"]
+```
 
 ---
 
-## Verification Plan
+## Changes Implemented
 
-### Automated Tests
-1. Verify `isMedicineInSentPO` test script returns `false` for unreconciled orders from previous days so they stay visible in Live Cart when opened via `Alt+L`.
-2. Verify `GET /purchases/reconciliation` returns real medicine names for UID 17648 (`EPTUS 25 MG TAB`, `GLUCONORM G1 TAB`, `DAPAGLYN 10 MG TAB`, `VERTIN 16 MG TAB`) instead of email noise.
-3. Run `npm run guardrails` to verify 0 performance or architectural violations.
-4. Run `tsc --noEmit` / `npm run build` across backend and `npm run build:client` for frontend to ensure clean compilation.
+### 1. Backend: Purchase Audit Service & Multi-Page PDF Generator
+- **File:** `src/services/purchaseAuditService.ts`
+  - Added full `PurchaseAuditService` class with:
+    - `compileAuditData(monthKey)`: Aggregates gross inward purchases, returns, MRP valuation, gross margins %, MoM % growth, 3-month moving average, top 15 distributors with bill counts & spend shares, and trajectory determination.
+    - `generateAuditPdf(data)`: Generates an executive multi-page vector PDF via PDFKit with KPI metric cards, comparative 6-month table, top 15 distributor matrix, and strategic working capital recommendations.
+    - `listArchivedAudits()`: Discovers and sorts all archived monthly audits.
+    - `runScheduledFirstOfMonthAudit()`: Automates generation, archival, and WhatsApp dispatch on the 1st of every month without duplicating records.
+- **File:** `src/services/monthlyReportService.ts`
+  - Integrated `purchaseAuditService.runScheduledFirstOfMonthAudit()` on the 1st of every month during daily operational checks.
+
+### 2. Backend: API Endpoints for Audit Archive & Manual Generation
+- **File:** `src/routes/reports.ts`
+  - `GET /api/reports/monthly-audits`: Lists all archived monthly audit PDFs with month, file size, and timestamp.
+  - `GET /api/reports/monthly-audits/download/:filename`: Streams the requested monthly audit PDF directly to the browser.
+  - `POST /api/reports/monthly-audits/generate`: Human-in-the-loop manual generation endpoint allowing the owner to generate or re-generate an audit for any month with optional WhatsApp dispatch.
+  - `GET /api/reports/monthly-audits/preview`: Structured JSON preview of the audit metrics.
+
+### 3. Frontend: Reports Page UI with Monthly Audit Manager
+- **File:** `frontend/src/pages/Reports/index.tsx`
+  - Added **"Monthly Audits"** button in the header action bar next to the "Generate" and "Export Report" buttons.
+  - Added a dedicated **Monthly Purchase & Inventory Audits Modal** featuring:
+    - Latest archived audit fast-action card with instant "Download PDF" and "WhatsApp" buttons.
+    - On-demand month selector and "Generate & Archive PDF" / "Generate & Send WhatsApp" actions (Human-in-the-Loop).
+    - Complete archive table listing all past monthly audits with file size and one-click download/share actions.
 
 ---
 
-## Execution Status
+## Verification Results
 
-| Task | Description | Status | Verification |
-|------|-------------|--------|--------------|
-| Task 1 | Fix `LiveCartAddModal.tsx` bounced rows sent PO filtering with `minPlacedAt` | Completed | Verified `isMedicineInSentPO` only suppresses newer POs; Alt+L keeps all 16 bounced items visible |
-| Task 2 | Enhance email noise filter & attachment-first extraction in `src/routes/purchases.ts` and `src/services/emailService.ts` | Completed | UID 17648 extracts actual medicines from CSV attachment |
-| Task 3 | Cleanse legacy noise in `emails.medicine_names` in both local dev and installed app databases | Completed | 17 emails cleaned in dev DB, 50 emails cleaned in installed app DB |
-| Task 4 | Run guardrails, typecheck, and quick-update | Completed | `npm run guardrails` exit 0, `npm run build` passed, `npm run build:client` passed, knowledge graph updated |
+### Automated Checks
+1. Type check: `npx tsc --noEmit` passed with 0 errors.
+2. Frontend build: `npm run build --prefix frontend` built cleanly (`✓ built in 1m 44s`).
+3. Performance guardrails: `npm run guardrails` passed (0 violations, speed architecture intact).
+4. Functional verification:
+   - Generated `Monthly_Audit_2026-10.pdf` and verified it exists in both `data/reports/monthly_audits/` and `D:\redbook\reports/`.
+5. Knowledge Graph update: `node scripts/quick-update.mjs` synchronized knowledge graph (1432 nodes, 877 edges).
 
 ---
 
-## What Was Completed and How It Was Completed
+## Tasks
 
-1. **Frontend `LiveCartAddModal.tsx` Fix:**
-   - Modified `isMedicineInSentPO` to accept an optional `minPlacedAt?: number` parameter. If provided, POs placed *before* that timestamp are ignored.
-   - In `bouncedRows`, computed `reconTimestamp = new Date(recon.received_date).getTime()`. Passed `minPlacedAt = reconTimestamp + 60000` to `isMedicineInSentPO`.
-   - Result: Historical POs from 3 days ago no longer suppress incoming unreconciled email invoices. When the user opens the modal via `Alt+L`, all 16 bounced items (e.g. `DUOLIN`, `BUDECORT`, `LACTOGEN`) remain visible in the Pending sidebar.
-
-2. **Backend Email Noise Filtering (`src/services/emailService.ts`):**
-   - Expanded `isNonMedicineNoise()` to catch boilerplate greetings, auto-generated footer notices, and standalone distributor entity names lacking dosage forms/strengths (`/auto[\s\-]generated|computer[\/\s]auto|greetings\s+from|warm\s+regards|yours?\s+sincerely/i`).
-
-3. **Backend Attachment-First Extraction (`src/routes/purchases.ts`):**
-   - In `GET /reconciliation`, when `medicine_names` is empty or sanitized to zero items, the route now inspects `email_attachments` and parses invoice attachments (CSV/Excel) via `emailService.parseAndImportAttachment()`, capturing genuine medicine names, invoice numbers, and distributor names directly.
-
-4. **Database Legacy Noise Cleanup:**
-   - Executed cleanup across both `data/app.db` and installed application database `G:\AI Pharmacy OS\data\app.db`.
-   - Cleansed 17 emails in dev DB and 50 emails in installed app DB. UID #17648 now stores:
-     `medicine_names = ["EPTUS 25 MG TAB", "GLUCONORM G1 TAB", "DAPAGLYN 10 MG TAB", "VERTIN 16 MG TAB"]`, `extracted_invoice_no = "BJ/223988"`, `extracted_distributor = "BAJAJ PHARMA"`.
-
-5. **Quality Gates & Knowledge Graph:**
-   - `npm run build` (backend TypeScript): 0 errors.
-   - `npm run build:client` (frontend Vite production build): 0 errors, built in 55.10s.
-   - `npm run guardrails`: 0 violations, speed architecture intact.
-   - `node scripts/quick-update.mjs`: Synchronized 1431 nodes and 877 edges.
+- [x] Task 1: Create `data/reports/monthly_audits` directory and enhance backend with purchase audit aggregation & PDF archival.
+  - **Completed:** Created `src/services/purchaseAuditService.ts` with comprehensive purchase audit compiling, PDFKit executive PDF rendering, and automated 1st-of-month scheduler hook.
+- [x] Task 2: Add `/monthly-audits` endpoints in `src/routes/reports.ts` for listing, downloading, and manual generation.
+  - **Completed:** Implemented `GET /api/reports/monthly-audits`, `GET /api/reports/monthly-audits/download/:filename`, `POST /api/reports/monthly-audits/generate`, and `GET /api/reports/monthly-audits/preview`.
+- [x] Task 3: Add Monthly Audit Card and download/history controls in `frontend/src/pages/Reports/index.tsx`.
+  - **Completed:** Added "Monthly Audits" header button and interactive `MonthlyAuditModal` with instant downloads, archive history, and on-demand generation controls.
+- [x] Task 4: Verify TypeScript compilation (`tsc --noEmit`), frontend build, and run `npm run guardrails`.
+  - **Completed:** All checks passed with 0 errors.
+- [x] Task 5: Run `node scripts/quick-update.mjs` and update `implementation.md` with completion status.
+  - **Completed:** Knowledge graph updated with 1432 nodes and 877 edges.

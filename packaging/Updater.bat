@@ -30,7 +30,9 @@ set "LOG_PATH=%~5"
 :: ── Defaults ───────────────────────────────────────────────
 if "%ZIP_PATH%"==""         ( echo [Updater] ERROR: No zip path provided. & ping 127.0.0.1 -n 4 >nul & exit /b 1 )
 if "%INSTALL_DIR%"==""      ( echo [Updater] ERROR: No install dir provided. & ping 127.0.0.1 -n 4 >nul & exit /b 1 )
+if "%INSTALL_DIR:~-1%"=="\" set "INSTALL_DIR=%INSTALL_DIR:~0,-1%"
 if "%TARGET_VERSION%"==""   set "TARGET_VERSION=unknown"
+if "%EXPECTED_SHA256%"==""  set "EXPECTED_SHA256=NONE"
 if "%LOG_PATH%"==""         set "LOG_PATH=%INSTALL_DIR%\logs\updater.log"
 
 :: ── Delegate to Native Apple-Design GUI Updater if available ─
@@ -71,22 +73,32 @@ set "STAGING_DIR=%INSTALL_DIR%\updates\staging"
 if not exist "%INSTALL_DIR%\updates" mkdir "%INSTALL_DIR%\updates" 2>nul
 if not exist "%STAGING_DIR%" mkdir "%STAGING_DIR%" 2>nul
 
-:: Check for a stale lock (older than 30 minutes = another updater may have crashed)
+:: Check for an active or stale lock
 if exist "%LOCK_PATH%" (
-    call :LOG "WARNING: Existing update.lock found. Checking if stale..."
-    powershell -NoProfile -Command "$f='%LOCK_PATH%'; $age=(Get-Date)-(Get-Item $f).LastWriteTime; if($age.TotalMinutes -lt 30){exit 1}else{exit 0}" >nul 2>&1
+    call :LOG "WARNING: Existing update.lock found. Checking liveness..."
+    powershell -NoProfile -Command ^
+        "$alive = $false; " ^
+        "try { " ^
+        "  $raw = Get-Content -LiteralPath '%LOCK_PATH%' -Raw; " ^
+        "  $d = ConvertFrom-Json $raw; " ^
+        "  if ($d.pid) { $p = Get-Process -Id ([int]$d.pid) -ErrorAction SilentlyContinue; if ($p) { $alive = $true } } " ^
+        "} catch {}; " ^
+        "$age = (Get-Date) - (Get-Item '%LOCK_PATH%').LastWriteTime; " ^
+        "if ($alive -and $age.TotalMinutes -lt 30) { exit 1 } else { exit 0 }" >nul 2>&1
     if !ERRORLEVEL!==1 (
-        echo [ERROR] Active update.lock found. Another update may be running.
-        call :LOG "ERROR: Active update.lock found (< 30 min old). Another update may be running. Aborting."
+        echo [ERROR] Active updater process is running. Another update is in progress.
+        call :LOG "ERROR: Active updater process is running. Aborting duplicate run."
         ping 127.0.0.1 -n 4 >nul
         exit /b 1
     )
-    call :LOG "Stale lock detected (> 30 min). Removing and continuing."
+    call :LOG "Stale or orphan lock detected. Evicting lock and continuing."
     del /f /q "%LOCK_PATH%" >nul 2>&1
 )
 
-:: Write lock (valid JSON, no invalid PID tokens)
-echo {"ts":"%DATE% %TIME%","targetVersion":"%TARGET_VERSION%","operation":"update"} > "%LOCK_PATH%"
+:: Write lock (valid JSON with PID)
+for /f "tokens=2 delims==" %%P in ('wmic process where "ProcessId=%PID%" get ProcessId /value 2^>nul ^| findstr ProcessId') do set "CUR_PID=%%P"
+if "%CUR_PID%"=="" set "CUR_PID=0"
+echo {"ts":"%DATE% %TIME%","targetVersion":"%TARGET_VERSION%","operation":"update","pid":%CUR_PID%} > "%LOCK_PATH%"
 call :LOG "update.lock written."
 
 :: ── 2. Wait for application processes to exit ──────────────
@@ -138,7 +150,7 @@ echo [1/4] Application closed successfully. [OK]
 
 :: ── 3. Verify SHA-256 ──────────────────────────────────────
 echo [2/4] Verifying update package integrity...
-if not "%EXPECTED_SHA256%"=="" (
+if not "%EXPECTED_SHA256%"=="" if not "%EXPECTED_SHA256%"=="NONE" (
     call :LOG "Verifying SHA-256 of update package..."
     if not exist "%ZIP_PATH%" (
         echo [ERROR] Update zip file not found at: %ZIP_PATH%

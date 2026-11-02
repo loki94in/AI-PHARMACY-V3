@@ -36,6 +36,8 @@ data/archived_migrations/
 
 # ─── Live Operational Data (never commit runtime exports) ────────────────────
 data/audit_queue.json
+data/reports/
+*.pdf
 data/ocr_corrections.json
 data/search_screenshots/
 data/temp_ocr/

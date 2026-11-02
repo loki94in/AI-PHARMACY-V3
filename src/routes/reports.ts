@@ -1,4 +1,6 @@
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 // import { INVENTORY_ACTIVE_WHERE } from '../utils/inventoryActive.js';
 import { dbManager } from '../database/connection.js';
 import { exportToPdf, exportToCsv } from '../utils/reportExporter.js';
@@ -538,6 +540,117 @@ router.post('/send-monthly-scheduled', async (req, res) => {
   } catch (err: any) {
     console.error('Error triggering scheduled monthly report send:', err);
     res.status(500).json({ success: false, message: err.message || 'Failed to send report' });
+  }
+});
+
+// ==========================================
+// MONTHLY INVENTORY PURCHASE AUDIT ENDPOINTS
+// ==========================================
+
+// List all archived monthly audit reports
+router.get('/monthly-audits', async (_req, res) => {
+  try {
+    const { purchaseAuditService } = await import('../services/purchaseAuditService.js');
+    const audits = await purchaseAuditService.listArchivedAudits();
+    res.json({ success: true, audits });
+  } catch (err: any) {
+    console.error('Error listing monthly audits:', err);
+    res.status(500).json({ success: false, error: 'Failed to list monthly audits' });
+  }
+});
+
+// Download a specific archived monthly audit PDF
+router.get('/monthly-audits/download/:filename', async (req, res) => {
+  const { filename } = req.params;
+  // Security validation: filename must match expected pattern
+  if (!filename || !/^Monthly_Audit_\d{4}[-_]\d{2}\.pdf$/i.test(filename)) {
+    return res.status(400).json({ error: 'Invalid audit report filename' });
+  }
+
+  try {
+    const { purchaseAuditService } = await import('../services/purchaseAuditService.js');
+    const dir = purchaseAuditService.getArchiveDirectory();
+    const filePath = path.join(dir, filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Monthly audit report not found' });
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    return res.sendFile(filePath);
+  } catch (err: any) {
+    console.error('Error downloading monthly audit:', err);
+    res.status(500).json({ error: 'Failed to download monthly audit' });
+  }
+});
+
+// Generate on-demand Monthly Purchase Audit PDF (Human-in-the-Loop)
+router.post('/monthly-audits/generate', async (req, res) => {
+  const monthKey = req.body.monthKey ? String(req.body.monthKey).trim() : undefined;
+  const sendWhatsApp = Boolean(req.body.sendWhatsApp);
+
+  try {
+    const { purchaseAuditService } = await import('../services/purchaseAuditService.js');
+    const auditData = await purchaseAuditService.compileAuditData(monthKey);
+    const generatedPath = await purchaseAuditService.generateAuditPdf(auditData);
+    const filename = path.basename(generatedPath);
+
+    let waResult = null;
+    if (sendWhatsApp) {
+      const db = await dbManager.getConnection();
+      const phoneRow = await db.get("SELECT value FROM app_settings WHERE key = 'monthly_report_phone'");
+      const fallbackPhoneRow = await db.get("SELECT value FROM app_settings WHERE key = 'phone'");
+      const targetPhone = req.body.phone ? String(req.body.phone).trim() : (phoneRow?.value || fallbackPhoneRow?.value || '').trim();
+
+      if (targetPhone) {
+        const { whatsappQueueWorker } = await import('../services/whatsappQueueWorker.js');
+        const caption = 
+          `📊 *${auditData.pharmacy.name} — Monthly Inventory Audit (${auditData.auditMonth.monthLabel})*\n\n` +
+          `• *Net Purchase Spend:* Rs. ${auditData.auditMonth.netAmount.toLocaleString('en-IN')}\n` +
+          `• *Invoices Inwarded:* ${auditData.auditMonth.billsCount} bills from ${auditData.auditMonth.activeVendorsCount} suppliers\n` +
+          `• *Retail Gross Margin:* ${auditData.auditMonth.marginPct}% (MRP: Rs. ${auditData.auditMonth.mrpValue.toLocaleString('en-IN')})\n` +
+          `• *Trajectory:* ${auditData.trajectory.verdict}\n\n` +
+          `📄 Complete Multi-Page Audit PDF Document Attached.`;
+
+        await whatsappQueueWorker.enqueue(
+          targetPhone,
+          caption,
+          `manual_monthly_audit_${auditData.auditMonth.monthKey}`,
+          'Pharmacy Owner / Admin',
+          undefined,
+          generatedPath
+        );
+        waResult = { sent: true, phone: targetPhone };
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Monthly Audit PDF for ${auditData.auditMonth.monthLabel} generated and archived successfully!`,
+      filename,
+      monthKey: auditData.auditMonth.monthKey,
+      monthLabel: auditData.auditMonth.monthLabel,
+      summary: auditData.auditMonth,
+      trajectory: auditData.trajectory,
+      whatsapp: waResult
+    });
+  } catch (err: any) {
+    console.error('Error generating monthly audit on demand:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to generate monthly audit' });
+  }
+});
+
+// Get structured JSON preview of audit data
+router.get('/monthly-audits/preview', async (req, res) => {
+  const monthKey = req.query.month ? String(req.query.month).trim() : undefined;
+  try {
+    const { purchaseAuditService } = await import('../services/purchaseAuditService.js');
+    const data = await purchaseAuditService.compileAuditData(monthKey);
+    res.json({ success: true, data });
+  } catch (err: any) {
+    console.error('Error fetching monthly audit preview:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch audit preview' });
   }
 });
 

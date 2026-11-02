@@ -18,14 +18,14 @@ import { dbManager } from '../database/connection.js';
 // Vercel license server URL — update after deploying
 const LICENSE_SERVER = process.env.LICENSE_SERVER_URL || 'https://website-woad-seven-26.vercel.app';
 
-let defaultAppVersion = '0.1.27';
+let defaultAppVersion = '0.1.200';
 try {
   const pkgJsonPath = path.join(process.cwd(), 'package.json');
   if (fs.existsSync(pkgJsonPath)) {
     const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
     if (pkgJson?.version) defaultAppVersion = pkgJson.version;
   }
-} catch (_) {}
+} catch (_) { }
 
 export const APP_VERSION = process.env.APP_VERSION || defaultAppVersion;
 
