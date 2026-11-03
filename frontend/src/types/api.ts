@@ -289,6 +289,20 @@ export interface WhatsAppReadinessState {
   hasSavedSession: boolean;
 }
 
+export interface ReorderDistributorOption {
+  distributorId?: number | null;
+  distributorName: string;
+  storeId?: number | null;
+  storeName?: string;
+  rate: number;
+  mrp?: number;
+  scheme?: string;
+  lastDate?: string;
+  productCode?: string;
+  productId?: number;
+  isBestRate?: boolean;
+}
+
 export interface ReorderRecentItem {
   medicineName: string;
   lastOrderedDate: string;
@@ -320,4 +334,5 @@ export interface ReorderRecentItem {
   mapped?: boolean;
   availability?: number;
   distributorId?: number | null;
+  distributorOptions?: ReorderDistributorOption[];
 }

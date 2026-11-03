@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, AlertTriangle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, ChevronRight, Folder, FolderOpen, CheckCircle2, WifiOff, Store, Zap, Loader2, BookOpen, Star, Globe } from 'lucide-react';
 import { formatDisplayDate, getTodayString } from '../../utils/date';
-import { api, apiClient, type SpecialOrder, type Refill, type ReorderSuggestion, type BatchLastPurchaseResult, type ReorderRecentItem } from '../../services/api';
+import { api, apiClient, type SpecialOrder, type Refill, type ReorderSuggestion, type BatchLastPurchaseResult, type ReorderRecentItem, type ReorderDistributorOption } from '../../services/api';
 import { toastEvent, liveCartAddEvent, specialOrdersEvent, whatsappQueueEvent, messageSendEvent } from '../../services/events';
 import { findBestCartMatchForOrder } from '../../utils/orderFuzzyMatcher';
 import { isStrictSameProduct } from '../../utils/strictProductName';
@@ -20,6 +20,257 @@ import { BatchDispatchModal } from './BatchDispatchModal';
 import { SingleDispatchModal } from './SingleDispatchModal';
 import { SingleOrderConfirmModal } from './SingleOrderConfirmModal';
 import { MedicineLinkModal } from '../../components/MedicineLinkModal';
+
+const highlightMatchHelper = (text: string, query: string): React.ReactNode => {
+  if (!query || !query.trim()) return text;
+  const q = query.toLowerCase().trim();
+  const idx = text.toLowerCase().indexOf(q);
+  if (idx === -1) return text;
+  const before = text.slice(0, idx);
+  const match = text.slice(idx, idx + q.length);
+  const after = text.slice(idx + q.length);
+  return (
+    <>
+      {before}
+      <mark className="bg-amber-400/30 text-amber-200 rounded px-0.5">{match}</mark>
+      {after}
+    </>
+  );
+};
+
+interface ReorderMedicineCardProps {
+  cardKey: string;
+  medicineName: string;
+  medicineId?: number;
+  company?: string;
+  packaging?: string;
+  tag?: React.ReactNode;
+  subtitle?: React.ReactNode;
+  defaultQty?: number;
+  currentStock?: number;
+  minStock?: number;
+  distributorOptions?: ReorderDistributorOption[];
+  defaultStoreId?: number | null;
+  defaultStoreName?: string | null;
+  defaultPtr?: number | null;
+  defaultMrp?: number | null;
+  defaultScheme?: string | null;
+  productCode?: string | null;
+  productId?: number | null;
+  sourceOrderId?: number | null;
+  sourceRefillId?: number | null;
+  inCart: boolean;
+  isAdding: boolean;
+  searchQuery?: string;
+  actionExtra?: React.ReactNode;
+  onAdd: (qty: number, selectedDist?: ReorderDistributorOption) => void;
+  onOpenDetails?: () => void;
+}
+
+const ReorderMedicineCard: React.FC<ReorderMedicineCardProps> = ({
+  medicineName,
+  company,
+  packaging,
+  tag,
+  subtitle,
+  defaultQty = 1,
+  distributorOptions = [],
+  defaultStoreName,
+  defaultPtr,
+  defaultMrp,
+  defaultScheme,
+  inCart,
+  isAdding,
+  searchQuery = '',
+  actionExtra,
+  onAdd,
+  onOpenDetails
+}) => {
+  const [qty, setQty] = useState<number>(Math.max(1, defaultQty));
+  const bestOption = distributorOptions.find(o => o.isBestRate) || distributorOptions[0];
+  const [selectedOpt, setSelectedOpt] = useState<ReorderDistributorOption | undefined>(bestOption);
+
+  useEffect(() => {
+    if (distributorOptions.length > 0) {
+      const best = distributorOptions.find(o => o.isBestRate) || distributorOptions[0];
+      setSelectedOpt(best);
+    }
+  }, [distributorOptions]);
+
+  const activeRate = selectedOpt?.rate ?? defaultPtr;
+  const activeMrp = selectedOpt?.mrp ?? defaultMrp;
+  const activeScheme = selectedOpt?.scheme ?? defaultScheme;
+  const activeDistName = selectedOpt?.storeName || selectedOpt?.distributorName || defaultStoreName;
+
+  return (
+    <div className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
+      <div className="space-y-2">
+        {/* Top Header: Medicine Name & Tag */}
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-extrabold text-xs text-text truncate" title={medicineName}>
+                {highlightMatchHelper(medicineName, searchQuery)}
+              </span>
+              {packaging && (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono shrink-0">
+                  {packaging}
+                </span>
+              )}
+            </div>
+            {company && (
+              <p className="text-[10px] text-muted truncate mt-0.5">{company}</p>
+            )}
+          </div>
+          {tag}
+        </div>
+
+        {/* Subtitle / Context Info */}
+        {subtitle && (
+          <div className="text-xs text-muted space-y-1">
+            {subtitle}
+          </div>
+        )}
+
+        {/* ALWAYS-VISIBLE Rate & Price Strip */}
+        <div className="p-2.5 rounded-xl bg-bg/50 border border-glass-border/50 space-y-1.5">
+          <div className="flex items-center justify-between text-xs flex-wrap gap-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              {activeRate !== undefined && activeRate !== null && activeRate > 0 ? (
+                <span className="font-bold text-emerald-400 font-mono text-[11px]">
+                  PTR: ₹{activeRate.toFixed(2)}
+                </span>
+              ) : (
+                <span className="text-muted text-[11px] italic">PTR: --</span>
+              )}
+              {activeMrp !== undefined && activeMrp !== null && activeMrp > 0 && (
+                <span className="text-muted font-mono text-[11px]">
+                  MRP: ₹{activeMrp.toFixed(2)}
+                </span>
+              )}
+              {activeScheme ? (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
+                  🎁 {activeScheme}
+                </span>
+              ) : null}
+            </div>
+            {activeDistName && (
+              <span className="text-[10px] font-medium text-muted truncate max-w-[150px]" title={activeDistName}>
+                via <strong className="text-text">{activeDistName}</strong>
+              </span>
+            )}
+          </div>
+
+          {/* Multi-Distributor Selection Pills */}
+          {distributorOptions.length > 1 && (
+            <div className="pt-1.5 border-t border-glass-border/30">
+              <div className="text-[9px] font-extrabold uppercase text-muted tracking-wider mb-1 flex items-center justify-between">
+                <span>Distributor Rates ({distributorOptions.length}):</span>
+                <span className="text-[9px] text-emerald-400 font-bold lowercase">click to select</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {distributorOptions.map((opt, oIdx) => {
+                  const isSelected = selectedOpt ? (selectedOpt.storeId === opt.storeId && selectedOpt.distributorName === opt.distributorName) : opt.isBestRate;
+                  return (
+                    <button
+                      key={`${opt.storeId || opt.distributorName}-${oIdx}`}
+                      type="button"
+                      onClick={() => setSelectedOpt(opt)}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                        isSelected
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-xs'
+                          : 'bg-bg text-muted hover:text-text border-glass-border/60 hover:bg-bg3'
+                      }`}
+                      title={`${opt.distributorName}: Rate ₹${opt.rate.toFixed(2)}${opt.mrp ? ` | MRP ₹${opt.mrp.toFixed(2)}` : ''}${opt.scheme ? ` | Scheme ${opt.scheme}` : ''}`}
+                    >
+                      <span className="truncate max-w-[90px]">{opt.distributorName}</span>
+                      <span className="font-mono text-emerald-400 font-bold">₹{opt.rate.toFixed(2)}</span>
+                      {opt.isBestRate && (
+                        <span className="text-[8px] bg-emerald-500/30 text-emerald-300 px-1 py-0.2 rounded font-extrabold">Best</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Action Footer: Inline Qty & 1-Click Add */}
+      <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
+        {/* Quantity Stepper */}
+        <div className="flex items-center gap-1 bg-bg/80 border border-glass-border rounded-xl px-1.5 py-0.5">
+          <button
+            type="button"
+            onClick={() => setQty(q => Math.max(1, q - 1))}
+            className="w-6 h-6 rounded-lg bg-bg2 hover:bg-bg3 text-text font-bold text-xs flex items-center justify-center cursor-pointer transition-colors"
+            title="Decrease quantity"
+          >
+            -
+          </button>
+          <input
+            type="number"
+            min={1}
+            value={qty}
+            onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+            className="w-8 text-center text-xs font-mono font-bold text-text bg-transparent focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => setQty(q => q + 1)}
+            className="w-6 h-6 rounded-lg bg-bg2 hover:bg-bg3 text-text font-bold text-xs flex items-center justify-center cursor-pointer transition-colors"
+            title="Increase quantity"
+          >
+            +
+          </button>
+        </div>
+
+        {/* Right actions: extra action (e.g. snooze) + Add Button */}
+        <div className="flex items-center gap-1.5 flex-1 justify-end">
+          {actionExtra}
+          {onOpenDetails && (
+            <button
+              type="button"
+              onClick={onOpenDetails}
+              className="p-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-glass-border text-muted hover:text-text transition-all cursor-pointer"
+              title="View purchase history details & invoice records"
+            >
+              <BookOpen size={13} />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => !inCart && onAdd(qty, selectedOpt)}
+            disabled={inCart || isAdding}
+            className={`py-1.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs ${
+              inCart
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default'
+                : 'bg-primary hover:bg-primary/80 text-white active:scale-95 cursor-pointer disabled:opacity-50'
+            }`}
+          >
+            {isAdding ? (
+              <>
+                <Loader2 size={13} className="animate-spin" />
+                <span>Adding...</span>
+              </>
+            ) : inCart ? (
+              <>
+                <CheckCircle2 size={13} className="text-emerald-400" />
+                <span>✓ In Live Cart</span>
+              </>
+            ) : (
+              <>
+                <ShoppingCart size={13} />
+                <span>Add ({qty})</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface CartLineItem {
   productId: number | null;
@@ -2913,6 +3164,115 @@ export default function PharmarackCart() {
     filteredReorderRecentItems.length +
     filteredPurchaseHistoryItems.length;
 
+  // Unified Reorder Pricing Lookup Map
+  // Allows Special Requests, Refills Due, and all cards to display real PTR, MRP, Scheme, and multi-distributor options
+  const reorderPricingLookup = React.useMemo(() => {
+    const byName = new Map<string, {
+      ptr?: number;
+      mrp?: number;
+      scheme?: string;
+      storeId?: number;
+      storeName?: string;
+      distributorOptions?: ReorderDistributorOption[];
+    }>();
+    const byId = new Map<number, {
+      ptr?: number;
+      mrp?: number;
+      scheme?: string;
+      storeId?: number;
+      storeName?: string;
+      distributorOptions?: ReorderDistributorOption[];
+    }>();
+
+    // 1. Ingest from purchaseHistoryItems (distributor-specific purchase bills)
+    for (const phi of purchaseHistoryItems) {
+      const cleanName = (phi.medicineName || '').toLowerCase().trim();
+      const option: ReorderDistributorOption = {
+        distributorId: phi.distributorId,
+        distributorName: phi.storeName || phi.lastDistributorName || 'Distributor',
+        storeId: phi.storeId,
+        storeName: phi.storeName || phi.lastDistributorName,
+        rate: Number(phi.ptr || phi.lastRate || 0),
+        mrp: phi.mrp,
+        scheme: phi.scheme,
+        lastDate: phi.lastOrderedDate,
+        productCode: phi.productCode,
+        productId: phi.productId,
+        isBestRate: false
+      };
+      
+      const existing = byName.get(cleanName) || { distributorOptions: [] };
+      const opts = [...(existing.distributorOptions || [])];
+      if (!opts.some(o => (option.storeId && o.storeId && o.storeId === option.storeId) || (option.distributorName && o.distributorName && o.distributorName.toLowerCase() === option.distributorName.toLowerCase()))) {
+        opts.push(option);
+      }
+      const entry = {
+        ptr: existing.ptr || (option.rate > 0 ? option.rate : undefined),
+        mrp: existing.mrp || option.mrp,
+        scheme: existing.scheme || option.scheme,
+        storeId: existing.storeId || option.storeId || undefined,
+        storeName: existing.storeName || option.storeName,
+        distributorOptions: opts
+      };
+      if (cleanName) byName.set(cleanName, entry);
+      if (phi.medicineId) byId.set(phi.medicineId, entry);
+    }
+
+    // 2. Ingest from reorderSuggestions (carries backend multi-distributor purchase options & links)
+    for (const sug of reorderSuggestions) {
+      const cleanName = (sug.medicineName || '').toLowerCase().trim();
+      const existing = byName.get(cleanName) || { distributorOptions: [] };
+      const combinedOpts = [...(existing.distributorOptions || [])];
+
+      if (Array.isArray(sug.distributorOptions) && sug.distributorOptions.length > 0) {
+        for (const opt of sug.distributorOptions) {
+          if (!combinedOpts.some(o => (opt.storeId && o.storeId && opt.storeId === o.storeId) || (opt.distributorName && o.distributorName && opt.distributorName.toLowerCase() === o.distributorName.toLowerCase()))) {
+            combinedOpts.push(opt);
+          }
+        }
+      } else if (sug.storeName || sug.lastDistributorName) {
+        const fallbackOpt: ReorderDistributorOption = {
+          distributorId: sug.distributorId,
+          distributorName: sug.storeName || sug.lastDistributorName || 'Distributor',
+          storeId: sug.storeId ? Number(sug.storeId) : undefined,
+          storeName: sug.storeName || sug.lastDistributorName,
+          rate: sug.ptr || 0,
+          mrp: sug.mrp,
+          scheme: sug.scheme,
+          productCode: sug.productCode,
+          productId: sug.productId,
+          isBestRate: true
+        };
+        if (!combinedOpts.some(o => o.distributorName.toLowerCase() === fallbackOpt.distributorName.toLowerCase())) {
+          combinedOpts.push(fallbackOpt);
+        }
+      }
+
+      // Mark best rate
+      const validRates = combinedOpts.filter(o => o.rate > 0);
+      const minRate = validRates.length > 0 ? Math.min(...validRates.map(o => o.rate)) : 0;
+      combinedOpts.forEach(o => {
+        o.isBestRate = o.rate > 0 && o.rate === minRate;
+      });
+      combinedOpts.sort((a, b) => (a.isBestRate ? -1 : b.isBestRate ? 1 : (a.rate || 0) - (b.rate || 0)));
+
+      const best = combinedOpts[0];
+      const entry = {
+        ptr: best?.rate || sug.ptr || existing.ptr,
+        mrp: best?.mrp || sug.mrp || existing.mrp,
+        scheme: best?.scheme || sug.scheme || existing.scheme,
+        storeId: best?.storeId ? Number(best.storeId) : (sug.storeId ? Number(sug.storeId) : existing.storeId),
+        storeName: best?.storeName || sug.storeName || sug.lastDistributorName || existing.storeName,
+        distributorOptions: combinedOpts
+      };
+
+      if (cleanName) byName.set(cleanName, entry);
+      if (sug.medicineId) byId.set(sug.medicineId, entry);
+    }
+
+    return { byName, byId };
+  }, [purchaseHistoryItems, reorderSuggestions]);
+
   const [sendingDeliveryBoyNotifId, setSendingDeliveryBoyNotifId] = useState<number | null>(null);
 
   const handleSendDeliveryBoyNotification = async (dist: Distributor) => {
@@ -5064,14 +5424,37 @@ export default function PharmarackCart() {
     });
   };
 
-  const handleConfirmReorderSame = async () => {
-    if (!reorderSameModalTarget) return;
-    const card = reorderSameModalTarget;
-    const qtyToAdd = Math.max(1, reorderModalQty || 1);
+  const executeReorderAdd = async (
+    card: {
+      medicineName: string;
+      medicineId?: number;
+      productCode?: string;
+      productId?: number | string;
+      company?: string;
+      mrp?: number;
+      packaging?: string;
+      ptr?: number;
+      currentStock?: number;
+      minStock?: number;
+      suggestedQty?: number;
+      storeId?: number;
+      storeName?: string;
+      scheme?: string;
+      previousPurchase?: {
+        supplierName?: string;
+        quantity?: number;
+        price?: number;
+        mrp?: number;
+        purchaseDate?: string;
+      };
+      hasPreviousPurchase?: boolean;
+      sourceOrderId?: number;
+      sourceRefillId?: number;
+    },
+    requestedQty?: number
+  ) => {
+    const qtyToAdd = Math.max(1, requestedQty || card.suggestedQty || 1);
     const medName = card.medicineName;
-
-    // 1. Immediately close modal so user can proceed without waiting (<10ms)
-    setReorderSameModalTarget(null);
 
     // Directly use the card's native distributor or resolve via mappings
     let targetStoreId = card.storeId ? Number(card.storeId) : 0;
@@ -5264,6 +5647,14 @@ export default function PharmarackCart() {
         });
       }
     })();
+  };
+
+  const handleConfirmReorderSame = async () => {
+    if (!reorderSameModalTarget) return;
+    const card = reorderSameModalTarget;
+    const qtyToAdd = Math.max(1, reorderModalQty || 1);
+    setReorderSameModalTarget(null);
+    await executeReorderAdd(card, qtyToAdd);
   };
 
   // Re-fetch pending special orders whenever any page creates/updates an order.
@@ -5848,52 +6239,65 @@ export default function PharmarackCart() {
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredPendingOrders.map((order) => {
                           const inCart = Boolean(getOrderItemInCart(order));
+                          const pricing = reorderPricingLookup.byName.get(order.product.toLowerCase().trim());
+                          const distOptions = pricing?.distributorOptions || [];
                           return (
-                            <div key={`all-order-${order.id}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="font-extrabold text-xs text-text">{highlightMatch(order.product, reorderSearchQuery)}</span>
-                                  <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${order.priority === 'Urgent' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-bg3 text-muted border border-glass-border'}`}>
-                                    {order.priority || 'Normal'}
-                                  </span>
-                                </div>
-                                <div className="text-xs text-muted space-y-1">
+                            <ReorderMedicineCard
+                              key={`all-order-${order.id}`}
+                              cardKey={`all-order-${order.id}`}
+                              medicineName={order.product}
+                              tag={
+                                <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${order.priority === 'Urgent' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-bg3 text-muted border border-glass-border'}`}>
+                                  {order.priority || 'Normal'}
+                                </span>
+                              }
+                              subtitle={
+                                <>
                                   <div>Customer: <strong className="text-text">{order.requester}</strong> ({order.phone})</div>
                                   <div>Required Qty: <strong className="text-primary font-mono">{order.qty || 1}</strong></div>
                                   {order.advance_payment ? <div>Advance Paid: <strong className="text-emerald-400 font-mono">₹{order.advance_payment}</strong></div> : null}
                                   {order.pharmarack_distributor && <div>Assigned Dist: <strong className="text-text">{order.pharmarack_distributor}</strong></div>}
-                                  {order.pharmarack_rate ? (
-                                    <div className="text-[11px]">
-                                      Est. Rate: <strong className="text-emerald-400 font-mono">₹{order.pharmarack_rate.toFixed(2)}</strong>
-                                      {order.pharmarack_mrp ? <span className="text-muted ml-1.5">MRP: ₹{order.pharmarack_mrp.toFixed(2)}</span> : null}
-                                      {order.pharmarack_scheme ? <span className="text-emerald-400 ml-1.5 font-bold">🎁 {order.pharmarack_scheme}</span> : null}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-                              <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => !inCart && openReorderModalForItem({
-                                    medicineName: order.product,
-                                    suggestedQty: order.qty || 1,
-                                    sourceOrderId: order.id,
-                                    storeName: order.pharmarack_distributor,
-                                    storeId: order.pharmarack_store_id ? Number(order.pharmarack_store_id) : undefined,
-                                    productCode: order.pharmarack_product_code || undefined,
-                                    productId: order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined,
-                                    ptr: order.pharmarack_rate,
-                                    mrp: order.pharmarack_mrp,
-                                    scheme: order.pharmarack_scheme
-                                  })}
-                                  disabled={inCart}
-                                  className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
-                                >
-                                  {inCart ? <CheckCircle2 size={14} className="text-emerald-400" /> : <ShoppingCart size={14} />}
-                                  <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
-                                </button>
-                              </div>
-                            </div>
+                                </>
+                              }
+                              defaultQty={order.qty || 1}
+                              distributorOptions={distOptions}
+                              defaultStoreName={order.pharmarack_distributor || pricing?.storeName}
+                              defaultStoreId={order.pharmarack_store_id ? Number(order.pharmarack_store_id) : pricing?.storeId}
+                              defaultPtr={order.pharmarack_rate || pricing?.ptr}
+                              defaultMrp={order.pharmarack_mrp || pricing?.mrp}
+                              defaultScheme={order.pharmarack_scheme || pricing?.scheme}
+                              productCode={order.pharmarack_product_code}
+                              productId={order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined}
+                              sourceOrderId={order.id}
+                              inCart={inCart}
+                              isAdding={addingItemKeys.has(`${order.product}:::${order.pharmarack_store_id || pricing?.storeId || 0}`)}
+                              searchQuery={reorderSearchQuery}
+                              onAdd={(qty, selectedDist) => {
+                                executeReorderAdd({
+                                  medicineName: order.product,
+                                  productCode: selectedDist?.productCode || order.pharmarack_product_code || undefined,
+                                  productId: selectedDist?.productId || (order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined),
+                                  storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (order.pharmarack_store_id ? Number(order.pharmarack_store_id) : pricing?.storeId),
+                                  storeName: selectedDist?.storeName || selectedDist?.distributorName || order.pharmarack_distributor || pricing?.storeName,
+                                  ptr: selectedDist?.rate ?? order.pharmarack_rate ?? pricing?.ptr,
+                                  mrp: selectedDist?.mrp ?? order.pharmarack_mrp ?? pricing?.mrp,
+                                  scheme: selectedDist?.scheme ?? order.pharmarack_scheme ?? pricing?.scheme,
+                                  sourceOrderId: order.id
+                                }, qty);
+                              }}
+                              onOpenDetails={() => openReorderModalForItem({
+                                medicineName: order.product,
+                                suggestedQty: order.qty || 1,
+                                sourceOrderId: order.id,
+                                storeName: order.pharmarack_distributor || pricing?.storeName,
+                                storeId: order.pharmarack_store_id ? Number(order.pharmarack_store_id) : pricing?.storeId,
+                                productCode: order.pharmarack_product_code || undefined,
+                                productId: order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined,
+                                ptr: order.pharmarack_rate || pricing?.ptr,
+                                mrp: order.pharmarack_mrp || pricing?.mrp,
+                                scheme: order.pharmarack_scheme || pricing?.scheme
+                              })}
+                            />
                           );
                         })}
                       </div>
@@ -5912,38 +6316,66 @@ export default function PharmarackCart() {
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredPendingRefills.map((refill) => {
                           const inCart = Boolean(getRefillItemInCart(refill));
+                          const medName = refill.medicine_name || '';
+                          const pricing = (refill.medicine_id ? reorderPricingLookup.byId.get(refill.medicine_id) : undefined) ||
+                                          (medName ? reorderPricingLookup.byName.get(medName.toLowerCase().trim()) : undefined);
+                          const distOptions = pricing?.distributorOptions || [];
                           return (
-                            <div key={`all-refill-${refill.id}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="font-extrabold text-sm text-text">{highlightMatch(refill.medicine_name || '', reorderSearchQuery)}</span>
-                                  <span className="text-[11px] font-mono font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20">
-                                    Due: {refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Soon'}
-                                  </span>
-                                </div>
-                                <div className="text-sm text-muted space-y-1">
+                            <ReorderMedicineCard
+                              key={`all-refill-${refill.id}`}
+                              cardKey={`all-refill-${refill.id}`}
+                              medicineName={medName}
+                              medicineId={refill.medicine_id}
+                              tag={
+                                <span className="text-[11px] font-mono font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20">
+                                  Due: {refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Soon'}
+                                </span>
+                              }
+                              subtitle={
+                                <>
                                   <div>Patient: <strong className="text-text">{refill.patient_name}</strong> ({refill.patient_phone})</div>
                                   <div>Needed: <strong className="text-primary font-mono">{refill.quantity_needed || 1}</strong> | In Stock: <strong className="text-text font-mono">{refill.in_stock_qty || 0}</strong></div>
-                                </div>
-                              </div>
-                              <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => !inCart && openReorderModalForItem({
-                                    medicineName: refill.medicine_name || '',
-                                    medicineId: refill.medicine_id,
-                                    suggestedQty: Number(refill.quantity_needed) || 1,
-                                    currentStock: Number(refill.in_stock_qty) || 0,
-                                    sourceRefillId: refill.id
-                                  })}
-                                  disabled={inCart}
-                                  className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
-                                >
-                                  {inCart ? <CheckCircle2 size={14} className="text-emerald-400" /> : <ShoppingCart size={14} />}
-                                  <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
-                                </button>
-                              </div>
-                            </div>
+                                </>
+                              }
+                              defaultQty={Number(refill.quantity_needed) || 1}
+                              currentStock={Number(refill.in_stock_qty) || 0}
+                              distributorOptions={distOptions}
+                              defaultStoreName={pricing?.storeName}
+                              defaultStoreId={pricing?.storeId}
+                              defaultPtr={pricing?.ptr}
+                              defaultMrp={pricing?.mrp}
+                              defaultScheme={pricing?.scheme}
+                              sourceRefillId={refill.id}
+                              inCart={inCart}
+                              isAdding={addingItemKeys.has(`${medName}:::${pricing?.storeId || 0}`)}
+                              searchQuery={reorderSearchQuery}
+                              onAdd={(qty, selectedDist) => {
+                                executeReorderAdd({
+                                  medicineName: medName,
+                                  medicineId: refill.medicine_id,
+                                  productCode: selectedDist?.productCode,
+                                  productId: selectedDist?.productId,
+                                  storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : pricing?.storeId,
+                                  storeName: selectedDist?.storeName || selectedDist?.distributorName || pricing?.storeName,
+                                  ptr: selectedDist?.rate ?? pricing?.ptr,
+                                  mrp: selectedDist?.mrp ?? pricing?.mrp,
+                                  scheme: selectedDist?.scheme ?? pricing?.scheme,
+                                  sourceRefillId: refill.id
+                                }, qty);
+                              }}
+                              onOpenDetails={() => openReorderModalForItem({
+                                medicineName: medName,
+                                medicineId: refill.medicine_id,
+                                suggestedQty: Number(refill.quantity_needed) || 1,
+                                currentStock: Number(refill.in_stock_qty) || 0,
+                                sourceRefillId: refill.id,
+                                storeName: pricing?.storeName,
+                                storeId: pricing?.storeId,
+                                ptr: pricing?.ptr,
+                                mrp: pricing?.mrp,
+                                scheme: pricing?.scheme
+                              })}
+                            />
                           );
                         })}
                       </div>
@@ -5960,77 +6392,81 @@ export default function PharmarackCart() {
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {filteredReorderSuggestions.slice(0, reorderVisibleCount).map((sug, idx) => (
-                          <div key={`all-sug-${sug.medicineId}-${idx}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <span className="font-extrabold text-xs text-text truncate">{highlightMatch(sug.medicineName, reorderSearchQuery)}</span>
-                                  {sug.packaging && (
-                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono shrink-0">
-                                      {sug.packaging}
-                                    </span>
-                                  )}
-                                </div>
+                        {filteredReorderSuggestions.slice(0, reorderVisibleCount).map((sug, idx) => {
+                          const inCart = isMedicineInAnyCart(sug.medicineName);
+                          const pricing = (sug.medicineId ? reorderPricingLookup.byId.get(sug.medicineId) : undefined) ||
+                                          (sug.medicineName ? reorderPricingLookup.byName.get(sug.medicineName.toLowerCase().trim()) : undefined);
+                          const distOptions = (sug.distributorOptions && sug.distributorOptions.length > 0) ? sug.distributorOptions : (pricing?.distributorOptions || []);
+                          return (
+                            <ReorderMedicineCard
+                              key={`all-sug-${sug.medicineId}-${idx}`}
+                              cardKey={`all-sug-${sug.medicineId}-${idx}`}
+                              medicineName={sug.medicineName}
+                              medicineId={sug.medicineId}
+                              packaging={sug.packaging}
+                              company={sug.company}
+                              tag={
                                 <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
                                   {sug.isHotMover ? '🔥 Hot Mover' : '⚠️ Low Stock'}
                                 </span>
-                              </div>
-                              <div className="text-xs text-muted space-y-1">
-                                {(sug.lastDistributorName || sug.storeName) && (
-                                  <div className="flex items-center gap-1.5">
-                                    <Store size={11} className="text-emerald-400 shrink-0" />
-                                    <span className="truncate">Distributor: <strong className="text-text font-bold">{sug.lastDistributorName || sug.storeName}</strong></span>
-                                  </div>
-                                )}
-                                {sug.ptr ? (
-                                  <div className="text-[11px]">
-                                    Last PTR: <strong className="text-emerald-400 font-mono">₹{sug.ptr.toFixed(2)}</strong>
-                                    {sug.mrp ? <span className="text-muted ml-1.5">MRP: ₹{sug.mrp.toFixed(2)}</span> : null}
-                                  </div>
-                                ) : null}
-                                <div>📊 Past {reorderWindowMonths} {reorderWindowMonths === 1 ? 'Month' : 'Months'} Sold: <strong className="text-text font-mono">{sug.twoMonthSales ?? sug.sixMonthTotalSales ?? 0}</strong> units</div>
-                                <div>📦 Current Stock: <strong className="text-rose-400 font-mono">{sug.currentStock}</strong> strips</div>
-                              </div>
-                            </div>
-                            <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
-                              <div className="text-xs font-bold text-muted">
-                                Need: <strong className="text-emerald-400 font-mono text-xs">{sug.suggestedQty}</strong> qty
-                              </div>
-                              {(() => {
-                                const inCart = isMedicineInAnyCart(sug.medicineName);
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={() => !inCart && openReorderModalForItem({
-                                      medicineName: sug.medicineName,
-                                      medicineId: sug.medicineId,
-                                      packaging: sug.packaging,
-                                      company: sug.company,
-                                      ptr: sug.ptr,
-                                      mrp: sug.mrp,
-                                      scheme: sug.scheme,
-                                      storeId: sug.storeId ? Number(sug.storeId) : undefined,
-                                      storeName: sug.storeName || sug.lastDistributorName,
-                                      productCode: sug.productCode,
-                                      productId: sug.productId,
-                                      previousPurchase: sug.previousPurchase,
-                                      hasPreviousPurchase: Boolean(sug.previousPurchase),
-                                      currentStock: sug.currentStock,
-                                      minStock: 5,
-                                      suggestedQty: sug.suggestedQty
-                                    })}
-                                    disabled={inCart}
-                                    className={`py-1 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all whitespace-nowrap ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-emerald-500 hover:bg-emerald-600 text-white active:scale-95 cursor-pointer shadow-xs'}`}
-                                  >
-                                    {inCart ? <CheckCircle2 size={13} className="text-emerald-400" /> : <Plus size={13} />}
-                                    <span>{inCart ? '✓ In Live Cart' : `+ Add (${sug.suggestedQty})`}</span>
-                                  </button>
-                                );
-                              })()}
-                            </div>
-                          </div>
-                        ))}
+                              }
+                              subtitle={
+                                <>
+                                  <div>📊 Past {reorderWindowMonths} {reorderWindowMonths === 1 ? 'Month' : 'Months'} Sold: <strong className="text-text font-mono">{sug.twoMonthSales ?? sug.sixMonthTotalSales ?? 0}</strong> units</div>
+                                  <div>📦 Current Stock: <strong className="text-rose-400 font-mono">{sug.currentStock}</strong> strips</div>
+                                </>
+                              }
+                              defaultQty={sug.suggestedQty || 1}
+                              currentStock={sug.currentStock}
+                              distributorOptions={distOptions}
+                              defaultStoreName={sug.storeName || sug.lastDistributorName || pricing?.storeName}
+                              defaultStoreId={sug.storeId ? Number(sug.storeId) : pricing?.storeId}
+                              defaultPtr={sug.ptr || pricing?.ptr}
+                              defaultMrp={sug.mrp || pricing?.mrp}
+                              defaultScheme={sug.scheme || pricing?.scheme}
+                              productCode={sug.productCode}
+                              productId={sug.productId}
+                              inCart={inCart}
+                              isAdding={addingItemKeys.has(`${sug.medicineName}:::${sug.storeId || pricing?.storeId || 0}`)}
+                              searchQuery={reorderSearchQuery}
+                              onAdd={(qty, selectedDist) => {
+                                executeReorderAdd({
+                                  medicineName: sug.medicineName,
+                                  medicineId: sug.medicineId,
+                                  packaging: sug.packaging,
+                                  company: sug.company,
+                                  productCode: selectedDist?.productCode || sug.productCode,
+                                  productId: selectedDist?.productId || sug.productId,
+                                  storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (sug.storeId ? Number(sug.storeId) : pricing?.storeId),
+                                  storeName: selectedDist?.storeName || selectedDist?.distributorName || sug.storeName || sug.lastDistributorName || pricing?.storeName,
+                                  ptr: selectedDist?.rate ?? sug.ptr ?? pricing?.ptr,
+                                  mrp: selectedDist?.mrp ?? sug.mrp ?? pricing?.mrp,
+                                  scheme: selectedDist?.scheme ?? sug.scheme ?? pricing?.scheme,
+                                  currentStock: sug.currentStock,
+                                  suggestedQty: qty
+                                }, qty);
+                              }}
+                              onOpenDetails={() => openReorderModalForItem({
+                                medicineName: sug.medicineName,
+                                medicineId: sug.medicineId,
+                                packaging: sug.packaging,
+                                company: sug.company,
+                                ptr: sug.ptr || pricing?.ptr,
+                                mrp: sug.mrp || pricing?.mrp,
+                                scheme: sug.scheme || pricing?.scheme,
+                                storeId: sug.storeId ? Number(sug.storeId) : pricing?.storeId,
+                                storeName: sug.storeName || sug.lastDistributorName || pricing?.storeName,
+                                productCode: sug.productCode,
+                                productId: sug.productId,
+                                previousPurchase: sug.previousPurchase,
+                                hasPreviousPurchase: Boolean(sug.previousPurchase),
+                                currentStock: sug.currentStock,
+                                minStock: 5,
+                                suggestedQty: sug.suggestedQty
+                              })}
+                            />
+                          );
+                        })}
                       </div>
                       {filteredReorderSuggestions.length > reorderVisibleCount && (
                         <div className="flex justify-center pt-2">
@@ -6062,76 +6498,73 @@ export default function PharmarackCart() {
                           const itemQty = getReorderItemQty(rawKey, 1);
                           const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
                           const inCart = isMedicineInAnyCart(item.medicineName);
+                          const pricing = reorderPricingLookup.byName.get(item.medicineName.toLowerCase().trim());
+                          const distOptions = (item.distributorOptions && item.distributorOptions.length > 0) ? item.distributorOptions : (pricing?.distributorOptions || []);
                           return (
-                            <div key={itemKey} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                              <div className="space-y-2.5">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0 flex-1">
-                                    <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
-                                      {highlightMatch(item.medicineName, reorderSearchQuery)}
-                                    </div>
-                                    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                                      {item.packaging && (
-                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
-                                          {item.packaging}
-                                        </span>
-                                      )}
-                                      {item.scheme && (
-                                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">
-                                          🎁 {item.scheme}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                  {item.receiptStatus === 'RECEIVED' ? (
-                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0 flex items-center gap-1">
-                                      <CheckCircle2 size={10} /> Received
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1">
-                                      <Clock size={10} /> In-Transit
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-xs text-muted space-y-1">
-                                  <div className="flex items-center gap-1.5">
-                                    <Store size={12} className="text-violet-400 shrink-0" />
-                                    <span className="truncate">Supplied by: <strong className="text-text font-bold">{item.storeName || item.lastDistributorName || 'Distributor'}</strong></span>
-                                  </div>
-                                  {(item.ptr || item.lastRate) ? (
-                                    <div className="text-[11px]">
-                                      Last PTR: <strong className="text-emerald-400 font-mono">₹{(item.ptr || item.lastRate || 0).toFixed(2)}</strong>
-                                      {item.mrp ? <span className="text-muted ml-1.5">MRP: ₹{item.mrp.toFixed(2)}</span> : null}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-                              <div className="pt-2.5 border-t border-glass-border/30 flex items-center justify-between gap-2">
-                                <span className="text-xs text-muted font-bold">Qty: {itemQty}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => openReorderModalForItem({
-                                    medicineName: item.medicineName,
-                                    medicineId: item.medicineId,
-                                    productCode: item.productCode,
-                                    productId: item.productId,
-                                    company: item.manufacturer || '',
-                                    mrp: item.mrp,
-                                    packaging: item.packaging,
-                                    ptr: item.ptr || item.lastRate,
-                                    storeId: item.storeId ? Number(item.storeId) : undefined,
-                                    storeName: item.storeName || item.lastDistributorName,
-                                    scheme: item.scheme,
-                                    suggestedQty: itemQty
-                                  })}
-                                  disabled={inCart || isAdding}
-                                  className="py-1.5 px-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
-                                >
-                                  {isAdding ? <Loader2 size={12} className="animate-spin" /> : inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
-                                  <span>{isAdding ? 'Adding…' : inCart ? '✓ In Cart' : 'Reorder'}</span>
-                                </button>
-                              </div>
-                            </div>
+                            <ReorderMedicineCard
+                              key={itemKey}
+                              cardKey={itemKey}
+                              medicineName={item.medicineName}
+                              medicineId={item.medicineId}
+                              packaging={item.packaging}
+                              company={item.manufacturer}
+                              tag={
+                                item.receiptStatus === 'RECEIVED' ? (
+                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0 flex items-center gap-1">
+                                    <CheckCircle2 size={10} /> Received
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1">
+                                    <Clock size={10} /> In-Transit
+                                  </span>
+                                )
+                              }
+                              subtitle={
+                                <div>Last ordered: <strong className="text-text font-mono">{formatDisplayDate(item.lastOrderedDate)}</strong> ({item.lastQty} units)</div>
+                              }
+                              defaultQty={itemQty}
+                              distributorOptions={distOptions}
+                              defaultStoreName={item.storeName || item.lastDistributorName || pricing?.storeName}
+                              defaultStoreId={item.storeId ? Number(item.storeId) : pricing?.storeId}
+                              defaultPtr={item.ptr || item.lastRate || pricing?.ptr}
+                              defaultMrp={item.mrp || pricing?.mrp}
+                              defaultScheme={item.scheme || pricing?.scheme}
+                              productCode={item.productCode}
+                              productId={item.productId}
+                              inCart={inCart}
+                              isAdding={isAdding}
+                              searchQuery={reorderSearchQuery}
+                              onAdd={(qty, selectedDist) => {
+                                executeReorderAdd({
+                                  medicineName: item.medicineName,
+                                  medicineId: item.medicineId,
+                                  company: item.manufacturer || '',
+                                  packaging: item.packaging,
+                                  productCode: selectedDist?.productCode || item.productCode,
+                                  productId: selectedDist?.productId || item.productId,
+                                  storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (item.storeId ? Number(item.storeId) : pricing?.storeId),
+                                  storeName: selectedDist?.storeName || selectedDist?.distributorName || item.storeName || item.lastDistributorName || pricing?.storeName,
+                                  ptr: selectedDist?.rate ?? item.ptr ?? item.lastRate ?? pricing?.ptr,
+                                  mrp: selectedDist?.mrp ?? item.mrp ?? pricing?.mrp,
+                                  scheme: selectedDist?.scheme ?? item.scheme ?? pricing?.scheme,
+                                  suggestedQty: qty
+                                }, qty);
+                              }}
+                              onOpenDetails={() => openReorderModalForItem({
+                                medicineName: item.medicineName,
+                                medicineId: item.medicineId,
+                                productCode: item.productCode,
+                                productId: item.productId,
+                                company: item.manufacturer || '',
+                                mrp: item.mrp,
+                                packaging: item.packaging,
+                                ptr: item.ptr || item.lastRate,
+                                storeId: item.storeId ? Number(item.storeId) : undefined,
+                                storeName: item.storeName || item.lastDistributorName,
+                                scheme: item.scheme,
+                                suggestedQty: itemQty
+                              })}
+                            />
                           );
                         })}
                       </div>
@@ -6165,77 +6598,77 @@ export default function PharmarackCart() {
                           const itemQty = getReorderItemQty(rawKey, 1);
                           const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
                           const inCart = isMedicineInAnyCart(item.medicineName);
+                          const pricing = (item.medicineId ? reorderPricingLookup.byId.get(item.medicineId) : undefined) ||
+                                          (item.medicineName ? reorderPricingLookup.byName.get(item.medicineName.toLowerCase().trim()) : undefined);
+                          const distOptions = pricing?.distributorOptions || [];
                           return (
-                            <div key={itemKey} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                              <div className="space-y-2.5">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0 flex-1">
-                                    <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
-                                      {highlightMatch(item.medicineName, reorderSearchQuery)}
-                                    </div>
-                                    {item.manufacturer && (
-                                      <p className="text-[10px] text-muted truncate mt-0.5">{item.manufacturer}</p>
-                                    )}
-                                  </div>
-                                  {item.billCount && (
-                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1">
-                                      <Star size={9} className="fill-amber-400" /> ×{item.billCount} bills
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-xs text-muted space-y-1">
-                                  <div className="flex items-center gap-1.5">
-                                    <Store size={12} className="text-sky-400 shrink-0" />
-                                    <span className="truncate">Distributor: <strong className="text-text font-bold">{item.lastDistributorName || item.storeName || 'Distributor'}</strong></span>
-                                  </div>
-                                  {(item.ptr || item.lastRate) ? (
-                                    <div className="text-[11px]">
-                                      Last PTR: <strong className="text-emerald-400 font-mono">₹{(item.ptr || item.lastRate || 0).toFixed(2)}</strong>
-                                      {item.mrp ? <span className="text-muted ml-1.5">MRP: ₹{item.mrp.toFixed(2)}</span> : null}
-                                    </div>
-                                  ) : null}
-                                  {item.scheme ? (
-                                    <div className="text-[11px]">
-                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">
-                                        🎁 {item.scheme}
-                                      </span>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-                              <div className="pt-2.5 border-t border-glass-border/30 flex items-center justify-between gap-2">
-                                <span className="text-xs text-muted font-bold">Qty: {itemQty}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => openReorderModalForItem({
-                                    medicineName: item.medicineName,
-                                    medicineId: item.medicineId,
-                                    productCode: item.productCode,
-                                    productId: item.productId,
-                                    company: item.manufacturer || '',
-                                    mrp: item.mrp,
-                                    packaging: item.packaging,
-                                    ptr: item.ptr,
-                                    storeId: item.storeId ? Number(item.storeId) : undefined,
-                                    storeName: item.storeName || item.lastDistributorName,
-                                    suggestedQty: itemQty,
-                                    previousPurchase: {
-                                      supplierName: item.storeName || item.lastDistributorName,
-                                      quantity: item.lastQty,
-                                      price: item.ptr,
-                                      mrp: item.mrp,
-                                      purchaseDate: item.lastOrderedDate
-                                    },
-                                    hasPreviousPurchase: true
-                                  })}
-                                  disabled={inCart || isAdding}
-                                  className="py-1.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs disabled:opacity-50"
-                                >
-                                  {isAdding ? <Loader2 size={12} className="animate-spin" /> : inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
-                                  <span>{isAdding ? 'Adding…' : inCart ? '✓ In Cart' : 'Add to Cart'}</span>
-                                </button>
-                              </div>
-                            </div>
+                            <ReorderMedicineCard
+                              key={itemKey}
+                              cardKey={itemKey}
+                              medicineName={item.medicineName}
+                              medicineId={item.medicineId}
+                              packaging={item.packaging}
+                              company={item.manufacturer}
+                              tag={
+                                item.billCount ? (
+                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1">
+                                    <Star size={9} className="fill-amber-400" /> ×{item.billCount} bills
+                                  </span>
+                                ) : null
+                              }
+                              subtitle={
+                                <div>Last bill: <strong className="text-text font-mono">{formatDisplayDate(item.lastOrderedDate)}</strong> ({item.lastQty} units)</div>
+                              }
+                              defaultQty={itemQty}
+                              distributorOptions={distOptions}
+                              defaultStoreName={item.storeName || item.lastDistributorName || pricing?.storeName}
+                              defaultStoreId={item.storeId ? Number(item.storeId) : pricing?.storeId}
+                              defaultPtr={item.ptr || item.lastRate || pricing?.ptr}
+                              defaultMrp={item.mrp || pricing?.mrp}
+                              defaultScheme={item.scheme || pricing?.scheme}
+                              productCode={item.productCode}
+                              productId={item.productId}
+                              inCart={inCart}
+                              isAdding={isAdding}
+                              searchQuery={reorderSearchQuery}
+                              onAdd={(qty, selectedDist) => {
+                                executeReorderAdd({
+                                  medicineName: item.medicineName,
+                                  medicineId: item.medicineId,
+                                  company: item.manufacturer || '',
+                                  packaging: item.packaging,
+                                  productCode: selectedDist?.productCode || item.productCode,
+                                  productId: selectedDist?.productId || item.productId,
+                                  storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (item.storeId ? Number(item.storeId) : pricing?.storeId),
+                                  storeName: selectedDist?.storeName || selectedDist?.distributorName || item.storeName || item.lastDistributorName || pricing?.storeName,
+                                  ptr: selectedDist?.rate ?? item.ptr ?? item.lastRate ?? pricing?.ptr,
+                                  mrp: selectedDist?.mrp ?? item.mrp ?? pricing?.mrp,
+                                  scheme: selectedDist?.scheme ?? item.scheme ?? pricing?.scheme,
+                                  suggestedQty: qty
+                                }, qty);
+                              }}
+                              onOpenDetails={() => openReorderModalForItem({
+                                medicineName: item.medicineName,
+                                medicineId: item.medicineId,
+                                productCode: item.productCode,
+                                productId: item.productId,
+                                company: item.manufacturer || '',
+                                mrp: item.mrp,
+                                packaging: item.packaging,
+                                ptr: item.ptr,
+                                storeId: item.storeId ? Number(item.storeId) : undefined,
+                                storeName: item.storeName || item.lastDistributorName,
+                                suggestedQty: itemQty,
+                                previousPurchase: {
+                                  supplierName: item.storeName || item.lastDistributorName,
+                                  quantity: item.lastQty,
+                                  price: item.ptr,
+                                  mrp: item.mrp,
+                                  purchaseDate: item.lastOrderedDate
+                                },
+                                hasPreviousPurchase: true
+                              })}
+                            />
                           );
                         })}
                       </div>
@@ -6281,55 +6714,65 @@ export default function PharmarackCart() {
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {filteredPendingOrders.map((order) => {
                       const inCart = Boolean(getOrderItemInCart(order));
+                      const pricing = reorderPricingLookup.byName.get(order.product.toLowerCase().trim());
+                      const distOptions = pricing?.distributorOptions || [];
                       return (
-                        <div key={order.id} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="font-extrabold text-xs text-text">{highlightMatch(order.product, reorderSearchQuery)}</span>
-                              <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${order.priority === 'Urgent' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-bg3 text-muted border border-glass-border'
-                                }`}>
-                                {order.priority || 'Normal'}
-                              </span>
-                            </div>
-
-                            <div className="text-xs text-muted space-y-1">
+                        <ReorderMedicineCard
+                          key={`order-tab-${order.id}`}
+                          cardKey={`order-tab-${order.id}`}
+                          medicineName={order.product}
+                          tag={
+                            <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${order.priority === 'Urgent' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-bg3 text-muted border border-glass-border'}`}>
+                              {order.priority || 'Normal'}
+                            </span>
+                          }
+                          subtitle={
+                            <>
                               <div>Customer: <strong className="text-text">{order.requester}</strong> ({order.phone})</div>
                               <div>Required Qty: <strong className="text-primary font-mono">{order.qty || 1}</strong></div>
                               {order.advance_payment ? <div>Advance Paid: <strong className="text-emerald-400 font-mono">₹{order.advance_payment}</strong></div> : null}
                               {order.pharmarack_distributor && <div>Assigned Dist: <strong className="text-text">{order.pharmarack_distributor}</strong></div>}
-                              {order.pharmarack_rate ? (
-                                <div className="text-[11px]">
-                                  Est. Rate: <strong className="text-emerald-400 font-mono">₹{order.pharmarack_rate.toFixed(2)}</strong>
-                                  {order.pharmarack_mrp ? <span className="text-muted ml-1.5">MRP: ₹{order.pharmarack_mrp.toFixed(2)}</span> : null}
-                                  {order.pharmarack_scheme ? <span className="text-emerald-400 ml-1.5 font-bold">🎁 {order.pharmarack_scheme}</span> : null}
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-
-                          <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
-                            <button
-                              type="button"
-                              onClick={() => !inCart && openReorderModalForItem({
-                                medicineName: order.product,
-                                suggestedQty: order.qty || 1,
-                                sourceOrderId: order.id,
-                                storeName: order.pharmarack_distributor,
-                                storeId: order.pharmarack_store_id ? Number(order.pharmarack_store_id) : undefined,
-                                productCode: order.pharmarack_product_code || undefined,
-                                productId: order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined,
-                                ptr: order.pharmarack_rate,
-                                mrp: order.pharmarack_mrp,
-                                scheme: order.pharmarack_scheme
-                              })}
-                              disabled={inCart}
-                              className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
-                            >
-                              {inCart ? <CheckCircle2 size={14} className="text-emerald-400" /> : <ShoppingCart size={14} />}
-                              <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
-                            </button>
-                          </div>
-                        </div>
+                            </>
+                          }
+                          defaultQty={order.qty || 1}
+                          distributorOptions={distOptions}
+                          defaultStoreName={order.pharmarack_distributor || pricing?.storeName}
+                          defaultStoreId={order.pharmarack_store_id ? Number(order.pharmarack_store_id) : pricing?.storeId}
+                          defaultPtr={order.pharmarack_rate || pricing?.ptr}
+                          defaultMrp={order.pharmarack_mrp || pricing?.mrp}
+                          defaultScheme={order.pharmarack_scheme || pricing?.scheme}
+                          productCode={order.pharmarack_product_code}
+                          productId={order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined}
+                          sourceOrderId={order.id}
+                          inCart={inCart}
+                          isAdding={addingItemKeys.has(`${order.product}:::${order.pharmarack_store_id || pricing?.storeId || 0}`)}
+                          searchQuery={reorderSearchQuery}
+                          onAdd={(qty, selectedDist) => {
+                            executeReorderAdd({
+                              medicineName: order.product,
+                              productCode: selectedDist?.productCode || order.pharmarack_product_code || undefined,
+                              productId: selectedDist?.productId || (order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined),
+                              storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (order.pharmarack_store_id ? Number(order.pharmarack_store_id) : pricing?.storeId),
+                              storeName: selectedDist?.storeName || selectedDist?.distributorName || order.pharmarack_distributor || pricing?.storeName,
+                              ptr: selectedDist?.rate ?? order.pharmarack_rate ?? pricing?.ptr,
+                              mrp: selectedDist?.mrp ?? order.pharmarack_mrp ?? pricing?.mrp,
+                              scheme: selectedDist?.scheme ?? order.pharmarack_scheme ?? pricing?.scheme,
+                              sourceOrderId: order.id
+                            }, qty);
+                          }}
+                          onOpenDetails={() => openReorderModalForItem({
+                            medicineName: order.product,
+                            suggestedQty: order.qty || 1,
+                            sourceOrderId: order.id,
+                            storeName: order.pharmarack_distributor || pricing?.storeName,
+                            storeId: order.pharmarack_store_id ? Number(order.pharmarack_store_id) : pricing?.storeId,
+                            productCode: order.pharmarack_product_code || undefined,
+                            productId: order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined,
+                            ptr: order.pharmarack_rate || pricing?.ptr,
+                            mrp: order.pharmarack_mrp || pricing?.mrp,
+                            scheme: order.pharmarack_scheme || pricing?.scheme
+                          })}
+                        />
                       );
                     })}
                   </div>
@@ -6347,40 +6790,66 @@ export default function PharmarackCart() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {filteredPendingRefills.map((refill) => {
                     const inCart = Boolean(getRefillItemInCart(refill));
+                    const medName = refill.medicine_name || '';
+                    const pricing = (refill.medicine_id ? reorderPricingLookup.byId.get(refill.medicine_id) : undefined) ||
+                                    (medName ? reorderPricingLookup.byName.get(medName.toLowerCase().trim()) : undefined);
+                    const distOptions = pricing?.distributorOptions || [];
                     return (
-                      <div key={refill.id} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="font-extrabold text-sm text-text">{highlightMatch(refill.medicine_name || '', reorderSearchQuery)}</span>
-                            <span className="text-[11px] font-mono font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20">
-                              Due: {refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Soon'}
-                            </span>
-                          </div>
-
-                          <div className="text-sm text-muted space-y-1">
+                      <ReorderMedicineCard
+                        key={`refill-tab-${refill.id}`}
+                        cardKey={`refill-tab-${refill.id}`}
+                        medicineName={medName}
+                        medicineId={refill.medicine_id}
+                        tag={
+                          <span className="text-[11px] font-mono font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full border border-sky-500/20">
+                            Due: {refill.next_refill_date ? new Date(refill.next_refill_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : 'Soon'}
+                          </span>
+                        }
+                        subtitle={
+                          <>
                             <div>Patient: <strong className="text-text">{refill.patient_name}</strong> ({refill.patient_phone})</div>
                             <div>Needed: <strong className="text-primary font-mono">{refill.quantity_needed || 1}</strong> | In Stock: <strong className="text-text font-mono">{refill.in_stock_qty || 0}</strong></div>
-                          </div>
-                        </div>
-
-                        <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
-                          <button
-                            type="button"
-                            onClick={() => !inCart && openReorderModalForItem({
-                              medicineName: refill.medicine_name || '',
-                              medicineId: refill.medicine_id,
-                              suggestedQty: Number(refill.quantity_needed) || 1,
-                              currentStock: Number(refill.in_stock_qty) || 0,
-                              sourceRefillId: refill.id
-                            })}
-                            disabled={inCart}
-                            className={`flex-1 py-1.5 px-3 rounded-xl text-sm font-bold flex items-center justify-center gap-1.5 transition-all ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-primary text-white hover:bg-primary/80 active:scale-95 cursor-pointer'}`}
-                          >
-                            {inCart ? <CheckCircle2 size={14} className="text-emerald-400" /> : <ShoppingCart size={14} />}
-                            <span>{inCart ? '✓ In Live Cart' : 'Add to Cart'}</span>
-                          </button>
-                        </div>
-                      </div>
+                          </>
+                        }
+                        defaultQty={Number(refill.quantity_needed) || 1}
+                        currentStock={Number(refill.in_stock_qty) || 0}
+                        distributorOptions={distOptions}
+                        defaultStoreName={pricing?.storeName}
+                        defaultStoreId={pricing?.storeId}
+                        defaultPtr={pricing?.ptr}
+                        defaultMrp={pricing?.mrp}
+                        defaultScheme={pricing?.scheme}
+                        sourceRefillId={refill.id}
+                        inCart={inCart}
+                        isAdding={addingItemKeys.has(`${medName}:::${pricing?.storeId || 0}`)}
+                        searchQuery={reorderSearchQuery}
+                        onAdd={(qty, selectedDist) => {
+                          executeReorderAdd({
+                            medicineName: medName,
+                            medicineId: refill.medicine_id,
+                            productCode: selectedDist?.productCode,
+                            productId: selectedDist?.productId,
+                            storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : pricing?.storeId,
+                            storeName: selectedDist?.storeName || selectedDist?.distributorName || pricing?.storeName,
+                            ptr: selectedDist?.rate ?? pricing?.ptr,
+                            mrp: selectedDist?.mrp ?? pricing?.mrp,
+                            scheme: selectedDist?.scheme ?? pricing?.scheme,
+                            sourceRefillId: refill.id
+                          }, qty);
+                        }}
+                        onOpenDetails={() => openReorderModalForItem({
+                          medicineName: medName,
+                          medicineId: refill.medicine_id,
+                          suggestedQty: Number(refill.quantity_needed) || 1,
+                          currentStock: Number(refill.in_stock_qty) || 0,
+                          sourceRefillId: refill.id,
+                          storeName: pricing?.storeName,
+                          storeId: pricing?.storeId,
+                          ptr: pricing?.ptr,
+                          mrp: pricing?.mrp,
+                          scheme: pricing?.scheme
+                        })}
+                      />
                     );
                   })}
                 </div>
@@ -6395,47 +6864,44 @@ export default function PharmarackCart() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredReorderSuggestions.slice(0, reorderVisibleCount).map((sug, idx) => (
-                    <div key={`sug-${sug.medicineId}-${idx}`} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="font-extrabold text-xs text-text truncate">{highlightMatch(sug.medicineName, reorderSearchQuery)}</span>
-                            {sug.packaging && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono shrink-0">
-                                {sug.packaging}
-                              </span>
-                            )}
-                          </div>
+                  {filteredReorderSuggestions.slice(0, reorderVisibleCount).map((sug, idx) => {
+                    const inCart = isMedicineInAnyCart(sug.medicineName);
+                    const pricing = (sug.medicineId ? reorderPricingLookup.byId.get(sug.medicineId) : undefined) ||
+                                    (sug.medicineName ? reorderPricingLookup.byName.get(sug.medicineName.toLowerCase().trim()) : undefined);
+                    const distOptions = (sug.distributorOptions && sug.distributorOptions.length > 0) ? sug.distributorOptions : (pricing?.distributorOptions || []);
+                    return (
+                      <ReorderMedicineCard
+                        key={`sug-tab-${sug.medicineId}-${idx}`}
+                        cardKey={`sug-tab-${sug.medicineId}-${idx}`}
+                        medicineName={sug.medicineName}
+                        medicineId={sug.medicineId}
+                        packaging={sug.packaging}
+                        company={sug.company}
+                        tag={
                           <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
                             {sug.isHotMover ? '🔥 Hot Mover' : '⚠️ Low Stock'}
                           </span>
-                        </div>
-
-                        <div className="text-xs text-muted space-y-1">
-                          {(sug.lastDistributorName || sug.storeName) && (
-                            <div className="flex items-center gap-1.5">
-                              <Store size={11} className="text-emerald-400 shrink-0" />
-                              <span className="truncate">Distributor: <strong className="text-text font-bold">{sug.lastDistributorName || sug.storeName}</strong></span>
-                            </div>
-                          )}
-                          {sug.ptr ? (
-                            <div className="text-[11px]">
-                              Last PTR: <strong className="text-emerald-400 font-mono">₹{sug.ptr.toFixed(2)}</strong>
-                              {sug.mrp ? <span className="text-muted ml-1.5">MRP: ₹{sug.mrp.toFixed(2)}</span> : null}
-                            </div>
-                          ) : null}
-                          <div>📊 Past {reorderWindowMonths} {reorderWindowMonths === 1 ? 'Month' : 'Months'} Sold: <strong className="text-text font-mono">{sug.twoMonthSales ?? sug.sixMonthTotalSales ?? 0}</strong> units</div>
-                          <div>📦 Current Stock: <strong className="text-rose-400 font-mono">{sug.currentStock}</strong> strips</div>
-                        </div>
-                      </div>
-
-                      <div className="pt-2 border-t border-glass-border/30 flex items-center justify-between gap-2">
-                        <div className="text-xs font-bold text-muted">
-                          Need: <strong className="text-emerald-400 font-mono text-xs">{sug.suggestedQty}</strong> qty
-                        </div>
-
-                        <div className="flex items-center gap-1.5">
+                        }
+                        subtitle={
+                          <>
+                            <div>📊 Past {reorderWindowMonths} {reorderWindowMonths === 1 ? 'Month' : 'Months'} Sold: <strong className="text-text font-mono">{sug.twoMonthSales ?? sug.sixMonthTotalSales ?? 0}</strong> units</div>
+                            <div>📦 Current Stock: <strong className="text-rose-400 font-mono">{sug.currentStock}</strong> strips</div>
+                          </>
+                        }
+                        defaultQty={sug.suggestedQty || 1}
+                        currentStock={sug.currentStock}
+                        distributorOptions={distOptions}
+                        defaultStoreName={sug.storeName || sug.lastDistributorName || pricing?.storeName}
+                        defaultStoreId={sug.storeId ? Number(sug.storeId) : pricing?.storeId}
+                        defaultPtr={sug.ptr || pricing?.ptr}
+                        defaultMrp={sug.mrp || pricing?.mrp}
+                        defaultScheme={sug.scheme || pricing?.scheme}
+                        productCode={sug.productCode}
+                        productId={sug.productId}
+                        inCart={inCart}
+                        isAdding={addingItemKeys.has(`${sug.medicineName}:::${sug.storeId || pricing?.storeId || 0}`)}
+                        searchQuery={reorderSearchQuery}
+                        actionExtra={
                           <select
                             onChange={async (e) => {
                               const val = e.target.value;
@@ -6455,41 +6921,45 @@ export default function PharmarackCart() {
                             <option value="30">30 days</option>
                             <option value="permanent">Permanently</option>
                           </select>
-
-                          {(() => {
-                            const inCart = isMedicineInAnyCart(sug.medicineName);
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => !inCart && openReorderModalForItem({
-                                  medicineName: sug.medicineName,
-                                  medicineId: sug.medicineId,
-                                  packaging: sug.packaging,
-                                  company: sug.company,
-                                  ptr: sug.ptr,
-                                  mrp: sug.mrp,
-                                  storeId: sug.storeId ? Number(sug.storeId) : undefined,
-                                  storeName: sug.storeName || sug.lastDistributorName,
-                                  productCode: sug.productCode,
-                                  productId: sug.productId,
-                                  previousPurchase: sug.previousPurchase,
-                                  hasPreviousPurchase: Boolean(sug.previousPurchase),
-                                  currentStock: sug.currentStock,
-                                  minStock: 5,
-                                  suggestedQty: sug.suggestedQty
-                                })}
-                                disabled={inCart}
-                                className={`py-1 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all whitespace-nowrap ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-emerald-500 hover:bg-emerald-600 text-white active:scale-95 cursor-pointer shadow-xs'}`}
-                              >
-                                {inCart ? <CheckCircle2 size={13} className="text-emerald-400" /> : <Plus size={13} />}
-                                <span>{inCart ? '✓ In Live Cart' : `+ Add (${sug.suggestedQty})`}</span>
-                              </button>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                        }
+                        onAdd={(qty, selectedDist) => {
+                          executeReorderAdd({
+                            medicineName: sug.medicineName,
+                            medicineId: sug.medicineId,
+                            packaging: sug.packaging,
+                            company: sug.company,
+                            productCode: selectedDist?.productCode || sug.productCode,
+                            productId: selectedDist?.productId || sug.productId,
+                            storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (sug.storeId ? Number(sug.storeId) : pricing?.storeId),
+                            storeName: selectedDist?.storeName || selectedDist?.distributorName || sug.storeName || sug.lastDistributorName || pricing?.storeName,
+                            ptr: selectedDist?.rate ?? sug.ptr ?? pricing?.ptr,
+                            mrp: selectedDist?.mrp ?? sug.mrp ?? pricing?.mrp,
+                            scheme: selectedDist?.scheme ?? sug.scheme ?? pricing?.scheme,
+                            currentStock: sug.currentStock,
+                            suggestedQty: qty
+                          }, qty);
+                        }}
+                        onOpenDetails={() => openReorderModalForItem({
+                          medicineName: sug.medicineName,
+                          medicineId: sug.medicineId,
+                          packaging: sug.packaging,
+                          company: sug.company,
+                          ptr: sug.ptr || pricing?.ptr,
+                          mrp: sug.mrp || pricing?.mrp,
+                          scheme: sug.scheme || pricing?.scheme,
+                          storeId: sug.storeId ? Number(sug.storeId) : pricing?.storeId,
+                          storeName: sug.storeName || sug.lastDistributorName || pricing?.storeName,
+                          productCode: sug.productCode,
+                          productId: sug.productId,
+                          previousPurchase: sug.previousPurchase,
+                          hasPreviousPurchase: Boolean(sug.previousPurchase),
+                          currentStock: sug.currentStock,
+                          minStock: 5,
+                          suggestedQty: sug.suggestedQty
+                        })}
+                      />
+                    );
+                  })}
                 </div>
               )
             )}
@@ -6503,222 +6973,83 @@ export default function PharmarackCart() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {filteredReorderRecentItems.slice(0, reorderVisibleCount).map((item, idx) => {
-                    const itemKey = `recent-${item.medicineName}:::${item.storeId || item.storeName || ''}:::${idx}`;
-                    const itemQty = getReorderItemQty(itemKey, 1);
-                    const stockInfo = checkedStockMap[item.medicineName];
-                    const isCheckingStock = checkingStockMed === item.medicineName;
-                    const highestStock = stockInfo?.highestStockDistributor || item.highestStockDistributor;
-                    const hasHighStock = Boolean(highestStock && highestStock.availability > 0);
-                    const isDiffDistributor = hasHighStock && highestStock?.storeId !== item.storeId;
+                    const cardKey = `recent-tab-${item.medicineName}:::${item.storeId || item.storeName || ''}:::${idx}`;
+                    const inCart = isMedicineInAnyCart(item.medicineName);
+                    const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
+                    const pricing = (item.medicineId ? reorderPricingLookup.byId.get(item.medicineId) : undefined) ||
+                                    (item.medicineName ? reorderPricingLookup.byName.get(item.medicineName.toLowerCase().trim()) : undefined);
+                    const distOptions = (item.distributorOptions && item.distributorOptions.length > 0)
+                      ? item.distributorOptions
+                      : (pricing?.distributorOptions || []);
 
                     return (
-                      <div key={itemKey} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                        <div className="space-y-2.5">
-                          {/* Medicine Title & Packaging */}
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1">
-                              <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
-                                {highlightMatch(item.medicineName, reorderSearchQuery)}
-                              </div>
-                              <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-                                {item.packaging && (
-                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-bg3 text-muted border border-glass-border/40 font-mono">
-                                    {item.packaging}
-                                  </span>
-                                )}
-                                {item.scheme && (
-                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">
-                                    🎁 {item.scheme}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Inward / Receipt Status */}
-                            {item.receiptStatus === 'RECEIVED' ? (
-                              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0 flex items-center gap-1" title={`Inwarded in Invoice ${item.receivedInvoiceNo || ''}`}>
-                                <CheckCircle2 size={10} /> Received
-                              </span>
-                            ) : (
-                              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1" title="Dispatched from distributor — awaiting store arrival">
-                                <Clock size={10} /> In-Transit
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Distributor Attribution & Order Reference */}
-                          <div className="text-xs text-muted space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              <Store size={12} className="text-violet-400 shrink-0" />
-                              <span className="truncate">Supplied by: <strong className="text-text font-bold">{item.storeName || item.lastDistributorName || 'Distributor'}</strong></span>
-                            </div>
+                      <ReorderMedicineCard
+                        key={cardKey}
+                        cardKey={cardKey}
+                        medicineName={item.medicineName}
+                        medicineId={item.medicineId}
+                        packaging={item.packaging}
+                        company={item.manufacturer}
+                        tag={
+                          item.receiptStatus === 'RECEIVED' ? (
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono shrink-0 flex items-center gap-1" title={`Inwarded in Invoice ${item.receivedInvoiceNo || ''}`}>
+                              <CheckCircle2 size={10} /> Received
+                            </span>
+                          ) : (
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1" title="Dispatched from distributor — awaiting store arrival">
+                              <Clock size={10} /> In-Transit
+                            </span>
+                          )
+                        }
+                        subtitle={
+                          <div className="space-y-0.5">
                             <div className="flex items-center justify-between text-[11px]">
                               <span>Last Ordered: <strong className="text-text font-mono">{item.lastOrderedDate}</strong></span>
-                              {item.orderId && (
-                                <span className="text-[10px] font-mono text-muted/80">Order #{item.orderId}</span>
-                              )}
+                              {item.orderId && <span className="text-[10px] font-mono text-muted/80">Order #{item.orderId}</span>}
                             </div>
-                            {item.ptr ? (
-                              <div className="text-[11px]">
-                                Last PTR: <strong className="text-emerald-400 font-mono">₹{item.ptr.toFixed(2)}</strong>
-                                {item.mrp ? <span className="text-muted ml-1.5">MRP: ₹{item.mrp.toFixed(2)}</span> : null}
-                              </div>
-                            ) : null}
-                            {item.scheme ? (
-                              <div className="text-[11px]">
-                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">
-                                  🎁 {item.scheme}
-                                </span>
-                              </div>
-                            ) : null}
+                            {item.receivedInvoiceNo && (
+                              <div className="text-[10px] text-muted truncate">Invoice: <span className="font-mono text-text">{item.receivedInvoiceNo}</span></div>
+                            )}
                           </div>
-
-                          {/* On-Demand Stock Check Trigger / Results */}
-                          {!stockInfo && !item.highestStockDistributor ? (
-                            <div className="pt-1">
-                              <button
-                                type="button"
-                                onClick={() => handleCheckStock(item.medicineName)}
-                                disabled={isCheckingStock}
-                                className="w-full py-1.5 px-2.5 rounded-xl bg-bg2 hover:bg-bg3 border border-glass-border text-muted hover:text-text text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
-                                title="Check live stock only for this medicine"
-                              >
-                                {isCheckingStock ? (
-                                  <>
-                                    <Loader2 size={12} className="animate-spin text-primary" />
-                                    <span>Checking live stock…</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Zap size={11} className="text-amber-400" />
-                                    <span>Check Highest Stock</span>
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          ) : hasHighStock && highestStock ? (
-                            <div className="p-2 rounded-xl bg-primary/10 border border-primary/20 text-[11px] text-text flex items-center justify-between gap-1">
-                              <div className="min-w-0 flex items-center gap-1.5">
-                                <Zap size={12} className="text-primary shrink-0" />
-                                <span className="truncate">
-                                  Highest Stock: <strong>{highestStock.storeName}</strong>
-                                </span>
-                              </div>
-                              <span className="font-mono font-bold text-emerald-400 shrink-0">
-                                {highestStock.availability} in stock
-                              </span>
-                            </div>
-                          ) : (
-                            <div className="p-1.5 rounded-xl bg-bg3/30 border border-glass-border/30 text-[10px] text-muted flex items-center gap-1.5">
-                              <AlertCircle size={11} className="text-muted/60 shrink-0" />
-                              <span>No alternate stock found in catalog</span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Bottom: Inline Quantity Stepper + Reorder Actions */}
-                        <div className="pt-2.5 border-t border-glass-border/30 space-y-2">
-                          {/* Stepper */}
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-bold text-muted">Reorder Qty:</span>
-                            <div className="flex items-center gap-1 bg-bg border border-glass-border rounded-xl p-0.5">
-                              <button
-                                type="button"
-                                onClick={() => setReorderItemQty(itemKey, itemQty - 1)}
-                                disabled={itemQty <= 1}
-                                className="w-6 h-6 rounded-lg bg-bg2 hover:bg-bg3 text-muted hover:text-text flex items-center justify-center text-xs font-bold disabled:opacity-40 cursor-pointer"
-                              >
-                                -
-                              </button>
-                              <input
-                                type="number"
-                                min="1"
-                                value={itemQty}
-                                onChange={(e) => setReorderItemQty(itemKey, parseInt(e.target.value, 10) || 1)}
-                                className="w-10 text-center font-mono text-xs font-bold text-text bg-transparent focus:outline-none"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setReorderItemQty(itemKey, itemQty + 1)}
-                                className="w-6 h-6 rounded-lg bg-bg2 hover:bg-bg3 text-muted hover:text-text flex items-center justify-center text-xs font-bold cursor-pointer"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex items-center gap-1.5">
-                            {(() => {
-                              const inCart = isMedicineInAnyCart(item.medicineName);
-                              const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => openReorderModalForItem({
-                                    medicineName: item.medicineName,
-                                    medicineId: item.medicineId,
-                                    productCode: item.productCode,
-                                    productId: item.productId,
-                                    company: item.manufacturer || '',
-                                    mrp: item.mrp,
-                                    packaging: item.packaging,
-                                    ptr: item.ptr || item.lastRate,
-                                    storeId: item.storeId ? Number(item.storeId) : undefined,
-                                    storeName: item.storeName || item.lastDistributorName,
-                                    scheme: item.scheme,
-                                    suggestedQty: itemQty
-                                  })}
-                                  disabled={inCart || isAdding}
-                                  className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-purple-600 hover:bg-purple-700 text-white active:scale-95 cursor-pointer disabled:opacity-50'}`}
-                                  title={inCart ? `${item.medicineName} is already in the live cart` : `Reorder from ${item.storeName || item.lastDistributorName}`}
-                                >
-                                  {isAdding ? <Loader2 size={12} className="animate-spin" /> : inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
-                                  <span className="truncate">{isAdding ? 'Adding…' : inCart ? '✓ In Live Cart' : `Reorder (x${itemQty})`}</span>
-                                </button>
-                              );
-                            })()}
-
-                            {isDiffDistributor && highestStock && (() => {
-                              const isAddingHs = addingItemKeys.has(`${item.medicineName}:::${highestStock.storeId || 0}`);
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => openReorderModalForItem({
-                                    medicineName: item.medicineName,
-                                    medicineId: item.medicineId,
-                                    productCode: item.productCode,
-                                    productId: item.productId,
-                                    company: item.manufacturer || '',
-                                    mrp: item.mrp,
-                                    packaging: item.packaging,
-                                    ptr: highestStock.ptr || item.ptr,
-                                    storeId: highestStock.storeId ? Number(highestStock.storeId) : undefined,
-                                    storeName: highestStock.storeName,
-                                    scheme: item.scheme,
-                                    suggestedQty: itemQty
-                                  })}
-                                  disabled={isAddingHs}
-                                  className="py-1.5 px-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-[11px] font-bold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs whitespace-nowrap disabled:opacity-50"
-                                  title={`Switch and reorder from ${highestStock.storeName} (${highestStock.availability} in stock)`}
-                                >
-                                  {isAddingHs ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
-                                  <span>{isAddingHs ? 'Adding…' : 'Highest Stock'}</span>
-                                </button>
-                              );
-                            })()}
-
-                            <button
-                              type="button"
-                              onClick={() => liveCartAddEvent.triggerOpen(item.medicineName, itemQty)}
-                              className="p-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-glass-border text-muted hover:text-text transition-all active:scale-95 cursor-pointer"
-                              title="Search across all available distributors in modal"
-                            >
-                              <Search size={13} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+                        }
+                        defaultQty={1}
+                        distributorOptions={distOptions}
+                        defaultStoreName={item.storeName || item.lastDistributorName || pricing?.storeName}
+                        defaultStoreId={item.storeId ? Number(item.storeId) : pricing?.storeId}
+                        defaultPtr={item.ptr || item.lastRate || pricing?.ptr}
+                        defaultMrp={item.mrp || pricing?.mrp}
+                        defaultScheme={item.scheme || pricing?.scheme}
+                        inCart={inCart}
+                        isAdding={isAdding}
+                        searchQuery={reorderSearchQuery}
+                        onAdd={(qty, selectedDist) => {
+                          executeReorderAdd({
+                            medicineName: item.medicineName,
+                            medicineId: item.medicineId,
+                            productCode: selectedDist?.productCode || item.productCode,
+                            productId: selectedDist?.productId || item.productId,
+                            storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (item.storeId ? Number(item.storeId) : pricing?.storeId),
+                            storeName: selectedDist?.storeName || selectedDist?.distributorName || item.storeName || item.lastDistributorName || pricing?.storeName,
+                            ptr: selectedDist?.rate ?? item.ptr ?? item.lastRate ?? pricing?.ptr,
+                            mrp: selectedDist?.mrp ?? item.mrp ?? pricing?.mrp,
+                            scheme: selectedDist?.scheme ?? item.scheme ?? pricing?.scheme,
+                          }, qty);
+                        }}
+                        onOpenDetails={() => openReorderModalForItem({
+                          medicineName: item.medicineName,
+                          medicineId: item.medicineId,
+                          productCode: item.productCode,
+                          productId: item.productId,
+                          company: item.manufacturer || '',
+                          mrp: item.mrp || pricing?.mrp,
+                          packaging: item.packaging,
+                          ptr: item.ptr || item.lastRate || pricing?.ptr,
+                          storeId: item.storeId ? Number(item.storeId) : pricing?.storeId,
+                          storeName: item.storeName || item.lastDistributorName || pricing?.storeName,
+                          scheme: item.scheme || pricing?.scheme,
+                          suggestedQty: 1
+                        })}
+                      />
                     );
                   })}
                 </div>
@@ -6739,122 +7070,82 @@ export default function PharmarackCart() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {filteredPurchaseHistoryItems.slice(0, reorderVisibleCount).map((item, idx) => {
-                    const itemKey = `purchase:::${item.medicineId || item.medicineName}:::${item.distributorId || item.storeId || item.storeName || ''}:::${idx}`;
-                    const itemQty = getReorderItemQty(itemKey, 1);
+                    const cardKey = `purchase-tab:::${item.medicineId || item.medicineName}:::${item.distributorId || item.storeId || item.storeName || ''}:::${idx}`;
+                    const inCart = isMedicineInAnyCart(item.medicineName);
+                    const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
+                    const pricing = (item.medicineId ? reorderPricingLookup.byId.get(item.medicineId) : undefined) ||
+                                    (item.medicineName ? reorderPricingLookup.byName.get(item.medicineName.toLowerCase().trim()) : undefined);
+                    const distOptions = (pricing?.distributorOptions && pricing.distributorOptions.length > 0)
+                      ? pricing.distributorOptions
+                      : (item.distributorOptions || []);
 
                     return (
-                      <div key={itemKey} className="p-4 rounded-2xl border border-glass-border/70 bg-bg2/40 flex flex-col justify-between gap-3 shadow-sm hover:border-glass-border transition-all">
-                        <div className="space-y-2.5">
-                          {/* Medicine Title & Frequency Badge */}
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1">
-                              <div className="font-extrabold text-xs text-text truncate" title={item.medicineName}>
-                                {highlightMatch(item.medicineName, reorderSearchQuery)}
-                              </div>
-                              {item.manufacturer && (
-                                <p className="text-[10px] text-muted truncate mt-0.5">
-                                  {item.manufacturer}
-                                </p>
-                              )}
-                            </div>
-
-                            {item.billCount && (
-                              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1" title={`Purchased in ${item.billCount} bills`}>
-                                <Star size={9} className="fill-amber-400" /> ×{item.billCount} bills
-                              </span>
-                            )}
+                      <ReorderMedicineCard
+                        key={cardKey}
+                        cardKey={cardKey}
+                        medicineName={item.medicineName}
+                        medicineId={item.medicineId}
+                        packaging={item.packaging}
+                        company={item.manufacturer}
+                        tag={
+                          item.billCount ? (
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-mono shrink-0 flex items-center gap-1" title={`Purchased in ${item.billCount} bills`}>
+                              <Star size={9} className="fill-amber-400" /> ×{item.billCount} bills
+                            </span>
+                          ) : undefined
+                        }
+                        subtitle={
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span>Last Invoice: <strong className="text-text font-mono">{item.lastOrderedDate || 'N/A'}</strong></span>
+                            {item.lastQty ? <span className="text-muted">Last Qty: <strong className="text-text font-mono">{item.lastQty}</strong></span> : null}
                           </div>
-
-                          {/* Distributor Attribution & Pricing */}
-                          <div className="text-xs text-muted space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              <Store size={12} className="text-sky-400 shrink-0" />
-                              <span className="truncate">Distributor: <strong className="text-text font-bold">{item.lastDistributorName || item.storeName || 'Distributor'}</strong></span>
-                            </div>
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span>Last Invoice Date: <strong className="text-text font-mono">{item.lastOrderedDate || 'N/A'}</strong></span>
-                            </div>
-                            {item.ptr ? (
-                              <div className="text-[11px]">
-                                Last PTR: <strong className="text-emerald-400 font-mono">₹{item.ptr.toFixed(2)}</strong>
-                                {item.mrp ? <span className="text-muted ml-1.5">MRP: ₹{item.mrp.toFixed(2)}</span> : null}
-                              </div>
-                            ) : null}
-                          </div>
-
-                          {/* Quantity Controls */}
-                          <div className="flex items-center justify-between pt-1">
-                            <span className="text-xs text-muted">Order Qty:</span>
-                            <div className="flex items-center gap-1 bg-bg3/60 rounded-xl p-1 border border-glass-border/40">
-                              <button
-                                type="button"
-                                onClick={() => setReorderItemQty(itemKey, Math.max(1, itemQty - 1))}
-                                className="w-6 h-6 rounded-lg bg-bg2 hover:bg-bg border border-glass-border flex items-center justify-center text-xs font-bold text-muted hover:text-text cursor-pointer transition-all active:scale-95"
-                              >
-                                -
-                              </button>
-                              <span className="w-8 text-center font-mono font-bold text-xs text-text">{itemQty}</span>
-                              <button
-                                type="button"
-                                onClick={() => setReorderItemQty(itemKey, itemQty + 1)}
-                                className="w-6 h-6 rounded-lg bg-bg2 hover:bg-bg border border-glass-border flex items-center justify-center text-xs font-bold text-muted hover:text-text cursor-pointer transition-all active:scale-95"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex items-center gap-1.5">
-                            {(() => {
-                              const inCart = isMedicineInAnyCart(item.medicineName);
-                              const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => openReorderModalForItem({
-                                    medicineName: item.medicineName,
-                                    medicineId: item.medicineId,
-                                    productCode: item.productCode,
-                                    productId: item.productId,
-                                    company: item.manufacturer || '',
-                                    mrp: item.mrp,
-                                    packaging: item.packaging,
-                                    ptr: item.ptr,
-                                    scheme: item.scheme,
-                                    storeId: item.storeId ? Number(item.storeId) : undefined,
-                                    storeName: item.lastDistributorName || item.storeName,
-                                    suggestedQty: itemQty,
-                                    previousPurchase: {
-                                      supplierName: item.lastDistributorName || item.storeName,
-                                      quantity: item.lastQty,
-                                      price: item.ptr,
-                                      mrp: item.mrp,
-                                      purchaseDate: item.lastOrderedDate
-                                    },
-                                    hasPreviousPurchase: true
-                                  })}
-                                  disabled={inCart || isAdding}
-                                  className={`flex-1 py-1.5 px-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-xs ${inCart ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 opacity-80 cursor-default' : 'bg-sky-600 hover:bg-sky-500 text-white active:scale-95 cursor-pointer disabled:opacity-50'}`}
-                                  title={inCart ? `${item.medicineName} is already in the live cart` : `Add to live cart of ${item.storeName || item.lastDistributorName}`}
-                                >
-                                  {isAdding ? <Loader2 size={12} className="animate-spin" /> : inCart ? <CheckCircle2 size={12} className="text-emerald-400" /> : <ShoppingCart size={12} />}
-                                  <span className="truncate">{isAdding ? 'Adding…' : inCart ? '✓ In Live Cart' : `Add to Cart (x${itemQty})`}</span>
-                                </button>
-                              );
-                            })()}
-
-                            <button
-                              type="button"
-                              onClick={() => liveCartAddEvent.triggerOpen(item.medicineName, itemQty)}
-                              className="p-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-glass-border text-muted hover:text-text transition-all active:scale-95 cursor-pointer"
-                              title="Search across all available distributors in modal"
-                            >
-                              <Search size={13} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+                        }
+                        defaultQty={item.lastQty || 1}
+                        distributorOptions={distOptions}
+                        defaultStoreName={item.lastDistributorName || item.storeName || pricing?.storeName}
+                        defaultStoreId={item.storeId ? Number(item.storeId) : (item.distributorId ? Number(item.distributorId) : pricing?.storeId)}
+                        defaultPtr={item.ptr || pricing?.ptr}
+                        defaultMrp={item.mrp || pricing?.mrp}
+                        defaultScheme={item.scheme || pricing?.scheme}
+                        inCart={inCart}
+                        isAdding={isAdding}
+                        searchQuery={reorderSearchQuery}
+                        onAdd={(qty, selectedDist) => {
+                          executeReorderAdd({
+                            medicineName: item.medicineName,
+                            medicineId: item.medicineId,
+                            productCode: selectedDist?.productCode || item.productCode,
+                            productId: selectedDist?.productId || item.productId,
+                            storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (item.storeId ? Number(item.storeId) : pricing?.storeId),
+                            storeName: selectedDist?.storeName || selectedDist?.distributorName || item.lastDistributorName || item.storeName || pricing?.storeName,
+                            ptr: selectedDist?.rate ?? item.ptr ?? pricing?.ptr,
+                            mrp: selectedDist?.mrp ?? item.mrp ?? pricing?.mrp,
+                            scheme: selectedDist?.scheme ?? item.scheme ?? pricing?.scheme,
+                          }, qty);
+                        }}
+                        onOpenDetails={() => openReorderModalForItem({
+                          medicineName: item.medicineName,
+                          medicineId: item.medicineId,
+                          productCode: item.productCode,
+                          productId: item.productId,
+                          company: item.manufacturer || '',
+                          mrp: item.mrp || pricing?.mrp,
+                          packaging: item.packaging,
+                          ptr: item.ptr || pricing?.ptr,
+                          scheme: item.scheme || pricing?.scheme,
+                          storeId: item.storeId ? Number(item.storeId) : pricing?.storeId,
+                          storeName: item.lastDistributorName || item.storeName || pricing?.storeName,
+                          suggestedQty: item.lastQty || 1,
+                          previousPurchase: {
+                            supplierName: item.lastDistributorName || item.storeName,
+                            quantity: item.lastQty,
+                            price: item.ptr,
+                            mrp: item.mrp,
+                            purchaseDate: item.lastOrderedDate
+                          },
+                          hasPreviousPurchase: true
+                        })}
+                      />
                     );
                   })}
                 </div>

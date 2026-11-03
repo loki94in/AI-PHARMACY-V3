@@ -19,6 +19,14 @@ import path from 'path';
 import fs from 'fs';
 import http from 'http';
 
+// Guard unhandled main-process errors from silently terminating the window
+process.on('uncaughtException', (err) => {
+  console.error('[ElectronMain] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[ElectronMain] Unhandled Rejection:', reason);
+});
+
 // Resolve __dirname safely across both CJS and ESM
 const currentDir = typeof __dirname !== 'undefined'
   ? __dirname
@@ -359,6 +367,23 @@ function createWindow() {
     return { action: 'allow' };
   });
 
+  // Renderer process crash protection & automatic recovery
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.warn(`[ElectronMain] Renderer process gone (reason: ${details.reason}, exitCode: ${details.exitCode})`);
+    if (details.reason !== 'clean-exit' && mainWindow && !mainWindow.isDestroyed()) {
+      console.log('[ElectronMain] Attempting to reload window after unexpected renderer exit...');
+      mainWindow.loadURL(BACKEND_URL).catch(() => {});
+    }
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.warn(`[ElectronMain] Page failed to load: ${validatedURL} (${errorCode}: ${errorDescription})`);
+    if (validatedURL !== BACKEND_URL && mainWindow && !mainWindow.isDestroyed()) {
+      console.log('[ElectronMain] Falling back to default app root URL...');
+      mainWindow.loadURL(BACKEND_URL).catch(() => {});
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -440,24 +465,38 @@ app.whenReady().then(async () => {
     // Coucou parity: Check if resuming from an update checkpoint (Coucou session resume)
     let targetUrl = BACKEND_URL;
     try {
-      const checkpointFile = path.join(process.cwd(), 'data', 'session_checkpoint.json');
-      if (fs.existsSync(checkpointFile)) {
+      const exeDir = path.dirname(process.execPath);
+      const possibleCheckpointPaths = [
+        path.join(exeDir, 'data', 'session_checkpoint.json'),
+        path.join(process.cwd(), 'data', 'session_checkpoint.json'),
+      ];
+      const checkpointFile = possibleCheckpointPaths.find((p) => fs.existsSync(p));
+      if (checkpointFile) {
         const raw = fs.readFileSync(checkpointFile, 'utf8');
         const cp = JSON.parse(raw);
-        if (cp && typeof cp.route === 'string' && cp.route.startsWith('/') && !cp.resumed) {
+        if (cp && typeof cp.route === 'string' && cp.route.trim() !== '' && cp.route !== '/' && !cp.resumed) {
           if (!cp.timestamp || (Date.now() - cp.timestamp < 30 * 60 * 1000)) {
-            const cleanRoute = cp.route.replace(/^\/+/, '');
-            targetUrl = `${BACKEND_URL}${cleanRoute}`;
+            const normalizedRoute = cp.route.startsWith('/') ? cp.route : `/${cp.route}`;
+            const candidateUrl = `${BACKEND_URL}${normalizedRoute}`;
+            // Validate URL syntax before accepting
+            new URL(candidateUrl);
+            targetUrl = candidateUrl;
             console.log(`[ElectronMain] Coucou-parity resume: restoring route "${cp.route}" (target URL: ${targetUrl})`);
           }
         }
       }
     } catch (cpErr: any) {
       console.warn('[ElectronMain] Failed to inspect session checkpoint:', cpErr.message);
+      targetUrl = BACKEND_URL;
     }
 
-    console.log('[ElectronMain] Backend ready. Loading the app...');
-    mainWindow?.loadURL(targetUrl); // no window = it was closed on the splash and the app is quitting
+    console.log(`[ElectronMain] Backend ready. Loading the app at ${targetUrl}...`);
+    mainWindow?.loadURL(targetUrl).catch((navErr) => {
+      console.warn('[ElectronMain] Target URL navigation failed, falling back to app root:', navErr.message);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(BACKEND_URL).catch(() => {});
+      }
+    });
   } catch (err) {
     console.error('[ElectronMain] Backend failed to start:', err);
     if (mainWindow && !mainWindow.isDestroyed()) {

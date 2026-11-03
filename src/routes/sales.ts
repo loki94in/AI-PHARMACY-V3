@@ -3482,7 +3482,7 @@ router.get('/reorder-suggestions', async (_req, res) => {
       : [];
     const ptrByMed: Record<number, number> = Object.fromEntries(ptrRows.map((r: any) => [r.medicine_id, Number(r.ptr || 0)]));
 
-    // Batch-enrich last purchase distributor, rate, and MRP for suggestions
+    // Batch-enrich last purchase distributor, rate, and MRP for suggestions (multi-distributor)
     const lastPurchasesByMed: Record<number, {
       distributorId: number | null;
       distributorName: string;
@@ -3495,6 +3495,18 @@ router.get('/reorder-suggestions', async (_req, res) => {
       lastDate: string;
     }> = {};
 
+    const allPurchasesByMed: Record<number, Array<{
+      distributorId: number | null;
+      distributorName: string;
+      storeId: number | null;
+      storeName: string;
+      rate: number;
+      mrp: number;
+      quantity: number;
+      scheme?: string;
+      lastDate: string;
+    }>> = {};
+
     if (candidateIds.length > 0) {
       const placeholders = candidateIds.map(() => '?').join(',');
       const purchaseRows = await db.all(
@@ -3503,18 +3515,21 @@ router.get('/reorder-suggestions', async (_req, res) => {
                 p.date AS last_purchase_date
          FROM (
            SELECT pi.medicine_id, pi.purchase_id, pi.cost_price, pi.mrp, pi.quantity, pi.free_qty, pi.scheme_per,
-                  ROW_NUMBER() OVER (PARTITION BY pi.medicine_id ORDER BY pi.id DESC) as rn
+                  ROW_NUMBER() OVER (PARTITION BY pi.medicine_id, p.distributor_id ORDER BY p.date DESC, pi.id DESC) as rn
            FROM purchase_items pi
+           JOIN purchases p ON p.id = pi.purchase_id
            WHERE pi.medicine_id IN (${placeholders})
          ) pi
          JOIN purchases p ON p.id = pi.purchase_id
          LEFT JOIN distributors d ON d.id = p.distributor_id
          LEFT JOIN pharmarack_distributor_mappings pdm ON pdm.distributor_id = d.id
-         WHERE pi.rn = 1`,
+         WHERE pi.rn = 1
+         ORDER BY p.date DESC`,
         candidateIds
       );
       for (const pr of purchaseRows) {
-        lastPurchasesByMed[Number(pr.medicine_id)] = {
+        const mid = Number(pr.medicine_id);
+        const item = {
           distributorId: pr.distributor_id ? Number(pr.distributor_id) : null,
           distributorName: pr.distributor_name || pr.store_name || '',
           storeId: pr.store_id ? Number(pr.store_id) : null,
@@ -3525,10 +3540,18 @@ router.get('/reorder-suggestions', async (_req, res) => {
           scheme: Number(pr.free_qty || 0) > 0 && Number(pr.quantity || 0) > 0 ? (pr.quantity + '+' + pr.free_qty) : (Number(pr.scheme_per || 0) > 0 ? (pr.scheme_per + '%') : ''),
           lastDate: pr.last_purchase_date ? String(pr.last_purchase_date).slice(0, 10) : ''
         };
+        if (!lastPurchasesByMed[mid]) {
+          lastPurchasesByMed[mid] = item;
+        }
+        if (!allPurchasesByMed[mid]) {
+          allPurchasesByMed[mid] = [];
+        }
+        allPurchasesByMed[mid].push(item);
       }
     }
 
     const linksByMed: Record<number, { storeId: number; storeName: string; productCode: string; productId: number; rate?: number; mrp?: number; scheme?: string }> = {};
+    const allLinksByMed: Record<number, Array<{ storeId: number; storeName: string; productCode: string; productId: number; rate?: number; mrp?: number; scheme?: string }>> = {};
     if (candidateIds.length > 0) {
       const placeholders = candidateIds.map(() => '?').join(',');
       const linkRows = await db.all(
@@ -3540,17 +3563,22 @@ router.get('/reorder-suggestions', async (_req, res) => {
       );
       for (const lr of linkRows) {
         const mid = Number(lr.medicine_id);
+        const linkItem = {
+          storeId: Number(lr.store_id || 0),
+          storeName: lr.store_name || '',
+          productCode: lr.product_code || '',
+          productId: Number(lr.product_id || 0),
+          rate: Number(lr.rate || 0),
+          mrp: Number(lr.mrp || 0),
+          scheme: String(lr.scheme || '').trim()
+        };
         if (!linksByMed[mid]) {
-          linksByMed[mid] = {
-            storeId: Number(lr.store_id || 0),
-            storeName: lr.store_name || '',
-            productCode: lr.product_code || '',
-            productId: Number(lr.product_id || 0),
-            rate: Number(lr.rate || 0),
-            mrp: Number(lr.mrp || 0),
-            scheme: String(lr.scheme || '').trim()
-          };
+          linksByMed[mid] = linkItem;
         }
+        if (!allLinksByMed[mid]) {
+          allLinksByMed[mid] = [];
+        }
+        allLinksByMed[mid].push(linkItem);
       }
     }
 
@@ -3574,10 +3602,95 @@ router.get('/reorder-suggestions', async (_req, res) => {
 
       const lp = lastPurchasesByMed[medId];
       const link = linksByMed[medId];
-      const finalStoreId = link?.storeId || lp?.storeId || null;
-      const finalStoreName = link?.storeName || lp?.storeName || lp?.distributorName || '';
-      const finalPtr = lp?.rate || ptrByMed[medId] || 0;
-      const finalMrp = lp?.mrp || Number(row.mrp || 0);
+
+      // Build unified distributorOptions for multi-distributor comparison
+      const optionsMap = new Map<string, {
+        distributorId: number | null;
+        distributorName: string;
+        storeId: number | null;
+        storeName: string;
+        rate: number;
+        mrp: number;
+        scheme?: string;
+        lastDate?: string;
+        productCode?: string;
+        productId?: number;
+        isBestRate: boolean;
+      }>();
+
+      const purchases = allPurchasesByMed[medId] || [];
+      const links = allLinksByMed[medId] || [];
+
+      for (const p of purchases) {
+        const key = `${p.storeId || 0}:::${(p.distributorName || p.storeName || '').toLowerCase().trim()}`;
+        const matchedLink = links.find(l => (p.storeId && l.storeId === p.storeId) || (l.storeName && p.storeName && l.storeName.toLowerCase() === p.storeName.toLowerCase()));
+        optionsMap.set(key, {
+          distributorId: p.distributorId,
+          distributorName: p.distributorName,
+          storeId: p.storeId || matchedLink?.storeId || null,
+          storeName: p.storeName || p.distributorName,
+          rate: p.rate,
+          mrp: p.mrp || Number(row.mrp || 0),
+          scheme: matchedLink?.scheme || p.scheme || '',
+          lastDate: p.lastDate,
+          productCode: matchedLink?.productCode || '',
+          productId: matchedLink?.productId || 0,
+          isBestRate: false
+        });
+      }
+
+      for (const l of links) {
+        const key = `${l.storeId || 0}:::${(l.storeName || '').toLowerCase().trim()}`;
+        if (!optionsMap.has(key)) {
+          optionsMap.set(key, {
+            distributorId: null,
+            distributorName: l.storeName,
+            storeId: l.storeId || null,
+            storeName: l.storeName,
+            rate: l.rate || 0,
+            mrp: l.mrp || Number(row.mrp || 0),
+            scheme: l.scheme || '',
+            lastDate: '',
+            productCode: l.productCode,
+            productId: l.productId,
+            isBestRate: false
+          });
+        } else {
+          const existing = optionsMap.get(key)!;
+          if (!existing.productCode && l.productCode) existing.productCode = l.productCode;
+          if (!existing.productId && l.productId) existing.productId = l.productId;
+          if (!existing.rate && l.rate) existing.rate = l.rate;
+          if (!existing.scheme && l.scheme) existing.scheme = l.scheme;
+        }
+      }
+
+      const distributorOptions = Array.from(optionsMap.values());
+      const validRates = distributorOptions.filter(o => o.rate > 0);
+      const minRate = validRates.length > 0 ? Math.min(...validRates.map(o => o.rate)) : 0;
+      if (minRate > 0) {
+        for (const o of distributorOptions) {
+          if (o.rate === minRate) {
+            o.isBestRate = true;
+          }
+        }
+      } else if (distributorOptions.length > 0) {
+        distributorOptions[0].isBestRate = true;
+      }
+
+      distributorOptions.sort((a, b) => {
+        if (a.isBestRate !== b.isBestRate) return a.isBestRate ? -1 : 1;
+        if (a.rate > 0 && b.rate > 0 && a.rate !== b.rate) return a.rate - b.rate;
+        return (b.lastDate || '').localeCompare(a.lastDate || '');
+      });
+
+      const bestOption = distributorOptions[0];
+      const finalStoreId = bestOption?.storeId || link?.storeId || lp?.storeId || null;
+      const finalStoreName = bestOption?.storeName || link?.storeName || lp?.storeName || lp?.distributorName || '';
+      const finalPtr = bestOption?.rate || lp?.rate || ptrByMed[medId] || 0;
+      const finalMrp = bestOption?.mrp || lp?.mrp || Number(row.mrp || 0);
+      const finalScheme = bestOption?.scheme || link?.scheme || lp?.scheme || '';
+      const finalProductCode = bestOption?.productCode || link?.productCode || '';
+      const finalProductId = bestOption?.productId || link?.productId || 0;
 
       items.push({
         medicineId: medId,
@@ -3586,13 +3699,14 @@ router.get('/reorder-suggestions', async (_req, res) => {
         packaging: row.packaging || '',
         ptr: finalPtr,
         mrp: finalMrp,
-        scheme: (link?.scheme) || lp?.scheme || '',
+        scheme: finalScheme,
         storeId: finalStoreId,
         storeName: finalStoreName,
-        distributorId: lp?.distributorId || null,
-        lastDistributorName: lp?.distributorName || finalStoreName,
-        productCode: link?.productCode || '',
-        productId: link?.productId || 0,
+        distributorId: bestOption?.distributorId || lp?.distributorId || null,
+        lastDistributorName: finalStoreName,
+        productCode: finalProductCode,
+        productId: finalProductId,
+        distributorOptions,
         previousPurchase: lp ? {
           supplierName: lp.distributorName,
           quantity: lp.quantity,

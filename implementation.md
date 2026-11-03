@@ -1,46 +1,71 @@
-# Implementation Plan: Live Cart Rapid-Add Selection Speed & Seamless Next-Medicine Search
+# Implementation Plan: Fix Electron Session Resume Malformed URL Crash
 
-**Plan Name:** `live_cart_rapid_add_selection_speed`  
-**Target:** Eliminate all selection lag, multi-step focus hops, and typing freezes in the "Add to Live Cart" flow ([`LiveCartAddModal.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartAddModal.tsx) and [`LiveCartSearchSection.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartSearchSection.tsx)).
+**Plan Name:** `electron_resume_url_crash_fix`  
+**Dedicated Plan Document:** [`ELECTRON_RESUME_URL_CRASH_FIX_IMPLEMENTATION_PLAN.md`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/ELECTRON_RESUME_URL_CRASH_FIX_IMPLEMENTATION_PLAN.md)  
+**Target:** [`electron/main.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/electron/main.ts) & runtime startup resilience.
 
 ---
 
 ## 1. Problem Statement & Root Cause
 
-When a user in "Add to Live Cart" selects a medicine from the dropdown search list:
-1. **Multi-Step Delay**: Selecting a suggestion (`selectSuggestion`) previously did not add the item to the cart. It filled the search box with the medicine name, updated 12 states in `LiveCartAddModal`, and shifted focus to the Quantity input with a 50ms timeout. The user had to press Enter a second time (or click "Add to Live Cart") to actually add it.
-2. **Focus Delay & Next-Search Interruption**: After submitting, a 100ms `setTimeout` attempted to refocus the search box. If the user started typing the next medicine immediately, keystrokes were missed or typed into the wrong input.
-3. **Background Cart Refresh Stutter**: Adding an item triggered a background sync that emitted `refresh-pharmarack-cart`, which called `fetchLiveCartSummary`. When the summary returned, `setCartDistributors` forced a heavy re-render of the modal while the user was actively typing the next medicine.
+### Symptoms
+When launching the installed AI Pharmacy OS app (`PharmacyOS.exe`), the blue splash screen appears briefly ("AI Pharmacy OS Starting..." / "Starting ultra-fast engine...") and then the application window suddenly closes by itself without displaying the pharmacy interface.
+
+### Root Cause Analysis
+In commit [`ac5700fe`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/electron/main.ts#L440-L465), post-update session route resumption was introduced:
+```ts
+const cleanRoute = cp.route.replace(/^\/+/, '');
+targetUrl = `${BACKEND_URL}${cleanRoute}`;
+```
+- `BACKEND_URL` is defined as `http://127.0.0.1:${PORT}` (e.g. `http://127.0.0.1:5175`) — without a trailing slash.
+- `cleanRoute` strips the leading slash from `cp.route` (e.g. `"/settings?tab=license"` becomes `"settings?tab=license"`).
+- Consequently, `${BACKEND_URL}${cleanRoute}` produces a malformed URL with no slash separating the port and path:
+  `http://127.0.0.1:5175settings?tab=license`
+- Calling `mainWindow?.loadURL("http://127.0.0.1:5175settings?tab=license")` in Electron triggers an immediate synchronous URL parse error (`ERR_INVALID_URL (-300)`) and an unhandled Promise rejection.
+- Because `loadURL` was unhandled and Electron lacked an uncaught exception / rejection guard, Electron terminates the main process with exit code 1.
+- When `mainWindow` is destroyed, `window-all-closed` triggers `gracefulShutdown('CLIENT_EXIT')` on the backend, making the splash screen disappear and the entire app terminate ~2 seconds after opening.
+- Additionally, `process.cwd()` was used to locate `data/session_checkpoint.json` instead of the canonical executable directory `exeDir` (`path.dirname(process.execPath)`), and `mainWindow` lacked crash / navigation fallback listeners (`render-process-gone`, `did-fail-load`).
 
 ---
 
-## 2. Implemented Architecture & Solution
+## 2. Proposed Architectural Solution
 
-### A. Rapid 1-Click Instant Add
-- When a user selects a medicine from the dropdown list (by clicking the suggestion row or pressing `Enter`), it immediately adds the medicine to the live cart queue (`status: 'adding'`) using `handleInstantAdd`.
-- Instantly clears the search input text and keeps focus directly on the search input without any timeouts, blurs, or intermediate quantity hops.
-- The user can seamlessly type: `Med A` ➔ `Enter` (queued) ➔ `Med B` ➔ `Enter` (queued) ➔ `Med C` ➔ `Enter` (queued) in rapid succession.
+1. **Fix URL Construction in `electron/main.ts`**:
+   - Ensure the path always begins with `/`:
+     ```ts
+     const normalizedRoute = cp.route.startsWith('/') ? cp.route : `/${cp.route}`;
+     targetUrl = `${BACKEND_URL}${normalizedRoute}`;
+     ```
+   - Validate `targetUrl` using `new URL(targetUrl)` before attempting to navigate. If invalid, safely fall back to `BACKEND_URL`.
 
-### B. Immediate Visual Feedback & Human-in-the-Loop Control (Rule 6)
-- The item is immediately displayed in the staged "Pending / Last Added" banner with live status (`Adding...` ➔ `Added ✓`), with 1-click quantity adjustments, Retry on error, and Dismiss.
-- The Cart Preview panel on the right shows live distributor cart breakdown and total lines.
+2. **Wrap `mainWindow.loadURL()` in Fallback Error Handling**:
+   - Add `.catch()` to `loadURL(targetUrl)`. If navigation fails for any reason, log a warning and fall back to loading the default `BACKEND_URL`:
+     ```ts
+     mainWindow?.loadURL(targetUrl).catch((navErr) => {
+       console.warn('[ElectronMain] Target URL navigation failed, falling back to app root:', navErr.message);
+       mainWindow?.loadURL(BACKEND_URL).catch(() => {});
+     });
+     ```
 
-### C. Quantity Pre-set & Manual Option
-- The user can set quantity in the Quantity box before searching, and selecting any medicine adds with that quantity.
-- If a user opens the modal from a pending request or refill with a target quantity, that quantity is used automatically.
+3. **Use Canonical Executable Directory**:
+   - Resolve `checkpointFile` using `path.join(exeDir, 'data', 'session_checkpoint.json')` rather than `process.cwd()`.
 
-### D. Zero-Lag Decoupled Background Refresh
-- Isolate the search input in `LiveCartSearchSection` so that background cart summary re-fetches and cart updates do not interrupt active keystrokes or drop typing frames.
+4. **Add Process Crash & Window Protection in Electron**:
+   - Add `process.on('uncaughtException')` and `process.on('unhandledRejection')` logging guards in `electron/main.ts` so an unexpected asynchronous error never silently kills the main window.
+   - Add `mainWindow.webContents.on('render-process-gone')` and `did-fail-load` handlers with automatic recovery / reload.
+
+5. **Rebuild Binary & Validate**:
+   - Recompile TypeScript backend and Electron main process (`npm run build`).
+   - Run `npm run guardrails` to confirm zero violations.
+   - Verify that launching with an existing `session_checkpoint.json` loads the correct URL without crashing.
 
 ---
 
-## 3. Tasks & Execution Status
+## 3. Tasks & Verification Checklist
 
-- [x] Task 1: Add `handleInstantAdd` in [`LiveCartAddModal.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartAddModal.tsx)
-  - **Completed**: Implemented `handleInstantAdd` to queue item into `pendingAdds` (`status: 'adding'`), immediately reset search query and form state, preserve input focus, and dispatch `processBackgroundAdd` detached.
-- [x] Task 2: Connect instant-add and seamless continuous search in [`LiveCartSearchSection.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartSearchSection.tsx)
-  - **Completed**: In `selectSuggestion`, immediately cleared `product` to `''`, dismissed suggestion popup, called `onSelectSuggestion(med, validCandidates)`, kept `inputRef.current?.focus()` active immediately, and updated badge to `↵ Enter to Add`.
-- [x] Task 3: Ensure human-in-the-loop quantity adjustment and deletion on staged items
-  - **Completed**: Increased pending add chips display to 3 with live status badges (`Adding...` ➔ `Added ✓`), Retry button on failures, and Dismiss button.
-- [x] Task 4: Run guardrails and update knowledge graph
-  - **Completed**: Verified `npm run guardrails` passed (`tsc --noEmit` clean, 0 violations). Ran `node scripts/quick-update.mjs` (1437 nodes, 879 edges).
+- [x] Task 1: Fix URL concatenation & checkpoint path in [`electron/main.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/electron/main.ts)
+  - **Completed**: Ensured route always begins with `/` via `normalizedRoute = cp.route.startsWith('/') ? cp.route : `/${cp.route}``, validated via `new URL(candidateUrl)`, and resolved checkpoint using `exeDir` and `process.cwd()` fallbacks.
+- [x] Task 2: Add navigation rejection fallback and process safety guards in [`electron/main.ts`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/electron/main.ts)
+  - **Completed**: Added `.catch()` fallback to `mainWindow.loadURL()` reverting to `BACKEND_URL`, added `process.on('uncaughtException')` and `process.on('unhandledRejection')` logging handlers, and registered `render-process-gone` and `did-fail-load` recovery listeners on `mainWindow.webContents`.
+- [x] Task 3: Build & verify
+  - **Completed**: Rebuilt with `npm run build`, verified `npm run guardrails` passed (0 violations, clean TypeScript compilation), compiled `dist/electron/main.cjs` and `dist/resources/app/main.cjs` with esbuild, and updated the knowledge graph via `node scripts/quick-update.mjs`.
