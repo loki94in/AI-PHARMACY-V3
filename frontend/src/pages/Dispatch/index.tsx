@@ -181,12 +181,16 @@ const Dispatch = () => {
   // New delivery boy form states
   const [newBoyName, setNewBoyName] = useState('');
   const [newBoyPhone, setNewBoyPhone] = useState('');
+  const [newBoyShiftStart, setNewBoyShiftStart] = useState('');
+  const [newBoyShiftEnd, setNewBoyShiftEnd] = useState('');
   const [addingBoy, setAddingBoy] = useState(false);
 
   // Edit delivery boy state
   const [editingBoyId, setEditingBoyId] = useState<number | null>(null);
   const [editBoyName, setEditBoyName] = useState('');
   const [editBoyPhone, setEditBoyPhone] = useState('');
+  const [editBoyShiftStart, setEditBoyShiftStart] = useState('');
+  const [editBoyShiftEnd, setEditBoyShiftEnd] = useState('');
   const [savingBoyEdit, setSavingBoyEdit] = useState(false);
 
   // Delivery Boy Sent Message History states
@@ -757,11 +761,15 @@ const Dispatch = () => {
       await api.addDeliveryBoy({
         name: newBoyName.trim(),
         whatsapp_number: cleanPhone || undefined,
+        shift_start_time: newBoyShiftStart || null,
+        shift_end_time: newBoyShiftEnd || null,
         is_active: 1,
       });
       showNotif(`Delivery boy "${newBoyName.trim()}" added successfully!`);
       setNewBoyName('');
       setNewBoyPhone('');
+      setNewBoyShiftStart('');
+      setNewBoyShiftEnd('');
       await broadcastContactDataChanged();
       fetchAll();
     } catch (err) {
@@ -783,9 +791,13 @@ const Dispatch = () => {
       await api.updateDeliveryBoy(id, {
         name: editBoyName.trim(),
         whatsapp_number: cleanPhone || undefined,
+        shift_start_time: editBoyShiftStart || null,
+        shift_end_time: editBoyShiftEnd || null,
       });
       showNotif(`Delivery boy updated successfully!`);
       setEditingBoyId(null);
+      setEditBoyShiftStart('');
+      setEditBoyShiftEnd('');
       await broadcastContactDataChanged();
       fetchAll();
     } catch (err) {
@@ -2410,6 +2422,10 @@ const Dispatch = () => {
         setNewBoyName={setNewBoyName}
         newBoyPhone={newBoyPhone}
         setNewBoyPhone={setNewBoyPhone}
+        newBoyShiftStart={newBoyShiftStart}
+        setNewBoyShiftStart={setNewBoyShiftStart}
+        newBoyShiftEnd={newBoyShiftEnd}
+        setNewBoyShiftEnd={setNewBoyShiftEnd}
         handleAddDeliveryBoy={handleAddDeliveryBoy}
         addingBoy={addingBoy}
         editingBoyId={editingBoyId}
@@ -2418,6 +2434,10 @@ const Dispatch = () => {
         setEditBoyName={setEditBoyName}
         editBoyPhone={editBoyPhone}
         setEditBoyPhone={setEditBoyPhone}
+        editBoyShiftStart={editBoyShiftStart}
+        setEditBoyShiftStart={setEditBoyShiftStart}
+        editBoyShiftEnd={editBoyShiftEnd}
+        setEditBoyShiftEnd={setEditBoyShiftEnd}
         handleSaveBoyEdit={handleSaveBoyEdit}
         savingBoyEdit={savingBoyEdit}
         handleToggleBoyActive={handleToggleBoyActive}

@@ -2408,6 +2408,33 @@ export default function PharmarackCart() {
       if (match?.id) return match.id;
     }
 
+    // 5. Shift & Default Fallback:
+    // If only 1 delivery boy exists: auto-select that boy 24x7!
+    const availableBoys = activeBoys.filter((b: any) => (b.is_active === undefined || b.is_active === 1) && b.id);
+    if (availableBoys.length === 1) {
+      return availableBoys[0].id!;
+    }
+    // If multiple delivery boys exist: match current clock time with shift hours
+    if (availableBoys.length > 1) {
+      const now = new Date();
+      const checkMin = now.getHours() * 60 + now.getMinutes();
+      const shiftMatch = availableBoys.find((b: any) => {
+        if (!b.shift_start_time || !b.shift_end_time) return false;
+        const [sh, sm] = b.shift_start_time.split(':').map(Number);
+        const [eh, em] = b.shift_end_time.split(':').map(Number);
+        if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) return false;
+        const startMin = sh * 60 + sm;
+        const endMin = eh * 60 + em;
+        if (startMin <= endMin) {
+          return checkMin >= startMin && checkMin < endMin;
+        } else {
+          return checkMin >= startMin || checkMin < endMin;
+        }
+      });
+      if (shiftMatch && shiftMatch.id) return shiftMatch.id;
+      return availableBoys[0].id!;
+    }
+
     return null;
   };
 

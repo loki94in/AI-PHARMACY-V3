@@ -1854,9 +1854,9 @@ export const api = {
   updateDispatchOrder: (id: number, data: DispatchOrderPayload) => apiClient.put(`/dispatch/orders/${id}`, data).then(res => res.data),
   deleteDispatchOrder: (id: number) => apiClient.delete(`/dispatch/orders/${id}`).then(res => res.data),
   getDeliveryBoys: () => apiClient.get('/dispatch/delivery-boys').then(res => res.data),
-  addDeliveryBoy: (data: { name: string; whatsapp_number?: string; telegram_chat_id?: string; is_active?: number }) =>
+  addDeliveryBoy: (data: { name: string; whatsapp_number?: string; telegram_chat_id?: string; shift_start_time?: string | null; shift_end_time?: string | null; is_active?: number }) =>
     apiClient.post('/dispatch/delivery-boys', data).then(res => res.data),
-  updateDeliveryBoy: (id: number, data: { name?: string; whatsapp_number?: string; telegram_chat_id?: string; is_active?: number }) =>
+  updateDeliveryBoy: (id: number, data: { name?: string; whatsapp_number?: string; telegram_chat_id?: string; shift_start_time?: string | null; shift_end_time?: string | null; is_active?: number }) =>
     apiClient.put(`/dispatch/delivery-boys/${id}`, data).then(res => res.data),
   deleteDeliveryBoy: (id: number) => apiClient.delete(`/dispatch/delivery-boys/${id}`).then(res => res.data),
   getDeliveryBoyMessageDates: () => apiClient.get<{ success: boolean; dates: string[] }>('/dispatch/messages/dates').then(res => res.data),

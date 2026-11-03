@@ -376,13 +376,24 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
   }
 
   const startOfDayMs = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
-  const lateReminders: any[] = [];
+  const { resolveDeliveryBoyForDistributor } = await import('./distributorDispatchReminderWorker.js');
   const directOrderRemindersToNotifyBoy: any[] = [];
+  const distributorsToAnnounce: Array<{ row: any; claimedOrderNos: string[]; isFollowUp: boolean; appAlreadySent: boolean }> = [];
+
   for (const [storeKey, { storeName, orderNos, appAlreadySent }] of byStore) {
     const row = reminders.find((r: any) => String(r.distributor_name || '').toLowerCase().trim() === storeKey);
     if (!row || !row.id || row.id >= 800000) { // synthetic "No Order Today" rows are not real reminders
       await settle(db, orderNos, 'no_reminder_row', false, { storeName });
       continue;
+    }
+
+    // Auto-resolve assigned delivery boy (1 boy = 24x7 auto, 2+ boys = shift-based auto)
+    const resolvedBoy = await resolveDeliveryBoyForDistributor(db, row.distributor_id || null, storeName);
+    if (resolvedBoy && resolvedBoy.delivery_boy_id) {
+      row.delivery_boy_id = resolvedBoy.delivery_boy_id;
+      row.delivery_boy_name = resolvedBoy.name;
+      row.delivery_boy_phone = resolvedBoy.phone;
+      await db.run('UPDATE distributor_dispatch_reminders SET delivery_boy_id = ? WHERE id = ?', [resolvedBoy.delivery_boy_id, row.id]).catch(() => {});
     }
 
     // A reminder that is queued but NOT yet sent (reminders are queued ahead of their time slot):
@@ -426,9 +437,6 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
       (row.last_reminded_at && String(row.last_reminded_at).startsWith(today.iso))
     );
 
-    // 5-Minute review grace period for human-in-the-loop review before automated release
-    const gracePeriodMs = Date.now() + 5 * 60 * 1000;
-
     // Single-writer claim: atomically claim announced_at before dispatching to eliminate race with Route STEP 4
     const claimRes = await db.run(
       `UPDATE pharmarack_synced_orders 
@@ -458,30 +466,63 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
       if (claimedOrderNos.length === 0) continue;
     }
 
-    if (!alreadyReminded) {
-      // Direct order detected for today and reminder NOT yet sent today:
-      // Auto-send the dispatch announcement to the distributor for today's orders
-      const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { isOrderAnnouncement: true, orderNos: claimedOrderNos });
-      const sent = sentRes.ok;
-      await settle(db, claimedOrderNos, sent ? 'dispatch_reminder_queued' : 'reminder_not_sent', sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
-      if (sent) {
-        result.followUps++;
-        directOrderRemindersToNotifyBoy.push(row);
-      }
-    } else {
-      // Reminder already sent today: send single follow-up naming only the new order(s)
-      const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, undefined, gracePeriodMs, { followUp: true, orderNos: claimedOrderNos });
-      const sent = sentRes.ok;
-      await settle(db, claimedOrderNos, sent ? 'follow_up_queued' : 'follow_up_not_sent', sent, { storeName, status: row.status, appAlreadySent, gracePeriodUntil: gracePeriodMs });
-      if (sent) {
-        result.followUps++;
-        lateReminders.push(row);
-        directOrderRemindersToNotifyBoy.push(row);
-      }
+    directOrderRemindersToNotifyBoy.push(row);
+    distributorsToAnnounce.push({
+      row,
+      claimedOrderNos,
+      isFollowUp: alreadyReminded,
+      appAlreadySent
+    });
+  }
+
+  // ─── ZERO-WAIT ASAP DISPATCH MESH (Delivery Boy 1st -> 10-15s Safe Gap -> Distributor 2nd) ───
+  // STEP 1: Notify assigned Delivery Boy ASAP (scheduled_at = NOW)
+  if (directOrderRemindersToNotifyBoy.length > 0) {
+    try {
+      console.log(`[PharmarackOrderSync] STEP 1: Enqueuing ASAP pickup dispatch to assigned Delivery Boy (${directOrderRemindersToNotifyBoy.length} distributor(s))...`);
+      await notificationService.sendConsolidatedDeliveryBoyDispatch(directOrderRemindersToNotifyBoy);
+    } catch (err: any) {
+      console.warn('[PharmarackOrderSync] Delivery boy ASAP dispatch failed:', err?.message || err);
     }
   }
 
-  // 3. Delivery boys: record assignment for fresh orders (pickup alerts disabled per pharmacy policy)
+  // STEP 2: Enqueue Distributor Announcement with 15s offset so Delivery Boy receives first
+  const distributorScheduledAt = Date.now() + 15000;
+  for (const { row, claimedOrderNos, isFollowUp, appAlreadySent } of distributorsToAnnounce) {
+    if (!isFollowUp) {
+      const sentRes = await notificationService.sendDistributorDispatchReminder(
+        row.id,
+        undefined,
+        distributorScheduledAt,
+        { isOrderAnnouncement: true, orderNos: claimedOrderNos }
+      );
+      const sent = sentRes.ok;
+      await settle(db, claimedOrderNos, sent ? 'dispatch_reminder_queued' : 'reminder_not_sent', sent, {
+        storeName: row.distributor_name,
+        status: row.status,
+        appAlreadySent,
+        scheduledAt: distributorScheduledAt
+      });
+      if (sent) result.followUps++;
+    } else {
+      const sentRes = await notificationService.sendDistributorDispatchReminder(
+        row.id,
+        undefined,
+        distributorScheduledAt,
+        { followUp: true, orderNos: claimedOrderNos }
+      );
+      const sent = sentRes.ok;
+      await settle(db, claimedOrderNos, sent ? 'follow_up_queued' : 'follow_up_not_sent', sent, {
+        storeName: row.distributor_name,
+        status: row.status,
+        appAlreadySent,
+        scheduledAt: distributorScheduledAt
+      });
+      if (sent) result.followUps++;
+    }
+  }
+
+  // 3. Delivery boys: record assignment in order tracking tables
   for (const f of fresh) {
     try {
       const alreadyNotifiedBoy = await db.get(
@@ -490,7 +531,6 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
       );
       if (alreadyNotifiedBoy) continue;
 
-      // Resolve distributor contact and assigned delivery boy
       const { resolveDistributorContact } = await import('../utils/distributorSyncHelper.js');
       const contact = await resolveDistributorContact(db, f.storeName);
       let targetBoy: any = null;
@@ -509,15 +549,6 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
       );
     } catch (boyErr: any) {
       console.warn(`[PharmarackOrderSync] Failed to update delivery boy record for order ${f.orderNo}:`, boyErr?.message || boyErr);
-    }
-  }
-
-  // 4. Also keep consolidated delivery boy dispatch updated if reminders changed
-  if (directOrderRemindersToNotifyBoy.length > 0) {
-    try {
-      await notificationService.sendConsolidatedDeliveryBoyDispatch(directOrderRemindersToNotifyBoy);
-    } catch (err: any) {
-      console.warn('[PharmarackOrderSync] Delivery boy direct-order dispatch failed:', err?.message || err);
     }
   }
 

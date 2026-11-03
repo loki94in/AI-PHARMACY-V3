@@ -2396,6 +2396,8 @@ export async function ensureSchema(dbPath: string) {
       name TEXT NOT NULL,
       whatsapp_number TEXT,
       telegram_chat_id TEXT,
+      shift_start_time TEXT DEFAULT NULL,
+      shift_end_time TEXT DEFAULT NULL,
       is_active INTEGER DEFAULT 1
     );
     CREATE TABLE IF NOT EXISTS storage_locations (
@@ -3135,6 +3137,8 @@ export async function ensureSchema(dbPath: string) {
       ['distributor_dispatch_reminders', 'store_id', 'ALTER TABLE distributor_dispatch_reminders ADD COLUMN store_id INTEGER DEFAULT 1'],
       ['pharmarack_distributor_mappings', 'store_id', 'ALTER TABLE pharmarack_distributor_mappings ADD COLUMN store_id INTEGER DEFAULT 1'],
       ['delivery_boys', 'store_id', 'ALTER TABLE delivery_boys ADD COLUMN store_id INTEGER DEFAULT 1'],
+      ['delivery_boys', 'shift_start_time', 'ALTER TABLE delivery_boys ADD COLUMN shift_start_time TEXT DEFAULT NULL'],
+      ['delivery_boys', 'shift_end_time', 'ALTER TABLE delivery_boys ADD COLUMN shift_end_time TEXT DEFAULT NULL'],
       // Online Order Payment Lifecycle (Schema v49)
       ['special_orders', 'payment_status', "ALTER TABLE special_orders ADD COLUMN payment_status TEXT DEFAULT 'UNPAID'"],
       ['special_orders', 'payment_reference', 'ALTER TABLE special_orders ADD COLUMN payment_reference TEXT'],
@@ -3518,6 +3522,8 @@ export async function ensureSchema(dbPath: string) {
       name TEXT NOT NULL,
       whatsapp_number TEXT,
       telegram_chat_id TEXT,
+      shift_start_time TEXT DEFAULT NULL,
+      shift_end_time TEXT DEFAULT NULL,
       is_active INTEGER DEFAULT 1
     );
     CREATE INDEX IF NOT EXISTS idx_delivery_boys_active ON delivery_boys(is_active);

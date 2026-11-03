@@ -150,9 +150,19 @@ router.delete('/orders/:id', async (req, res) => {
 // ─── DELIVERY BOYS ────────────────────────────────────────────────────────────
 
 let deliveryBoysTableInitialized = false;
-const ensureDeliveryBoysTable = async (_db: any) => {
+const ensureDeliveryBoysTable = async (db: any) => {
   if (deliveryBoysTableInitialized) return;
-  deliveryBoysTableInitialized = true;
+  try {
+    const cols = await db.all("PRAGMA table_info(delivery_boys)");
+    const colNames = new Set(cols.map((c: any) => c.name.toLowerCase()));
+    if (!colNames.has('shift_start_time')) {
+      await db.run("ALTER TABLE delivery_boys ADD COLUMN shift_start_time TEXT DEFAULT NULL");
+    }
+    if (!colNames.has('shift_end_time')) {
+      await db.run("ALTER TABLE delivery_boys ADD COLUMN shift_end_time TEXT DEFAULT NULL");
+    }
+    deliveryBoysTableInitialized = true;
+  } catch (_) {}
 };
 
 // GET /api/dispatch/delivery-boys
@@ -170,7 +180,7 @@ router.get('/delivery-boys', async (_req, res) => {
 
 // POST /api/dispatch/delivery-boys
 router.post('/delivery-boys', async (req, res) => {
-  const { name, whatsapp_number, telegram_chat_id, is_active } = req.body;
+  const { name, whatsapp_number, telegram_chat_id, is_active, shift_start_time, shift_end_time } = req.body;
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Delivery boy name is required' });
 
   let cleanPhone: string | null = null;
@@ -198,13 +208,13 @@ router.post('/delivery-boys', async (req, res) => {
     if (existing) {
       targetId = existing.id;
       await db.run(
-        'UPDATE delivery_boys SET name = ?, whatsapp_number = ?, is_active = 1 WHERE id = ?',
-        [cleanName, cleanPhone, existing.id]
+        'UPDATE delivery_boys SET name = ?, whatsapp_number = ?, shift_start_time = COALESCE(?, shift_start_time), shift_end_time = COALESCE(?, shift_end_time), is_active = 1 WHERE id = ?',
+        [cleanName, cleanPhone, shift_start_time || null, shift_end_time || null, existing.id]
       );
     } else {
       const result = await db.run(
-        'INSERT INTO delivery_boys (name, whatsapp_number, telegram_chat_id, is_active) VALUES (?, ?, ?, ?)',
-        [cleanName, cleanPhone, telegram_chat_id || null, is_active !== undefined ? is_active : 1]
+        'INSERT INTO delivery_boys (name, whatsapp_number, telegram_chat_id, shift_start_time, shift_end_time, is_active) VALUES (?, ?, ?, ?, ?, ?)',
+        [cleanName, cleanPhone, telegram_chat_id || null, shift_start_time || null, shift_end_time || null, is_active !== undefined ? is_active : 1]
       );
       targetId = result.lastID || 0;
     }
@@ -228,7 +238,7 @@ router.post('/delivery-boys', async (req, res) => {
 // PUT /api/dispatch/delivery-boys/:id
 router.put('/delivery-boys/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, whatsapp_number, telegram_chat_id, is_active } = req.body;
+  const { name, whatsapp_number, telegram_chat_id, is_active, shift_start_time, shift_end_time } = req.body;
   try {
     const db = await dbManager.getConnection();
     await ensureDeliveryBoysTable(db);
@@ -256,11 +266,13 @@ router.put('/delivery-boys/:id', async (req, res) => {
     const boyId = Number(id);
 
     await db.run(
-      `UPDATE delivery_boys SET name=?, whatsapp_number=?, telegram_chat_id=?, is_active=? WHERE id=?`,
+      `UPDATE delivery_boys SET name=?, whatsapp_number=?, telegram_chat_id=?, shift_start_time=?, shift_end_time=?, is_active=? WHERE id=?`,
       [
         newName,
         cleanPhone,
         telegram_chat_id !== undefined ? telegram_chat_id : existing.telegram_chat_id,
+        shift_start_time !== undefined ? (shift_start_time || null) : existing.shift_start_time,
+        shift_end_time !== undefined ? (shift_end_time || null) : existing.shift_end_time,
         is_active !== undefined ? is_active : existing.is_active,
         id
       ]

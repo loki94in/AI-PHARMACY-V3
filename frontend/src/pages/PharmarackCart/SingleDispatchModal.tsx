@@ -32,6 +32,8 @@ interface DeliveryBoyItem {
   id?: number;
   name: string;
   whatsapp_number?: string;
+  shift_start_time?: string | null;
+  shift_end_time?: string | null;
   is_active?: number;
 }
 

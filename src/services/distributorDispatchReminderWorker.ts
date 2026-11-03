@@ -38,10 +38,58 @@ async function ensureReminderSchema(db: any): Promise<void> {
 export async function resolveDeliveryBoyForDistributor(
   db: any,
   distributorId: number | null,
-  distributorName?: string
+  distributorName?: string,
+  orderTimeStr?: string
 ): Promise<{ delivery_boy_id: number | null; name: string | null; phone: string | null }> {
   try {
-    // 0. Check mapped delivery_boy_id in pharmarack_distributor_mappings table first
+    const activeBoys = await db.all(
+      "SELECT id, name, whatsapp_number, shift_start_time, shift_end_time FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' ORDER BY id ASC"
+    );
+
+    if (!activeBoys || activeBoys.length === 0) {
+      return { delivery_boy_id: null, name: null, phone: null };
+    }
+
+    // RULE 1: Default (Single Delivery Boy in store) -> 24x7 directly assigned, zero config needed
+    if (activeBoys.length === 1) {
+      const boy = activeBoys[0];
+      const p = (boy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
+      return { delivery_boy_id: boy.id, name: boy.name || 'Delivery Staff', phone: p || null };
+    }
+
+    // RULE 2: Multiple Delivery Boys (2+) -> Check Shift Sessions
+    let checkMinutes: number;
+    if (orderTimeStr && orderTimeStr.includes(':')) {
+      const [h, m] = orderTimeStr.split(':').map(Number);
+      checkMinutes = (!isNaN(h) ? h : 0) * 60 + (!isNaN(m) ? m : 0);
+    } else {
+      const now = new Date();
+      checkMinutes = now.getHours() * 60 + now.getMinutes();
+    }
+
+    // Find boy whose shift covers checkMinutes
+    const shiftMatch = activeBoys.find((b: any) => {
+      if (!b.shift_start_time || !b.shift_end_time) return false;
+      const [sh, sm] = b.shift_start_time.split(':').map(Number);
+      const [eh, em] = b.shift_end_time.split(':').map(Number);
+      if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) return false;
+      const startMin = sh * 60 + sm;
+      const endMin = eh * 60 + em;
+
+      if (startMin <= endMin) {
+        return checkMinutes >= startMin && checkMinutes < endMin;
+      } else {
+        // Overnight shift (e.g. 20:00 to 04:00)
+        return checkMinutes >= startMin || checkMinutes < endMin;
+      }
+    });
+
+    if (shiftMatch) {
+      const p = (shiftMatch.whatsapp_number || '').replace(/\D/g, '').slice(-10);
+      return { delivery_boy_id: shiftMatch.id, name: shiftMatch.name || 'Delivery Staff', phone: p || null };
+    }
+
+    // RULE 3: Fallback to mapped delivery_boy_id in pharmarack_distributor_mappings or distributors
     if (distributorName) {
       try {
         const mapRow = await db.get(
@@ -49,10 +97,7 @@ export async function resolveDeliveryBoyForDistributor(
           [distributorName]
         );
         if (mapRow?.delivery_boy_id) {
-          const boy = await db.get(
-            "SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1",
-            [mapRow.delivery_boy_id]
-          );
+          const boy = activeBoys.find((b: any) => b.id === mapRow.delivery_boy_id);
           if (boy) {
             const p = (boy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
             return { delivery_boy_id: boy.id, name: boy.name || 'Delivery Staff', phone: p || null };
@@ -61,11 +106,10 @@ export async function resolveDeliveryBoyForDistributor(
       } catch (_) {}
     }
 
-    // 1. Check mapped delivery_boy_id in distributors table
     if (distributorId) {
       const distRow = await db.get("SELECT delivery_boy_id FROM distributors WHERE id = ?", [distributorId]);
       if (distRow?.delivery_boy_id) {
-        const boy = await db.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [distRow.delivery_boy_id]);
+        const boy = activeBoys.find((b: any) => b.id === distRow.delivery_boy_id);
         if (boy) {
           const p = (boy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
           return { delivery_boy_id: boy.id, name: boy.name || 'Delivery Staff', phone: p || null };
@@ -76,7 +120,7 @@ export async function resolveDeliveryBoyForDistributor(
     if (distributorName) {
       const distRow = await db.get("SELECT delivery_boy_id FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1", [distributorName]);
       if (distRow?.delivery_boy_id) {
-        const boy = await db.get("SELECT id, name, whatsapp_number FROM delivery_boys WHERE id = ? AND is_active = 1", [distRow.delivery_boy_id]);
+        const boy = activeBoys.find((b: any) => b.id === distRow.delivery_boy_id);
         if (boy) {
           const p = (boy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
           return { delivery_boy_id: boy.id, name: boy.name || 'Delivery Staff', phone: p || null };
@@ -84,13 +128,10 @@ export async function resolveDeliveryBoyForDistributor(
       }
     }
 
-    // 2. Fallback to active delivery boys in store
-    const activeBoys = await db.all("SELECT id, name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' ORDER BY id ASC");
-    if (activeBoys && activeBoys.length > 0) {
-      const boy = activeBoys[0];
-      const p = (boy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
-      return { delivery_boy_id: boy.id, name: boy.name || 'Delivery Staff', phone: p || null };
-    }
+    // Fallback: Default to first active delivery boy
+    const firstBoy = activeBoys[0];
+    const p = (firstBoy.whatsapp_number || '').replace(/\D/g, '').slice(-10);
+    return { delivery_boy_id: firstBoy.id, name: firstBoy.name || 'Delivery Staff', phone: p || null };
   } catch (err: any) {
     console.warn('[DistributorReminderWorker] Error resolving delivery boy:', err.message);
   }
