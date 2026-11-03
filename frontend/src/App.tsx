@@ -11,6 +11,7 @@ import { StoreProvider } from './context/StoreContext';
 import { TerminalProvider } from './context/TerminalContext';
 import UpdateBanner from './components/UpdateBanner';
 import { useAppearanceSync } from './hooks/useAppearanceSync';
+import { useNavigationRestore } from './hooks/useNavigationRestore';
 
 // Minimal page-switch loading fallback — renders instantly, no layout shift
 const PageLoader = () => (
@@ -108,6 +109,32 @@ const pageRoutes: KeepAliveRoute[] = [
 // ──────────────────────────────────────────────
 // App Component
 // ──────────────────────────────────────────────
+// Coucou parity: Observer to track navigation & confirm session restoration after update
+const NavigationRestoreObserver: React.FC = () => {
+  useNavigationRestore();
+  return null;
+};
+
+// Coucou parity: Restores the exact screen and sub-tab where the user was working before update/restart
+const RootRedirect: React.FC<{ isLocalOrigin: boolean; isOwnerAuthenticated: boolean }> = ({ isLocalOrigin, isOwnerAuthenticated }) => {
+  if (typeof window !== 'undefined') {
+    try {
+      const checkpointRaw = localStorage.getItem('pharmacy_update_checkpoint');
+      if (checkpointRaw) {
+        const cp = JSON.parse(checkpointRaw);
+        if (cp && typeof cp.route === 'string' && cp.route !== '/' && !cp.resumed) {
+          return <Navigate to={cp.route} replace />;
+        }
+      }
+      const lastRoute = localStorage.getItem('pharmacy_last_active_route');
+      if (isLocalOrigin && lastRoute && lastRoute !== '/' && !lastRoute.startsWith('/portal') && !lastRoute.startsWith('/owner')) {
+        return <Navigate to={lastRoute} replace />;
+      }
+    } catch (_) {}
+  }
+  return <Navigate to={isLocalOrigin ? "/pos" : (isOwnerAuthenticated ? "/crm" : "/portal")} replace />;
+};
+
 function App() {
   useAppearanceSync();
 
@@ -312,10 +339,11 @@ function App() {
       <StoreProvider>
         <TerminalProvider>
           <BrowserRouter>
+            <NavigationRestoreObserver />
             <Suspense fallback={<PageLoader />}>
               <Layout>
                 <Routes>
-                  <Route path="/" element={<Navigate to={isLocalOrigin ? "/pos" : (isOwnerAuthenticated ? "/crm" : "/portal")} replace />} />
+                  <Route path="/" element={<RootRedirect isLocalOrigin={isLocalOrigin} isOwnerAuthenticated={isOwnerAuthenticated} />} />
                   <Route path="/owner" element={<Navigate to="/owner/login" replace />} />
                   <Route path="/expiry" element={<Navigate to="/returns?tab=expiry" replace />} />
                   <Route path="/automation-center" element={<Navigate to="/crm?tab=messages" replace />} />

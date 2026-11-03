@@ -554,7 +554,7 @@ export interface RefillCartResult {
   refillId: number;
   medicineName: string;
   qty: number;
-  line?: { storeName: string; productName: string; qty: number; distributorStock?: string | number };
+  line?: { storeName: string; productName: string; qty: number; oldQty?: number; addedQty?: number; distributorStock?: string | number };
   linked: Array<{ storeName: string; productName: string; stock: string; inStock: boolean }>;
   candidates: RefillCartCandidate[];
 }
@@ -1978,7 +1978,7 @@ export const api = {
   getDistributorRanks: () =>
     apiClient.get<{ success: boolean; ranks: Array<{ name: string; purchases: number }> }>('/refills/distributor-ranks').then(res => res.data),
   // One WhatsApp to the OWNER after a refill cart run; queued:false + reason when no owner number.
-  sendRefillCartSummary: (patientName: string, rows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; distributorStock?: string | number; message?: string }>) =>
+  sendRefillCartSummary: (patientName: string, rows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; oldQty?: number; addedQty?: number; distributorStock?: string | number; message?: string }>) =>
     apiClient.post<{ ok: boolean; queued: boolean; reason?: string }>('/refills/cart-summary', { patientName, rows }).then(res => res.data),
   // Saved Pharmarack distributor products per medicine (PUT replaces the set; [] unlinks; no cart write)
   linkBillMedicines: (purchaseId: number) =>

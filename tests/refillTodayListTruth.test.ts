@@ -112,6 +112,56 @@ describe('Refill Today List Truth & Queue Resilience (P2-111, P2-112, P2-113)', 
       expect(summaryRes.reason).toContain('All items are completed or cancelled');
     });
 
+    it('formats refill cart summary with old qty, added qty, and distributor stock', async () => {
+      await db.run(`INSERT INTO medicines (id, name) VALUES (1, 'NICOTEX 4 TIN 40TAB')`);
+      await db.run(`
+        INSERT INTO patient_refills (id, medicine_id, patient_name, patient_phone, next_refill_date, is_active, status, quantity_needed, cart_store_name, cart_product_code, cart_qty)
+        VALUES (401, 1, 'Mr. SANTROSH PARAB', '9876500006', DATE('now', 'localtime'), 1, 'ordered', 3, 'BAJAJ PHARMA', 'PROD-1', 3)
+      `);
+
+      const summaryRes = await sendRefillCartSummary('Mr. SANTROSH PARAB', [
+        {
+          refillId: 401,
+          medicineName: 'NICOTEX 4 TIN 40TAB',
+          status: 'added',
+          storeName: 'BAJAJ PHARMA',
+          qty: 3,
+          oldQty: 1,
+          addedQty: 2,
+          distributorStock: 67
+        }
+      ]);
+
+      expect(summaryRes.queued).toBe(true);
+      const queueRow = await db.get('SELECT message FROM whatsapp_send_queue ORDER BY id DESC LIMIT 1');
+      expect(queueRow.message).toContain('🛒 *Refill cart — Mr. SANTROSH PARAB*');
+      expect(queueRow.message).toContain('*BAJAJ PHARMA*');
+      expect(queueRow.message).toContain('• NICOTEX 4 TIN 40TAB × 3 (old: 1, added: 2) (67)');
+    });
+
+    it('formats already-in-cart lines with distributor stock', async () => {
+      await db.run(`INSERT INTO medicines (id, name) VALUES (2, 'TELMA 40')`);
+      await db.run(`
+        INSERT INTO patient_refills (id, medicine_id, patient_name, patient_phone, next_refill_date, is_active, status, quantity_needed, cart_store_name, cart_product_code, cart_qty)
+        VALUES (402, 2, 'Mr. SANTROSH PARAB', '9876500006', DATE('now', 'localtime'), 1, 'ordered', 2, 'BAJAJ PHARMA', 'PROD-2', 2)
+      `);
+
+      const summaryRes = await sendRefillCartSummary('Mr. SANTROSH PARAB', [
+        {
+          refillId: 402,
+          medicineName: 'TELMA 40',
+          status: 'in_cart',
+          storeName: 'BAJAJ PHARMA',
+          qty: 2,
+          distributorStock: 45
+        }
+      ]);
+
+      expect(summaryRes.queued).toBe(true);
+      const queueRow = await db.get('SELECT message FROM whatsapp_send_queue ORDER BY id DESC LIMIT 1');
+      expect(queueRow.message).toContain('• TELMA 40 × 2 (already in cart) (45)');
+    });
+
     it('purgePendingCustomerReminders cleans up staged notifications matching phone and medicines', async () => {
       await db.run(`
         INSERT INTO automation_notifications (id, type, recipient_phone, recipient_name, message, status)

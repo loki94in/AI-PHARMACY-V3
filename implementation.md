@@ -1,93 +1,90 @@
-# Implementation Plan: Dynamic Shift Auto-Assignment & Zero-Wait ASAP Dispatch Mesh
+# Implementation Plan: Refill Cart WhatsApp Summary — Display Old Qty, Added Qty & Distributor Stock
 
-**Plan Name:** `asap_dispatch_and_shift_delivery_boy_mesh`  
-**Target:**
-1. **Default (1 Delivery Boy):** 24x7 zero-configuration auto-assignment. Any order detected or placed at any time of day is directly assigned to the single saved delivery boy.
-2. **Advanced (2+ Delivery Boys):** Shift session feature activates automatically when 2 or more delivery staff are added. Supports configuring shift hours (e.g. 09:00–12:00, 12:00–18:00) with automatic order-time routing.
-3. **Zero-Wait ASAP Dispatch Sequence:** Remove clock gating (no waiting for 12:30 or 14:00) and remove human review grace hold. When an order is placed or synced:
-   - **Step 1:** Assigned Delivery Boy receives pickup WhatsApp notification ASAP.
-   - **Step 2:** Safe anti-spam pause (10–15 seconds enforced by queue worker).
-   - **Step 3:** Distributor receives order confirmation WhatsApp notification ASAP.
-4. **UI Integration:**
-   - Dispatch page (`ManageStaffModal.tsx`): Shift fields unlock when 2+ staff exist; single staff shows 24x7 default badge.
-   - Dispatch table: Order time and assigned delivery boy displayed with one-click re-assignment dropdown.
-   - Pharmacart live modals: Pre-selects the on-shift delivery boy and dispatches immediately upon confirmation.
+**Plan Name:** `refill_cart_summary_old_added_qty_and_stock`  
+**Target:** Enhance the WhatsApp owner refill cart summary message (`sendRefillCartSummary` in `src/services/refillCartService.ts`) so that when an item was already in the live cart (or merged/increased), the message clearly shows the **old quantity**, the **added quantity**, the **total quantity**, and the **live distributor stock** (e.g. `(67)`).
 
 ---
 
-## Technical Strategy
+## 1. Context & User Requirement Analysis
 
-1. **Schema Safety (`src/database.ts` & `ensureSchema`):**
-   - Add `shift_start_time TEXT DEFAULT NULL` and `shift_end_time TEXT DEFAULT NULL` to `delivery_boys`.
-   - Update both DDL migration block AND `ensureSchema` fast-path.
+### Current Message Format:
+```text
+🛒 *Refill cart — Mr. SANTROSH PARAB*
 
-2. **Delivery Boy Auto-Resolver (`src/services/distributorDispatchReminderWorker.ts`):**
-   - If count of active delivery staff == 1: return that staff member 24x7.
-   - If count >= 2: parse current local time (`HH:MM`) and match against staff whose `shift_start_time <= now < shift_end_time`. Fallback to primary/mapped staff.
+*BAJAJ PHARMA*
+• NICOTEX 4 TIN  40TAB × 2 (67)
+```
+- Header: `🛒 *Refill cart — <Patient Name>*`
+- Store Section: `*<Distributor Name>*`
+- Item Line: `• <Medicine Name> × <Qty> (<Distributor Stock>)`
 
-3. **Event-Driven Dispatch Pipeline (`src/services/pharmarackOrderSyncService.ts`):**
-   - Replace 5-minute review grace delay (`gracePeriodMs`) with immediate enqueue (`Date.now()`).
-   - Enqueue Delivery Boy WhatsApp pickup notification first.
-   - Enqueue Distributor WhatsApp notification second (with 15s offset or queue worker natural pacing).
-   - Strict deduplication ensures no repeat messages for the same PO.
-
-4. **Frontend Implementation:**
-   - Update `ManageStaffModal.tsx` in `frontend/src/pages/Dispatch/` to manage shift times when 2+ staff exist.
-   - Update `frontend/src/pages/Dispatch/index.tsx` for quick delivery boy reassignment.
-   - Update `BatchDispatchModal.tsx` and `SingleDispatchModal.tsx` in `frontend/src/pages/PharmarackCart/` for shift-aware pre-selection.
+### The Problem:
+1. When a medicine already exists in the live distributor cart (from previous orders, other refills, or manual cart entries), `processRefillCartItem` merges the quantities (`hit.qty + qty = total`).
+2. However, the WhatsApp summary sent to the store owner previously printed only the final quantity (`× 3`), completely hiding the fact that `1` was already in the cart and `2` was freshly added.
+3. In update paths (e.g. lines 418–424 in `src/services/refillCartService.ts`), `distributorStock` was omitted in the returned `line` object, leading to missing stock counts `(67)` in the message.
+4. When `status === 'in_cart'` (already present in cart, no new quantity added), it appended `(already in cart)`, but `distributorStock` was frequently missing because `mine.raw?.stock` in Pharmarack's cart API response was often `null` or undefined.
 
 ---
 
-## Tasks & Progress Tracking
+## 2. Message Formats Implemented
 
-- [x] Task 1: Update SQLite Schema in `src/database.ts` with `shift_start_time` and `shift_end_time` in `delivery_boys`.
-- [x] Task 2: Enhance Delivery Boy CRUD API in `src/routes/dispatch.ts` to read/write shift hours.
-- [x] Task 3: Upgrade `resolveDeliveryBoyForDistributor` in `src/services/distributorDispatchReminderWorker.ts` with 1-boy 24x7 and 2+ boy shift logic.
-- [x] Task 4: Invert and expedite notification order in `src/services/pharmarackOrderSyncService.ts` (Delivery Boy 1st -> 15s -> Distributor 2nd, Zero-wait).
-- [x] Task 5: Update `ManageStaffModal.tsx` and Dispatch UI for shift activation and one-click re-assignment.
-- [x] Task 6: Update Pharmacart Dispatch modals to respect on-shift delivery boy.
-- [x] Task 7: Verify TypeScript compilation and run performance guardrails (`npm run guardrails`).
-- [x] Task 8: Update Knowledge Graph (`node scripts/quick-update.mjs`).
+### Case A: Newly added medicine (clean new line in cart)
+```text
+• NICOTEX 4 TIN  40TAB × 2 (67)
+```
+
+### Case B: Already in cart & quantity was increased (e.g. old: 1, added: 2 ➔ total: 3)
+```text
+• NICOTEX 4 TIN  40TAB × 3 (old: 1, added: 2) (67)
+```
+
+### Case C: Already in cart with exact quantity needed (no new qty added)
+```text
+• NICOTEX 4 TIN  40TAB × 2 (already in cart) (67)
+```
 
 ---
 
-## Completed Tasks Log
+## 3. Technical Changes & Data Flow
 
-### Task 1: SQLite Schema (`src/database.ts`)
-- Added `shift_start_time TEXT DEFAULT NULL` and `shift_end_time TEXT DEFAULT NULL` across table creations (`delivery_boys`) in both fast-boot `ensureSchema` and full DDL migration blocks.
-- Added migration alters:
-  - `['delivery_boys', 'shift_start_time', 'ALTER TABLE delivery_boys ADD COLUMN shift_start_time TEXT DEFAULT NULL']`
-  - `['delivery_boys', 'shift_end_time', 'ALTER TABLE delivery_boys ADD COLUMN shift_end_time TEXT DEFAULT NULL']`
+### A. Backend Schema & Service (`src/services/refillCartService.ts`)
+1. Extended `RefillCartResult.line` and `RefillCartSummaryRow` to include `oldQty?: number`, `addedQty?: number`, and `distributorStock?: string | number`.
+2. In `processRefillCartItem`:
+   - When increasing an existing cart line (`hit`):
+     - Record `oldQty = hit.qty`, `addedQty = qty`, `total = hit.qty + qty`.
+     - Extract `distributorStock` via live search fallback if `hit.raw?.stock` is null/empty.
+     - Include `oldQty`, `addedQty`, and `distributorStock` in the returned `line`.
+   - When `mine` is already in the cart (`in_cart`):
+     - Resolve live `distributorStock` via live search fallback if `mine.raw?.stock` is null/empty.
+     - Include `oldQty: mine.qty`, `addedQty: 0`, and `distributorStock`.
+3. In `sendRefillCartSummary`:
+   - Format: `• ${name} × ${qty}${qtyDetail}${stockStr}`
+   - Where `qtyDetail` is ` (old: ${oldQty}, added: ${addedQty})` when both are > 0, or ` (already in cart)` when `in_cart`.
+   - Where `stockStr` is ` (${distributorStock})` whenever stock is available.
 
-### Task 2: API Endpoints (`src/routes/dispatch.ts`)
-- Updated `ensureDeliveryBoysTable` to verify and backfill shift columns if missing.
-- Updated `POST /api/dispatch/delivery-boys` and `PUT /api/dispatch/delivery-boys/:id` to accept and persist `shift_start_time` and `shift_end_time`.
+### B. Frontend Plumbing (`frontend/src/services/api.ts` & `frontend/src/services/refillCartJobs.ts`)
+1. Updated `sendRefillCartSummary` signature and `RefillCartResult` in `frontend/src/services/api.ts` to include optional `oldQty?: number` and `addedQty?: number`.
+2. In `frontend/src/services/refillCartJobs.ts`:
+   - Mapped `oldQty: r.line?.oldQty` and `addedQty: r.line?.addedQty` when calling `api.sendRefillCartSummary`.
 
-### Task 3: Auto-Resolver (`src/services/distributorDispatchReminderWorker.ts`)
-- Rewrote `resolveDeliveryBoyForDistributor`:
-  - **Rule 1 (Default):** If only 1 active delivery boy exists, immediately assign 24x7 with zero configuration needed.
-  - **Rule 2 (Shifts):** If 2 or more delivery boys exist, compare order time (`HH:MM`) against each boy's `shift_start_time` and `shift_end_time` (including overnight shift support) and route accordingly.
-  - **Rule 3 (Fallback):** Checks mapped distributor delivery staff, then falls back to primary active staff.
+### C. Inbound WhatsApp Intent Service & Confirmation Routes
+1. In `src/services/whatsappIntentService.ts` & `src/routes/refills.ts`:
+   - Forward `oldQty: cartRes.line?.oldQty`, `addedQty: cartRes.line?.addedQty`, and `distributorStock: cartRes.line?.distributorStock` to `sendRefillCartSummary`.
 
-### Task 4: Inverted ASAP Dispatch Pipeline (`src/services/pharmarackOrderSyncService.ts`)
-- Removed the 5-minute human review grace period (`gracePeriodMs = Date.now() + 5*60*1000`).
-- **STEP 1:** Enqueues Delivery Boy pickup dispatch ASAP (`scheduled_at = Date.now()`).
-- **STEP 2:** Enqueues Distributor confirmation second (`scheduled_at = Date.now() + 15000`), maintaining the mandatory 10–15s safe anti-spam queue gap.
-- Atomic claims and strict order-no deduplication preserved.
+---
 
-### Task 5: UI & Shift Management (`ManageStaffModal.tsx` & `Dispatch/index.tsx`)
-- In `ManageStaffModal.tsx`:
-  - Shows `⚡ 24x7 Auto-Assign Active` when only 1 delivery boy is registered.
-  - Unlocks Shift Hours (`Shift Start`, `Shift End`) when 2 or more staff members are registered or being added.
-  - Supports editing shift times with quick time pickers.
-- In `Dispatch/index.tsx`:
-  - Connected state hooks (`newBoyShiftStart`, `newBoyShiftEnd`, `editBoyShiftStart`, `editBoyShiftEnd`).
-  - Added one-click delivery boy re-assignment dropdowns for live orders.
+## 4. Tasks & Progress Tracking
 
-### Task 6: Pharmacart Modals (`BatchDispatchModal.tsx`, `SingleDispatchModal.tsx`, `PharmarackCart/index.tsx`)
-- Extended `DeliveryBoyItem` with `shift_start_time` and `shift_end_time`.
-- In `resolveInitialDeliveryBoyId`: Auto-selects on-shift delivery boy if 2+ boys exist, or the single delivery boy 24x7.
+- [x] Task 1: Update `RefillCartResult` and `RefillCartSummaryRow` interfaces in `src/services/refillCartService.ts` and `frontend/src/services/api.ts`.
+  - *Completed*: Added optional `oldQty` and `addedQty` fields to `RefillCartResult.line` and `RefillCartSummaryRow` across backend and frontend API types.
+- [x] Task 2: Update `processRefillCartItem` to capture and pass `oldQty`, `addedQty`, and fallback distributor stock for existing cart lines.
+  - *Completed*: Updated `processRefillCartItem` for both `mine` (`in_cart`) and `hit` (increased) scenarios to resolve live distributor stock and accurately populate `oldQty` and `addedQty`.
+- [x] Task 3: Update `sendRefillCartSummary` to format lines displaying `old: X, added: Y` and distributor stock `(Z)`.
+  - *Completed*: Implemented formatted output `• Name × Total (old: X, added: Y) (Stock)` with regex fallback parsing on message for backward compatibility.
+- [x] Task 4: Connect frontend mapping in `frontend/src/services/refillCartJobs.ts` and backend callers (`whatsappIntentService.ts`, `routes/refills.ts`).
+  - *Completed*: Wired `oldQty`, `addedQty`, and `distributorStock` through `refillCartJobs.ts`, `routes/refills.ts`, and `whatsappIntentService.ts`.
+- [x] Task 5: Run tests, `npm run guardrails`, and `node scripts/quick-update.mjs`.
+  - *Completed*: Added automated unit tests in `tests/refillTodayListTruth.test.ts` (11/11 passed), verified `tsc -b frontend/tsconfig.json` (0 errors), passed `npm run guardrails` (PASS with 0 violations), and refreshed knowledge graph.
 
-### Task 7 & 8: Verification & Knowledge Graph
-- `npm run guardrails`: TypeScript compilation (`tsc --noEmit`) clean, database schema integrity passed, zero guardrail violations.
-- `node scripts/quick-update.mjs`: Knowledge graph synchronized successfully (1432 nodes, 877 edges).
+---
+*All tasks completed successfully with zero regressions.*

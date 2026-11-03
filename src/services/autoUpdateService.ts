@@ -742,7 +742,7 @@ class AutoUpdateService {
    *
    * PRODUCTION.md §22, §23
    */
-  async applyUpdate(): Promise<{ success: boolean; message: string }> {
+  async applyUpdate(options?: { route?: string }): Promise<{ success: boolean; message: string }> {
     if (!this.lastResult?.latestVersion) {
       throw new Error('No pending update found.');
     }
@@ -757,6 +757,21 @@ class AutoUpdateService {
     const { APP_VERSION } = await import('./licenseService.js');
     if (this.lastResult?.latestVersion && compareVersions(this.lastResult.latestVersion, APP_VERSION) <= 0) {
       throw new Error(`Cannot install update: version v${this.lastResult.latestVersion} is not newer than currently running v${APP_VERSION}.`);
+    }
+
+    // Coucou parity: Persist session checkpoint before shutting down so app reopens where user left off
+    try {
+      const { saveSessionCheckpoint } = await import('./sessionCheckpointService.js');
+      saveSessionCheckpoint({
+        route: options?.route || '/pos',
+        targetVersion: this.lastResult.latestVersion,
+        previousVersion: APP_VERSION,
+        timestamp: Date.now(),
+        resumed: false,
+      });
+      console.log(`[AutoUpdate] Stored session checkpoint for relaunch: route="${options?.route || '/pos'}" target="v${this.lastResult.latestVersion}"`);
+    } catch (cpErr: any) {
+      console.warn('[AutoUpdate] Could not save session checkpoint:', cpErr.message);
     }
 
     const stagingDir = getStagingDir();

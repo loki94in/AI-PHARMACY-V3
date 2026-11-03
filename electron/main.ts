@@ -35,7 +35,7 @@ if (process.platform === 'win32') {
       fs.unlinkSync(rogueShortcut);
       console.log('[ElectronMain] Purged rogue Electron.lnk from Start Menu.');
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 5175;
@@ -54,9 +54,12 @@ if (!gotTheLock) {
   process.exit(0);
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
+    } else {
+      console.log('[ElectronMain] Second instance launched while window was closed. Recreating window...');
+      createWindow();
     }
   });
 }
@@ -84,7 +87,7 @@ function cleanAllSessionLocks(targetDir: string): void {
     for (const lock of sessionLocks) {
       try {
         if (fs.existsSync(lock)) fs.unlinkSync(lock);
-      } catch (_) {}
+      } catch (_) { }
     }
   }
 }
@@ -105,7 +108,7 @@ async function reclaimPort(port: number): Promise<void> {
         console.log(`[ElectronMain] Port ${port} is occupied by stale PID ${pid}. Terminating process tree...`);
         try {
           await run(`taskkill /F /T /PID ${pid}`, { timeout: 2000 });
-        } catch (_) {}
+        } catch (_) { }
       }
     }
   } catch (_) {
@@ -253,14 +256,14 @@ function startBackend(): ChildProcess {
           os.setPriority(child.pid, os.constants.priority.PRIORITY_NORMAL);
           console.log(`[ElectronMain] Backend child PID ${child.pid} set to Normal process priority.`);
         }
-      }).catch(() => {});
-    } catch (_) {}
+      }).catch(() => { });
+    } catch (_) { }
   }
 
   const logDir = path.join(exeDir, 'data');
   try {
     fs.mkdirSync(logDir, { recursive: true });
-  } catch (_) {}
+  } catch (_) { }
   const logFile = path.join(logDir, 'backend.log');
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
@@ -280,7 +283,7 @@ function startBackend(): ChildProcess {
   child.on('close', () => {
     try {
       logStream.end();
-    } catch (_) {}
+    } catch (_) { }
   });
 
   child.on('error', (err) => {
@@ -372,8 +375,8 @@ app.whenReady().then(async () => {
           os.setPriority(process.pid, os.constants.priority.PRIORITY_NORMAL);
           console.log('[ElectronMain] Electron main process set to Normal process priority.');
         }
-      }).catch(() => {});
-    } catch (_) {}
+      }).catch(() => { });
+    } catch (_) { }
   }
 
   // Priority Shield: If a background development server is running on port 5174, request it to yield WhatsApp
@@ -382,9 +385,9 @@ app.whenReady().then(async () => {
       res.resume();
       console.log('[ElectronMain] Notified background dev server on port 5174 to yield WhatsApp session.');
     });
-    yieldReq.on('error', () => {/* port 5174 not running, expected in standalone prod */});
+    yieldReq.on('error', () => {/* port 5174 not running, expected in standalone prod */ });
     yieldReq.end();
-  } catch (_) {}
+  } catch (_) { }
 
   // Register Desktop Media Request Handler for screen/window capture in renderer (e.g. Purchases invoice capture)
   try {
@@ -433,8 +436,28 @@ app.whenReady().then(async () => {
   try {
     await waitForBackend();
     backendReady = true;
+
+    // Coucou parity: Check if resuming from an update checkpoint (Coucou session resume)
+    let targetUrl = BACKEND_URL;
+    try {
+      const checkpointFile = path.join(process.cwd(), 'data', 'session_checkpoint.json');
+      if (fs.existsSync(checkpointFile)) {
+        const raw = fs.readFileSync(checkpointFile, 'utf8');
+        const cp = JSON.parse(raw);
+        if (cp && typeof cp.route === 'string' && cp.route.startsWith('/') && !cp.resumed) {
+          if (!cp.timestamp || (Date.now() - cp.timestamp < 30 * 60 * 1000)) {
+            const cleanRoute = cp.route.replace(/^\/+/, '');
+            targetUrl = `${BACKEND_URL}${cleanRoute}`;
+            console.log(`[ElectronMain] Coucou-parity resume: restoring route "${cp.route}" (target URL: ${targetUrl})`);
+          }
+        }
+      }
+    } catch (cpErr: any) {
+      console.warn('[ElectronMain] Failed to inspect session checkpoint:', cpErr.message);
+    }
+
     console.log('[ElectronMain] Backend ready. Loading the app...');
-    mainWindow?.loadURL(BACKEND_URL); // no window = it was closed on the splash and the app is quitting
+    mainWindow?.loadURL(targetUrl); // no window = it was closed on the splash and the app is quitting
   } catch (err) {
     console.error('[ElectronMain] Backend failed to start:', err);
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -460,7 +483,7 @@ function forceKillBackendTree(pid: number): void {
     } else {
       process.kill(pid, 'SIGKILL');
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 app.on('window-all-closed', () => {
@@ -502,12 +525,17 @@ app.on('window-all-closed', () => {
 
   try {
     const req = http.request(
-      `${BACKEND_URL}/api/system/client-exit`,
+      `${BACKEND_URL}/api/system/shutdown`,
       { method: 'POST', timeout: 2000 },
-      () => {}
+      () => { }
     );
     req.on('error', () => {
-      // Backend unreachable (already dead/hung) — let the force timer handle it.
+      // Fallback probe to /api/system/client-exit
+      try {
+        const fallback = http.request(`${BACKEND_URL}/api/system/client-exit`, { method: 'POST', timeout: 1500 }, () => { });
+        fallback.on('error', () => { });
+        fallback.end();
+      } catch (_) { }
     });
     req.end();
   } catch (_) {

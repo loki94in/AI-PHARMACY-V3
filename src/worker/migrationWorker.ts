@@ -221,6 +221,14 @@ let isQueueRunning = false;
 let migrationQueue: MigrationTask[] = [];
 
 export async function runManualMigrationQueue(tasks: MigrationTask[]): Promise<void> {
+  // Clear stale lock if prior migration started > 45 minutes ago
+  if ((migrationStatus.active || isQueueRunning) && migrationStatus.startTime && Date.now() - migrationStatus.startTime > 45 * 60 * 1000) {
+    console.warn('[Migration Worker] Clearing stale migration lock (> 45 min elapsed).');
+    migrationStatus.active = false;
+    isQueueRunning = false;
+    migrationQueue = [];
+  }
+
   if (migrationStatus.active || isQueueRunning) {
     throw new Error('A migration is already in progress.');
   }

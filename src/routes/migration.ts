@@ -387,6 +387,14 @@ router.post('/run', async (req, res) => {
   if (!tasks && !fileName) {
     return res.status(400).json({ error: 'fileName or tasks required' });
   }
+  if (migrationStatus.active) {
+    return res.status(409).json({
+      error: 'A migration is already in progress',
+      message: migrationStatus.message,
+      progress: migrationStatus.progress,
+      file: migrationStatus.file
+    });
+  }
   try {
     const db = await dbManager.getConnection();
     await db.run(
@@ -1257,6 +1265,14 @@ router.get('/local-backups', async (_req, res) => {
 // Trigger migration on a local detected backup file
 router.post('/run-local-backup', async (req, res) => {
   try {
+    if (migrationStatus.active) {
+      return res.status(409).json({
+        error: 'A migration is already in progress',
+        message: migrationStatus.message,
+        progress: migrationStatus.progress,
+        file: migrationStatus.file
+      });
+    }
     const { fullPath, fileName } = req.body;
     let targetPath = fullPath;
     let targetName = fileName;

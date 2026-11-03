@@ -467,12 +467,28 @@ export class ConversationalAgentEngine {
         } else if (proposal.type === 'ADJUST_STOCK') {
           // Adjust stock in inventory_master and log to stock_ledger
           const medId = Number(proposal.data.medicineId);
-          const batchNo = String(proposal.data.batchNo || '');
+          const batchNo = String(proposal.data.batchNo || 'DEFAULT');
           const newQty = Number(proposal.data.newQuantity || 0);
-          await db.run(
+          const updateRes = await db.run(
             `UPDATE inventory_master SET quantity = ? WHERE medicine_id = ? AND batch_no = ?`,
             [newQty, medId, batchNo]
+          ).catch(() => ({ changes: 0 }));
+
+          if (!updateRes || updateRes.changes === 0) {
+            // If no matching batch row existed, create primary batch row
+            await db.run(
+              `INSERT INTO inventory_master (store_id, medicine_id, batch_no, quantity, expiry_date)
+               VALUES (1, ?, ?, ?, date('now', '+365 days', 'localtime'))`,
+              [medId, batchNo, newQty]
+            ).catch(() => {});
+          }
+
+          // Atomic sync of medicines.total_stock
+          await db.run(
+            `UPDATE medicines SET total_stock = (SELECT COALESCE(SUM(quantity), 0) FROM inventory_master WHERE medicine_id = ?) WHERE id = ?`,
+            [medId, medId]
           ).catch(() => {});
+
           await db.run(
             `INSERT INTO stock_ledger (medicine_id, batch_no, quantity, transaction_type) VALUES (?, ?, ?, 'ADJUSTMENT')`,
             [medId, batchNo, newQty]
@@ -486,7 +502,8 @@ export class ConversationalAgentEngine {
             entityId: medId,
             description: `Audited stock adjustment: Medicine #${medId} (Batch: ${batchNo}) set to ${newQty} units. Reason: ${proposal.data.reason || 'Audit'}`
           });
-          replyText = `✅ *Stock Corrected!*\n\nStock for *${proposal.data.medicineName || 'medicine'}* (Batch: ${batchNo}) has been successfully updated to *${newQty} units* and recorded in the audit ledger.`;
+          eventService.emit('inventory_updated', { medicineId: medId, newQuantity: newQty });
+          replyText = `✅ *Live Inventory Updated!*\n\nStock for *${proposal.data.medicineName || 'medicine'}* (Batch: ${batchNo}) has been successfully updated to *${newQty} units* in live inventory and recorded in the audit ledger.`;
           executionResult = { success: true, updatedQty: newQty };
         } else if (proposal.type === 'STAGE_PRESCRIPTION_DRAFT') {
           replyText = `✅ *Prescription Workflow Staged!*\n\nThe identified medicines have been linked to the prescription dispensing queue for pharmacist verification.`;
@@ -632,7 +649,11 @@ export class ConversationalAgentEngine {
           const remRes = await creditReminderService.buildCreditReminderWithQr(
             proposal.data.customerId,
             db,
-            { skipDedupe: true, isManual: true }
+            {
+              skipDedupe: true,
+              isManual: true,
+              amountOverride: proposal.data.amount ? Number(proposal.data.amount) : undefined
+            }
           );
           if (remRes.success) {
             replyText = `✅ *Payment Reminder Dispatched!*\n\nBranded UPI Payment QR card and itemized bill breakdown sent via WhatsApp to *${proposal.data.customerName}* (${proposal.data.phone || 'patient'}). Total due: ₹${Number(proposal.data.amount || 0).toFixed(2)}.`;
@@ -1071,38 +1092,55 @@ export class ConversationalAgentEngine {
         break;
       }
 
-      // ── Capability 5e: Purchase Inward & Rate Queries (Strictly Owner) ─────
+      // ── Capability 5e: Purchase Inward & Rate Queries ─────
       case 'PURCHASE_QUERY': {
-        if (role !== 'owner') {
-          replyText = `🔒 *Access Restricted:* Trade pricing and supplier invoice details are restricted to verified store owners.`;
-          state = 'idle';
-        } else {
-          const medQuery = detected.medicineName || '';
-          const pur = await pharmacyToolRegistry.getPurchaseRateComparison(medQuery, db);
-          toolExecutions.push({ tool: 'getPurchaseRateComparison', result: pur });
+        const medQuery = detected.medicineName || '';
+        const tfDays = detected.timeframe ? parseInt(detected.timeframe, 10) : undefined;
+        const pur = await pharmacyToolRegistry.getPurchaseRateComparison(medQuery, db, { timeframeDays: tfDays });
+        toolExecutions.push({ tool: 'getPurchaseRateComparison', result: pur });
 
-          if (pur.records.length > 0) {
-            replyText = `💼 *Purchase Inward & Trade Price Intelligence*\n\n` +
-              `Found *${pur.records.length} purchase record(s)*${medQuery ? ` for *${medQuery}*` : ''}:\n\n`;
+        const tfText = tfDays ? ` in the last ${tfDays} days` : '';
+        const isOwner = role === 'owner';
 
-            pur.records.slice(0, 6).forEach((p, idx) => {
-              replyText += `${idx + 1}. *${p.medicineName}* (Batch: \`${p.batchNo}\`)\n` +
-                `   • PTR / Cost: *₹${p.costPrice.toFixed(2)}* (MRP: ₹${p.mrp.toFixed(2)}) | Qty: ${p.quantity}\n` +
-                `   • Supplier: *${p.distributorName}* | Invoice: \`${p.invoiceNo}\` (${p.invoiceDate})\n`;
-              cards.push({
-                id: `${p.batchNo}_${idx}`,
-                title: p.medicineName,
-                subtitle: `PTR: ₹${p.costPrice.toFixed(2)} | Dist: ${p.distributorName}`,
-                badge: `Inv: ${p.invoiceNo}`,
-                badgeColor: 'green'
-              });
+        if (pur.records.length > 0) {
+          replyText = `💼 *Purchase Inward & Trade Price Intelligence*\n\n` +
+            `Found *${pur.records.length} purchase record(s)*${medQuery ? ` for *${medQuery}*` : ''}${tfText}:\n\n`;
+
+          pur.records.slice(0, 6).forEach((p, idx) => {
+            const costStr = isOwner ? `• PTR / Cost: *₹${p.costPrice.toFixed(2)}* (MRP: ₹${p.mrp.toFixed(2)}) | ` : `• MRP: ₹${p.mrp.toFixed(2)} | `;
+            replyText += `${idx + 1}. *${p.medicineName}* (Batch: \`${p.batchNo}\`)\n` +
+              `   ${costStr}Qty: ${p.quantity}\n` +
+              `   • Supplier: *${p.distributorName}* | Invoice: \`${p.invoiceNo}\` (${p.invoiceDate})\n`;
+            cards.push({
+              id: `${p.batchNo}_${idx}`,
+              title: p.medicineName,
+              subtitle: (isOwner ? `PTR: ₹${p.costPrice.toFixed(2)} | ` : '') + `Dist: ${p.distributorName}`,
+              badge: `Inv: ${p.invoiceNo}`,
+              badgeColor: 'green'
             });
-          } else {
-            replyText = `🔍 No purchase invoice records found${medQuery ? ` for *${medQuery}*` : ''}.`;
-          }
-          state = 'idle';
+          });
+        } else if (pur.similarMedicines && pur.similarMedicines.length > 0) {
+          replyText = `🔍 No purchase invoice records found${medQuery ? ` for *${medQuery}*` : ''}${tfText}.\n\n` +
+            `💡 *Did you mean one of these similar medicines in your inventory?*\n` +
+            pur.similarMedicines.map((m, i) => `${i + 1}. *${m}*`).join('\n') +
+            `\n\n_Tap or ask for any of the above to inspect purchase history._`;
+          suggestedFollowUps = pur.similarMedicines.slice(0, 3).map(m => `Purchase history of ${m}`);
+          pur.similarMedicines.forEach((m, idx) => {
+            cards.push({
+              id: `sim_med_${idx}`,
+              title: m,
+              subtitle: 'Similar medicine in catalog/inventory',
+              badge: 'Catalog Match',
+              badgeColor: 'blue'
+            });
+          });
+        } else {
+          replyText = `🔍 No purchase invoice records found${medQuery ? ` for *${medQuery}*` : ''}${tfText}.`;
         }
-        suggestedFollowUps = ['Check sales summary', 'Audit expiring stock'];
+        state = 'idle';
+        if (!suggestedFollowUps || suggestedFollowUps.length === 0) {
+          suggestedFollowUps = ['Check sales summary', 'Audit expiring stock'];
+        }
         break;
       }
 
@@ -1259,25 +1297,59 @@ export class ConversationalAgentEngine {
 
       // ── Capability 2: Stock Quantity Correction Guidance & Staging ─────────
       case 'STOCK_CORRECTION': {
+        const isAddition = (detected as any).destination === 'inventory' || /strip/i.test(detected.unit || '') || /\b(?:add|insert|plus|\+)\b/i.test(userText);
         const correctionInfo = await pharmacyToolRegistry.correctStockQuantity({
           medicineName: detected.medicineName,
           medicineId: detected.medicineId,
           batchNo: detected.batchNo,
-          newQuantity: detected.quantity,
-          reason: 'Assistant physical audit adjustment',
+          newQuantity: !isAddition ? detected.quantity : undefined,
+          addQuantity: isAddition ? detected.quantity : undefined,
+          quantity: detected.quantity,
+          unit: detected.unit,
+          mode: isAddition ? 'add' : 'set',
+          reason: isAddition ? 'Assistant live stock inward addition' : 'Assistant physical audit adjustment',
           dbInstance: db
         });
         toolExecutions.push({ tool: 'correctStockQuantity', result: correctionInfo });
 
-        replyText = correctionInfo.guidance;
-        if (correctionInfo.stagedProposal) {
-          proposedAction = correctionInfo.stagedProposal;
-          replyText += `\n\n👉 *Would you like to confirm adjusting stock for ${detected.medicineName || 'medicine'} to ${detected.quantity} units?*\nReply *Yes* to commit, or *No* to cancel.`;
-          state = 'awaiting_confirmation';
-        } else {
+        if (correctionInfo.candidateMedicines && correctionInfo.candidateMedicines.length > 1 && !correctionInfo.stagedProposal) {
+          replyText = `🔍 Found *${correctionInfo.candidateMedicines.length} similar medicines* matching "*${detected.medicineName || ''}*":\n\n` +
+            correctionInfo.candidateMedicines.map((m, idx) => `${idx + 1}. *${m.name}* (Current stock: ${m.totalStock} units${m.packSize ? `, Pack: ${m.packSize}` : ''})`).join('\n') +
+            `\n\n👉 *Which medicine would you like to update?* Reply with the name or select from options.`;
+          suggestedFollowUps = correctionInfo.candidateMedicines.slice(0, 3).map(m => `Add ${detected.quantity || 1} ${detected.unit || 'strips'} ${m.name}`);
+          cards = correctionInfo.candidateMedicines.map(m => ({
+            id: `cand_${m.id}`,
+            title: m.name,
+            subtitle: `Current Stock: ${m.totalStock} units | ${m.packSize || 'Standard pack'}`,
+            badge: `${m.totalStock} in stock`,
+            badgeColor: m.totalStock > 0 ? 'green' : 'amber'
+          }));
           state = 'idle';
+        } else if (correctionInfo.stagedProposal) {
+          const staged = correctionInfo.stagedProposal;
+          proposedAction = staged;
+          replyText = `📦 *${staged.summary}*\n\n` +
+            `👉 *Would you like to confirm updating live inventory?*\n` +
+            `Reply *Yes* to commit to live stock, or *No* to cancel.`;
+          state = 'awaiting_confirmation';
+          cards = [{
+            id: `stock_${Date.now()}`,
+            title: staged.data.medicineName,
+            subtitle: `Batch: ${staged.data.batchNo} | New Total: ${staged.data.newQuantity} units`,
+            badge: staged.data.mode === 'add' ? `+${staged.data.addedQuantity} added` : `${staged.data.newQuantity} units`,
+            badgeColor: 'blue',
+            details: {
+              'Action': staged.data.mode === 'add' ? 'Stock Addition' : 'Stock Adjustment',
+              'Current Stock': `${staged.data.currentQuantity ?? 'N/A'} units`,
+              'New Stock': `${staged.data.newQuantity} units`
+            }
+          }];
+          suggestedFollowUps = ['Yes, commit to live stock', 'Cancel'];
+        } else {
+          replyText = correctionInfo.guidance;
+          state = 'idle';
+          suggestedFollowUps = ['Open Inventory Screen', 'Audit Physical Batches'];
         }
-        suggestedFollowUps = ['Open Inventory Screen', 'Audit Physical Batches'];
         break;
       }
 
@@ -1349,8 +1421,50 @@ export class ConversationalAgentEngine {
           }
           state = 'idle';
         } else {
-          const mentionedMedicine = detected.medicineName || this.extractMedicineFromText(userText);
-          let targetRefill = refillsResult[0];
+          const isAllRefills = Boolean((detected as any).allRefills || /\ball\b/i.test(userText));
+
+          if (isAllRefills && refillsResult.length > 0 && role !== 'customer') {
+            const displayName = targetCustomerName || patName || 'Customer';
+            const itemsList = refillsResult.map((r, i) =>
+              `${i + 1}. *${r.medicineName}* — Default Qty: *${r.quantityNeeded} units* (${r.inStock ? '✅ In Stock' : '⏳ Shortage'})`
+            ).join('\n');
+
+            replyText = `🔔 *Complete Patient Chronic Refill Package — ${displayName}*\n\n` +
+              `Found *${refillsResult.length} active chronic medicine(s)*:\n\n${itemsList}\n\n` +
+              `👉 *Would you like to stage all ${refillsResult.length} medicines for dispensing/live cart?*\n` +
+              `Reply *Yes* to confirm, or *No* to cancel.`;
+
+            proposedAction = {
+              id: `refill_all_${Date.now()}`,
+              type: 'STAGE_LIVE_CART_BATCH',
+              summary: `Stage all ${refillsResult.length} refill items for ${displayName}`,
+              data: {
+                customerName: displayName,
+                customerId: targetCustomerId,
+                phone: targetPhone,
+                items: refillsResult.map(r => ({
+                  medicineName: r.medicineName,
+                  quantity: r.quantityNeeded,
+                  unit: 'units'
+                }))
+              },
+              requiresConfirmation: true,
+              status: 'PENDING_CONFIRMATION'
+            };
+
+            cards = refillsResult.map(r => ({
+              id: `ref_${r.id}`,
+              title: r.medicineName,
+              subtitle: `Default: ${r.quantityNeeded} units | ${r.inStock ? 'In Stock' : 'Needs Procurement'}`,
+              badge: `${r.quantityNeeded} units`,
+              badgeColor: r.inStock ? 'green' : 'amber'
+            }));
+
+            suggestedFollowUps = ['Confirm all refills', 'Cancel'];
+            state = 'awaiting_confirmation';
+          } else {
+            const mentionedMedicine = detected.medicineName || this.extractMedicineFromText(userText);
+            let targetRefill = refillsResult[0];
 
           if (mentionedMedicine) {
             const matched = refillsResult.find((r: RefillRecordItem) =>
@@ -1477,22 +1591,21 @@ export class ConversationalAgentEngine {
               };
               suggestedFollowUps = ['Confirm Refill', 'Schedule Call Task', 'Cancel'];
             }
+            cards = [
+              {
+                id: targetRefill.id,
+                title: targetRefill.medicineName,
+                subtitle: `Due: ${targetRefill.nextRefillDate || 'Today'} | Qty: ${targetRefill.quantityNeeded}`,
+                badge: targetRefill.inStock ? 'In Stock' : 'Needs Procurement',
+                badgeColor: targetRefill.inStock ? 'green' : 'amber'
+              }
+            ];
+            state = 'awaiting_confirmation';
           }
-
-          cards = [
-            {
-              id: targetRefill.id,
-              title: targetRefill.medicineName,
-              subtitle: `Due: ${targetRefill.nextRefillDate || 'Today'} | Qty: ${targetRefill.quantityNeeded}`,
-              badge: targetRefill.inStock ? 'In Stock' : 'Needs Procurement',
-              badgeColor: targetRefill.inStock ? 'green' : 'amber'
-            }
-          ];
-
-          state = 'awaiting_confirmation';
         }
-        break;
       }
+      break;
+    }
 
       // ── Capability 5: Proactive Assistance — Call Tasks & Reminders ────────
       case 'REMINDER_SCHEDULE': {
@@ -1998,9 +2111,15 @@ export class ConversationalAgentEngine {
         toolExecutions.push({ tool: 'queryCustomerCreditDue', result: dueResult });
 
         if (dueResult && dueResult.creditBalance > 0) {
+          const effectiveAmount = (detected as any).amount && Number((detected as any).amount) > 0
+            ? Number((detected as any).amount)
+            : dueResult.creditBalance;
+          const isCustomAmount = effectiveAmount !== dueResult.creditBalance;
+
           const facts = {
             customerName: dueResult.name,
             creditBalance: dueResult.creditBalance,
+            requestedAmount: effectiveAmount,
             phone: dueResult.phone,
             creditDueDate: dueResult.creditDueDate,
             unpaidBillsCount: dueResult.pendingInvoices.length,
@@ -2012,26 +2131,27 @@ export class ConversationalAgentEngine {
           };
           const fallback = `💳 *Monthly Due Summary for ${dueResult.name}*\n\n` +
             `• *Total Outstanding Balance:* ₹${dueResult.creditBalance.toFixed(2)}\n` +
+            (isCustomAmount ? `• *Requested Payment Amount:* ₹${effectiveAmount.toFixed(2)}\n` : '') +
             `• *Registered Phone:* ${dueResult.phone || 'Not recorded'}\n` +
             `• *Due Date:* ${dueResult.creditDueDate || 'As agreed'}\n\n` +
-            `👉 Would you like to send an official WhatsApp payment reminder with rotating UPI QR code?`;
+            `👉 Would you like to send an official WhatsApp payment reminder with rotating UPI QR code for *₹${effectiveAmount.toFixed(2)}*?`;
 
           replyText = await this.synthesizeGroundedResponse(
             userText,
             facts,
-            'State the customer Monthly Due Summary, the balance amount in ₹, and ask if they would like to send a WhatsApp payment reminder with UPI QR.',
+            `State the customer Monthly Due Summary, the balance amount in ₹ (and requested payment amount ₹${effectiveAmount.toFixed(2)}), and ask if they would like to send a WhatsApp payment reminder with UPI QR.`,
             fallback
           );
 
           proposedAction = {
             id: `due_qr_${Date.now()}`,
             type: 'SEND_DUE_PAYMENT_QR',
-            summary: `Send WhatsApp payment reminder & UPI QR for ₹${dueResult.creditBalance.toFixed(2)} to ${dueResult.name}`,
+            summary: `Send WhatsApp payment reminder & UPI QR for ₹${effectiveAmount.toFixed(2)} to ${dueResult.name}`,
             data: {
               customerId: dueResult.customerId,
               customerName: dueResult.name,
               phone: dueResult.phone,
-              amount: dueResult.creditBalance
+              amount: effectiveAmount
             },
             requiresConfirmation: true,
             status: 'PENDING_CONFIRMATION'
@@ -2041,12 +2161,14 @@ export class ConversationalAgentEngine {
           cards = [{
             id: `due_${Date.now()}`,
             title: dueResult.name,
-            subtitle: `Due: ₹${dueResult.creditBalance.toFixed(2)} | ${dueResult.pendingInvoices.length} pending bill(s)`,
-            badge: `₹${dueResult.creditBalance.toFixed(2)} DUE`,
+            subtitle: `Due: ₹${dueResult.creditBalance.toFixed(2)} | QR: ₹${effectiveAmount.toFixed(2)}`,
+            badge: `₹${effectiveAmount.toFixed(2)} QR`,
             badgeColor: 'amber',
             details: {
               Customer: dueResult.name,
               Phone: dueResult.phone || 'N/A',
+              'Total Balance': `₹${dueResult.creditBalance.toFixed(2)}`,
+              'Payment QR Amount': `₹${effectiveAmount.toFixed(2)}`,
               'Due Date': dueResult.creditDueDate || 'Immediate'
             }
           }];
@@ -2569,7 +2691,7 @@ export class ConversationalAgentEngine {
     batchNo?: string;
     quantity?: number;
     unit?: string;
-    destination?: 'live_cart' | 'pos_cart';
+    destination?: 'live_cart' | 'pos_cart' | 'inventory';
     targetPage?: string;
     targetTab?: string;
     timeframe?: string;
@@ -2584,6 +2706,8 @@ export class ConversationalAgentEngine {
     wantsLiveCart?: boolean;
     wantsCallTask?: boolean;
     wantsSpecialOrder?: boolean;
+    amount?: number;
+    allRefills?: boolean;
   }> {
     const t = text.toLowerCase().trim();
 
@@ -2636,7 +2760,7 @@ export class ConversationalAgentEngine {
 
     // 0c. Raw Medicine Name Input Fast-Path (e.g. "ALEX JUNIOR SYP 60ML", "DOLO 650MG STRIP", "Augmentin 625")
     const hasDosageOrStrength = /\b(?:syp|syrup|tab|tablet|tablets|cap|capsule|capsules|inj|injection|susp|suspension|drops|ointment|cream|gel|rotacaps|respules|mg|ml|gm)\b/i.test(t);
-    const isCommandDirect = /\b(?:add|stage|put|load|book|order|remind|explain|how to|where is|run|trigger|start|execute|find an alternative|alternative for|wapas|due|balance|sop)\b/i.test(t);
+    const isCommandDirect = /\b(?:add|stage|put|load|book|order|remind|explain|how to|where is|run|trigger|start|execute|find an alternative|alternative for|wapas|due|balance|sop|purchas|kharida|bought)\b/i.test(t);
     if (!isCommandDirect && hasDosageOrStrength) {
       const candidateMed = this.extractMedicineFromText(text) || text.replace(/[!.,?]/g, '').trim();
       if (candidateMed.length >= 3 && !/\b(?:live cart|pos billing|order hub|inventory|settings|pharmarack|sales report)\b/i.test(candidateMed)) {
@@ -2673,16 +2797,31 @@ export class ConversationalAgentEngine {
             return { type: 'DELIVERY_STATUS' };
           }
           if (opIntent.intent === 'PURCHASE_QUERY') {
-            return { type: 'PURCHASE_QUERY', medicineName: opIntent.medicineName };
+            return {
+              type: 'PURCHASE_QUERY',
+              medicineName: opIntent.medicineName,
+              timeframe: opIntent.timeframeDays ? String(opIntent.timeframeDays) : undefined
+            };
           }
           if (opIntent.intent === 'SALES_SUMMARY') {
             return { type: 'SALES_COMPARISON' };
           }
           if (opIntent.intent === 'REFILL_MANAGEMENT') {
-            return { type: 'REFILL', medicineName: opIntent.medicineName, patientName: opIntent.patientName };
+            return {
+              type: 'REFILL',
+              medicineName: opIntent.medicineName,
+              patientName: opIntent.patientName,
+              allRefills: opIntent.allRefills || /\ball\b/i.test(t)
+            };
           }
           if (opIntent.intent === 'STOCK_ADJUSTMENT') {
-            return { type: 'STOCK_CORRECTION', medicineName: opIntent.medicineName, quantity: opIntent.quantity };
+            return {
+              type: 'STOCK_CORRECTION',
+              medicineName: opIntent.medicineName,
+              quantity: opIntent.quantity,
+              unit: opIntent.unit,
+              destination: (opIntent.destination === 'inventory' || /\binventory\b/i.test(t)) ? 'inventory' : 'live_cart'
+            };
           }
           if (opIntent.intent === 'PAGE_GUIDANCE') {
             return {
@@ -2699,7 +2838,11 @@ export class ConversationalAgentEngine {
             return { type: 'MEDICINE_INQUIRY', medicineName: opIntent.medicineName };
           }
           if (opIntent.intent === 'CUSTOMER_DUE_QUERY') {
-            return { type: 'CUSTOMER_DUE_QUERY', patientName: opIntent.patientName };
+            return {
+              type: 'CUSTOMER_DUE_QUERY',
+              patientName: opIntent.patientName,
+              amount: opIntent.amount
+            };
           }
           if (opIntent.intent === 'SPECIAL_ORDER_BOOKING') {
             return {
@@ -2756,6 +2899,74 @@ export class ConversationalAgentEngine {
       };
     }
 
+    // Purchase Inquiries & Timeframe ("when was the last time we purchased XYZ", "last 15 days purchase of XYZ")
+    if (
+      /\b(?:when\s+(?:was\s+)?(?:the\s+)?last\s+time\s+we\s+purchas(?:ed|e)?|last\s+purchase\s+(?:of|rate)?|purchase\s+history|purchased?\s+(?:date|rate|invoice)|kab\s+kharida\s+tha|last\s+time\s+kharida|purchase\s+rate|ptr\s+of)\b/i.test(t) ||
+      (/\blast\s+(\d{1,3})\s+days?\s+(?:result|purchase|record|inward|bills?)\b/i.test(t))
+    ) {
+      const daysMatch = t.match(/\blast\s+(\d{1,3})\s+days?\b/i);
+      let med = text
+        .replace(/\b(?:when\s+(?:was\s+)?(?:the\s+)?last\s+time\s+we\s+purchas(?:ed|e)?|last\s+purchase\s+of|last\s+purchase|purchase\s+history\s+of|purchase\s+history|purchased?)\b/gi, ' ')
+        .replace(/\b(?:in\s*(?:the\s*)?last\s*\d{1,3}\s*days?|last\s*\d{1,3}\s*days?)\b/gi, ' ')
+        .replace(/[?!,.]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!med) {
+        const afterOf = text.match(/(?:of|for|medicine|dawa|item)\s+([A-Za-z0-9\s-]{2,30})/i);
+        if (afterOf && !/^(result|records?|purchase|inward)$/i.test(afterOf[1].trim())) {
+          med = afterOf[1].trim();
+        }
+      }
+      return {
+        type: 'PURCHASE_QUERY',
+        medicineName: med || undefined,
+        timeframe: daysMatch ? daysMatch[1] : undefined
+      };
+    }
+
+    // Live Inventory Stock Additions ("add 4-5 strips in inventory", "add Pan 40 5 strips to inventory")
+    if (
+      /\b(?:add|insert|update|put)\b.*\b(?:inventory|live\s*inventory|stock|shelf)\b/i.test(t) ||
+      (/\b(?:inventory|live\s*inventory|stock)\b.*\b(?:me\s*add|me\s*dalo|me\s*daliye|add\s*karo)\b/i.test(t))
+    ) {
+      const rangeMatch = text.match(/\b(\d+)\s*(?:-|to)\s*(\d+)\s*(?:strip|strips|box|boxes|pack|packs|unit|units)?\b/i);
+      const unitQtyMatch = text.match(/\b(\d{1,4})\s*(?:strip|strips|box|boxes|pack|packs|unit|units)\b/i);
+      const trailingQtyMatch = text.match(/\b(?:add|insert|update|put)\s+(\d{1,4})\b/i);
+      const qty = rangeMatch ? parseInt(rangeMatch[2], 10) : (unitQtyMatch ? parseInt(unitQtyMatch[1], 10) : (trailingQtyMatch ? parseInt(trailingQtyMatch[1], 10) : 1));
+      const isStrip = /\b(strip|strips)\b/i.test(t);
+      let med = text
+        .replace(/\b(?:add|insert|update|put|into|in|to|the|live|inventory|stock|shelf)\b/gi, ' ')
+        .replace(/\b\d+\s*(?:-|to)\s*\d+\s*(?:strip|strips|box|boxes|pack|packs|unit|units)?\b/gi, ' ')
+        .replace(/\b\d{1,4}\s*(?:strip|strips|box|boxes|pack|packs|unit|units)\b/gi, ' ')
+        .replace(/\b(?:strip|strips|box|boxes|pack|packs|unit|units)\b/gi, ' ')
+        .replace(/[.,!]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      return {
+        type: 'STOCK_CORRECTION',
+        medicineName: med || undefined,
+        quantity: qty,
+        unit: isStrip ? 'strips' : 'units',
+        destination: 'inventory'
+      };
+    }
+
+    // Patient Chronic Refill All ("add Ramesh refill all", "refill all for patient Ramesh")
+    if (
+      /\b(?:refill\s+all|all\s+refill|sabhi\s+refill|saari\s+dawa|all\s+medicines?\s+refill)\b/i.test(t) ||
+      (/\b(?:refill|dawa)\b/i.test(t) && /\ball\b/i.test(t))
+    ) {
+      const custMatch = text.match(/(?:for|to|of|ka|ki|ke|patient|customer)\s+([A-Za-z0-9\s]{2,30})/i) ||
+                        text.match(/\b(?:add\s+)?([A-Za-z0-9]{3,20})\s+(?:ka|ki|ke)?\s*refill\s+all\b/i);
+      let pat = custMatch ? custMatch[1].trim() : undefined;
+      if (pat && /^(all|refill|dawa)$/i.test(pat)) pat = undefined;
+      return {
+        type: 'REFILL',
+        patientName: pat || session.contextData?.lastCustomer,
+        allRefills: true
+      };
+    }
+
     // 0c. Customer Due Bills, Payment QR, Special Orders & Refill Onboarding Fallbacks
     if (
       !/\b(?:refill|renew|repeat)\b/i.test(t) &&
@@ -2769,7 +2980,9 @@ export class ConversationalAgentEngine {
       if (!pat || /^(him|his|her|customer|patient|iska|uska)$/i.test(pat.trim())) {
         pat = session.contextData?.lastCustomer || undefined;
       }
-      return { type: 'CUSTOMER_DUE_QUERY', patientName: pat };
+      const amountMatch = text.match(/\b(\d{2,6})\s*(?:rs|rupees|inr|\/-)?\b/i) || text.match(/(?:rs|₹)\.?\s*(\d{2,6})\b/i);
+      const parsedAmount = amountMatch ? parseFloat(amountMatch[1]) : undefined;
+      return { type: 'CUSTOMER_DUE_QUERY', patientName: pat, amount: parsedAmount };
     }
 
     if (
@@ -3237,6 +3450,8 @@ export class ConversationalAgentEngine {
 
     let clean = text
       .replace(/\b(?:this medicine is unavailable|this medicine is out of stock|this medicine is not available|this medicine|this)\b/gi, ' ')
+      .replace(/\b(?:in the live inventory|in live inventory|to live inventory|in the inventory|in inventory|to inventory|into inventory|in stock|to stock|into stock)\b/gi, ' ')
+      .replace(/\b(?:when was the last time we purchased|when did we purchase|last time we purchased|last purchase of|purchase history of|last purchase|purchase history|purchased|purchase)\b/gi, ' ')
       .replace(/\b(?:in the live cart|in live cart|to live cart|into live cart|in the pos cart|to pos cart|in pos cart|in the cart|in cart|to cart|into cart|in bill|to bill|into bill|on live cart|on pos|on bill)\b/gi, ' ')
       .replace(/\b(?:what is the active salt of|what is the salt of|what is the salt in|active salt of|active ingredient of|salt of|salt in|uses of|use of)\b/gi, ' ')
       .replace(/\b(?:where is|where are|where|which rack is|which rack for|which rack|rack location for|rack location of|rack location|rack of|rack and stock for|rack and stock of|rack and stock|stock and rack for|stock and rack|kahan hai|kept|located|placed|rack|shelf)\b/gi, ' ')

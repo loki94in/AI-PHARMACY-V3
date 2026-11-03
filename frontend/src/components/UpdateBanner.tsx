@@ -60,7 +60,22 @@ export default function UpdateBanner() {
     }, 15000);
 
     try {
-      const res = await fetch('/api/system/apply-update', { method: 'POST' });
+      // Coucou parity: Persist session checkpoint before triggering in-place update
+      const currentRoute = window.location.pathname + window.location.search + window.location.hash;
+      try {
+        localStorage.setItem('pharmacy_update_checkpoint', JSON.stringify({
+          route: currentRoute,
+          targetVersion,
+          timestamp: Date.now(),
+          resumed: false,
+        }));
+      } catch (_) {}
+
+      const res = await fetch('/api/system/apply-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ route: currentRoute }),
+      });
       const data = await res.json() as { success?: boolean; error?: string };
       if (!data.success) {
         clearTimeout(timeout);

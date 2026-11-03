@@ -7,6 +7,28 @@
 
 ## Fixed
 
+### [Fixed] P2-143 - Release Packaging: Unbundle Qwen Model by Default for Fast Lightweight Builds
+
+- **Symptom:** Release build script (`scripts/release.mjs`) automatically bundled the ~1 GB Qwen GGUF model and `llama-server.exe` into every release installer whenever `models/local-ai` existed on disk, creating ~1 GB installers with slow download, slow LZMA2 compression, and slow installation.
+- **Root Cause:** `scripts/release.mjs` checked `hasLocalAiAssets` and defaulted `bundleLocalAi` to `true` whenever local assets were present, overriding the standard lightweight cloud installer mode.
+- **Fix:** Switched `scripts/release.mjs` so offline bundling is strictly **opt-in** (`--bundle-local-ai`, `--offline`, or `BUNDLE_LOCAL_AI=1`). Standard releases (`npm run release`, `npm run release:pilot`) default to lightweight, fast cloud installers without bundling the 1 GB model weights.
+
+
+### [Fixed] P2-142 - Desktop Window Relaunch Lockup on Zombie Process, Shutdown Route Parity & Refill Column Guard
+
+- **Symptom:** After finalizing a heavy migration or closing the app window, relaunching AI Pharmacy OS resulted in a silent process exit with no visible window, forcing the user to reinstall the app to kill background zombies. Re-running migration while in-flight surfaced as a fatal failure, and `/staging/finalize` threw `SQLITE_ERROR: no such column: medicine_name`.
+- **Root Cause:**
+  1. `app.on('second-instance')` in `electron/main.ts` did nothing when `mainWindow` was null or destroyed, immediately terminating subsequent launch attempts while zombie processes held the single-instance lock.
+  2. `window-all-closed` in `electron/main.ts` sent `POST /api/system/client-exit`, which did not exist on the backend (actual route was `/api/system/shutdown`), causing shutdown to always time out and force-kill without closing locks or database cleanly.
+  3. `src/utils/reconnectPatientRefills.ts` queried `medicine_name` on `_backup_patient_refills_pre_reconnect` and `refill_fulfillments` without table column-existence verification.
+  4. Migration worker `/run` and `/run-local-backup` threw uncaught background errors when an import was already active instead of returning transparent 409 conflict responses.
+- **Fix:**
+  1. Added window resurrection in `electron/main.ts` on `second-instance` if `mainWindow` is null.
+  2. Routed Electron shutdown to `/api/system/shutdown` and added `/api/system/client-exit` route alias in `src/server.ts`.
+  3. Added column defensive checks and `ALTER TABLE` in `src/utils/reconnectPatientRefills.ts` for `medicine_name`.
+  4. Added stale-lock timeout recovery (>45 min) in `migrationWorker.ts` and 409 response in `src/routes/migration.ts`.
+
+
 ### [Fixed] P2-141 — Conversational Assistant Latency Optimization & Multi-Intent Fast-Path Routing
 - Cause:
   1. `queryOperationalAiIntent` previously had a 10-second default timeout (`timeoutMs: 10000`) and was placed ahead of deterministic pattern matchers in `resolveUnifiedIntent`. When the local Qwen model process was cold or idle, every user request hung for ~10–13 seconds waiting for network timeouts.

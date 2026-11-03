@@ -42,6 +42,18 @@ export async function reconnectPatientRefillsCatalog(
       } catch (_) {}
     }
 
+    // 2b. Ensure medicine_name column exists on refill_fulfillments
+    const fulTableCheck = await db.get("SELECT 1 FROM sqlite_master WHERE type='table' AND name='refill_fulfillments'");
+    if (fulTableCheck) {
+      const rfCols = await db.all('PRAGMA table_info(refill_fulfillments)');
+      const rfColNames = new Set((rfCols || []).map((c: any) => (c.name || '').toLowerCase()));
+      if (!rfColNames.has('medicine_name')) {
+        try {
+          await db.run('ALTER TABLE refill_fulfillments ADD COLUMN medicine_name TEXT');
+        } catch (_) {}
+      }
+    }
+
     // 3. Check row count in active patient_refills
     let countRow = await db.get('SELECT COUNT(*) as c FROM patient_refills');
     result.totalChecked = countRow?.c || 0;
@@ -119,26 +131,37 @@ export async function reconnectPatientRefillsCatalog(
 
       // Try resolving name from fulfillment history if not on row
       if (!targetMedName) {
-        const ful = await db.get(
-          'SELECT medicine_name FROM refill_fulfillments WHERE refill_id = ? AND medicine_name IS NOT NULL LIMIT 1',
-          [row.id]
-        );
-        if (ful?.medicine_name) {
-          targetMedName = ful.medicine_name;
-        }
+        try {
+          const ful = await db.get(
+            'SELECT medicine_name FROM refill_fulfillments WHERE refill_id = ? AND medicine_name IS NOT NULL LIMIT 1',
+            [row.id]
+          );
+          if (ful?.medicine_name) {
+            targetMedName = ful.medicine_name;
+          }
+        } catch (_) {}
       }
 
       // Try resolving from pre-reconnect backup snapshot if present
       if (!targetMedName && hasPreReconnectBackup) {
-        const bakRow = await db.get(
-          'SELECT cart_product_name, medicine_name FROM _backup_patient_refills_pre_reconnect WHERE id = ?',
-          [row.id]
-        );
-        if (bakRow?.medicine_name) {
-          targetMedName = bakRow.medicine_name;
-        } else if (bakRow?.cart_product_name) {
-          targetMedName = bakRow.cart_product_name;
-        }
+        try {
+          const bakCols = await db.all('PRAGMA table_info(_backup_patient_refills_pre_reconnect)');
+          const bakColNames = new Set((bakCols || []).map((c: any) => (c.name || '').toLowerCase()));
+          const hasBakMedName = bakColNames.has('medicine_name');
+          const hasBakCartProd = bakColNames.has('cart_product_name');
+          if (hasBakMedName || hasBakCartProd) {
+            const selectCols = [hasBakCartProd ? 'cart_product_name' : "NULL as cart_product_name", hasBakMedName ? 'medicine_name' : "NULL as medicine_name"].join(', ');
+            const bakRow = await db.get(
+              `SELECT ${selectCols} FROM _backup_patient_refills_pre_reconnect WHERE id = ?`,
+              [row.id]
+            );
+            if (bakRow?.medicine_name) {
+              targetMedName = bakRow.medicine_name;
+            } else if (bakRow?.cart_product_name) {
+              targetMedName = bakRow.cart_product_name;
+            }
+          }
+        } catch (_) {}
       }
 
       // Try resolving from pre-migration backup database if provided
@@ -210,21 +233,25 @@ export async function reconnectPatientRefillsCatalog(
     // 8. Heal any orphaned refill_fulfillments
     const fulTableExists = await db.get("SELECT 1 FROM sqlite_master WHERE type='table' AND name='refill_fulfillments'");
     if (fulTableExists) {
-      const orphanedFulfillments = await db.all(`
-        SELECT rf.id, rf.medicine_name
-        FROM refill_fulfillments rf
-        LEFT JOIN medicines m ON m.id = rf.medicine_id
-        WHERE m.id IS NULL AND rf.medicine_name IS NOT NULL
-      `);
+      const rfCols = await db.all('PRAGMA table_info(refill_fulfillments)');
+      const hasRfMedName = (rfCols || []).some((c: any) => (c.name || '').toLowerCase() === 'medicine_name');
+      if (hasRfMedName) {
+        const orphanedFulfillments = await db.all(`
+          SELECT rf.id, rf.medicine_name
+          FROM refill_fulfillments rf
+          LEFT JOIN medicines m ON m.id = rf.medicine_id
+          WHERE m.id IS NULL AND rf.medicine_name IS NOT NULL
+        `);
 
-      for (const f of orphanedFulfillments) {
-        const match = await db.get(
-          'SELECT id FROM medicines WHERE name = ? COLLATE NOCASE LIMIT 1',
-          [f.medicine_name]
-        );
-        if (match?.id) {
-          await db.run('UPDATE refill_fulfillments SET medicine_id = ? WHERE id = ?', [match.id, f.id]);
-          result.remappedFulfillments++;
+        for (const f of orphanedFulfillments) {
+          const match = await db.get(
+            'SELECT id FROM medicines WHERE name = ? COLLATE NOCASE LIMIT 1',
+            [f.medicine_name]
+          );
+          if (match?.id) {
+            await db.run('UPDATE refill_fulfillments SET medicine_id = ? WHERE id = ?', [match.id, f.id]);
+            result.remappedFulfillments++;
+          }
         }
       }
     }

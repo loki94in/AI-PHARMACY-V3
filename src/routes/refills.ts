@@ -1288,7 +1288,9 @@ router.post('/confirm-patient', async (req, res) => {
             medicineName: r.medicine_name,
             status: cartRes.status,
             storeName: cartRes.line?.storeName,
-            qty: cartRes.qty,
+            qty: cartRes.line?.qty ?? cartRes.qty,
+            oldQty: cartRes.line?.oldQty,
+            addedQty: cartRes.line?.addedQty,
             distributorStock: cartRes.line?.distributorStock,
             message: cartRes.message
           });

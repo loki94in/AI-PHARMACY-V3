@@ -35,7 +35,9 @@ export interface OperationalModelOutput {
   distributorName?: string;
   quantity?: number;
   unit?: string;
-  destination?: 'live_cart' | 'pos_cart';
+  destination?: 'live_cart' | 'pos_cart' | 'inventory';
+  amount?: number;
+  allRefills?: boolean;
   targetPage?: string;
   targetTab?: string;
   automationId?: string;
@@ -119,8 +121,23 @@ User: "Rajesh ka refill due kab hai?"
 User: "expiry check karo 60 days"
 {"intent":"EXPIRY_AUDIT","confidence":0.95,"timeframeDays":60}
 
+User: "when was the last time we purchased Dolo 650"
+{"intent":"PURCHASE_QUERY","confidence":0.95,"medicineName":"Dolo 650"}
+
+User: "show last 15 days purchase of Augmentin"
+{"intent":"PURCHASE_QUERY","confidence":0.95,"medicineName":"Augmentin","timeframeDays":15}
+
+User: "add Rajesh refill all"
+{"intent":"REFILL_MANAGEMENT","confidence":0.95,"patientName":"Rajesh","allRefills":true,"actionRequested":"CONFIRM"}
+
+User: "add Azithral 4 strips in inventory"
+{"intent":"STOCK_ADJUSTMENT","confidence":0.95,"medicineName":"Azithral","quantity":4,"unit":"strips","destination":"inventory"}
+
 User: "share payment qr for Rajesh monthly due bill"
 {"intent":"CUSTOMER_DUE_QUERY","confidence":0.95,"patientName":"Rajesh"}
+
+User: "send credit reminder 100rs auto qr code to Rajesh"
+{"intent":"CUSTOMER_DUE_QUERY","confidence":0.95,"patientName":"Rajesh","amount":100}
 
 User: "Rajesh ka monthly due kitna hai"
 {"intent":"CUSTOMER_DUE_QUERY","confidence":0.95,"patientName":"Rajesh"}
@@ -269,7 +286,7 @@ export function parseOperationalIntent(raw: string): OperationalModelOutput {
       unit = rawUnit.trim().toLowerCase();
     }
 
-    let destination: 'live_cart' | 'pos_cart' | undefined;
+    let destination: 'live_cart' | 'pos_cart' | 'inventory' | undefined;
     const rawDest = parsed['destination'] ?? parsed['dest'];
     if (rawDest && typeof rawDest === 'string') {
       const d = rawDest.toLowerCase().trim();
@@ -277,7 +294,21 @@ export function parseOperationalIntent(raw: string): OperationalModelOutput {
         destination = 'live_cart';
       } else if (d === 'pos_cart' || d === 'pos' || d.includes('bill') || d.includes('pos')) {
         destination = 'pos_cart';
+      } else if (d === 'inventory' || d.includes('stock') || d.includes('inventory')) {
+        destination = 'inventory';
       }
+    }
+
+    let amount: number | undefined;
+    const rawAmount = parsed['amount'] ?? parsed['rs'] ?? parsed['rupees'];
+    if (rawAmount != null && !isNaN(Number(rawAmount))) {
+      amount = Math.max(1, Math.min(100000, Number(rawAmount)));
+    }
+
+    let allRefills: boolean | undefined;
+    const rawAllRefills = parsed['allrefills'] ?? parsed['all'];
+    if (rawAllRefills === true || rawAllRefills === 'true' || rawAllRefills === 1) {
+      allRefills = true;
     }
 
     let distributorName: string | undefined;
@@ -333,6 +364,8 @@ export function parseOperationalIntent(raw: string): OperationalModelOutput {
       quantity,
       unit,
       destination,
+      amount,
+      allRefills,
       targetPage,
       targetTab,
       automationId,

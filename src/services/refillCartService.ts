@@ -52,7 +52,7 @@ export interface RefillCartResult {
   refillId: number;
   medicineName: string;
   qty: number;
-  line?: { storeName: string; productName: string; qty: number; distributorStock?: string | number };
+  line?: { storeName: string; productName: string; qty: number; oldQty?: number; addedQty?: number; distributorStock?: string | number };
   linked: Array<{ storeName: string; productName: string; stock: string; inStock: boolean }>;
   candidates: RefillCartCandidate[];
 }
@@ -323,11 +323,28 @@ export async function processRefillCartItem(
   //    line by this refill's qty (cart qty + refill qty); nothing is reduced or replaced.
   const mine = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : undefined;
   if (mine && (!opts.qty || Number(opts.qty) === mine.qty)) {
+    let stockVal = (mine.raw as any)?.stock;
+    if (stockVal == null || String(stockVal).trim() === '') {
+      try {
+        const o = await pr.performPharmarackSearch(mine.productName || medicineName, Number(mine.storeId), false);
+        if (o.status === 'ok') {
+          const match = o.items.find((i: any) => Number(i.storeId) === Number(mine.storeId) && String(i.productCode) === String(mine.productCode));
+          if (match?.stock != null) stockVal = match.stock;
+        }
+      } catch (_) {}
+    }
     return {
       ...base,
       status: 'in_cart',
       message: `Already in the cart at ${mine.storeName} (qty ${mine.qty}).`,
-      line: { storeName: mine.storeName, productName: mine.productName, qty: mine.qty, distributorStock: (mine.raw as any)?.stock }
+      line: {
+        storeName: mine.storeName,
+        productName: mine.productName,
+        qty: mine.qty,
+        oldQty: mine.qty,
+        addedQty: 0,
+        distributorStock: stockVal
+      }
     };
   }
   let hit: CartLine | undefined;
@@ -343,8 +360,26 @@ export async function processRefillCartItem(
     }
   }
   if (hit) {
+    let stockVal = (hit.raw as any)?.stock;
+    if (stockVal == null || String(stockVal).trim() === '') {
+      try {
+        const o = await pr.performPharmarackSearch(hit.productName || medicineName, Number(hit.storeId), false);
+        if (o.status === 'ok') {
+          const match = o.items.find((i: any) => Number(i.storeId) === Number(hit.storeId) && String(i.productCode) === String(hit.productCode));
+          if (match?.stock != null) stockVal = match.stock;
+        }
+      } catch (_) {}
+    }
     const total = isMineUpdate ? qty : hit.qty + qty;
-    const lineInfo = { storeName: hit.storeName, productName: hit.productName, qty: total, distributorStock: (hit.raw as any)?.stock };
+    const addedAmount = isMineUpdate ? (qty > hit.qty ? qty - hit.qty : 0) : qty;
+    const lineInfo = {
+      storeName: hit.storeName,
+      productName: hit.productName,
+      qty: total,
+      oldQty: hit.qty,
+      addedQty: addedAmount,
+      distributorStock: stockVal
+    };
     if (opts.dryRun) {
       return { ...base, status: 'ready', message: `Ready: ${hit.storeName} already has ${hit.qty}; Add makes it ${total}.`, line: lineInfo };
     }
@@ -419,7 +454,14 @@ export async function processRefillCartItem(
       ...base,
       status: 'added',
       message: successMsg,
-      line: { storeName: after.storeName, productName: after.productName, qty: total }
+      line: {
+        storeName: after.storeName,
+        productName: after.productName,
+        qty: total,
+        oldQty: hit.qty,
+        addedQty: addedAmount,
+        distributorStock: stockVal
+      }
     };
   }
 
@@ -550,7 +592,7 @@ export async function processRefillCartItem(
       ...base, linked, candidates,
       status: 'ready',
       message: `Ready: ${qty} will go to ${chosen.link.store_name} (stock ${it.stock ?? '?'}). Press Add.`,
-      line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ''), qty, distributorStock: it.stock }
+      line: { storeName: String(chosen.link.store_name), productName: String(it.name || chosen.link.product_name || ''), qty, oldQty: 0, addedQty: qty, distributorStock: it.stock }
     };
   }
 
@@ -642,7 +684,7 @@ export async function processRefillCartItem(
       ...base, linked, candidates,
       status: 'added',
       message: `Added ${qty} to ${added.storeName}${note}.`,
-      line: { storeName: added.storeName, productName: added.productName, qty: added.qty, distributorStock: candItem.stock }
+      line: { storeName: added.storeName, productName: added.productName, qty: added.qty, oldQty: 0, addedQty: added.qty, distributorStock: candItem.stock }
     };
   }
 
@@ -668,6 +710,8 @@ export interface RefillCartSummaryRow {
   status: string;
   storeName?: string;
   qty?: number;
+  oldQty?: number;
+  addedQty?: number;
   distributorStock?: string | number;
   message?: string;
 }
@@ -714,7 +758,25 @@ export async function sendRefillCartSummary(
       const store = String((confirmed ? (r.storeName || db_.cart_store_name) : r.storeName) || 'Distributor').trim();
       const qty = r.qty ?? (confirmed ? db_.cart_qty : undefined);
       const stockStr = r.distributorStock != null && String(r.distributorStock).trim() !== '' ? ` (${r.distributorStock})` : '';
-      const line = `• ${name} × ${qty ?? '?'}${stockStr}${r.status === 'in_cart' ? ' (already in cart)' : ''}`;
+
+      let oldQty = r.oldQty;
+      let addedQty = r.addedQty;
+      if (oldQty == null && r.message) {
+        const m = r.message.match(/Increased at .*?:\s*(\d+)\s*\+\s*(\d+)\s*=\s*(\d+)/i);
+        if (m) {
+          oldQty = Number(m[1]);
+          addedQty = Number(m[2]);
+        }
+      }
+
+      let qtyDetail = '';
+      if (oldQty != null && addedQty != null && oldQty > 0 && addedQty > 0) {
+        qtyDetail = ` (old: ${oldQty}, added: ${addedQty})`;
+      } else if (r.status === 'in_cart') {
+        qtyDetail = ' (already in cart)';
+      }
+
+      const line = `• ${name} × ${qty ?? '?'}${qtyDetail}${stockStr}`;
       byStore.set(store, [...(byStore.get(store) || []), line]);
     } else {
       needs.push(`• ${name} — ${r.message || r.status}`);

@@ -57,7 +57,7 @@ if (isMaxCompression) {
 
 // Remote publishing is default whenever ADMIN_SECRET is available so running `npm run release` immediately notifies all client apps.
 // Pass `--local` if you explicitly want a local-only installer build without publishing.
-const isLocalExplicit = args.includes('--local');
+const isLocalExplicit = args.includes('--local') || args.includes('--offline') || args.includes('--no-remote') || args.includes('--no-vercel');
 const isRemote = !isLocalExplicit && (Boolean(process.env.ADMIN_SECRET) || args.includes('--remote') || args.includes('--publish') || (args.includes('git') && args.includes('vercel')));
 
 // ── Vercel / GitHub config ───────────────────────────────────────────────────
@@ -177,14 +177,16 @@ const rollout   = isPilot ? 'PILOT' : 'ALL';
 const releaseStartTime = performance.now();
 const formatElapsed = (start) => `${((performance.now() - start) / 1000).toFixed(1)}s`;
 
-// Local AI offline assets bundling: default to TRUE if verified local-ai assets exist, unless explicitly disabled
-const hasLocalAiAssets = fs.existsSync(path.join(rootDir, 'models', 'local-ai', 'llama-server.exe')) &&
-  fs.existsSync(path.join(rootDir, 'models', 'local-ai', 'qwen3-1.7b-q4_k_m.gguf'));
-const explicitCloudOnly = process.env.BUNDLE_LOCAL_AI === '0' || process.env.BUNDLE_LOCAL_AI === 'false' || args.includes('--no-local-ai') || args.includes('--cloud-only');
-const bundleLocalAi = !explicitCloudOnly && (process.env.BUNDLE_LOCAL_AI === '1' || process.env.BUNDLE_LOCAL_AI === 'true' || hasLocalAiAssets || args.includes('--bundle-local-ai') || args.includes('--offline'));
+// Local AI offline assets bundling: OPT-IN ONLY (defaults to lightweight fast releases).
+// Bundled ONLY when explicitly commanded via BUNDLE_LOCAL_AI=1 or --bundle-local-ai / --offline.
+const explicitCloudOnly = process.env.BUNDLE_LOCAL_AI === '0' || process.env.BUNDLE_LOCAL_AI === 'false' || args.includes('--no-local-ai') || args.includes('--cloud-only') || args.includes('--no-qwen') || args.includes('--offline');
+const explicitOffline = process.env.BUNDLE_LOCAL_AI === '1' || process.env.BUNDLE_LOCAL_AI === 'true' || args.includes('--bundle-local-ai') || args.includes('--offline');
+const bundleLocalAi = !explicitCloudOnly && explicitOffline;
 
 if (bundleLocalAi) {
   process.env.BUNDLE_LOCAL_AI = '1';
+} else {
+  process.env.BUNDLE_LOCAL_AI = '0';
 }
 
 console.log('\n=============================================================');

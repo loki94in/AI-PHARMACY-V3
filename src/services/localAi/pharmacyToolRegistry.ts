@@ -828,9 +828,17 @@ export class PharmacyToolRegistry {
     medicineId?: number;
     batchNo?: string;
     newQuantity?: number;
+    addQuantity?: number;
+    quantity?: number;
+    unit?: string;
+    mode?: 'set' | 'add';
     reason?: string;
     dbInstance?: any;
-  }): Promise<{ guidance: string; stagedProposal?: any }> {
+  }): Promise<{
+    guidance: string;
+    stagedProposal?: any;
+    candidateMedicines?: Array<{ id: number; name: string; packSize?: string; totalStock: number }>;
+  }> {
     const guidance =
       `To correct stock quantities in AI-PHARMACY-V3:\n\n` +
       `1. Perform a physical shelf count of the medicine and note the batch number.\n` +
@@ -844,29 +852,85 @@ export class PharmacyToolRegistry {
     let resolvedBatchNo = options.batchNo;
     let resolvedMedName = options.medicineName;
     const db = options.dbInstance;
+    let candidateMedicines: Array<{ id: number; name: string; packSize?: string; totalStock: number }> = [];
 
-    if (!resolvedMedId && resolvedMedName && db) {
+    if (db && (!resolvedMedId || !resolvedMedName)) {
       try {
-        const medRow = await db.get(
-          `SELECT id, name FROM medicines WHERE name LIKE ? OR canonical_name LIKE ? ORDER BY id DESC LIMIT 1`,
-          [`%${resolvedMedName}%`, `%${resolvedMedName}%`]
-        );
-        if (medRow) {
-          resolvedMedId = medRow.id;
-          resolvedMedName = medRow.name;
-          if (!resolvedBatchNo) {
-            const batchRow = await db.get(
-              `SELECT batch_no FROM inventory_master WHERE medicine_id = ? ORDER BY id DESC LIMIT 1`,
-              [medRow.id]
-            );
-            if (batchRow) resolvedBatchNo = batchRow.batch_no;
+        const cleanTerm = (resolvedMedName || '').trim();
+        if (cleanTerm) {
+          const rows = await db.all(
+            `SELECT id, name, pack_size, total_stock FROM medicines WHERE name LIKE ? OR canonical_name LIKE ? ORDER BY total_stock DESC LIMIT 6`,
+            [`%${cleanTerm}%`, `%${cleanTerm}%`]
+          ).catch(() => []);
+
+          if (rows && rows.length > 0) {
+            candidateMedicines = rows.map((r: any) => ({
+              id: Number(r.id),
+              name: String(r.name),
+              packSize: r.pack_size ? String(r.pack_size) : undefined,
+              totalStock: Number(r.total_stock || 0)
+            }));
+
+            // Exact match priority or fallback to primary row
+            const exact = rows.find((r: any) => String(r.name).toLowerCase() === cleanTerm.toLowerCase());
+            const chosen = exact || rows[0];
+            resolvedMedId = chosen.id;
+            resolvedMedName = chosen.name;
+
+            if (!resolvedBatchNo) {
+              const batchRow = await db.get(
+                `SELECT batch_no FROM inventory_master WHERE medicine_id = ? ORDER BY id DESC LIMIT 1`,
+                [chosen.id]
+              ).catch(() => null);
+              if (batchRow) resolvedBatchNo = batchRow.batch_no;
+            }
+
+            // Calculate pack size and quantities
+            let packSizeNum = 1;
+            const rawPack = String(chosen.pack_size || '');
+            const packMatch = rawPack.match(/(\d+)/);
+            if (packMatch) {
+              packSizeNum = Math.max(1, parseInt(packMatch[1], 10));
+            } else if (/strip/i.test(options.unit || '')) {
+              packSizeNum = 10;
+            }
+
+            const inputQty = options.addQuantity ?? options.quantity ?? options.newQuantity ?? 1;
+            const isStrip = /strip/i.test(options.unit || '');
+            const isAdditionMode = options.mode === 'add' || isStrip || options.addQuantity != null;
+
+            const unitsToAdd = isStrip ? (inputQty * packSizeNum) : inputQty;
+            const currentStock = Number(chosen.total_stock || 0);
+            const targetQuantity = isAdditionMode ? (currentStock + unitsToAdd) : (options.newQuantity ?? currentStock);
+
+            const summaryText = isAdditionMode
+              ? `Add ${inputQty} ${isStrip ? 'strip(s)' : 'unit(s)'} (${unitsToAdd} units) of ${resolvedMedName} to live inventory (Current: ${currentStock} → New Total: ${targetQuantity} units)`
+              : `Adjust stock for ${resolvedMedName} (Batch: ${resolvedBatchNo || 'General'}) to ${targetQuantity} units`;
+
+            stagedProposal = {
+              id: `stock_adj_${Date.now()}`,
+              type: 'ADJUST_STOCK',
+              summary: summaryText,
+              data: {
+                medicineId: resolvedMedId,
+                medicineName: resolvedMedName,
+                batchNo: resolvedBatchNo || 'DEFAULT',
+                newQuantity: targetQuantity,
+                addedQuantity: unitsToAdd,
+                currentQuantity: currentStock,
+                unit: options.unit || (isStrip ? 'strips' : 'units'),
+                mode: isAdditionMode ? 'add' : 'set',
+                reason: options.reason || 'Physical count adjustment'
+              },
+              requiresConfirmation: true,
+              status: 'PENDING_CONFIRMATION'
+            };
           }
         }
       } catch (_) {}
-    }
-
-    if (resolvedMedId && typeof options.newQuantity === 'number') {
+    } else if (resolvedMedId && typeof options.newQuantity === 'number') {
       stagedProposal = {
+        id: `stock_adj_${Date.now()}`,
         type: 'ADJUST_STOCK',
         summary: `Adjust stock for ${resolvedMedName || `medicine #${resolvedMedId}`} (Batch: ${resolvedBatchNo || 'General'}) to ${options.newQuantity} units`,
         data: {
@@ -875,11 +939,13 @@ export class PharmacyToolRegistry {
           batchNo: resolvedBatchNo || 'DEFAULT',
           newQuantity: options.newQuantity,
           reason: options.reason || 'Physical count adjustment'
-        }
+        },
+        requiresConfirmation: true,
+        status: 'PENDING_CONFIRMATION'
       };
     }
 
-    return { guidance, stagedProposal };
+    return { guidance, stagedProposal, candidateMedicines };
   }
 
   /**
@@ -1388,9 +1454,11 @@ export class PharmacyToolRegistry {
    */
   public async getPurchaseRateComparison(
     medicineQuery: string,
-    dbInstance?: any
+    dbInstance?: any,
+    options?: { timeframeDays?: number }
   ): Promise<{
     medicineQuery: string;
+    timeframeDays?: number;
     records: Array<{
       medicineName: string;
       batchNo: string;
@@ -1401,11 +1469,14 @@ export class PharmacyToolRegistry {
       invoiceDate: string;
       distributorName: string;
     }>;
+    similarMedicines: string[];
   }> {
     const db = dbInstance || (await dbManager.getConnection());
-    const term = `%${(medicineQuery || '').trim()}%`;
+    const rawTerm = (medicineQuery || '').trim();
+    const term = `%${rawTerm}%`;
+    const timeframeDays = options?.timeframeDays;
 
-    const query = `
+    let query = `
       SELECT pi.batch_no as batchNo, pi.cost_price as costPrice, pi.mrp, pi.quantity,
              p.date as invoiceDate, p.invoice_no as invoiceNo,
              COALESCE(d.name, 'Standard Distributor') as distributorName,
@@ -1414,12 +1485,21 @@ export class PharmacyToolRegistry {
       JOIN purchases p ON p.id = pi.purchase_id
       JOIN medicines m ON m.id = pi.medicine_id
       LEFT JOIN distributors d ON d.id = p.distributor_id
-      WHERE m.name LIKE ? OR m.generic_name LIKE ?
+      WHERE (m.name LIKE ? OR m.generic_name LIKE ?)
+    `;
+    const params: any[] = [term, term];
+
+    if (timeframeDays && timeframeDays > 0) {
+      query += ` AND p.date >= date('now', '-' || ? || ' days', 'localtime')`;
+      params.push(timeframeDays);
+    }
+
+    query += `
       ORDER BY p.date DESC
       LIMIT 15
     `;
 
-    const rows: any[] = await db.all(query, [term, term]).catch(() => []);
+    const rows: any[] = await db.all(query, params).catch(() => []);
 
     const records = rows.map(r => ({
       medicineName: String(r.medicineName || ''),
@@ -1432,9 +1512,22 @@ export class PharmacyToolRegistry {
       distributorName: String(r.distributorName || 'Standard Distributor')
     }));
 
+    // If no purchase records found or term provided, look up similar medicines in catalog/inventory
+    let similarMedicines: string[] = [];
+    if (records.length === 0 && rawTerm.length >= 2) {
+      const prefix = rawTerm.length > 4 ? rawTerm.slice(0, 4) : rawTerm;
+      const simRows = await db.all(
+        `SELECT DISTINCT name FROM medicines WHERE name LIKE ? OR canonical_name LIKE ? OR generic_name LIKE ? ORDER BY total_stock DESC LIMIT 5`,
+        [`%${prefix}%`, `%${prefix}%`, `%${prefix}%`]
+      ).catch(() => []);
+      similarMedicines = simRows.map((r: any) => String(r.name || ''));
+    }
+
     return {
       medicineQuery,
-      records
+      timeframeDays,
+      records,
+      similarMedicines
     };
   }
 

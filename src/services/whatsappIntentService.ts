@@ -5732,7 +5732,7 @@ export async function handleInbound(msg: any): Promise<void> {
           // Automatically add confirmed refill medicines directly to Pharmarack Live Cart
           // (same workflow as manual CRM "Order to Cart": processRefillCartItem ->
           // addItemsToPharmarackCart -> verified re-read -> patient_refills.cart_*).
-          const cartSummaryRows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; distributorStock?: string | number; message?: string }> = [];
+          const cartSummaryRows: Array<{ refillId: number; medicineName: string; status: string; storeName?: string; qty?: number; oldQty?: number; addedQty?: number; distributorStock?: string | number; message?: string }> = [];
           try {
             const { processRefillCartItem, sendRefillCartSummary } = await import('./refillCartService.js');
             for (const r of pendingRefills) {
@@ -5747,7 +5747,9 @@ export async function handleInbound(msg: any): Promise<void> {
                   medicineName: r.medicine_name,
                   status: cartRes.status,
                   storeName: cartRes.line?.storeName,
-                  qty: cartRes.qty,
+                  qty: cartRes.line?.qty ?? cartRes.qty,
+                  oldQty: cartRes.line?.oldQty,
+                  addedQty: cartRes.line?.addedQty,
                   distributorStock: cartRes.line?.distributorStock,
                   message: cartRes.message
                 });

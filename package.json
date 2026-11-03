@@ -1,6 +1,6 @@
 {
   "name": "ai-pharmacy",
-  "version": "0.1.202",
+  "version": "0.1.204",
   "type": "module",
   "bin": "dist-pkg/server.cjs",
   "scripts": {
@@ -58,7 +58,9 @@
     "fuses:verify": "node scripts/flip-electron-fuses.mjs --verify",
     "test:e2e": "e2e run",
     "test:e2e:headed": "e2e run --headed --workers 1",
-    "test:e2e:live": "e2e run --headed --workers 1"
+    "test:e2e:live": "e2e run --headed --workers 1",
+    "offline": "node scripts/release.mjs --local --no-local-ai",
+    "release:offline": "node scripts/release.mjs --local --no-local-ai"
   },
   "dependencies": {
     "@types/compression": "^1.8.1",

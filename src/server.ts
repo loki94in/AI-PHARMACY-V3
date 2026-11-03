@@ -383,12 +383,26 @@ app.post('/api/system/shutdown', (req, res) => {
   }, 100);
 });
 
+// Alias for Electron client-exit shutdown requests
+app.post('/api/system/client-exit', (_req, res) => {
+  console.log('[System] Received client-exit request from Electron. Terminating server gracefully...');
+  if (pendingShutdownTimer) {
+    clearTimeout(pendingShutdownTimer);
+    pendingShutdownTimer = null;
+  }
+  res.json({ success: true, message: 'Shutting down AI Pharmacy OS...' });
+  setTimeout(() => {
+    void gracefulShutdown('CLIENT_EXIT');
+  }, 100);
+});
+
 // Client-initiated 1-click silent update install and auto-restart
-app.post('/api/system/apply-update', async (_req, res) => {
+app.post('/api/system/apply-update', async (req, res) => {
   console.log('[System] Received apply-update request. Installing update and restarting...');
   try {
+    const route = typeof req.body?.route === 'string' ? req.body.route : undefined;
     const { autoUpdateService } = await import('./services/autoUpdateService.js');
-    const result = await autoUpdateService.applyUpdate();
+    const result = await autoUpdateService.applyUpdate({ route });
     res.json(result);
     setTimeout(() => {
       void gracefulShutdown('APPLY_UPDATE');
@@ -397,6 +411,30 @@ app.post('/api/system/apply-update', async (_req, res) => {
     console.error('[System] Failed to apply update:', err.message);
     res.status(400).json({ success: false, error: err.message });
   }
+});
+
+// Session checkpoint endpoints for Coucou-parity state resumption
+app.get('/api/system/session-checkpoint', async (_req, res) => {
+  const { getSessionCheckpoint } = await import('./services/sessionCheckpointService.js');
+  res.json({ checkpoint: getSessionCheckpoint() });
+});
+
+app.post('/api/system/session-checkpoint', async (req, res) => {
+  const { saveSessionCheckpoint } = await import('./services/sessionCheckpointService.js');
+  saveSessionCheckpoint(req.body || {});
+  res.json({ success: true });
+});
+
+app.post('/api/system/session-checkpoint/resumed', async (_req, res) => {
+  const { markCheckpointResumed } = await import('./services/sessionCheckpointService.js');
+  markCheckpointResumed();
+  res.json({ success: true });
+});
+
+app.delete('/api/system/session-checkpoint', async (_req, res) => {
+  const { clearSessionCheckpoint } = await import('./services/sessionCheckpointService.js');
+  clearSessionCheckpoint();
+  res.json({ success: true });
 });
 
 app.use('/api/auth', lazyRoute(() => import('./routes/auth.js'), 'hot'));

@@ -12,6 +12,7 @@ export interface CreditReminderOptions {
   skipDedupe?: boolean;
   customMessage?: string;
   isManual?: boolean;
+  amountOverride?: number;
 }
 
 export interface CreditReminderResult {
@@ -97,9 +98,11 @@ export class CreditReminderService {
       billsBreakdownStr += `\n`;
     }
 
-    const finalOutstanding = customer.credit_balance !== undefined && customer.credit_balance !== null && Number(customer.credit_balance) > 0
-      ? Number(customer.credit_balance)
-      : computedTotal;
+    const finalOutstanding = options?.amountOverride && Number(options.amountOverride) > 0
+      ? Number(options.amountOverride)
+      : (customer.credit_balance !== undefined && customer.credit_balance !== null && Number(customer.credit_balance) > 0
+          ? Number(customer.credit_balance)
+          : computedTotal);
 
     if (finalOutstanding < 1) {
       return { success: true, skipped: true, reason: 'Zero or negative outstanding balance' };
