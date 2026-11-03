@@ -1213,6 +1213,8 @@ export const api = {
   }),
   getMedicineQuickDetails: (id: number) => apiClient.get(`/medicines/${id}/quick-details`).then(res => res.data),
   getCompositionIntelligence: (id: number) => apiClient.get(`/medicines/${id}/composition-intelligence`).then(res => res.data),
+  getAlternativesHeadsUp: (params: { query?: string; medicineId?: number }) =>
+    apiClient.get('/medicines/alternatives-heads-up', { params }).then(res => res.data),
   checkInteractions: (medicineIds: number[]) => apiClient.post('/clinical/check-interactions', { medicine_ids: medicineIds }).then(res => res.data),
   searchBySalt: (salt: string) => apiClient.get('/clinical/search-by-salt', { params: { salt } }).then(res => res.data),
 

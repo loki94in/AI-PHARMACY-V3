@@ -861,46 +861,66 @@ export class ConversationalAgentEngine {
         toolExecutions.push({ tool: 'findAlternatives', result: altResult });
 
         if (altResult.candidates && altResult.candidates.length > 0) {
-          const inStockAlts = altResult.candidates.filter(c => c.inStock);
+          const inStockAlts = altResult.inStockCandidates || altResult.candidates.filter(c => c.inStock);
+          const outOfStockAlts = altResult.outOfStockCandidates || altResult.candidates.filter(c => !c.inStock);
           const facts = {
             sourceMedicine: altResult.sourceMedicine,
             activeComposition: altResult.sourceSalt,
             inStock: altResult.sourceInStock,
-            suitableCandidatesCount: altResult.candidates.length,
-            topCandidates: altResult.candidates.slice(0, 4).map(c => ({
+            inStockCount: inStockAlts.length,
+            outOfStockCount: outOfStockAlts.length,
+            topInStockCandidates: inStockAlts.slice(0, 4).map(c => ({
               name: c.name,
-              inStock: c.inStock,
               stockQty: c.stockQuantity,
-              mrp: c.mrp,
               rackLocation: c.rackLocation,
-              differenceNote: c.differenceNote
+              mrp: c.mrp,
+              manufacturer: c.manufacturer
+            })),
+            outOfStockSample: outOfStockAlts.slice(0, 3).map(c => ({
+              name: c.name,
+              mrp: c.mrp,
+              manufacturer: c.manufacturer
             }))
           };
-          const fallback = `🔬 Alternatives for *${altResult.sourceMedicine}* (${altResult.sourceSalt || 'same salt'}):\n` +
-            (altResult.sourceInStock ? `• Available in stock\n` : `• Currently out of stock\n`) +
-            `• Top in-stock candidate: ${inStockAlts.length > 0 ? `${inStockAlts[0].name} (Qty: ${inStockAlts[0].stockQuantity}, MRP ₹${inStockAlts[0].mrp.toFixed(2)})` : 'None in stock'}\n\n` +
-            `⚠️ Pharmacist Verification Required before dispensing substitute.`;
+          const fallback = (altResult.headsUpSummary ||
+            `🔬 Alternatives for *${altResult.sourceMedicine}* (${altResult.sourceSalt || 'same salt'}):\n` +
+            (altResult.sourceInStock ? `• Available in stock on shelf\n` : `• Currently out of stock\n`) +
+            (inStockAlts.length > 0
+              ? `🟢 *What We Have (In Stock):* ${inStockAlts.map(a => `${a.name} (${a.stockQuantity} in stock${a.rackLocation ? ` | ${a.rackLocation}` : ''})`).join(', ')}\n`
+              : `🟢 *What We Have:* None in stock\n`) +
+            (outOfStockAlts.length > 0
+              ? `🔴 *What We Don't (Catalog):* ${outOfStockAlts.slice(0, 3).map(a => a.name).join(', ')}\n`
+              : '')) +
+            `\n\n⚠️ Pharmacist Verification Required before dispensing substitute.`;
 
           replyText = await this.synthesizeGroundedResponse(
             userText,
             facts,
-            'Explain if the requested medicine is available, mention its active salt composition, and recommend the best in-stock alternatives with rack location and price in 1-2 conversational sentences.',
+            'Give a clear heads-up dividing alternatives into What We Have (in-stock with rack and price) and What We Don\'t (out-of-stock brands) in 2-3 concise conversational sentences.',
             fallback
           );
 
-          altResult.candidates.forEach((cand, idx) => {
+          altResult.candidates.forEach(cand => {
+            const rackStr = cand.rackLocation ? ` | 📍 ${cand.rackLocation}` : '';
             cards.push({
               id: cand.id,
               title: cand.name,
-              subtitle: `${cand.dosageForm || 'Tablet'} | MRP ₹${cand.mrp.toFixed(2)} | By ${cand.manufacturer || 'Pharma'}`,
-              badge: cand.inStock ? `${cand.stockQuantity} in stock` : 'Out of Stock',
-              badgeColor: cand.inStock ? 'green' : 'amber'
+              subtitle: `${cand.dosageForm || 'Tablet'} | MRP ₹${cand.mrp.toFixed(2)}${rackStr} | By ${cand.manufacturer || 'Pharma'}`,
+              badge: cand.inStock ? `🟢 ${cand.stockQuantity} in stock` : '🔴 Out of Stock',
+              badgeColor: cand.inStock ? 'green' : 'red',
+              details: {
+                inStock: cand.inStock,
+                stockQuantity: cand.stockQuantity,
+                rackLocation: cand.rackLocation,
+                genericName: cand.genericName,
+                mrp: cand.mrp
+              }
             });
           });
 
           suggestedFollowUps = [
-            `Show details of 1 (${altResult.candidates[0]?.name})`,
-            altResult.candidates[1] ? `Show details of 2 (${altResult.candidates[1]?.name})` : 'Check distributor availability',
+            inStockAlts.length > 0 ? `Select ${inStockAlts[0].name} for bill` : 'Stage shortage to want list',
+            'Check distributor availability on Pharmarack',
             'Back to catalog'
           ];
         } else {

@@ -564,6 +564,30 @@ export const UnifiedOperationsAssistantModal: React.FC<UnifiedOperationsAssistan
                               Open record <ArrowRight size={10} />
                             </button>
                           )}
+                          {!card.actionUrl && card.details && typeof card.details.inStock === 'boolean' && (
+                            <div className="flex items-center gap-2 mt-1">
+                              {card.details.inStock ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigate(`/sales?search=${encodeURIComponent(card.title)}`);
+                                    onClose();
+                                  }}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer bg-transparent border-none p-0 text-left"
+                                >
+                                  Select in POS <ArrowRight size={10} />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSendMessage(`Add 5 ${card.title} to live cart shortage want list`)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer bg-transparent border-none p-0 text-left"
+                                >
+                                  Stage to Want List <ArrowRight size={10} />
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}

@@ -3,6 +3,7 @@ import { dbManager } from '../database/connection.js';
 import { inventoryCache } from '../services/inventoryCache.js';
 import { parsePackSizeFromPackaging } from '../utils/packaging.js';
 import { normalizeMedicineName } from '../utils/nameNormalizer.js';
+import { pharmacyToolRegistry } from '../services/localAi/pharmacyToolRegistry.js';
 
 const router = express.Router();
 
@@ -612,6 +613,38 @@ router.get('/medicines/compact', async (_req, res) => {
     await dbManager.close();
     console.error('Failed to get compact inventory:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET live alternatives heads-up dividing candidates into "What We Have" (in stock) vs "What We Don't" (out of stock)
+router.get('/medicines/alternatives-heads-up', async (req, res) => {
+  try {
+    const query = String(req.query.query || '').trim();
+    const medicineId = req.query.medicineId ? Number(req.query.medicineId) : undefined;
+
+    if (!query && !medicineId) {
+      return res.status(400).json({ error: 'Either query or medicineId is required' });
+    }
+
+    const db = await dbManager.getConnection();
+    let searchQuery = query;
+
+    if (medicineId && !searchQuery) {
+      const medRow = await db.get('SELECT name FROM medicines WHERE id = ?', [medicineId]).catch(() => null);
+      if (medRow?.name) {
+        searchQuery = medRow.name;
+      }
+    }
+
+    if (!searchQuery) {
+      return res.status(404).json({ error: 'Medicine not found' });
+    }
+
+    const result = await pharmacyToolRegistry.findAlternatives(searchQuery, db);
+    res.json(result);
+  } catch (error: any) {
+    console.error('Failed to get alternatives heads-up:', error);
+    res.status(500).json({ error: error.message || 'Internal server error' });
   }
 });
 

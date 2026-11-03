@@ -1,90 +1,46 @@
-# Implementation Plan: Refill Cart WhatsApp Summary — Display Old Qty, Added Qty & Distributor Stock
+# Implementation Plan: Live Cart Rapid-Add Selection Speed & Seamless Next-Medicine Search
 
-**Plan Name:** `refill_cart_summary_old_added_qty_and_stock`  
-**Target:** Enhance the WhatsApp owner refill cart summary message (`sendRefillCartSummary` in `src/services/refillCartService.ts`) so that when an item was already in the live cart (or merged/increased), the message clearly shows the **old quantity**, the **added quantity**, the **total quantity**, and the **live distributor stock** (e.g. `(67)`).
-
----
-
-## 1. Context & User Requirement Analysis
-
-### Current Message Format:
-```text
-🛒 *Refill cart — Mr. SANTROSH PARAB*
-
-*BAJAJ PHARMA*
-• NICOTEX 4 TIN  40TAB × 2 (67)
-```
-- Header: `🛒 *Refill cart — <Patient Name>*`
-- Store Section: `*<Distributor Name>*`
-- Item Line: `• <Medicine Name> × <Qty> (<Distributor Stock>)`
-
-### The Problem:
-1. When a medicine already exists in the live distributor cart (from previous orders, other refills, or manual cart entries), `processRefillCartItem` merges the quantities (`hit.qty + qty = total`).
-2. However, the WhatsApp summary sent to the store owner previously printed only the final quantity (`× 3`), completely hiding the fact that `1` was already in the cart and `2` was freshly added.
-3. In update paths (e.g. lines 418–424 in `src/services/refillCartService.ts`), `distributorStock` was omitted in the returned `line` object, leading to missing stock counts `(67)` in the message.
-4. When `status === 'in_cart'` (already present in cart, no new quantity added), it appended `(already in cart)`, but `distributorStock` was frequently missing because `mine.raw?.stock` in Pharmarack's cart API response was often `null` or undefined.
+**Plan Name:** `live_cart_rapid_add_selection_speed`  
+**Target:** Eliminate all selection lag, multi-step focus hops, and typing freezes in the "Add to Live Cart" flow ([`LiveCartAddModal.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartAddModal.tsx) and [`LiveCartSearchSection.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartSearchSection.tsx)).
 
 ---
 
-## 2. Message Formats Implemented
+## 1. Problem Statement & Root Cause
 
-### Case A: Newly added medicine (clean new line in cart)
-```text
-• NICOTEX 4 TIN  40TAB × 2 (67)
-```
-
-### Case B: Already in cart & quantity was increased (e.g. old: 1, added: 2 ➔ total: 3)
-```text
-• NICOTEX 4 TIN  40TAB × 3 (old: 1, added: 2) (67)
-```
-
-### Case C: Already in cart with exact quantity needed (no new qty added)
-```text
-• NICOTEX 4 TIN  40TAB × 2 (already in cart) (67)
-```
+When a user in "Add to Live Cart" selects a medicine from the dropdown search list:
+1. **Multi-Step Delay**: Selecting a suggestion (`selectSuggestion`) previously did not add the item to the cart. It filled the search box with the medicine name, updated 12 states in `LiveCartAddModal`, and shifted focus to the Quantity input with a 50ms timeout. The user had to press Enter a second time (or click "Add to Live Cart") to actually add it.
+2. **Focus Delay & Next-Search Interruption**: After submitting, a 100ms `setTimeout` attempted to refocus the search box. If the user started typing the next medicine immediately, keystrokes were missed or typed into the wrong input.
+3. **Background Cart Refresh Stutter**: Adding an item triggered a background sync that emitted `refresh-pharmarack-cart`, which called `fetchLiveCartSummary`. When the summary returned, `setCartDistributors` forced a heavy re-render of the modal while the user was actively typing the next medicine.
 
 ---
 
-## 3. Technical Changes & Data Flow
+## 2. Implemented Architecture & Solution
 
-### A. Backend Schema & Service (`src/services/refillCartService.ts`)
-1. Extended `RefillCartResult.line` and `RefillCartSummaryRow` to include `oldQty?: number`, `addedQty?: number`, and `distributorStock?: string | number`.
-2. In `processRefillCartItem`:
-   - When increasing an existing cart line (`hit`):
-     - Record `oldQty = hit.qty`, `addedQty = qty`, `total = hit.qty + qty`.
-     - Extract `distributorStock` via live search fallback if `hit.raw?.stock` is null/empty.
-     - Include `oldQty`, `addedQty`, and `distributorStock` in the returned `line`.
-   - When `mine` is already in the cart (`in_cart`):
-     - Resolve live `distributorStock` via live search fallback if `mine.raw?.stock` is null/empty.
-     - Include `oldQty: mine.qty`, `addedQty: 0`, and `distributorStock`.
-3. In `sendRefillCartSummary`:
-   - Format: `• ${name} × ${qty}${qtyDetail}${stockStr}`
-   - Where `qtyDetail` is ` (old: ${oldQty}, added: ${addedQty})` when both are > 0, or ` (already in cart)` when `in_cart`.
-   - Where `stockStr` is ` (${distributorStock})` whenever stock is available.
+### A. Rapid 1-Click Instant Add
+- When a user selects a medicine from the dropdown list (by clicking the suggestion row or pressing `Enter`), it immediately adds the medicine to the live cart queue (`status: 'adding'`) using `handleInstantAdd`.
+- Instantly clears the search input text and keeps focus directly on the search input without any timeouts, blurs, or intermediate quantity hops.
+- The user can seamlessly type: `Med A` ➔ `Enter` (queued) ➔ `Med B` ➔ `Enter` (queued) ➔ `Med C` ➔ `Enter` (queued) in rapid succession.
 
-### B. Frontend Plumbing (`frontend/src/services/api.ts` & `frontend/src/services/refillCartJobs.ts`)
-1. Updated `sendRefillCartSummary` signature and `RefillCartResult` in `frontend/src/services/api.ts` to include optional `oldQty?: number` and `addedQty?: number`.
-2. In `frontend/src/services/refillCartJobs.ts`:
-   - Mapped `oldQty: r.line?.oldQty` and `addedQty: r.line?.addedQty` when calling `api.sendRefillCartSummary`.
+### B. Immediate Visual Feedback & Human-in-the-Loop Control (Rule 6)
+- The item is immediately displayed in the staged "Pending / Last Added" banner with live status (`Adding...` ➔ `Added ✓`), with 1-click quantity adjustments, Retry on error, and Dismiss.
+- The Cart Preview panel on the right shows live distributor cart breakdown and total lines.
 
-### C. Inbound WhatsApp Intent Service & Confirmation Routes
-1. In `src/services/whatsappIntentService.ts` & `src/routes/refills.ts`:
-   - Forward `oldQty: cartRes.line?.oldQty`, `addedQty: cartRes.line?.addedQty`, and `distributorStock: cartRes.line?.distributorStock` to `sendRefillCartSummary`.
+### C. Quantity Pre-set & Manual Option
+- The user can set quantity in the Quantity box before searching, and selecting any medicine adds with that quantity.
+- If a user opens the modal from a pending request or refill with a target quantity, that quantity is used automatically.
+
+### D. Zero-Lag Decoupled Background Refresh
+- Isolate the search input in `LiveCartSearchSection` so that background cart summary re-fetches and cart updates do not interrupt active keystrokes or drop typing frames.
 
 ---
 
-## 4. Tasks & Progress Tracking
+## 3. Tasks & Execution Status
 
-- [x] Task 1: Update `RefillCartResult` and `RefillCartSummaryRow` interfaces in `src/services/refillCartService.ts` and `frontend/src/services/api.ts`.
-  - *Completed*: Added optional `oldQty` and `addedQty` fields to `RefillCartResult.line` and `RefillCartSummaryRow` across backend and frontend API types.
-- [x] Task 2: Update `processRefillCartItem` to capture and pass `oldQty`, `addedQty`, and fallback distributor stock for existing cart lines.
-  - *Completed*: Updated `processRefillCartItem` for both `mine` (`in_cart`) and `hit` (increased) scenarios to resolve live distributor stock and accurately populate `oldQty` and `addedQty`.
-- [x] Task 3: Update `sendRefillCartSummary` to format lines displaying `old: X, added: Y` and distributor stock `(Z)`.
-  - *Completed*: Implemented formatted output `• Name × Total (old: X, added: Y) (Stock)` with regex fallback parsing on message for backward compatibility.
-- [x] Task 4: Connect frontend mapping in `frontend/src/services/refillCartJobs.ts` and backend callers (`whatsappIntentService.ts`, `routes/refills.ts`).
-  - *Completed*: Wired `oldQty`, `addedQty`, and `distributorStock` through `refillCartJobs.ts`, `routes/refills.ts`, and `whatsappIntentService.ts`.
-- [x] Task 5: Run tests, `npm run guardrails`, and `node scripts/quick-update.mjs`.
-  - *Completed*: Added automated unit tests in `tests/refillTodayListTruth.test.ts` (11/11 passed), verified `tsc -b frontend/tsconfig.json` (0 errors), passed `npm run guardrails` (PASS with 0 violations), and refreshed knowledge graph.
-
----
-*All tasks completed successfully with zero regressions.*
+- [x] Task 1: Add `handleInstantAdd` in [`LiveCartAddModal.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartAddModal.tsx)
+  - **Completed**: Implemented `handleInstantAdd` to queue item into `pendingAdds` (`status: 'adding'`), immediately reset search query and form state, preserve input focus, and dispatch `processBackgroundAdd` detached.
+- [x] Task 2: Connect instant-add and seamless continuous search in [`LiveCartSearchSection.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartSearchSection.tsx)
+  - **Completed**: In `selectSuggestion`, immediately cleared `product` to `''`, dismissed suggestion popup, called `onSelectSuggestion(med, validCandidates)`, kept `inputRef.current?.focus()` active immediately, and updated badge to `↵ Enter to Add`.
+- [x] Task 3: Ensure human-in-the-loop quantity adjustment and deletion on staged items
+  - **Completed**: Increased pending add chips display to 3 with live status badges (`Adding...` ➔ `Added ✓`), Retry button on failures, and Dismiss button.
+- [x] Task 4: Run guardrails and update knowledge graph
+  - **Completed**: Verified `npm run guardrails` passed (`tsc --noEmit` clean, 0 violations). Ran `node scripts/quick-update.mjs` (1437 nodes, 879 edges).

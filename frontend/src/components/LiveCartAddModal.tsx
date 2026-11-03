@@ -1326,38 +1326,6 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     lastAddedDistributorRef.current = lastAddedDistributor;
   }, [cartDistributors, lastAddedDistributor]);
 
-  const selectSuggestion = useCallback((med: SuggestionMedicine, allCandidates: SuggestionMedicine[]) => {
-    if (med.isErrorMessage) return;
-    isSelectingRef.current = true;
-    
-    // Save current suggestions candidate list for cheaper option cross-checking
-    setCandidateOptions(allCandidates);
-    
-    setProduct(med.medicine_name);
-    setSelectedDistributor(med.distributor || '');
-    setSelectedRate(med.rate !== undefined && med.rate !== null ? med.rate : '');
-    setSelectedMrp(med.mrp !== undefined && med.mrp !== null ? med.mrp : '');
-    setSelectedMapped(med.mapped !== undefined ? med.mapped : null);
-    setSelectedScheme(med.scheme || '');
-    setSelectedProductId(med.productId || '');
-    setSelectedStoreId(med.storeId || '');
-    setSelectedProductCode(med.productCode || '');
-    setSelectedCompany(med.company || '');
-    setSelectedPackaging(med.packaging || '');
-    setSelectedMedicineName(med.medicine_name || '');
-
-    // Apply last order / pending target quantity upon selecting a medicine from suggestions
-    if (pendingTargetQty && pendingTargetQty > 0) {
-      setQty(pendingTargetQty);
-      setPendingTargetQty(null);
-    }
-
-    setTimeout(() => {
-      qtyInputRef.current?.focus();
-      qtyInputRef.current?.select();
-    }, 50);
-  }, [pendingTargetQty]);
-
   const handleClearSelectedMedicine = useCallback(() => {
     if (selectedProductId || selectedDistributor) {
       setSelectedDistributor('');
@@ -1443,6 +1411,111 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     setPendingAddStatus(id, 'adding');
     void processBackgroundAdd(record);
   };
+
+  // Instant 1-click addition for rapid medicine-after-medicine typing
+  const handleInstantAdd = useCallback((med: SuggestionMedicine, allCandidates?: SuggestionMedicine[]) => {
+    if (med.isErrorMessage || !med.productId || !med.storeId) return;
+
+    if (allCandidates) {
+      setCandidateOptions(allCandidates);
+    }
+
+    const targetQty = (pendingTargetQty && pendingTargetQty > 0)
+      ? pendingTargetQty
+      : (qty && qty > 0 ? qty : 1);
+
+    const displayName = med.medicine_name || med.shortName || 'Medicine';
+    const packagingSuffix = med.packaging && !displayName.includes(med.packaging) ? ` (${med.packaging})` : '';
+    const productNameToUse = `${displayName}${packagingSuffix}`;
+
+    const payload: LocalLiveCartAddPayload = {
+      productId: med.productId,
+      storeId: med.storeId,
+      qty: targetQty,
+      rate: med.rate !== undefined && med.rate !== null ? Number(med.rate) : undefined,
+      scheme: med.scheme || undefined,
+      productCode: med.productCode,
+      company: med.company,
+      productName: productNameToUse,
+      storeName: med.distributor,
+      packaging: med.packaging,
+      mapped: med.mapped === false ? false : true
+    };
+
+    const record: LocalPendingAdd = {
+      id: pendingAddSeq++,
+      name: productNameToUse,
+      qty: targetQty,
+      status: 'adding',
+      payload,
+      sourceOrderId: activeSourceOrderId,
+      hadSourceRefill: activeSourceRefillId !== undefined
+    };
+
+    setPendingAdds(prev => {
+      const next = [...prev.filter(p => p.status !== 'added'), record].slice(-3);
+      syncPendingAddsCache(next);
+      return next;
+    });
+
+    if (med.distributor) {
+      localStorage.setItem('pharmarack_last_added_distributor', med.distributor);
+      setLastAddedDistributor(med.distributor);
+    }
+
+    // Instantly reset search & form state
+    setProduct('');
+    setExternalSearchQuery(undefined);
+    setSearchClearToken(t => t + 1);
+    setQty(1);
+    setPendingTargetQty(null);
+    setActiveSourceOrderId(undefined);
+    setActiveSourceRefillId(undefined);
+    handleClearSelectedMedicine();
+
+    // Immediately keep focus on search input without any delay
+    productInputRef.current?.focus();
+
+    // Detached background addition to Pharmarack
+    void processBackgroundAdd(record);
+  }, [qty, pendingTargetQty, activeSourceOrderId, activeSourceRefillId, handleClearSelectedMedicine]);
+
+  const selectSuggestion = useCallback((med: SuggestionMedicine, allCandidates: SuggestionMedicine[]) => {
+    if (med.isErrorMessage) return;
+
+    // High-speed Instant Add if product and store are valid
+    if (med.productId && med.storeId) {
+      handleInstantAdd(med, allCandidates);
+      return;
+    }
+
+    isSelectingRef.current = true;
+    
+    // Save current suggestions candidate list for cheaper option cross-checking
+    setCandidateOptions(allCandidates);
+    
+    setProduct(med.medicine_name);
+    setSelectedDistributor(med.distributor || '');
+    setSelectedRate(med.rate !== undefined && med.rate !== null ? med.rate : '');
+    setSelectedMrp(med.mrp !== undefined && med.mrp !== null ? med.mrp : '');
+    setSelectedMapped(med.mapped !== undefined ? med.mapped : null);
+    setSelectedScheme(med.scheme || '');
+    setSelectedProductId(med.productId || '');
+    setSelectedStoreId(med.storeId || '');
+    setSelectedProductCode(med.productCode || '');
+    setSelectedCompany(med.company || '');
+    setSelectedPackaging(med.packaging || '');
+    setSelectedMedicineName(med.medicine_name || '');
+
+    // Apply last order / pending target quantity upon selecting a medicine from suggestions
+    if (pendingTargetQty && pendingTargetQty > 0) {
+      setQty(pendingTargetQty);
+      setPendingTargetQty(null);
+    }
+
+    qtyInputRef.current?.focus();
+    qtyInputRef.current?.select();
+  }, [handleInstantAdd, pendingTargetQty]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1545,10 +1618,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     setSelectedPackaging('');
     setSelectedMedicineName('');
 
-    // Focus back to search input so user can add another medicine
-    setTimeout(() => {
-      productInputRef.current?.focus();
-    }, 100);
+    // Focus back to search input immediately so user can add another medicine
+    productInputRef.current?.focus();
 
     void processBackgroundAdd(record);
   };
@@ -2463,7 +2534,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
                 {/* Stage-style pending adds: truthful adding → added / failed+Retry (capped to 2, clean compact display) */}
                 {pendingAdds.length > 0 && (
                   <div className="flex flex-col gap-1.5 shrink-0">
-                    {pendingAdds.slice(-2).map(pa => (
+                    {pendingAdds.slice(-3).map(pa => (
                       <div
                         key={pa.id}
                         className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold ${

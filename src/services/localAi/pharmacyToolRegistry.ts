@@ -97,6 +97,11 @@ export interface AlternativesResult {
   sourceSalt?: string;
   sourceInStock: boolean;
   candidates: AlternativeCandidateItem[];
+  inStockCandidates?: AlternativeCandidateItem[];
+  outOfStockCandidates?: AlternativeCandidateItem[];
+  inStockCount?: number;
+  outOfStockCount?: number;
+  headsUpSummary?: string;
   clinicalNotice: string;
 }
 
@@ -417,20 +422,38 @@ export class PharmacyToolRegistry {
         [sourceSalt, sourceId]
       ).catch(() => []);
 
-      candidates = matchRows.map((r: any) => ({
-        id: r.id,
-        name: r.name,
-        genericName: r.generic_name || sourceSalt,
-        dosageForm: r.dosage_form,
-        packSize: r.pack_size,
-        mrp: Number(r.mrp || 0),
-        sellingPrice: Number(r.sell_price || r.mrp || 0),
-        inStock: Number(r.total_stock || 0) > 0,
-        stockQuantity: Number(r.total_stock || 0),
-        manufacturer: r.manufacturer,
-        rackLocation: r.rack || undefined,
-        differenceNote: `Same composition (${sourceSalt}). ${Number(r.total_stock || 0) > 0 ? `Available in stock: ${r.total_stock} units` : 'Currently out of stock'}.`
-      }));
+      for (const r of matchRows) {
+        let liveStock = Number(r.total_stock || 0);
+        let liveRack = r.rack || undefined;
+
+        // Query active batch for live rack location if stock > 0
+        if (liveStock > 0) {
+          const inv = await db.get(
+            `SELECT rack_location, quantity FROM inventory_master
+             WHERE medicine_id = ? AND is_active = 1 AND quantity > 0
+             ORDER BY expiry_date ASC LIMIT 1`,
+            [r.id]
+          ).catch(() => null);
+          if (inv?.rack_location) {
+            liveRack = inv.rack_location;
+          }
+        }
+
+        candidates.push({
+          id: r.id,
+          name: r.name,
+          genericName: r.generic_name || sourceSalt,
+          dosageForm: r.dosage_form,
+          packSize: r.pack_size,
+          mrp: Number(r.mrp || 0),
+          sellingPrice: Number(r.sell_price || r.mrp || 0),
+          inStock: liveStock > 0,
+          stockQuantity: liveStock,
+          manufacturer: r.manufacturer,
+          rackLocation: liveRack,
+          differenceNote: `Same composition (${sourceSalt}). ${liveStock > 0 ? `Available in stock: ${liveStock} units` : 'Currently out of stock'}.`
+        });
+      }
     }
 
     // 3. Fallback: use medicineAvailabilityEngine if generic_name search returned empty
@@ -457,6 +480,7 @@ export class PharmacyToolRegistry {
               inStock: item.inStock,
               stockQuantity: item.currentStock || Number(m.total_stock || 0),
               manufacturer: m.manufacturer,
+              rackLocation: m.rack || undefined,
               differenceNote: item.matchType ? `Matched by ${item.matchType} similarity.` : undefined
             });
           }
@@ -464,11 +488,50 @@ export class PharmacyToolRegistry {
       } catch (_) {}
     }
 
+    const inStockCandidates = candidates.filter(c => c.inStock);
+    const outOfStockCandidates = candidates.filter(c => !c.inStock);
+
+    // Build structured heads-up summary
+    const summaryLines: string[] = [];
+    summaryLines.push(`📋 *Heads-Up for ${sourceName}*${sourceSalt ? ` (${sourceSalt})` : ''}:`);
+    if (sourceInStock) {
+      summaryLines.push(`• Requested medicine is *IN STOCK* on shelf.`);
+    } else {
+      summaryLines.push(`• Requested medicine is *CURRENTLY OUT OF STOCK*.`);
+    }
+
+    if (inStockCandidates.length > 0) {
+      summaryLines.push(`\n🟢 *WHAT WE HAVE (In-Stock Alternatives — ${inStockCandidates.length}):*`);
+      inStockCandidates.forEach((c, idx) => {
+        const rackStr = c.rackLocation ? ` | 📍 ${c.rackLocation}` : '';
+        summaryLines.push(`  ${idx + 1}. *${c.name}* — ${c.stockQuantity} in stock${rackStr} | MRP ₹${c.mrp.toFixed(2)} (${c.manufacturer || 'Pharma'})`);
+      });
+    } else {
+      summaryLines.push(`\n🟢 *WHAT WE HAVE:* None in stock on shelf for this exact composition.`);
+    }
+
+    if (outOfStockCandidates.length > 0) {
+      summaryLines.push(`\n🔴 *WHAT WE DON'T (Out-of-Stock Alternatives in Catalog — ${outOfStockCandidates.length}):*`);
+      outOfStockCandidates.slice(0, 5).forEach(c => {
+        summaryLines.push(`  • ${c.name} (${c.manufacturer || 'Pharma'}) — MRP ₹${c.mrp.toFixed(2)}`);
+      });
+      if (outOfStockCandidates.length > 5) {
+        summaryLines.push(`  • ... and ${outOfStockCandidates.length - 5} more known brands`);
+      }
+    }
+
+    const headsUpSummary = summaryLines.join('\n');
+
     return {
       sourceMedicine: sourceName,
       sourceSalt: sourceSalt || undefined,
       sourceInStock,
       candidates,
+      inStockCandidates,
+      outOfStockCandidates,
+      inStockCount: inStockCandidates.length,
+      outOfStockCount: outOfStockCandidates.length,
+      headsUpSummary,
       clinicalNotice: '⚠️ Pharmacist Verification Required: All medicine substitutions must be clinically verified and approved by a registered pharmacist before dispensing.'
     };
   }
