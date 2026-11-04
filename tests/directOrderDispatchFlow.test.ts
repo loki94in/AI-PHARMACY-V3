@@ -154,7 +154,7 @@ describe('Direct Order Detection, Duplicate-Safe Distributor Reminders & Deliver
 
     // Reminder was NOT sent yet today -> Auto-send reminder to distributor
     const sent = await notificationService.sendDistributorDispatchReminder(apolloRow.id, undefined, undefined, { orderNos: ['PR-1001'] });
-    expect(sent).toBe(true);
+    expect(sent.ok).toBe(true);
 
     // Verify WhatsApp queue has the message
     const queuedItem = await db.get(
@@ -162,7 +162,7 @@ describe('Direct Order Detection, Duplicate-Safe Distributor Reminders & Deliver
     );
     expect(queuedItem).toBeDefined();
     expect(queuedItem.target_name).toBe('Apollo Medico Wholesale');
-    expect(queuedItem.message).toContain("today's order");
+    expect(queuedItem.message).toMatch(/(today's order|order #PR-1001)/i);
 
     // Last reminded timestamp recorded
     const updatedReminder = await db.get("SELECT status, last_reminded_at FROM distributor_dispatch_reminders WHERE id = ?", [apolloRow.id]);

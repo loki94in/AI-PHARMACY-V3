@@ -268,7 +268,7 @@ export async function processRefillCartItem(
   const refill = await db.get(
     `SELECT pr.id, pr.medicine_id, pr.quantity_needed, pr.is_active, pr.status,
             pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name,
-            c.name AS customer_name, c.phone AS customer_phone, c.preferred_language
+            c.name AS customer_name, c.phone AS customer_phone, c.language
      FROM patient_refills pr 
      JOIN medicines m ON m.id = pr.medicine_id
      LEFT JOIN customers c ON c.id = pr.customer_id
@@ -433,7 +433,7 @@ export async function processRefillCartItem(
             patientName: refill.customer_name || 'Customer',
             medicineName: after!.productName || medicineName,
             quantity: qty,
-            lang: refill.preferred_language
+            lang: refill.language
           });
           await whatsappQueueWorker.enqueue(
             `91${patientPhone}`,
@@ -654,7 +654,7 @@ export async function processRefillCartItem(
             patientName: refill.customer_name || 'Customer',
             medicineName: added.productName || medicineName,
             quantity: qty,
-            lang: refill.preferred_language
+            lang: refill.language
           });
           await whatsappQueueWorker.enqueue(
             `91${patientPhone}`,

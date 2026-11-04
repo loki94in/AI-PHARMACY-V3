@@ -8762,19 +8762,28 @@ export default function PharmarackCart() {
                       setSelectedSavedDistId(val);
                       if (val) {
                         const found = savedDistributorsList.find((d) => d.id === val);
-                        if (found && (found.phone || found.mobile || found.whatsapp)) {
-                          setModalPhoneInput(found.phone || found.mobile || found.whatsapp || '');
+                        if (found) {
+                          const rawP = found.phone || found.mobile || found.whatsapp || '';
+                          const digits = rawP.replace(/\D/g, '');
+                          if (digits.length === 10 && !rawP.includes('@') && !rawP.includes('<')) {
+                            setModalPhoneInput(digits);
+                          }
                         }
                       }
                     }}
                     className="w-full bg-bg border border-glass-border rounded-xl px-3 py-2 text-xs text-text focus:outline-none focus:border-emerald-500 font-medium"
                   >
                     <option value="">-- Direct Mobile Number Only --</option>
-                    {savedDistributorsList.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name} {d.phone ? `(${d.phone})` : ''}
-                      </option>
-                    ))}
+                    {savedDistributorsList.map((d) => {
+                      const rawP = d.phone || '';
+                      const digits = rawP.replace(/\D/g, '');
+                      const phoneLabel = (digits.length === 10 && !rawP.includes('@') && !rawP.includes('<')) ? `(${digits})` : '';
+                      return (
+                        <option key={d.id} value={d.id}>
+                          {d.name} {phoneLabel}
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
 

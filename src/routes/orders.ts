@@ -158,17 +158,16 @@ router.post('/batch', async (req, res) => {
 
         const result = await db.run(
           `INSERT INTO special_orders (
-            store_id, customer_id, medicine_id, medicine_name, product, requester, phone, qty, priority, status, date, notified,
+            store_id, customer_id, medicine_id, medicine_name, requester, phone, qty, priority, status, date, notified,
             pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment, notification_count,
             scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
             cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
             schedule_calculated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             targetStoreId,
             batchCustomerId,
             resolvedMedicineId,
-            medName,
             medName,
             cleanReqName,
             cleanPhone,
@@ -220,7 +219,7 @@ router.post('/batch', async (req, res) => {
       const advMsg = advance_payment && Number(advance_payment) > 0 ? ` (Advance Paid: ₹${Number(advance_payment).toFixed(2)})` : '';
       
       const custRow = await db.get('SELECT * FROM customers WHERE phone LIKE ? LIMIT 1', [`%${cleanPhone}%`]).catch(() => null);
-      const lang = req.body.language || custRow?.preferred_language || custRow?.language || 'mr';
+      const lang = req.body.language || custRow?.language || 'mr';
       
       let itemsListStr = '';
       if (insertedOrders.length === 1) {
@@ -335,7 +334,7 @@ router.post('/', async (req, res) => {
     const initialStatus = status || 'Pending';
     const result = await db.run(
       `INSERT INTO special_orders (
-        store_id, customer_id, product, requester, phone, qty, priority, status, date, notified,
+        store_id, customer_id, medicine_name, requester, phone, qty, priority, status, date, notified,
         pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, pharmarack_scheme, advance_payment,
         customer_order_source, prescription_url, product_image_url, notes, notification_count,
         scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
@@ -387,7 +386,7 @@ router.post('/', async (req, res) => {
       const cleanReqName = formatCustomerName(requester);
       
       const custRow = await db.get('SELECT * FROM customers WHERE phone LIKE ? LIMIT 1', [`%${cleanPhone}%`]).catch(() => null);
-      const lang = req.body.language || custRow?.preferred_language || custRow?.language || 'mr';
+      const lang = req.body.language || custRow?.language || 'mr';
 
       let msg = '';
       if (lang === 'hi') {
@@ -462,7 +461,7 @@ router.post('/', async (req, res) => {
 async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedupe?: boolean; forceResend?: boolean; skipWhatsApp?: boolean }): Promise<boolean> {
   if (options?.skipWhatsApp) return false;
   const cleanPhone = String(order.phone || '').replace(/\D/g, '');
-  if (!cleanPhone) return false;
+  if (!cleanPhone || cleanPhone.length !== 10) return false;
 
   const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
   const last10 = cleanPhone.slice(-10);
@@ -473,7 +472,7 @@ async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedup
 
   // Check if this customer has multiple companion orders that are Ready
   const companionOrders = await db.all(
-    `SELECT id, product, medicine_name, qty, status FROM special_orders
+    `SELECT id, medicine_name, medicine_name AS product, qty, status FROM special_orders
      WHERE (phone LIKE ? OR phone = ? OR (requester = ? AND requester != ''))
        AND status IN ('Ready', 'ORDER_READY_FOR_PICKUP')
        AND (notified = 0 OR id = ?)`,
@@ -485,13 +484,19 @@ async function enqueueArrivalWhatsApp(db: any, order: any, options?: { skipDedup
   let msg: string;
   if (bundleOrders.length > 1) {
     const multiItems: MultiOrderItemArrival[] = bundleOrders.map((o: any) => ({
-      productName: (o.product || o.medicine_name || 'Special Order Item').trim(),
+      productName: (o.medicine_name || 'Special Order Item').trim(),
       qty: o.qty || 1,
       status: 'arrived'
     }));
     msg = await buildMultiOrderNotificationMessage(order.requester, multiItems, db, lang);
   } else {
-    msg = await buildOrderReadyNotificationMessage(order.requester, order.product, order.qty, db, lang);
+    msg = await buildOrderReadyNotificationMessage(
+      order.requester,
+      (order.medicine_name || 'Special Order Item').trim(),
+      order.qty,
+      db,
+      lang
+    );
   }
 
   // 60-minute duplicate safeguard: suppress duplicate arrival messages for the SAME customer/order within 60 minutes
@@ -809,18 +814,18 @@ router.post('/:id/resend-booking', async (req, res) => {
     const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
     
     const custRow = await db.get('SELECT * FROM customers WHERE phone LIKE ? LIMIT 1', [`%${cleanPhone}%`]).catch(() => null);
-    const lang = order.language || custRow?.preferred_language || custRow?.language || 'mr';
+    const lang = order.language || custRow?.language || 'mr';
     const medicalName = await getStoreMedicalNameAndPhone(db);
     const cleanReqName = formatCustomerName(order.requester);
     const advMsg = order.advance_payment && Number(order.advance_payment) > 0 ? ` (Advance Paid: ₹${Number(order.advance_payment).toFixed(2)})` : '';
     
     let msg = '';
     if (lang === 'hi') {
-      msg = `नमस्ते ${cleanReqName}, ${medicalName} पर आपकी ${order.product}${order.advance_payment && Number(order.advance_payment) > 0 ? ` (अग्रिम राशि: ₹${Number(order.advance_payment).toFixed(2)})` : ''} का ऑर्डर बुक कर लिया गया है। दवाई आने पर हम आपको सूचित करेंगे।`;
+      msg = `नमस्ते ${cleanReqName}, ${medicalName} पर आपकी ${order.medicine_name}${order.advance_payment && Number(order.advance_payment) > 0 ? ` (अग्रिम राशि: ₹${Number(order.advance_payment).toFixed(2)})` : ''} का ऑर्डर बुक कर लिया गया है। दवाई आने पर हम आपको सूचित करेंगे।`;
     } else if (lang === 'mr') {
-      msg = `नमस्कार ${cleanReqName}, ${medicalName} येथे आपली ${order.product}${order.advance_payment && Number(order.advance_payment) > 0 ? ` (अगाऊ रक्कम: ₹${Number(order.advance_payment).toFixed(2)})` : ''} ची ऑर्डर बुक करण्यात आली आहे. औषध आल्यावर आम्ही आपल्याला कळवू.`;
+      msg = `नमस्कार ${cleanReqName}, ${medicalName} येथे आपली ${order.medicine_name}${order.advance_payment && Number(order.advance_payment) > 0 ? ` (अगाऊ रक्कम: ₹${Number(order.advance_payment).toFixed(2)})` : ''} ची ऑर्डर बुक करण्यात आली आहे. औषध आल्यावर आम्ही आपल्याला कळवू.`;
     } else {
-      msg = `Hi ${cleanReqName}, your order for ${order.product}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
+      msg = `Hi ${cleanReqName}, your order for ${order.medicine_name}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
     }
 
     await whatsappQueueWorker.enqueue(formattedPhone, msg, 'special_order', order.requester || 'Customer', undefined, undefined, undefined, { skipDedupe: true });
@@ -861,7 +866,7 @@ router.get('/:id/payment-qr', async (req, res) => {
       so_code: soCode,
       customer_name: order.requester || 'Customer',
       customer_phone: order.phone || '',
-      medicine_name: order.product || order.medicine_name || 'Medicine',
+      medicine_name: order.medicine_name || 'Medicine',
       amount,
       upi_id: config.upi_id,
       payee_name: config.payee_name,
@@ -892,7 +897,7 @@ router.post('/:id/send-payment-qr', async (req, res) => {
     const activeQr = await paymentQrService.allocateNextQr();
     const amount = Number(order.advance_payment || order.total_amount || 50);
     const soCode = `SO-${order.id}`;
-    const medicineName = order.product || order.medicine_name || 'Medicine';
+    const medicineName = order.medicine_name || 'Medicine';
     const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
     const fullQrPath = await paymentQrService.generatePaymentCard({
       upiUri,
@@ -975,7 +980,7 @@ router.get('/:id/distributor-options', async (req, res) => {
     return res.json({
       orderId: id,
       soCode,
-      medicineName: order.medicine_name || order.product,
+      medicineName: order.medicine_name,
       quantity: order.qty || 1,
       currentDistributor: order.distributor_name || order.pharmarack_distributor || null,
       currentRate: order.pharmarack_rate || null,
@@ -1022,7 +1027,7 @@ router.post('/:id/confirm-distributor', async (req, res) => {
     const prodId = productId ? Number(productId) : (order.pharmarack_product_id || null);
     const prodCode = productCode ? String(productCode) : (order.pharmarack_product_code || null);
     const stId = storeId ? Number(storeId) : (order.pharmarack_store_id || null);
-    const prodName = productName || order.pharmarack_product_name || order.medicine_name || order.product;
+    const prodName = productName || order.pharmarack_product_name || order.medicine_name;
 
     const { generateStoreSpecialOrderCode } = await import('../services/whatsappIntentService.js');
     const soCode = await generateStoreSpecialOrderCode(db, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
@@ -1053,7 +1058,7 @@ router.post('/:id/confirm-distributor', async (req, res) => {
     const oldDistName = String(order.pharmarack_distributor || order.distributor_name || '').trim();
     const oldStoreId = order.pharmarack_store_id ? Number(order.pharmarack_store_id) : null;
     const oldProdCode = order.pharmarack_product_code ? String(order.pharmarack_product_code) : null;
-    const oldProdName = order.pharmarack_product_name || order.medicine_name || order.product;
+    const oldProdName = order.pharmarack_product_name || order.medicine_name;
     const distChanged = (oldDistName && oldDistName.toLowerCase() !== distName.toLowerCase()) ||
                         (oldStoreId && stId && oldStoreId !== stId);
 
@@ -1128,7 +1133,7 @@ router.post('/:id/confirm-distributor', async (req, res) => {
       // Allocate rotating UPI QR config
       const activeQr = await paymentQrService.allocateNextQr();
       const amount = 50;
-      const medicineTitle = prodName || order.medicine_name || order.product || 'Medicine';
+      const medicineTitle = prodName || order.medicine_name || 'Medicine';
       const upiUri = paymentQrService.buildUpiUri(activeQr.upi_id, activeQr.payee_name, amount, soCode);
       const fullQrPath = await paymentQrService.generatePaymentCard({
         upiUri,
@@ -1249,8 +1254,8 @@ router.post('/:id/mark-advance-paid', async (req, res) => {
     try {
       const { addItemsToPharmarackCart } = await import('./pharmarack.js');
       void addItemsToPharmarackCart([{
-        productName: order.pharmarack_product_name || order.medicine_name || order.product,
-        product: order.pharmarack_product_name || order.medicine_name || order.product,
+        productName: order.pharmarack_product_name || order.medicine_name,
+        product: order.pharmarack_product_name || order.medicine_name,
         productId: order.pharmarack_product_id || order.medicine_id || 0,
         productCode: order.pharmarack_product_code || '',
         storeId: order.pharmarack_store_id || 0,
@@ -1268,7 +1273,7 @@ router.post('/:id/mark-advance-paid', async (req, res) => {
     const soCode = await generateStoreSpecialOrderCode(db, order.store_id || 1, id).catch(() => `SO-TMSA-${id}`);
     const storeName = (await getStoreMedicalName(db, order.store_id || 1)) || 'AI Pharmacy';
     const customerName = formatCustomerName(order.customer_name || order.requester || 'Customer');
-    const medicineName = order.medicine_name || order.product || 'Medicine';
+    const medicineName = order.medicine_name || 'Medicine';
     const amountPaid = Number(order.advance_payment || order.screenshot_amount || order.total_amount || 50).toFixed(2);
     const cleanCustPhone = String(order.phone || '').replace(/\D/g, '').slice(-10);
 
@@ -1431,7 +1436,7 @@ export async function syncCloseCompanionRefillsForOrders(
       }
 
       const cleanDigits = (ord.phone || '').replace(/\D/g, '').slice(-10);
-      const prodName = (ord.product || ord.medicine_name || '').trim().toLowerCase();
+      const prodName = (ord.medicine_name || '').trim().toLowerCase();
       if (cleanDigits.length >= 7 && prodName) {
         const rows = await db.all(
           `SELECT pr.*, m.name as medicine_name 
@@ -2033,7 +2038,7 @@ router.post('/:id/auto-remind', async (req, res) => {
     const val = auto_remind === 1 || auto_remind === true ? 1 : 0;
     await db.run('UPDATE special_orders SET auto_remind = ? WHERE id = ?', [val, id]);
     if (val === 0) {
-      const order = await db.get('SELECT phone, product FROM special_orders WHERE id = ?', [id]);
+      const order = await db.get('SELECT phone, medicine_name, medicine_name AS product FROM special_orders WHERE id = ?', [id]);
       if (order) {
         await cancelPendingWhatsAppForOrder(db, { id, phone: order.phone, product: order.product });
         await purgePendingCustomerReminders(db, {
@@ -2125,7 +2130,7 @@ router.get('/:id/items', async (req, res) => {
       id: 0,
       order_id: order.id,
       medicine_id: order.medicine_id || null,
-      product_name: order.product || order.medicine_name || 'Medicine',
+      product_name: order.medicine_name || 'Medicine',
       requested_qty: order.qty || 1,
       confirmed_qty: order.qty || 1,
       mrp: order.pharmarack_mrp || 0,
@@ -2224,9 +2229,9 @@ router.put('/:id/items', async (req, res) => {
       // 4. Update special_orders header
       await db.run(
         `UPDATE special_orders
-         SET product = ?, medicine_name = ?, qty = ?, total_amount = ?, advance_payment = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+         SET medicine_name = ?, qty = ?, total_amount = ?, advance_payment = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [summaryProduct, currentItems[0].product_name, totalQty, totalAmount, newAdvance, newNotes, id]
+        [summaryProduct || currentItems[0].product_name, totalQty, totalAmount, newAdvance, newNotes, id]
       );
 
       // 5. Audit trail
@@ -2423,7 +2428,7 @@ router.post('/:id/fulfill', async (req, res) => {
 
       const invText = invoiceNo ? ` (Invoice: ${invoiceNo})` : '';
       const totalText = grandTotal ? ` Total Amount: ₹${Number(grandTotal).toFixed(2)}.` : '';
-      const msg = `Hi ${order.requester || 'Customer'}, your special order for ${order.product} (Qty: ${order.qty}) has been successfully dispensed and delivered at ${medicalName}.${invText}${totalText} Thank you for visiting us!`;
+      const msg = `Hi ${order.requester || 'Customer'}, your special order for ${order.medicine_name} (Qty: ${order.qty}) has been successfully dispensed and delivered at ${medicalName}.${invText}${totalText} Thank you for visiting us!`;
 
       await whatsappQueueWorker.enqueue(formattedPhone, msg, 'special_order_fulfilled', order.requester || 'Customer');
     }

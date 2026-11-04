@@ -263,7 +263,7 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
       if (rawLang && cleanPhone.length === 10) {
         const normLang = normalizeLanguage(rawLang);
         await db.run(
-          `UPDATE customers SET preferred_language = ? WHERE phone LIKE ?`,
+          `UPDATE customers SET language = ? WHERE phone LIKE ?`,
           [normLang, `%${cleanPhone}%`]
         ).catch(() => {});
         await db.run(

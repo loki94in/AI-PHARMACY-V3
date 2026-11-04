@@ -58,7 +58,7 @@ router.get('/check-duplicate-phone', async (req, res) => {
     const db = await dbManager.getConnection();
 
     // 1. Check existing distributors
-    let distSql = 'SELECT id, name, phone, contact FROM distributors WHERE (phone LIKE ? OR contact LIKE ? OR phone LIKE ? OR contact LIKE ?)';
+    let distSql = 'SELECT id, name, phone FROM distributors WHERE (phone LIKE ? OR phone LIKE ?)';
     const distParams: any[] = [`%${phone10}%`, `%${phone10}%`, `%${phone10}`, `%${phone10}`];
     if (excludeId && !isNaN(excludeId)) {
       distSql += ' AND id != ?';
@@ -95,7 +95,7 @@ router.get('/check-duplicate-phone', async (req, res) => {
       isDuplicate,
       phone: phone10,
       matchedDistributor: distMatch
-        ? { id: distMatch.id, name: distMatch.name, phone: distMatch.phone || distMatch.contact }
+        ? { id: distMatch.id, name: distMatch.name, phone: distMatch.phone }
         : (mapMatch ? { id: mapMatch.distributor_id, name: mapMatch.store_name, phone: mapMatch.phone } : null),
       matchedDeliveryBoy: boyMatch ? { id: boyMatch.id, name: boyMatch.name, phone: boyMatch.whatsapp_number } : null
     });
@@ -122,7 +122,7 @@ const postDistributorsHandler = async (req: express.Request, res: express.Respon
     const savedDistributor = await syncDistributorPhoneAcrossTables(db, {
       name: distName,
       phone: phoneVal.cleanPhone || phone,
-      contact: phoneVal.cleanPhone || contact,
+      
       email,
       address,
       gstin,
@@ -163,7 +163,7 @@ const putDistributorHandler = async (req: express.Request, res: express.Response
       id: Number(id),
       name: name || store_name,
       phone: phoneVal.cleanPhone || phone,
-      contact: phoneVal.cleanPhone || contact,
+      
       email,
       address,
       gstin,

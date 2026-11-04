@@ -111,11 +111,11 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
   // 2. Check exact match in distributors table
   try {
     const distRow = await db.get(
-      `SELECT id, name, phone, contact, delivery_boy_id, preferred_file_format FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))`,
+      `SELECT id, name, phone, delivery_boy_id, preferred_file_format FROM distributors WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))`,
       [rawName]
     );
     if (distRow) {
-      const phone = cleanPhoneStr(distRow.phone || distRow.contact);
+      const phone = cleanPhoneStr(distRow.phone);
       if (phone) {
         return {
           distributor_id: distRow.id,
@@ -179,14 +179,14 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
   // 4. Check fuzzy / normalized match in distributors table
   try {
     const allDistributors = await db.all(
-      `SELECT id, name, phone, contact, delivery_boy_id, preferred_file_format FROM distributors`
+      `SELECT id, name, phone, delivery_boy_id, preferred_file_format FROM distributors`
     );
     if (Array.isArray(allDistributors) && allDistributors.length > 0) {
       // Priority A: Exact stripped alphanumeric match
       let matched = allDistributors.find((d: any) => {
         if (!d || !d.name) return false;
         const rawSavedNorm = d.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return cleanPhoneStr(d.phone || d.contact) && rawSavedNorm && rawSavedNorm === cleanStoreNorm;
+        return cleanPhoneStr(d.phone) && rawSavedNorm && rawSavedNorm === cleanStoreNorm;
       });
 
       // Priority B: Normalized keyword match
@@ -194,14 +194,14 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
         matched = allDistributors.find((d: any) => {
           if (!d || !d.name) return false;
           const normSaved = normalizeDistributorName(d.name);
-          return cleanPhoneStr(d.phone || d.contact) && normSaved && normSaved === normStore;
+          return cleanPhoneStr(d.phone) && normSaved && normSaved === normStore;
         });
       }
 
       // Priority C: Strict exact match only (fuzzy substring includes match completely removed to prevent wrong distributor mappings)
 
       if (matched) {
-        const phone = cleanPhoneStr(matched.phone || matched.contact);
+        const phone = cleanPhoneStr(matched.phone);
         if (phone) {
           // Auto-persist resolved mapping so future lookups are instant
           try {
@@ -358,7 +358,7 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
           `UPDATE distributors 
            SET name = CASE WHEN ? != '' THEN ? ELSE name END,
                phone = CASE WHEN ? != '' THEN ? ELSE phone END,
-               contact = CASE WHEN ? != '' THEN ? ELSE contact END,
+               
                email = CASE WHEN ? != '' THEN ? ELSE email END,
                address = CASE WHEN ? != '' THEN ? ELSE address END,
                gstin = CASE WHEN ? != '' THEN ? ELSE gstin END,
@@ -367,7 +367,6 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
            WHERE id = ?`,
           [
             nameToUpdate, nameToUpdate,
-            cleanPhone, cleanPhone,
             cleanPhone, cleanPhone,
             cleanEmail, cleanEmail,
             params.address || '', params.address || '',
@@ -382,7 +381,7 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
           await db.run(
             `UPDATE distributors 
              SET phone = CASE WHEN ? != '' THEN ? ELSE phone END,
-                 contact = CASE WHEN ? != '' THEN ? ELSE contact END,
+                 
                  email = CASE WHEN ? != '' THEN ? ELSE email END,
                  address = CASE WHEN ? != '' THEN ? ELSE address END,
                  gstin = CASE WHEN ? != '' THEN ? ELSE gstin END,
@@ -408,11 +407,10 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
     } else if (distName) {
       try {
         const result = await db.run(
-          `INSERT INTO distributors (name, phone, contact, email, address, gstin, state_code, preferred_file_format)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO distributors (name, phone, email, address, gstin, state_code, preferred_file_format)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
             distName,
-            cleanPhone,
             cleanPhone,
             cleanEmail,
             params.address || '',
@@ -430,10 +428,10 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
             await db.run(
               `UPDATE distributors 
                SET phone = CASE WHEN ? != '' THEN ? ELSE phone END,
-                   contact = CASE WHEN ? != '' THEN ? ELSE contact END,
+                   
                    email = CASE WHEN ? != '' THEN ? ELSE email END
                WHERE id = ?`,
-              [cleanPhone, cleanPhone, cleanPhone, cleanPhone, cleanEmail, cleanEmail, matched.id]
+              [cleanPhone, cleanPhone, cleanEmail, cleanEmail, matched.id]
             );
           } else {
             throw insertErr;
@@ -493,7 +491,7 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
 
     const finalDistributor = await db.get('SELECT * FROM distributors WHERE id = ?', [targetId]);
     const effectiveName = finalDistributor?.name || distName;
-    const effectivePhone = finalDistributor?.phone || finalDistributor?.contact || cleanPhone;
+    const effectivePhone = finalDistributor?.phone || cleanPhone;
     const storeMappingKey = (params.store_name || effectiveName || '').trim();
 
     // 2. Update/Insert 'pharmarack_distributor_mappings' atomically

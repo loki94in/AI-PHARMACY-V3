@@ -894,7 +894,7 @@ const Dispatch = () => {
         patient_name: w.requester || 'Website Customer',
         patient_phone: w.phone || '',
         address: w.notes && w.notes.includes('Address:') ? w.notes.replace(/Address:/i, '').trim() : (w.notes || 'Home Delivery'),
-        items: w.medicine_name || w.product || (w.prescription_url ? 'Prescription Order' : 'Website Order'),
+        items: w.medicine_name || (w.prescription_url ? 'Prescription Order' : 'Website Order'),
         notes: w.notes || '',
         delivery_boy_id: w.delivery_boy_id || null,
         delivery_boy_name: allBoys.find(b => b.id === w.delivery_boy_id)?.name,
@@ -1884,35 +1884,44 @@ const Dispatch = () => {
                                   </div>
                                 )}
                               </div>
-                            ) : (
-                              <div className="flex items-center gap-1.5 group">
-                                {item.distributor_phone ? (
-                                  <span className="text-text font-semibold">
-                                    {item.distributor_phone}
-                                  </span>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleStartEditDistPhone(item)}
-                                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/25 flex items-center gap-1 cursor-pointer transition-all active:scale-95 shadow-sm"
-                                    title="Missing 10-digit contact number — click to enter and auto-send reminder"
-                                  >
-                                    <Edit2 size={10} />
-                                    <span>Missing Phone</span>
-                                  </button>
-                                )}
-                                {item.distributor_phone && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleStartEditDistPhone(item)}
-                                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-bg3 text-muted hover:text-sky transition-all cursor-pointer"
-                                    title="Edit phone number"
-                                  >
-                                    <Edit2 size={11} />
-                                  </button>
-                                )}
-                              </div>
-                            )}
+                            ) : (() => {
+                              const rawDigits = (item.distributor_phone || '').replace(/\D/g, '');
+                              const isValidDistPhone = Boolean(
+                                item.distributor_phone &&
+                                !item.distributor_phone.includes('@') &&
+                                !item.distributor_phone.includes('<') &&
+                                rawDigits.length === 10
+                              );
+                              return (
+                                <div className="flex items-center gap-1.5 group">
+                                  {isValidDistPhone ? (
+                                    <span className="text-text font-semibold">
+                                      {rawDigits}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStartEditDistPhone(item)}
+                                      className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/25 flex items-center gap-1 cursor-pointer transition-all active:scale-95 shadow-sm"
+                                      title="Missing 10-digit contact number — click to enter and auto-send reminder"
+                                    >
+                                      <Edit2 size={10} />
+                                      <span>Missing Phone</span>
+                                    </button>
+                                  )}
+                                  {isValidDistPhone && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStartEditDistPhone(item)}
+                                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-bg3 text-muted hover:text-sky transition-all cursor-pointer"
+                                      title="Edit phone number"
+                                    >
+                                      <Edit2 size={11} />
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="p-3.5 align-middle">
                             <select

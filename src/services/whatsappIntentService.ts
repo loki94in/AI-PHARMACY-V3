@@ -161,12 +161,10 @@ async function isDistributorOrInternal(phone: string, db: any): Promise<boolean>
 
   try {
     // 1. Check if number belongs to a registered distributor (main table)
-    // The app saves a distributor's WhatsApp number in `phone` (dispatch reminders send to it) and
-    // older rows keep it in `contact`: a number in EITHER column is a distributor.
     const dist = await db.get(
       `SELECT id, name FROM distributors
-       WHERE (contact IS NOT NULL AND contact LIKE ?) OR (phone IS NOT NULL AND phone LIKE ?) LIMIT 1`,
-      [`%${cleanDigits}%`, `%${cleanDigits}%`]
+       WHERE phone IS NOT NULL AND phone LIKE ? LIMIT 1`,
+      [`%${cleanDigits}%`]
     );
     if (dist) {
       console.log(`[Intent Service] Skipping customer bot for distributor "${dist.name}" (${cleanDigits}).`);

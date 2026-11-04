@@ -655,7 +655,10 @@ export class OrderScheduleService {
              COALESCE(c.phone, '') as customer_phone
       FROM patient_refills pr
       JOIN medicines m ON pr.medicine_id = m.id
-      LEFT JOIN customers c ON (c.name = pr.patient_name OR c.id = pr.customer_id)
+      LEFT JOIN customers c ON c.id = COALESCE(
+        pr.customer_id,
+        (SELECT c2.id FROM customers c2 WHERE c2.name = pr.patient_name ORDER BY c2.id DESC LIMIT 1)
+      )
       WHERE pr.is_active = 1
         AND pr.status IN ('pending', 'notified', 'staged')
         AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '-1 day')

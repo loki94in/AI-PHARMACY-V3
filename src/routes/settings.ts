@@ -705,17 +705,16 @@ router.post('/distributors', async (req, res) => {
       await db.run(
         `UPDATE distributors SET 
           phone = CASE WHEN ? != '' THEN ? ELSE phone END,
-          contact = CASE WHEN ? != '' THEN ? ELSE contact END,
           email = CASE WHEN ? != '' THEN ? ELSE email END,
           address = CASE WHEN ? != '' THEN ? ELSE address END,
           state_code = CASE WHEN ? != '' THEN ? ELSE state_code END
          WHERE id IN (${placeholders})`,
-        [cleanPhone, cleanPhone, cleanPhone, cleanPhone, cleanEmail, cleanEmail, address || '', address || '', state_code || '', state_code || '', ...ids]
+        [cleanPhone, cleanPhone, cleanEmail, cleanEmail, address || '', address || '', state_code || '', state_code || '', ...ids]
       );
     } else {
       const result = await db.run(
-        `INSERT INTO distributors (name, phone, contact, email, address, state_code) VALUES (?, ?, ?, ?, ?, ?)`,
-        [cleanName, cleanPhone, cleanPhone, cleanEmail, address || '', state_code || '']
+        `INSERT INTO distributors (name, phone, email, address, state_code) VALUES (?, ?, ?, ?, ?)`,
+        [cleanName, cleanPhone, cleanEmail, address || '', state_code || '']
       );
       targetId = result.lastID || 0;
     }

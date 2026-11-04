@@ -870,7 +870,10 @@ export async function buildDailyOperationalBriefing(
            COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as reminder_mode
     FROM automation_notifications an
     LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
-    LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+    LEFT JOIN customers c ON c.id = COALESCE(
+      (SELECT c1.id FROM customers c1 WHERE c1.phone = an.recipient_phone AND an.recipient_phone != '' ORDER BY c1.id DESC LIMIT 1),
+      (SELECT c2.id FROM customers c2 WHERE c2.name = an.recipient_name AND an.recipient_name != '' ORDER BY c2.id DESC LIMIT 1)
+    )
     WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
       AND (pr.id IS NULL OR (pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')))`).catch(() => []);
   const autoStagedCount = stagedRows.filter((r: any) => r.reminder_mode === 'auto').length;
@@ -1228,7 +1231,10 @@ export async function notifyAdminStagedReminders(db: Database): Promise<void> {
              COALESCE(pr.reminder_mode, c.reminder_mode, 'manual') as patient_reminder_mode
       FROM automation_notifications an
       LEFT JOIN patient_refills pr ON pr.id = CAST(an.reference_id AS INTEGER)
-      LEFT JOIN customers c ON (c.phone = an.recipient_phone OR c.name = an.recipient_name)
+      LEFT JOIN customers c ON c.id = COALESCE(
+      (SELECT c1.id FROM customers c1 WHERE c1.phone = an.recipient_phone AND an.recipient_phone != '' ORDER BY c1.id DESC LIMIT 1),
+      (SELECT c2.id FROM customers c2 WHERE c2.name = an.recipient_name AND an.recipient_name != '' ORDER BY c2.id DESC LIMIT 1)
+    )
       WHERE an.type IN ('refill_collection', 'refill_reminder') AND an.status = 'staged'
         AND (pr.id IS NULL OR (pr.is_active = 1 AND pr.status NOT IN ('completed', 'canceled')))
     `);

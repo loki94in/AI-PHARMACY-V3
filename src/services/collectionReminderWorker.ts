@@ -78,7 +78,7 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
     const readyRefills = await db.all(`
       SELECT pr.id, pr.patient_name, pr.patient_phone, pr.medicine_id, m.name as medicine_name,
              pr.quantity_needed, pr.last_collection_reminder_at, pr.collection_reminder_count,
-             COALESCE(pr.language, c.preferred_language, c.language, 'mr') as language
+             COALESCE(pr.language, c.language, 'mr') as language
       FROM patient_refills pr
       JOIN medicines m ON pr.medicine_id = m.id
       LEFT JOIN customers c ON c.id = (
@@ -199,9 +199,9 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
 
     // 5. Scan ready special orders & online pickup orders with auto_remind = 1 that have not been reminded today
     const readySpecialOrders = await db.all(`
-      SELECT so.id, so.requester, so.phone, so.product, so.qty,
+      SELECT so.id, so.requester, so.phone, so.medicine_name, so.qty,
              so.last_collection_reminder_at, so.notification_count,
-             COALESCE(c.preferred_language, c.language, 'mr') as language
+             COALESCE(c.language, 'mr') as language
       FROM special_orders so
       LEFT JOIN customers c ON c.id = (
         SELECT c2.id FROM customers c2 
@@ -239,12 +239,12 @@ export async function runCollectionReminderCycle(force = false): Promise<Collect
         orderGroups.set(key, group);
       }
       const isDuplicate = group.items.some(
-        it => it.id === so.id || it.product.trim().toLowerCase() === (so.product || '').trim().toLowerCase()
+        it => it.id === so.id || it.product.trim().toLowerCase() === (so.medicine_name || '').trim().toLowerCase()
       );
       if (!isDuplicate) {
         group.items.push({
           id: so.id,
-          product: so.product || 'Medicine',
+          product: so.medicine_name || 'Medicine',
           qty: Number(so.qty || 1)
         });
       }

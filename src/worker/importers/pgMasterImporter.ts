@@ -79,19 +79,25 @@ export async function importDistributor(row: Record<string, string | null>, db: 
       return; // Skip duplicate
   }
 
-  const phoneVal = row['phone'] || row['distributor_sales_phone'] || row['distributor_sales_mobile'] || row['contact'] || row['mobile'] || row['contact_no'] || row['phone_no'] || null;
+  const rawPhoneCandidate = row['phone'] || row['distributor_sales_phone'] || row['distributor_sales_mobile'] || row['mobile'] || row['phone_no'] || null;
+  const rawContactCandidate = row['contact'] || row['contact_no'] || null;
+  const emailCandidate = row['email'] || (rawContactCandidate && rawContactCandidate.includes('@') ? rawContactCandidate : null) || (rawPhoneCandidate && rawPhoneCandidate.includes('@') ? rawPhoneCandidate : null);
+
+  const cleanPhoneDigits = (rawPhoneCandidate && !rawPhoneCandidate.includes('@') && !rawPhoneCandidate.includes('<'))
+    ? rawPhoneCandidate.replace(/\D/g, '').slice(-10)
+    : ((rawContactCandidate && !rawContactCandidate.includes('@') && !rawContactCandidate.includes('<')) ? rawContactCandidate.replace(/\D/g, '').slice(-10) : '');
+  const finalPhone = cleanPhoneDigits.length === 10 ? cleanPhoneDigits : null;
 
   distributorBatch.push({
     name: name,
     normName: normName,
-    contact: phoneVal,
     legacy_id: legacyId,
     gstin: row['distributor_gstin'] || row['gstin'] || null,
     address: row['address'] || null,
     city: row['city'] || null,
-    email: row['email'] || null,
+    email: emailCandidate,
     dl_no: row['dlno'] || row['dl_no'] || null,
-    phone: phoneVal,
+    phone: finalPhone,
     state_code: row['gst_state'] || row['state_code'] || null,
   });
 
@@ -107,9 +113,9 @@ export async function flushDistributors(db: Database) {
     for (const d of distributorBatch) {
       try {
         const result = await db.run(
-          `INSERT INTO distributors (name, contact, legacy_id, gstin, address, city, email, dl_no, phone, state_code)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [d.name, d.contact, d.legacy_id, d.gstin, d.address, d.city, d.email, d.dl_no, d.phone, d.state_code]
+          `INSERT INTO distributors (name, legacy_id, gstin, address, city, email, dl_no, phone, state_code)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [d.name, d.legacy_id, d.gstin, d.address, d.city, d.email, d.dl_no, d.phone, d.state_code]
         );
         distributorMap.set(d.legacy_id, result.lastID!);
         normalizedDistributorMap.set(d.normName, result.lastID!);

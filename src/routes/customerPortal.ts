@@ -1278,13 +1278,13 @@ router.get('/customer/past-medicines', async (req, res) => {
     // 2. Special orders (past custom procurement requests)
     try {
       const specialOrders = await db.all(
-        `SELECT so.id as special_order_id, so.product as medicine_name,
+        `SELECT so.id as special_order_id, so.medicine_name,
                 so.qty, so.pharmarack_mrp as mrp, so.pharmarack_rate as sell_price,
                 so.pharmarack_distributor as store_name, so.status,
                 COALESCE(so.date, so.created_at) as last_refill_date,
                 'special_order' as item_type
          FROM special_orders so
-         WHERE (so.customer_id = ? OR so.phone LIKE ?) AND so.product IS NOT NULL AND TRIM(so.product) != ''
+         WHERE (so.customer_id = ? OR so.phone LIKE ?) AND so.medicine_name IS NOT NULL AND TRIM(so.medicine_name) != ''
          ORDER BY so.id DESC LIMIT 20`,
         [custId || -1, `%${last10}%`]
       );
@@ -1531,7 +1531,7 @@ router.post('/customer/refill-order', async (req, res) => {
     const idempotencyKey = (req.headers['idempotency-key'] as string) || (req.body.idempotency_key as string);
     if (idempotencyKey) {
       const recentOrder = await db.get(
-        `SELECT id, product, qty FROM special_orders 
+        `SELECT id, medicine_name, qty FROM special_orders 
          WHERE customer_id = ? AND notes LIKE ? AND created_at > datetime('now', '-2 minutes')
          ORDER BY id DESC LIMIT 1`,
         [custId, `%[Idempotency: ${idempotencyKey}]%`]
@@ -2021,7 +2021,8 @@ router.get('/customer/orders', async (req, res) => {
          so.id,
          so.store_id,
          so.customer_id,
-         so.product,
+         so.medicine_name,
+         so.medicine_name AS product,
          so.qty,
          so.status,
          so.payment_status,
@@ -2266,7 +2267,7 @@ router.post('/history/:invoiceId/refill', async (req, res) => {
         const itemTotal = (item.qty * (item.price || item.mrp || 0));
         const result = await db.run(
           `INSERT INTO special_orders (
-            store_id, customer_id, product, requester, phone, qty, priority, status, date,
+            store_id, customer_id, medicine_name, requester, phone, qty, priority, status, date,
             notified, advance_payment, notes, customer_order_source,
             payment_status, pharmacy_verification_status, delivery_status, return_status,
             total_amount, scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,

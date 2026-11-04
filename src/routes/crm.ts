@@ -509,7 +509,7 @@ router.get('/patient-order-history/:phone', async (req, res) => {
     const targetStoreId = (req as { tenant?: { storeId?: number } }).tenant?.storeId || resolveStoreId(req) || 1;
     const allStores = req.query.all_stores === 'true';
     const specialOrders = await db.all(
-      `SELECT id, customer_id, requester, phone, product, medicine_name, medicine_id, qty,
+      `SELECT id, customer_id, requester, phone, medicine_name, medicine_name AS product, medicine_id, qty,
               status, priority, notified, advance_payment, created_at, updated_at, date
        FROM special_orders
        WHERE (0 = 1 ${idCond}
@@ -1087,7 +1087,7 @@ router.get('/delay-notice-candidates', async (req, res) => {
         'special_order' as type,
         requester as patient_name,
         phone as patient_phone,
-        COALESCE(product, medicine_name, 'Medicine') as medicine_name,
+        COALESCE(medicine_name, 'Medicine') as medicine_name,
         COALESCE(qty, 1) as qty,
         COALESCE(estimated_delivery_start, scheduled_processing_at, date) as scheduled_date,
         status,

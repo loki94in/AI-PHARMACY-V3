@@ -246,13 +246,17 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
     for (const r of todayReminders) {
       const normDistName = (r.distributor_name || '').toLowerCase().trim();
       let phoneDigits = (r.distributor_phone || '').replace(/\D/g, '').slice(-10);
+      if (r.distributor_phone && (r.distributor_phone.includes('@') || r.distributor_phone.includes('<') || phoneDigits.length !== 10)) {
+        phoneDigits = '';
+        r.distributor_phone = '';
+      }
       if (!phoneDigits || phoneDigits.length !== 10) {
         const resolved = await resolveDistributorContact(db, r.distributor_name);
         if (resolved?.distributor_phone) {
           const resolvedClean = resolved.distributor_phone.replace(/\D/g, '').slice(-10);
-          if (resolvedClean.length === 10) {
+          if (resolvedClean.length === 10 && !resolved.distributor_phone.includes('@') && !resolved.distributor_phone.includes('<')) {
             phoneDigits = resolvedClean;
-            r.distributor_phone = resolved.distributor_phone;
+            r.distributor_phone = resolvedClean;
             if (resolved.distributor_id && !r.distributor_id) {
               r.distributor_id = resolved.distributor_id;
             }
@@ -261,7 +265,7 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
                 `UPDATE distributor_dispatch_reminders 
                  SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
                  WHERE id = ?`,
-                [resolved.distributor_phone, resolved.distributor_id || null, r.id]
+                [resolvedClean, resolved.distributor_id || null, r.id]
               );
             } catch (_) {}
           }
@@ -421,7 +425,7 @@ export async function appendMasterDistributorsDirectory(
 
   try {
     const allMasterDistributors = await db.all(
-      `SELECT d.id, d.name, d.phone, d.contact 
+      `SELECT d.id, d.name, d.phone 
        FROM distributors d 
        WHERE d.name IS NOT NULL AND d.name != ''
        ORDER BY d.name ASC`
@@ -438,7 +442,12 @@ export async function appendMasterDistributorsDirectory(
         if (md.id) existingCanonicalSet.add(`id:${md.id}`);
         if (normName) existingCanonicalSet.add(`norm:${normName}`);
         existingCanonicalSet.add(`raw:${md.name.toLowerCase().trim()}`);
-        const phone = (md.phone || md.contact || '').replace(/\\D/g, '').slice(-10);
+        const rawPhone = md.phone || '';
+        let phone = '';
+        if (rawPhone && !rawPhone.includes('@') && !rawPhone.includes('<')) {
+          const d = rawPhone.replace(/\D/g, '').slice(-10);
+          if (d.length === 10) phone = d;
+        }
         todayReminders.push({
           id: md.id ? 800000 + md.id : ++syntheticCounter,
           distributor_id: md.id || null,
@@ -596,7 +605,7 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
 
     // 2. Fetch distributors with purchase bills created today
     const purchases = await db.all(
-      `SELECT DISTINCT d.name as store_name, d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone, d.contact as distributor_contact
+      `SELECT DISTINCT d.name as store_name, d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone
        FROM purchases p
        JOIN distributors d ON p.distributor_id = d.id
        WHERE p.date IS NOT NULL AND DATE(p.date) = ?`,
@@ -606,12 +615,12 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
       store_name: d.store_name,
       distributor_id: d.distributor_id,
       distributor_name: d.distributor_name,
-      distributor_phone: (d.distributor_phone || d.distributor_contact || '').replace(/\D/g, '').slice(-10)
+      distributor_phone: (d.distributor_phone || '').replace(/\D/g, '').slice(-10)
     }));
 
     // 3. Fetch distributors with incoming emails/invoices received strictly today
     const emailDistributors = await db.all(
-      `SELECT DISTINCT d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone, d.contact as distributor_contact
+      `SELECT DISTINCT d.id as distributor_id, d.name as distributor_name, d.phone as distributor_phone
        FROM distributors d
        WHERE d.id IN (
          SELECT distributor_id FROM distributor_historical_files WHERE DATE(created_at, 'localtime') = ?
@@ -660,7 +669,7 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
       if (name) {
         const key = getCanonicalDistributorKey(d.distributor_id, name);
         const existing = distMap.get(key);
-        const p = (d.distributor_phone || d.distributor_contact || '').replace(/\D/g, '').slice(-10);
+        const p = (d.distributor_phone || '').replace(/\D/g, '').slice(-10);
         if (existing) {
           existing.hasEmailToday = true;
           if (!existing.id && d.distributor_id) existing.id = d.distributor_id;
@@ -1247,19 +1256,24 @@ export async function checkAndSendAutoReminders() {
     const dueReminders: Array<{ id: number; distributor_name: string; scheduledAtMs: number }> = [];
     const missingPhone: Array<{ id: number; distributor_name: string }> = [];
     for (const item of activeReminders) {
-      let p = (item.distributor_phone || item.master_phone || '').replace(/\D/g, '').slice(-10);
+      const rawP = item.distributor_phone || item.master_phone || '';
+      let p = '';
+      if (rawP && !rawP.includes('@') && !rawP.includes('<')) {
+        const d = rawP.replace(/\D/g, '').slice(-10);
+        if (d.length === 10) p = d;
+      }
       if (!p || p.length !== 10) {
         const resolved = await resolveDistributorContact(db, item.distributor_name);
         if (resolved?.distributor_phone) {
           const resolvedClean = resolved.distributor_phone.replace(/\D/g, '').slice(-10);
-          if (resolvedClean.length === 10) {
+          if (resolvedClean.length === 10 && !resolved.distributor_phone.includes('@') && !resolved.distributor_phone.includes('<')) {
             p = resolvedClean;
             try {
               await db.run(
                 `UPDATE distributor_dispatch_reminders 
                  SET distributor_phone = ?, distributor_id = COALESCE(distributor_id, ?) 
                  WHERE id = ?`,
-                [resolved.distributor_phone, resolved.distributor_id || null, item.id]
+                [resolvedClean, resolved.distributor_id || null, item.id]
               );
             } catch (_) {}
           }

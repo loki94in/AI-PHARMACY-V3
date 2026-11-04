@@ -360,15 +360,14 @@ export async function autoHealDistributorPhoneMappings(db: any): Promise<void> {
       SET phone = '8087125156',
           distributor_id = 134,
           updated_at = CURRENT_TIMESTAMP
-      WHERE (store_name LIKE '%CM Distributor%' OR store_id = 12928)
+      WHERE store_name LIKE '%CM Distributor%'
         AND (phone = '087125156' OR phone IS NULL OR LENGTH(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', '')) != 10)
     `);
 
-    // 2. Ensure CM Distributor in distributors table has the correct phone without wiping contact person names
+    // 2. Ensure CM Distributor in distributors table has the correct phone
     await db.run(`
       UPDATE distributors
-      SET phone = '8087125156',
-          contact = CASE WHEN contact IS NULL OR contact = '' OR contact = '087125156' THEN '8087125156' ELSE contact END
+      SET phone = '8087125156'
       WHERE name LIKE '%CM Distributor%'
         AND (phone IS NULL OR phone = '' OR phone = '087125156')
     `);
@@ -447,8 +446,146 @@ export async function autoHealDistributorPhoneMappings(db: any): Promise<void> {
       WHERE name LIKE '%CM Distributor%' AND (phone = '087125156' OR phone IS NULL OR phone = '')
     `);
 
+    // 7. Rescue email addresses mistakenly stored in distributors.phone or distributors.contact into distributors.email
+    // 7. Permanent elimination of redundant distributors.contact column
+    try {
+      const distCols = await db.all('PRAGMA table_info(distributors)');
+      const hasContact = distCols.some((c: any) => c.name === 'contact');
+      if (hasContact) {
+        // A. Rescue any email addresses mistakenly stored in contact into email
+        await db.run(`
+          UPDATE distributors
+          SET email = contact
+          WHERE (email IS NULL OR email = '')
+            AND (contact LIKE '%@%' OR contact LIKE '%.com%')
+        `);
+
+        // B. Ensure any valid 10-digit phone in contact is preserved in phone
+        await db.run(`
+          UPDATE distributors
+          SET phone = contact
+          WHERE (phone IS NULL OR phone = '')
+            AND contact IS NOT NULL AND contact != ''
+            AND contact NOT LIKE '%@%'
+            AND LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(contact, ' ', ''), '-', ''), '+91', ''), '+', '')) = 10
+        `);
+
+        // C. Permanently DROP the contact column from distributors
+        try {
+          await db.run('ALTER TABLE distributors DROP COLUMN contact');
+          console.log('[Boot] Permanently dropped redundant distributors.contact column.');
+        } catch (dropErr: any) {
+          // Fallback clean table rebuild for older SQLite engines
+          console.log('[Boot] Fallback table rebuild to drop contact column:', dropErr.message);
+          const cols: Array<{ name: string; type: string }> = await db.all('PRAGMA table_info(distributors)');
+          const colNames = cols.map(c => c.name).filter(n => n !== 'contact');
+          const colDefs = cols.filter(c => c.name !== 'contact').map(c => `${c.name} ${c.type || 'TEXT'}`).join(', ');
+          await db.exec(`
+            CREATE TABLE distributors_new (${colDefs});
+            INSERT INTO distributors_new (${colNames.join(', ')}) SELECT ${colNames.join(', ')} FROM distributors;
+            DROP TABLE distributors;
+            ALTER TABLE distributors_new RENAME TO distributors;
+          `);
+          console.log('[Boot] Table rebuild completed. distributors.contact column permanently deleted.');
+        }
+      }
+    } catch (colErr: any) {
+      console.warn('[Boot] distributors.contact column removal note:', colErr?.message || colErr);
+    }
+
+    // 8. Sanitize distributors.phone: blank out emails and invalid-length numbers
+    await db.run(`
+      UPDATE distributors
+      SET phone = CASE
+        WHEN phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%' THEN ''
+        WHEN phone != '' AND LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', ''), '+', '')) != 10 THEN ''
+        ELSE phone
+      END
+      WHERE phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%'
+         OR (phone != '' AND LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '+91', ''), '+', '')) != 10)
+    `);
+
+    // 9. Sanitize distributor_dispatch_reminders.distributor_phone: blank out emails and non-10-digit values
+    try {
+      await db.run(`
+        UPDATE distributor_dispatch_reminders
+        SET distributor_phone = CASE
+          WHEN distributor_phone LIKE '%@%' OR distributor_phone LIKE '%<%' OR distributor_phone LIKE '%.com%' THEN ''
+          WHEN distributor_phone != '' AND LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(distributor_phone, ' ', ''), '-', ''), '+91', ''), '+', '')) != 10 THEN ''
+          ELSE distributor_phone
+        END
+        WHERE distributor_phone LIKE '%@%' OR distributor_phone LIKE '%<%' OR distributor_phone LIKE '%.com%'
+           OR (distributor_phone != '' AND LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(distributor_phone, ' ', ''), '-', ''), '+91', ''), '+', '')) != 10)
+      `);
+    } catch (_) {}
+
   } catch (err: any) {
     console.warn('[Boot] Auto-heal distributor mappings error:', err?.message || err);
+  }
+}
+
+/**
+ * Permanently removes duplicate indexes and redundant dual-columns across the database.
+ * Drops duplicate indexes (idx_automation_notifications_type_status, idx_expiry_reviews_status, etc.)
+ * and unifies customers.preferred_language -> language, special_orders.product -> medicine_name.
+ */
+export async function autoHealDuplicateIndexesAndRedundantColumns(db: any): Promise<void> {
+  try {
+    // 1. Drop duplicate indexes
+    const duplicateIndexes = [
+      'idx_automation_notifications_type_status',
+      'idx_expiry_reviews_status',
+      'idx_msm_activity',
+      'idx_sales_invoices_date_status',
+      'idx_sales_invoices_customer_status',
+      'idx_customers_name',
+      'idx_medicines_name',
+      'idx_medicines_generic_name',
+      'idx_medicines_api_ref'
+    ];
+    for (const idx of duplicateIndexes) {
+      try {
+        await db.run(`DROP INDEX IF EXISTS ${idx}`);
+      } catch (_) {}
+    }
+
+    // 2. Unify customers.preferred_language into customers.language, then drop preferred_language
+    try {
+      const custCols: Array<{ name: string }> = await db.all('PRAGMA table_info(customers)');
+      if (custCols.some(c => c.name === 'preferred_language')) {
+        await db.run(`
+          UPDATE customers
+          SET language = preferred_language
+          WHERE preferred_language IS NOT NULL AND preferred_language != ''
+        `);
+        try {
+          await db.run('ALTER TABLE customers DROP COLUMN preferred_language');
+          console.log('[Boot] Permanently dropped customers.preferred_language column.');
+        } catch (dropErr: any) {
+          console.log('[Boot] customers.preferred_language drop note:', dropErr.message);
+        }
+      }
+    } catch (_) {}
+
+    // 3. Unify special_orders.product into special_orders.medicine_name, then drop product
+    try {
+      const soCols: Array<{ name: string }> = await db.all('PRAGMA table_info(special_orders)');
+      if (soCols.some(c => c.name === 'product')) {
+        await db.run(`
+          UPDATE special_orders
+          SET medicine_name = product
+          WHERE (medicine_name IS NULL OR medicine_name = '') AND product IS NOT NULL AND product != ''
+        `);
+        try {
+          await db.run('ALTER TABLE special_orders DROP COLUMN product');
+          console.log('[Boot] Permanently dropped special_orders.product column.');
+        } catch (dropErr: any) {
+          console.log('[Boot] special_orders.product drop note:', dropErr.message);
+        }
+      }
+    } catch (_) {}
+  } catch (err: any) {
+    console.warn('[Boot] Auto-heal duplicate indexes and columns error:', err?.message || err);
   }
 }
 
@@ -1230,7 +1367,6 @@ export async function ensureSchema(dbPath: string) {
         // Batch index verification in a single atomic exec to avoid 30+ sequential await round-trips
         await db.exec(`
           CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
-          CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name);
           CREATE INDEX IF NOT EXISTS idx_customers_name_nocase ON customers (name COLLATE NOCASE);
           CREATE INDEX IF NOT EXISTS idx_medicines_generic_name_nocase ON medicines (generic_name COLLATE NOCASE);
           CREATE INDEX IF NOT EXISTS idx_medicines_api_ref_nocase ON medicines (api_reference COLLATE NOCASE);
@@ -1340,9 +1476,8 @@ export async function ensureSchema(dbPath: string) {
         });
 
         await ensureColumns(db, 'customers', {
-          language: "TEXT DEFAULT 'en'",
-          language_confirmed: 'INTEGER DEFAULT 0',
-          preferred_language: "TEXT DEFAULT 'mr'"
+          language: "TEXT DEFAULT 'mr'",
+          language_confirmed: 'INTEGER DEFAULT 0'
         });
 
         await ensureColumns(db, 'special_orders', {
@@ -1872,6 +2007,8 @@ export async function ensureSchema(dbPath: string) {
         await ensureMultiPharmacyAndSnapshotSchema(db);
         await normalizeBillDatesToLocalTime(db);
         await autoHealDistributorPhoneMappings(db);
+    await autoHealDuplicateIndexesAndRedundantColumns(db);
+        await autoHealDuplicateIndexesAndRedundantColumns(db);
         await autoHealRefillIntervalsAndTasks(db);
         await ensureMedicinesFts(db);
         await ensureMedicineSearchSummaryTriggers(db);
@@ -2179,7 +2316,7 @@ export async function ensureSchema(dbPath: string) {
     CREATE TABLE IF NOT EXISTS distributors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
-      contact TEXT,
+      phone TEXT,
       delivery_boy_id INTEGER,
       min_order_value REAL DEFAULT NULL,
       min_order_items INTEGER DEFAULT NULL
@@ -2216,10 +2353,9 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY(medicine_id) REFERENCES medicines(id),
       UNIQUE(distributor_id, alias_name)
     );
-    CREATE INDEX IF NOT EXISTS idx_medicines_name ON medicines (name);
     CREATE INDEX IF NOT EXISTS idx_medicines_name_nocase ON medicines (name COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_medicine_aliases_nocase ON medicine_aliases (alias_name COLLATE NOCASE);
-    CREATE INDEX IF NOT EXISTS idx_medicines_api_ref ON medicines (api_reference);
+    CREATE INDEX IF NOT EXISTS idx_medicines_api_ref_nocase ON medicines (api_reference COLLATE NOCASE);
     CREATE INDEX IF NOT EXISTS idx_medicines_therapeutic ON medicines (therapeutic);
     CREATE INDEX IF NOT EXISTS idx_catalog_jobs_status ON catalog_jobs (status);
     CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases (date);
@@ -2326,7 +2462,7 @@ export async function ensureSchema(dbPath: string) {
       FOREIGN KEY(distributor_id) REFERENCES distributors(id),
       FOREIGN KEY(return_id) REFERENCES returns(id)
     );
-    CREATE INDEX IF NOT EXISTS idx_expiry_reviews_status ON expiry_return_reviews(status);
+    CREATE INDEX IF NOT EXISTS idx_expiry_return_reviews_status ON expiry_return_reviews(status);
     CREATE INDEX IF NOT EXISTS idx_expiry_reviews_inv ON expiry_return_reviews(inventory_id);
 
     -- Agent B: CRM, Communication, & Utilities Schemas
@@ -2336,9 +2472,8 @@ export async function ensureSchema(dbPath: string) {
       phone TEXT,
       address TEXT,
       notes TEXT,
-      language TEXT DEFAULT 'en',
+      language TEXT DEFAULT 'mr',
       language_confirmed INTEGER DEFAULT 0,
-      preferred_language TEXT DEFAULT 'mr',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE IF NOT EXISTS customer_portal_accounts (
@@ -2494,10 +2629,8 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_purchases_distributor_id ON purchases (distributor_id);
     CREATE INDEX IF NOT EXISTS idx_patient_refills_status_date ON patient_refills (status, next_refill_date);
     CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
-    CREATE INDEX IF NOT EXISTS idx_customers_name ON customers (name);
-    CREATE INDEX IF NOT EXISTS idx_sales_invoices_customer_status ON sales_invoices (customer_id, payment_status, payment_medium);
-    CREATE INDEX IF NOT EXISTS idx_sales_invoices_date_status ON sales_invoices (date DESC, payment_status);
-    -- Note: idx_purchases_date_dist, idx_purchases_dist_invoice, idx_medicines_name_mfg consolidated in Composite Performance Indexes block below
+    CREATE INDEX IF NOT EXISTS idx_customers_name_nocase ON customers (name COLLATE NOCASE);
+    -- Note: idx_sales_invoices_cust_pay, idx_sales_date_status, idx_purchases_date_dist, idx_purchases_dist_invoice consolidated in Composite Performance Indexes block below
     CREATE TABLE IF NOT EXISTS distributor_dispatch_reminders (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       distributor_id INTEGER,
@@ -2585,7 +2718,6 @@ export async function ensureSchema(dbPath: string) {
       phone TEXT,
       notes TEXT,
       medicine_name TEXT,
-      product TEXT,
       qty INTEGER DEFAULT 1,
       priority TEXT DEFAULT 'Normal',
       status TEXT DEFAULT 'Pending',
@@ -3018,8 +3150,7 @@ export async function ensureSchema(dbPath: string) {
       ['customers', 'credit_balance', 'ALTER TABLE customers ADD COLUMN credit_balance REAL DEFAULT 0'],
       ['customers', 'created_at', 'ALTER TABLE customers ADD COLUMN created_at DATETIME'],
       ['customers', 'credit_due_date', 'ALTER TABLE customers ADD COLUMN credit_due_date TEXT'],
-      ['customers', 'language', "ALTER TABLE customers ADD COLUMN language TEXT DEFAULT 'en'"],
-      ['customers', 'preferred_language', "ALTER TABLE customers ADD COLUMN preferred_language TEXT DEFAULT 'mr'"],
+      ['customers', 'language', "ALTER TABLE customers ADD COLUMN language TEXT DEFAULT 'mr'"],
       ['patient_refills', 'hold_for_stock', 'ALTER TABLE patient_refills ADD COLUMN hold_for_stock INTEGER DEFAULT 0'],
       ['patient_refills', 'is_active', 'ALTER TABLE patient_refills ADD COLUMN is_active INTEGER DEFAULT 1'],
       ['patient_refills', 'is_ready', 'ALTER TABLE patient_refills ADD COLUMN is_ready INTEGER DEFAULT 0'],
@@ -3320,32 +3451,36 @@ export async function ensureSchema(dbPath: string) {
         }
       }
 
-      // Rescue email strings into email column if email is empty before cleaning phone/contact
-      await db.run(`
-        UPDATE distributors SET
-          email = CASE
-            WHEN (email IS NULL OR email = '') AND (contact LIKE '%@%' OR contact LIKE '%.com%') THEN contact
-            WHEN (email IS NULL OR email = '') AND (phone LIKE '%@%' OR phone LIKE '%.com%') THEN phone
-            ELSE email
-          END
-        WHERE (email IS NULL OR email = '')
-          AND (contact LIKE '%@%' OR contact LIKE '%.com%' OR phone LIKE '%@%' OR phone LIKE '%.com%')
-      `);
+      const distColsCheck = await db.all('PRAGMA table_info(distributors)');
+      if (distColsCheck.some((c: any) => c.name === 'contact')) {
+        // Rescue email strings into email column if email is empty before cleaning phone/contact
+        await db.run(`
+          UPDATE distributors SET
+            email = CASE
+              WHEN (email IS NULL OR email = '') AND (contact LIKE '%@%' OR contact LIKE '%.com%') THEN contact
+              WHEN (email IS NULL OR email = '') AND (phone LIKE '%@%' OR phone LIKE '%.com%') THEN phone
+              ELSE email
+            END
+          WHERE (email IS NULL OR email = '')
+            AND (contact LIKE '%@%' OR contact LIKE '%.com%' OR phone LIKE '%@%' OR phone LIKE '%.com%')
+        `);
 
-      // Clean email strings incorrectly written into phone column without blanking valid contact person names
-      await db.run(`
-        UPDATE distributors SET
-          phone = CASE WHEN phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%' THEN '' ELSE phone END,
-          contact = CASE WHEN (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%') AND email IS NOT NULL AND email != '' THEN '' ELSE contact END
-        WHERE (phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%')
-           OR (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%')
-      `);
+        // Clean email strings incorrectly written into phone column
+        await db.run(`
+          UPDATE distributors SET
+            phone = CASE WHEN phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%' THEN '' ELSE phone END,
+            contact = CASE WHEN (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%') AND email IS NOT NULL AND email != '' THEN '' ELSE contact END
+          WHERE (phone LIKE '%@%' OR phone LIKE '%<%' OR phone LIKE '%.com%')
+             OR (contact LIKE '%@%' OR contact LIKE '%<%' OR contact LIKE '%.com%')
+        `);
 
-      // Synchronize distributors contact and phone columns safely without data loss:
-      // If phone is missing and contact contains numeric digits, populate phone
-      await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != '' AND (contact GLOB '[0-9]*' OR contact LIKE '+%')");
-      // If contact is completely empty, populate contact = phone as default fallback (never overwrite existing contact person name or landline)
-      await db.run("UPDATE distributors SET contact = phone WHERE (contact IS NULL OR contact = '') AND phone IS NOT NULL AND phone != ''");
+        // Synchronize distributors contact into phone before dropping:
+        await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != '' AND (contact GLOB '[0-9]*' OR contact LIKE '+%') AND LENGTH(REPLACE(REPLACE(REPLACE(REPLACE(contact, ' ', ''), '-', ''), '+91', ''), '+', '')) = 10");
+
+        try {
+          await db.run('ALTER TABLE distributors DROP COLUMN contact');
+        } catch (_) {}
+      }
 
       // Synchronize special_orders product and medicine_name columns to eliminate column name confusion
       await db.run("UPDATE special_orders SET product = medicine_name WHERE (product IS NULL OR product = '') AND medicine_name IS NOT NULL AND medicine_name != ''");
@@ -3360,7 +3495,6 @@ export async function ensureSchema(dbPath: string) {
       await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_quantity ON inventory_master (quantity);');
       await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_master_expiry ON inventory_master (expiry_date);');
       await db.run('CREATE INDEX IF NOT EXISTS idx_inventory_active_stock ON inventory_master (expiry_date, medicine_id) WHERE is_active = 1 AND quantity > 0');
-      await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_generic_name ON medicines (generic_name);');
       await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_generic_name_nocase ON medicines (generic_name COLLATE NOCASE);');
       await db.run('CREATE INDEX IF NOT EXISTS idx_medicines_api_ref_nocase ON medicines (api_reference COLLATE NOCASE);');
       await db.run('CREATE INDEX IF NOT EXISTS idx_customers_name_nocase ON customers (name COLLATE NOCASE);');
@@ -3674,7 +3808,7 @@ export async function ensureSchema(dbPath: string) {
     CREATE INDEX IF NOT EXISTS idx_purchases_date_dist ON purchases(date DESC, distributor_id);
     CREATE INDEX IF NOT EXISTS idx_purchases_dist_invoice ON purchases(distributor_id, invoice_no);
     CREATE INDEX IF NOT EXISTS idx_customers_credit ON customers(credit_balance, credit_enabled);
-    CREATE INDEX IF NOT EXISTS idx_automation_notifications_type_status ON automation_notifications(type, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_auto_notif_type_status ON automation_notifications(type, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_special_orders_status_date ON special_orders(status, date DESC);
     CREATE INDEX IF NOT EXISTS idx_medicines_enrichment ON medicines(enrichment_status);
     CREATE INDEX IF NOT EXISTS idx_action_logs_created_type ON action_logs(created_at DESC, action_type);
@@ -4860,14 +4994,6 @@ export async function ensureSchema(dbPath: string) {
       await db.run('ALTER TABLE patient_refills ADD COLUMN confirmed_at DATETIME DEFAULT NULL');
     } catch { }
 
-    // Safely synchronize distributors contact and phone without overwriting contact person names
-    try {
-      await db.run("UPDATE distributors SET phone = contact WHERE (phone IS NULL OR phone = '') AND contact IS NOT NULL AND contact != '' AND (contact GLOB '[0-9]*' OR contact LIKE '+%')");
-      await db.run("UPDATE distributors SET contact = phone WHERE (contact IS NULL OR contact = '') AND phone IS NOT NULL AND phone != ''");
-    } catch (syncErr) {
-      console.warn('[Database Schema] Distributor phone sync warning:', syncErr);
-    }
-
     // Catalogue Image Connection & Verification Tables
     await db.run(`
     CREATE TABLE IF NOT EXISTS catalog_images (
@@ -5062,6 +5188,7 @@ export async function ensureSchema(dbPath: string) {
     // Bill dates in one form: UTC ISO sale dates -> shop local time (2026-09-30)
     await normalizeBillDatesToLocalTime(db);
     await autoHealDistributorPhoneMappings(db);
+    await autoHealDuplicateIndexesAndRedundantColumns(db);
 
     // Schema v55: Multi-Pharmacy Tenant Identity, Staff RBAC, & Immutable Bill Snapshots
     await ensureMultiPharmacyAndSnapshotSchema(db);
@@ -5385,6 +5512,7 @@ export async function ensureSchema(dbPath: string) {
       await ensureCloudExecLedgerSchema(db);
       await normalizeBillDatesToLocalTime(db);
       await autoHealDistributorPhoneMappings(db);
+    await autoHealDuplicateIndexesAndRedundantColumns(db);
       await autoHealRefillIntervalsAndTasks(db);
       await ensureMedicinesFts(db);
       await ensureMedicineSearchSummaryTriggers(db);

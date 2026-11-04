@@ -323,16 +323,15 @@ enquiriesRouter.post('/:id/convert-to-order', async (req: Request, res: Response
     const insertResult = await db.run(
       `INSERT INTO special_orders (
         store_id, customer_id, medicine_id, requester, phone,
-        product, medicine_name, qty, pharmarack_mrp, status,
+        medicine_name, qty, pharmarack_mrp, status,
         source, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 'enquiry', ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 'enquiry', ?)`,
       [
         enquiry.store_id || 1,
         enquiry.customer_id || null,
         enquiry.medicine_id || null,
         enquiry.patient_name,
         enquiry.patient_phone,
-        enquiry.medicine_name,
         enquiry.medicine_name,
         enquiry.qty || 1,
         enquiry.mrp || null,

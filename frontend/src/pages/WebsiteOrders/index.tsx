@@ -393,8 +393,8 @@ export default function WebsiteOrders() {
           notes: `Website Order #${order.id}${advanceNote}`,
           medicines: [
             {
-              medicine_name: order.medicine_name || order.product,
-              name: order.medicine_name || order.product,
+              medicine_name: order.medicine_name,
+              name: order.medicine_name,
               quantity: order.qty || 1,
               qty: order.qty || 1,
               sell_price: rawMrp > 0 ? rawMrp : undefined,
@@ -403,7 +403,7 @@ export default function WebsiteOrders() {
           ],
           items: [
             {
-              medicine_name: order.medicine_name || order.product,
+              medicine_name: order.medicine_name,
               quantity: order.qty || 1,
               rate: rawMrp > 0 ? rawMrp : undefined
             }
@@ -873,8 +873,8 @@ export default function WebsiteOrders() {
                   {/* Medicine Item Details */}
                   <div className="p-2.5 rounded-xl bg-bg border border-border/60 space-y-1.5 text-xs">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="font-bold text-text truncate" title={order.medicine_name || order.product}>
-                        {order.medicine_name || order.product || 'Prescription Fulfillment Request'}
+                      <div className="font-bold text-text truncate" title={order.medicine_name}>
+                        {order.medicine_name || 'Prescription Fulfillment Request'}
                       </div>
                       {(order.distributor_name || order.pharmarack_distributor) && (
                         <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-sky-500/10 text-sky-400 border border-sky-500/20 shrink-0 flex items-center gap-1">
@@ -904,7 +904,7 @@ export default function WebsiteOrders() {
                   <div className="pt-0.5">
                     <button
                       type="button"
-                      onClick={() => handleToggleSourcing(order.id, order.medicine_name || order.product || '')}
+                      onClick={() => handleToggleSourcing(order.id, order.medicine_name || '')}
                       className="w-full py-1.5 px-3 rounded-xl bg-bg border border-border/80 hover:border-primary/50 text-[11px] font-bold text-text flex items-center justify-between transition-all cursor-pointer shadow-xs"
                     >
                       <span className="flex items-center gap-1.5">
@@ -987,7 +987,7 @@ export default function WebsiteOrders() {
                                           productId: opt.productId || opt.product_id,
                                           productCode: opt.productCode || opt.product_code,
                                           storeId: opt.storeId || opt.store_id,
-                                          productName: opt.name || opt.productName || order.medicine_name || order.product,
+                                          productName: opt.name || opt.productName || order.medicine_name,
                                           sendPaymentQr: !isPaidOrder
                                         });
                                       }}
@@ -1087,7 +1087,7 @@ export default function WebsiteOrders() {
                                         productId: item.productId || item.product_id,
                                         productCode: item.productCode || item.product_code,
                                         storeId: item.storeId || item.store_id,
-                                        productName: item.name || item.productName || order.medicine_name || order.product,
+                                        productName: item.name || item.productName || order.medicine_name,
                                         sendPaymentQr: !isPaidOrder
                                       });
                                     }}

@@ -487,6 +487,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
         candidates.push(altCase);
       }
       
+
       if (candidates.length > 0) {
         const parallelFetches = candidates.map(term =>
           fetchPharmarack('https://pharmretail-elasticsearch.pharmarack.com/open-search/api/v2/search', {
@@ -699,7 +700,7 @@ router.get('/distributors', async (_req, res) => {
       SELECT 
         d.id as storeId,
         d.name as storeName,
-        COALESCE(d.phone, d.contact, '') as mobileNumber,
+        COALESCE(d.phone, '') as mobileNumber,
         COALESCE(d.email, '') as email,
         COALESCE(d.address, '') as address,
         COALESCE(d.gstin, '') as partyCode,
@@ -841,22 +842,25 @@ router.get('/distributor-mappings', async (_req, res) => {
       SELECT 
         m.store_name, 
         COALESCE(m.distributor_id, d.id) as distributor_id, 
-        COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, ''), NULLIF(m.phone, '')) as phone, 
+        COALESCE(NULLIF(d.phone, ''), NULLIF(m.phone, '')) as phone, 
         COALESCE(d.name, m.store_name) as distributor_name, 
-        COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, ''), NULLIF(m.phone, '')) as distributor_phone,
+        COALESCE(NULLIF(d.phone, ''), NULLIF(m.phone, '')) as distributor_phone,
         COALESCE(m.delivery_boy_id, d.delivery_boy_id) as delivery_boy_id
       FROM pharmarack_distributor_mappings m
-      LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
+      LEFT JOIN distributors d ON d.id = COALESCE(
+        m.distributor_id,
+        (SELECT d2.id FROM distributors d2 WHERE LOWER(TRIM(d2.name)) = LOWER(TRIM(m.store_name)) ORDER BY d2.id DESC LIMIT 1)
+      )
       UNION
       SELECT 
         d.name as store_name, 
         d.id as distributor_id, 
-        COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, '')) as phone, 
+        COALESCE(NULLIF(d.phone, ''), '') as phone, 
         d.name as distributor_name, 
-        COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, '')) as distributor_phone,
+        COALESCE(NULLIF(d.phone, ''), '') as distributor_phone,
         d.delivery_boy_id as delivery_boy_id
       FROM distributors d
-      WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
+      WHERE (d.phone IS NOT NULL AND d.phone != '')
         AND LOWER(TRIM(d.name)) NOT IN (
           SELECT LOWER(TRIM(store_name)) FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL
         )
@@ -4114,15 +4118,18 @@ router.get('/live-cart-summary', async (_req, res) => {
       db.all(`
         SELECT 
           LOWER(TRIM(m.store_name)) as store_name_lower, 
-          COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, ''), NULLIF(m.phone, '')) as phone
+          COALESCE(NULLIF(d.phone, ''), NULLIF(m.phone, '')) as phone
         FROM pharmarack_distributor_mappings m
-        LEFT JOIN distributors d ON (m.distributor_id = d.id OR LOWER(TRIM(m.store_name)) = LOWER(TRIM(d.name)))
+        LEFT JOIN distributors d ON d.id = COALESCE(
+        m.distributor_id,
+        (SELECT d2.id FROM distributors d2 WHERE LOWER(TRIM(d2.name)) = LOWER(TRIM(m.store_name)) ORDER BY d2.id DESC LIMIT 1)
+      )
         UNION
         SELECT 
           LOWER(TRIM(d.name)) as store_name_lower, 
-          COALESCE(NULLIF(d.phone, ''), NULLIF(d.contact, '')) as phone
+          COALESCE(NULLIF(d.phone, ''), '') as phone
         FROM distributors d
-        WHERE ((d.phone IS NOT NULL AND d.phone != '') OR (d.contact IS NOT NULL AND d.contact != ''))
+        WHERE (d.phone IS NOT NULL AND d.phone != '')
       `).catch(() => [])
     ]);
 

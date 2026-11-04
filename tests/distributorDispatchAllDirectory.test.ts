@@ -26,12 +26,12 @@ describe('Dispatch All Distributors Directory & Phone Order Trigger Tests', () =
 
     // Seed master distributors
     await db.run(
-      `INSERT INTO distributors (name, phone, contact, email) VALUES (?, ?, ?, ?)`,
-      ['Balaji Pharma Wholesalers', '9822012345', 'Balaji Contact', 'balaji@example.com']
+      `INSERT INTO distributors (name, phone, email) VALUES (?, ?, ?)`,
+      ['Balaji Pharma Wholesalers', '9822012345', 'balaji@example.com']
     );
     await db.run(
-      `INSERT INTO distributors (name, phone, contact, email) VALUES (?, ?, ?, ?)`,
-      ['Apex Healthcare Distributors', '9822099999', 'Apex Contact', 'apex@example.com']
+      `INSERT INTO distributors (name, phone, email) VALUES (?, ?, ?)`,
+      ['Apex Healthcare Distributors', '9822099999', 'apex@example.com']
     );
 
     const { default: dispatchRouter } = await import('../src/routes/dispatch.js');

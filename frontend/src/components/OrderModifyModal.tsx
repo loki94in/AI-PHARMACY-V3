@@ -83,7 +83,7 @@ export const OrderModifyModal: React.FC<OrderModifyModalProps> = ({
             {
               id: undefined,
               medicine_id: order.medicine_id || null,
-              product_name: order.medicine_name || order.product || 'Medicine',
+              product_name: order.medicine_name || 'Medicine',
               requested_qty: order.qty || 1,
               mrp: order.pharmarack_mrp || 0,
               sell_price: order.pharmarack_rate || order.advance_payment || order.pharmarack_mrp || 0,
@@ -100,7 +100,7 @@ export const OrderModifyModal: React.FC<OrderModifyModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [order.id, order.medicine_id, order.medicine_name, order.product, order.qty, order.pharmarack_mrp, order.pharmarack_rate, order.advance_payment]);
+  }, [order.id, order.medicine_id, order.medicine_name, order.qty, order.pharmarack_mrp, order.pharmarack_rate, order.advance_payment]);
 
   // Debounced search for adding new medicine
   useEffect(() => {

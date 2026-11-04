@@ -245,7 +245,6 @@ export interface Patient {
   address?: string;
   notes?: string;
   language?: string;
-  preferred_language?: string;
 }
 
 export interface Doctor {

@@ -139,12 +139,8 @@ export async function reconnectDistributorLinks(
               UPDATE distributors
               SET 
                 phone = COALESCE(distributors.phone, (
-                  SELECT bd.phone FROM pre_mig_bak.distributors bd 
-                  WHERE LOWER(TRIM(bd.name)) = LOWER(TRIM(distributors.name)) AND bd.phone IS NOT NULL AND bd.phone != '' LIMIT 1
-                )),
-                contact = COALESCE(distributors.contact, (
-                  SELECT bd.contact FROM pre_mig_bak.distributors bd 
-                  WHERE LOWER(TRIM(bd.name)) = LOWER(TRIM(distributors.name)) AND bd.contact IS NOT NULL AND bd.contact != '' LIMIT 1
+                  SELECT COALESCE(NULLIF(bd.phone, ''), NULLIF(bd.contact, '')) FROM pre_mig_bak.distributors bd 
+                  WHERE LOWER(TRIM(bd.name)) = LOWER(TRIM(distributors.name)) AND ((bd.phone IS NOT NULL AND bd.phone != '') OR (bd.contact IS NOT NULL AND bd.contact != '')) LIMIT 1
                 )),
                 min_order_value = COALESCE(distributors.min_order_value, (
                   SELECT bd.min_order_value FROM pre_mig_bak.distributors bd 

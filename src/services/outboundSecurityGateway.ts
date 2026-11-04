@@ -164,9 +164,9 @@ export class OutboundSecurityGateway {
     try {
       const distRow = await db.get(
         `SELECT id, name FROM distributors 
-         WHERE (phone LIKE ? OR contact LIKE ?) 
+         WHERE phone LIKE ? 
          LIMIT 1`,
-        [`%${clean10}%`, `%${clean10}%`]
+        [`%${clean10}%`]
       );
       if (distRow?.id) {
         return { role: 'distributor', name: distRow.name, id: distRow.id };

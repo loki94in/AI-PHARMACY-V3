@@ -10,6 +10,10 @@ export const SQL_LOCAL_NOW = "datetime('now', 'localtime')";
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
+export function toLocalSqlDate(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 export function toLocalSqlDateTime(d: Date = new Date()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
