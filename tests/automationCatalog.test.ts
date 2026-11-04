@@ -53,6 +53,11 @@ describe('Automation catalog', () => {
   });
 
   it('getAutomationToggleStates defaults every entry to enabled when app_settings is empty', async () => {
+    const db = await dbManager.getConnection();
+    const keys = AUTOMATION_CATALOG.map((e) => e.appSettingsKey);
+    await db.run(`DELETE FROM app_settings WHERE key IN (${keys.map(() => '?').join(',')})`, keys);
+    await db.run("DELETE FROM app_settings WHERE key = 'trigger_wa_dispatch_reminder_enabled'");
+
     const states = await getAutomationToggleStates();
     for (const entry of AUTOMATION_CATALOG) {
       expect(states[entry.id]).toBe(true);

@@ -237,6 +237,19 @@ export function deleteBackup(filename: string): void {
   }
 
   fs.unlinkSync(filePath);
+
+  // Cascade cleanup companion SQLite files (.db, .db-shm, .db-wal, .db-journal)
+  const dir = path.dirname(filePath);
+  const baseNoExt = sanitized.replace(/\.gz$/, '');
+  const prefix = baseNoExt.endsWith('.db') ? baseNoExt.slice(0, -3) : baseNoExt;
+  const companionExts = ['.db', '.db-shm', '.db-wal', '.db-journal'];
+  for (const ext of companionExts) {
+    const companionPath = path.join(dir, prefix + ext);
+    if (companionPath !== filePath && fs.existsSync(companionPath)) {
+      try { fs.unlinkSync(companionPath); } catch (_) {}
+    }
+  }
+
   invalidatePreupdateCache();
 }
 
@@ -495,25 +508,67 @@ export function stopScheduler(): void {
 /**
  * Delete oldest backups if total exceeds MAX_BACKUPS and clean orphaned uncompressed .db files.
  */
-function enforceRetention(): void {
+export function enforceRetention(): void {
   try {
-    // 1. Clean up any orphaned uncompressed temp .db files (keeping disk slim)
+    // 1. Clean up orphaned uncompressed temp .db files, companion -shm/-wal/-journal, and test folders
     if (fs.existsSync(BACKUP_DIR)) {
       const allFiles = fs.readdirSync(BACKUP_DIR);
       for (const f of allFiles) {
-        if (f.startsWith('app_backup_') && f.endsWith('.db')) {
-          // If a corresponding .db.gz exists or the temp .db is older than 30 minutes, clean it up
-          const gzEquivalent = f + '.gz';
-          const fullPath = path.join(BACKUP_DIR, f);
-          try {
+        const fullPath = path.join(BACKUP_DIR, f);
+        try {
+          // Remove leftover drill & temporary restore directories
+          if ((f.startsWith('temp_restore_') || f.startsWith('test_drill_')) && fs.statSync(fullPath).isDirectory()) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
+            console.log(`[Backup] Cleaned leftover restore folder: ${f}`);
+            continue;
+          }
+
+          // Remove test drill and leftover orphaned temp files
+          if (f.startsWith('test_drill_')) {
+            fs.unlinkSync(fullPath);
+            continue;
+          }
+
+          // Clean uncompressed .db files if .db.gz exists or older than 30m
+          if (f.startsWith('app_backup_') && f.endsWith('.db')) {
+            const gzEquivalent = f + '.gz';
             const stats = fs.statSync(fullPath);
             const ageMs = Date.now() - stats.mtimeMs;
             if (fs.existsSync(path.join(BACKUP_DIR, gzEquivalent)) || ageMs > 30 * 60 * 1000) {
               fs.unlinkSync(fullPath);
               console.log(`[Backup] Cleaned uncompressed leftover database: ${f}`);
             }
-          } catch (_) {}
-        }
+          }
+
+          // Clean orphaned -shm, -wal, and -journal companion files
+          if (f.endsWith('.db-shm') || f.endsWith('.db-wal') || f.endsWith('.db-journal')) {
+            const baseDb = f.replace(/\.db-(shm|wal|journal)$/, '.db');
+            const gzEquivalent = baseDb + '.gz';
+            if (!fs.existsSync(path.join(BACKUP_DIR, baseDb)) || fs.existsSync(path.join(BACKUP_DIR, gzEquivalent))) {
+              fs.unlinkSync(fullPath);
+              console.log(`[Backup] Cleaned orphaned companion file: ${f}`);
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 1b. Enforce pre-migration retention: keep only latest 1 pre-migration backup to save multi-GB space
+      const preMigDir = path.join(BACKUP_DIR, 'pre_migration');
+      if (fs.existsSync(preMigDir)) {
+        try {
+          const preFiles = fs.readdirSync(preMigDir)
+            .filter(pf => pf.endsWith('.db'))
+            .map(pf => ({ filename: pf, path: path.join(preMigDir, pf), mtime: fs.statSync(path.join(preMigDir, pf)).mtime }))
+            .sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+          if (preFiles.length > 1) {
+            for (const oldPre of preFiles.slice(1)) {
+              try {
+                fs.unlinkSync(oldPre.path);
+                console.log(`[Backup] Cleaned old pre-migration snapshot: ${oldPre.filename}`);
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
       }
     }
 

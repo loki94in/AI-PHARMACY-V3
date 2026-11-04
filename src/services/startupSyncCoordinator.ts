@@ -109,10 +109,10 @@ class StartupSyncCoordinator {
 
         if (!storeId) {
           const linkRow = await db.get(
-            `SELECT store_id, distributor_name, product_id, product_code, rate, mrp 
+            `SELECT store_id, store_name AS distributor_name, product_id, product_code, rate, mrp 
              FROM medicine_distributor_links 
              WHERE LOWER(TRIM(medicine_name)) = LOWER(TRIM(?))
-             ORDER BY is_preferred DESC LIMIT 1`,
+             ORDER BY pick_order ASC LIMIT 1`,
             [prodName]
           ).catch(() => null);
 

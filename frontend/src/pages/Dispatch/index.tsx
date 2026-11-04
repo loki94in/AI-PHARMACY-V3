@@ -464,6 +464,13 @@ const Dispatch = () => {
       const distName = targetItem?.distributor_name || 'Distributor';
       const msgToSend = customMessageOverride !== undefined ? customMessageOverride : customMessages[id];
 
+      // If phone number is missing, prompt user to enter phone first
+      if (!targetItem?.distributor_phone || targetItem.distributor_phone.trim() === '') {
+        showNotif(`Please add a 10-digit WhatsApp number for ${distName} first.`, 'error');
+        if (targetItem) handleStartEditDistPhone(targetItem);
+        return;
+      }
+
       // If item is currently held in 5-minute scheduled review hold, release immediately via queue
       if (targetItem?.pending_queue_id && !customMessageOverride) {
         await api.sendWhatsAppQueueItemNow(targetItem.pending_queue_id);
@@ -479,7 +486,8 @@ const Dispatch = () => {
         const createRes = await api.createManualDistributorOrderReminder({
           distributor_name: targetItem.distributor_name,
           distributor_phone: targetItem.distributor_phone,
-          delivery_boy_id: targetItem.delivery_boy_id || undefined
+          delivery_boy_id: targetItem.delivery_boy_id || undefined,
+          distributor_id: targetItem.distributor_id || undefined
         });
         if (createRes && createRes.reminder && createRes.reminder.id) {
           targetId = createRes.reminder.id;
@@ -1763,6 +1771,10 @@ const Dispatch = () => {
                                 <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 shrink-0">
                                   <ShoppingCart size={10} /> Direct Order
                                 </span>
+                              ) : item.order_source === 'phone_call' ? (
+                                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1 shrink-0">
+                                  <PhoneCall size={10} /> Phone Order
+                                </span>
                               ) : item.has_order_today === 1 ? (
                                 <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide bg-sky/20 text-sky border border-sky/30 flex items-center gap-1 shrink-0">
                                   <Package size={10} /> Today's Order
@@ -1955,14 +1967,31 @@ const Dispatch = () => {
                                 type="button"
                                 onClick={() => handleSendReminderNow(item.id)}
                                 disabled={sendingReminderId === item.id}
-                                className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border border-emerald-500/40 disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-md hover:shadow-emerald-500/20 shrink-0"
+                                className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl border disabled:opacity-50 transition-all active:scale-95 cursor-pointer shadow-md shrink-0 ${
+                                  item.status === 'No Order Today'
+                                    ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border-amber-500/40 hover:shadow-amber-500/20'
+                                    : 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 border-emerald-500/40 hover:shadow-emerald-500/20'
+                                }`}
+                                title={
+                                  item.status === 'No Order Today'
+                                    ? 'Record manual phone order for today and dispatch WhatsApp reminder immediately'
+                                    : 'Send WhatsApp dispatch reminder immediately'
+                                }
                               >
                                 {sendingReminderId === item.id ? (
                                   <RefreshCw size={13} className="animate-spin" />
+                                ) : item.status === 'No Order Today' ? (
+                                  <PhoneCall size={13} />
                                 ) : (
                                   <Send size={13} />
                                 )}
-                                <span>{sendingReminderId === item.id ? 'Sending...' : 'Send Now'}</span>
+                                <span>
+                                  {sendingReminderId === item.id
+                                    ? 'Sending...'
+                                    : item.status === 'No Order Today'
+                                    ? 'Send Phone Order'
+                                    : 'Send Now'}
+                                </span>
                               </button>
 
                               <button

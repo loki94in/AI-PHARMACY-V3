@@ -620,10 +620,10 @@ export class UnifiedAssistantOrchestrator {
       suggestedFollowUps = ['Search inventory for Dolo 650', 'Show due refills', 'Query today sales turnover'];
     } else if (rawPath === '/inventory') {
       const stockSummary = await db.get(`
-        SELECT COUNT(*) as total,
-               SUM(CASE WHEN total_stock <= 5 THEN 1 ELSE 0 END) as low_stock,
-               SUM(CASE WHEN expiry_date IS NOT NULL AND expiry_date <= DATE('now', '+90 days') THEN 1 ELSE 0 END) as near_expiry
-        FROM medicines
+        SELECT COUNT(DISTINCT m.id) as total,
+               SUM(CASE WHEN m.total_stock <= 5 THEN 1 ELSE 0 END) as low_stock,
+               (SELECT COUNT(DISTINCT im.medicine_id) FROM inventory_master im WHERE im.is_active = 1 AND im.quantity > 0 AND im.expiry_date IS NOT NULL AND im.expiry_date <= DATE('now', '+90 days')) as near_expiry
+        FROM medicines m
       `).catch(() => ({ total: 0, low_stock: 0, near_expiry: 0 }));
       reply = `**Inventory & Batch Management**\n` +
         `• Total Medicines in Catalog: **${stockSummary?.total || 0}**\n` +

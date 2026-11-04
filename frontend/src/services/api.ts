@@ -860,6 +860,10 @@ export interface PharmarackSentOrder {
   batch_sent: boolean;
   batch_sent_at: number | null;
   source?: string;
+  distributor_id?: number | null;
+  distributor_name?: string;
+  distributor_phone?: string;
+  is_mapped?: boolean;
 }
 
 export interface PharmarackLatestSentMapEntry {
@@ -2093,6 +2097,8 @@ export const api = {
   getPharmarackSentDates: () => apiClient.get<{ success: boolean; dates: string[] }>('/pharmarack/sent-orders/dates').then(res => res.data),
   getPharmarackSentOrders: (date?: string) => apiClient.get<{ success: boolean; date: string; orders: PharmarackSentOrder[] }>('/pharmarack/sent-orders', { params: { date } }).then(res => res.data),
   sendSentOrderDispatch: (id: number) => apiClient.post<SendReminderResponse>(`/pharmarack/sent-orders/${id}/send-dispatch`).then(res => res.data),
+  assignSentOrderDistributorPhone: (data: { store_name: string; phone: string; distributor_id?: number | null }) =>
+    apiClient.post<{ success: boolean; message: string; phone: string }>('/pharmarack/sent-orders/assign-phone', data).then(res => res.data),
   checkPharmarackOrder: (distributor: string, lines: Array<{ name: string; mrp?: number }>) => apiClient.post<PharmarackOrderCheck>('/pharmarack/order-check', { distributor, lines }).then(res => res.data),
   getPharmarackLatestSentMap: () => apiClient.get<{ success: boolean; sentMap: Record<string, PharmarackLatestSentMapEntry> }>('/pharmarack/sent-orders/latest-map').then(res => res.data),
   logPharmarackPlacedOrder: (data: { store_id?: number | null; store_name: string; items: readonly unknown[]; delivery_persons?: readonly unknown[]; order_no?: string | null; delivery_boy_id?: number | null; delivery_boy_notified?: number }) => apiClient.post('/pharmarack/log-placed-order', data).then(res => res.data),

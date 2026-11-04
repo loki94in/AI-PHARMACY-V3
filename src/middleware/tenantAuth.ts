@@ -242,7 +242,12 @@ export async function tenantAuthMiddleware(req: Request, res: Response, next: Ne
           if (access || verified.role === 'owner') {
             let perms = verified.permissions;
             if (access?.permissions_json) {
-              try { perms = JSON.parse(access.permissions_json); } catch (_) {}
+              try { 
+                perms = JSON.parse(access.permissions_json); 
+              } catch (parseErr) {
+                console.warn('[TenantAuth] Failed to parse permissions_json for user %s, falling back to empty permissions:', verified.userId, parseErr);
+                perms = [];
+              }
             }
             verified.storeId = requestedStoreId;
             verified.role = access?.role || verified.role;

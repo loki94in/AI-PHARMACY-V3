@@ -317,12 +317,15 @@ function createWindow() {
   ];
   const windowIcon = possibleIcons.find((p) => fs.existsSync(p));
 
+  const isMaximizedMode = process.env.APP_WINDOW_MODE === 'maximized';
+
   mainWindow = new BrowserWindow({
     width: 1366,
     height: 868,
     minWidth: 1024,
     minHeight: 700,
     show: false, // show after ready-to-show to avoid white flash
+    fullscreen: !isMaximizedMode,
     title: 'AI Pharmacy OS',
     icon: windowIcon,
     backgroundColor: '#0f172a',
@@ -336,8 +339,12 @@ function createWindow() {
     },
   });
 
-  // Open the app in maximized mode (same as old Chrome --start-fullscreen)
-  mainWindow.maximize();
+  // Open the app in fullscreen mode (or maximized if configured)
+  if (isMaximizedMode) {
+    mainWindow.maximize();
+  } else {
+    mainWindow.setFullScreen(true);
+  }
 
   // Visual Safety Fallback: Ensure the window becomes visible within 2.5s even if ready-to-show is slow
   const showFallback = setTimeout(() => {

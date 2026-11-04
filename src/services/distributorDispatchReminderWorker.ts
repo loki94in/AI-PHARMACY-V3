@@ -42,9 +42,16 @@ export async function resolveDeliveryBoyForDistributor(
   orderTimeStr?: string
 ): Promise<{ delivery_boy_id: number | null; name: string | null; phone: string | null }> {
   try {
-    const activeBoys = await db.all(
-      "SELECT id, name, whatsapp_number, shift_start_time, shift_end_time FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' ORDER BY id ASC"
-    );
+    let activeBoys: any[] = [];
+    try {
+      activeBoys = await db.all(
+        "SELECT id, name, whatsapp_number, shift_start_time, shift_end_time FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' ORDER BY id ASC"
+      );
+    } catch (_colErr) {
+      activeBoys = await db.all(
+        "SELECT id, name, whatsapp_number FROM delivery_boys WHERE is_active = 1 AND whatsapp_number IS NOT NULL AND whatsapp_number != '' ORDER BY id ASC"
+      );
+    }
 
     if (!activeBoys || activeBoys.length === 0) {
       return { delivery_boy_id: null, name: null, phone: null };
@@ -383,11 +390,122 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
       }
     }
 
+    await appendMasterDistributorsDirectory(db, deduplicatedReminders, todayStr);
+
     return deduplicatedReminders;
   } catch (err: any) {
     console.error('[DistributorReminderWorker] Error in fast read today active distributors:', err.message);
     return [];
   }
+}
+
+/**
+ * Append all saved master distributors and Pharmarack mapped distributors who don't have
+ * an active reminder row today, ensuring "All Distributors" view in Dispatch always shows
+ * the full directory so users can trigger manual phone order dispatch reminders.
+ */
+export async function appendMasterDistributorsDirectory(
+  db: any,
+  todayReminders: any[],
+  todayStr: string
+): Promise<any[]> {
+  const existingCanonicalSet = new Set<string>();
+  for (const tr of todayReminders) {
+    if (tr.distributor_id) existingCanonicalSet.add(`id:${tr.distributor_id}`);
+    if (tr.distributor_name) {
+      existingCanonicalSet.add(`raw:${tr.distributor_name.toLowerCase().trim()}`);
+      const norm = normalizeDistributorName(tr.distributor_name);
+      if (norm) existingCanonicalSet.add(`norm:${norm}`);
+    }
+  }
+
+  try {
+    const allMasterDistributors = await db.all(
+      `SELECT d.id, d.name, d.phone, d.contact 
+       FROM distributors d 
+       WHERE d.name IS NOT NULL AND d.name != ''
+       ORDER BY d.name ASC`
+    );
+
+    let syntheticCounter = 800000;
+    for (const md of allMasterDistributors) {
+      const normName = normalizeDistributorName(md.name);
+      const hasId = md.id && existingCanonicalSet.has(`id:${md.id}`);
+      const hasNorm = normName && existingCanonicalSet.has(`norm:${normName}`);
+      const hasRaw = existingCanonicalSet.has(`raw:${md.name.toLowerCase().trim()}`);
+
+      if (!hasId && !hasNorm && !hasRaw) {
+        if (md.id) existingCanonicalSet.add(`id:${md.id}`);
+        if (normName) existingCanonicalSet.add(`norm:${normName}`);
+        existingCanonicalSet.add(`raw:${md.name.toLowerCase().trim()}`);
+        const phone = (md.phone || md.contact || '').replace(/\\D/g, '').slice(-10);
+        todayReminders.push({
+          id: md.id ? 800000 + md.id : ++syntheticCounter,
+          distributor_id: md.id || null,
+          distributor_name: md.name.trim(),
+          distributor_phone: phone,
+          date: todayStr,
+          status: 'No Order Today',
+          auto_remind: 0,
+          delivery_boy_id: null,
+          last_reminded_at: null,
+          scheduled_send_time: null,
+          created_at: new Date().toISOString(),
+          delivery_boy_name: null,
+          delivery_boy_phone: null,
+          has_pharmarack_order_today: 0,
+          has_order_today: 0,
+          latest_notif_status: null,
+          latest_notif_error: null,
+          order_count: 0,
+          orders_list: []
+        });
+      }
+    }
+
+    // Also merge any extra saved names from pharmarack_distributor_mappings
+    const pharmarackMappings = await db.all(
+      `SELECT distributor_id, store_name, phone FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL AND store_name != ''`
+    );
+    for (const pm of pharmarackMappings) {
+      const normName = normalizeDistributorName(pm.store_name);
+      const hasId = pm.distributor_id && existingCanonicalSet.has(`id:${pm.distributor_id}`);
+      const hasNorm = normName && existingCanonicalSet.has(`norm:${normName}`);
+      const hasRaw = existingCanonicalSet.has(`raw:${pm.store_name.toLowerCase().trim()}`);
+
+      if (!hasId && !hasNorm && !hasRaw) {
+        if (pm.distributor_id) existingCanonicalSet.add(`id:${pm.distributor_id}`);
+        if (normName) existingCanonicalSet.add(`norm:${normName}`);
+        existingCanonicalSet.add(`raw:${pm.store_name.toLowerCase().trim()}`);
+        const phone = (pm.phone || '').replace(/\\D/g, '').slice(-10);
+        todayReminders.push({
+          id: ++syntheticCounter,
+          distributor_id: pm.distributor_id || null,
+          distributor_name: pm.store_name.trim(),
+          distributor_phone: phone,
+          date: todayStr,
+          status: 'No Order Today',
+          auto_remind: 0,
+          delivery_boy_id: null,
+          last_reminded_at: null,
+          scheduled_send_time: null,
+          created_at: new Date().toISOString(),
+          delivery_boy_name: null,
+          delivery_boy_phone: null,
+          has_pharmarack_order_today: 0,
+          has_order_today: 0,
+          latest_notif_status: null,
+          latest_notif_error: null,
+          order_count: 0,
+          orders_list: []
+        });
+      }
+    }
+  } catch (err: any) {
+    console.warn('[DistributorReminderWorker] Error merging master saved distributors:', err.message);
+  }
+
+  return todayReminders;
 }
 
 /**
@@ -746,97 +864,7 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
     }
 
     // Merge all saved distributors from master directory tables who don't have an active order today
-    const existingCanonicalSet = new Set<string>();
-    for (const tr of todayReminders) {
-      if (tr.distributor_id) existingCanonicalSet.add(`id:${tr.distributor_id}`);
-      if (tr.distributor_name) {
-        existingCanonicalSet.add(`raw:${tr.distributor_name.toLowerCase().trim()}`);
-        const norm = normalizeDistributorName(tr.distributor_name);
-        if (norm) existingCanonicalSet.add(`norm:${norm}`);
-      }
-    }
-
-    try {
-      const allMasterDistributors = await db.all(
-        `SELECT d.id, d.name, d.phone, d.contact 
-         FROM distributors d 
-         WHERE d.name IS NOT NULL AND d.name != ''
-         ORDER BY d.name ASC`
-      );
-
-      let syntheticCounter = 800000;
-      for (const md of allMasterDistributors) {
-        const normName = normalizeDistributorName(md.name);
-        const hasId = md.id && existingCanonicalSet.has(`id:${md.id}`);
-        const hasNorm = normName && existingCanonicalSet.has(`norm:${normName}`);
-        const hasRaw = existingCanonicalSet.has(`raw:${md.name.toLowerCase().trim()}`);
-
-        if (!hasId && !hasNorm && !hasRaw) {
-          if (md.id) existingCanonicalSet.add(`id:${md.id}`);
-          if (normName) existingCanonicalSet.add(`norm:${normName}`);
-          existingCanonicalSet.add(`raw:${md.name.toLowerCase().trim()}`);
-          const phone = (md.phone || md.contact || '').replace(/\D/g, '').slice(-10);
-          todayReminders.push({
-            id: md.id ? 800000 + md.id : ++syntheticCounter,
-            distributor_id: md.id || null,
-            distributor_name: md.name.trim(),
-            distributor_phone: phone,
-            date: todayStr,
-            status: 'No Order Today',
-            auto_remind: 0,
-            delivery_boy_id: null,
-            last_reminded_at: null,
-            scheduled_send_time: null,
-            created_at: new Date().toISOString(),
-            delivery_boy_name: null,
-            delivery_boy_phone: null,
-            has_pharmarack_order_today: 0,
-            has_order_today: 0,
-            latest_notif_status: null,
-            latest_notif_error: null
-          });
-        }
-      }
-
-      // Also merge any extra saved names from pharmarack_distributor_mappings
-      const pharmarackMappings = await db.all(
-        `SELECT distributor_id, store_name, phone FROM pharmarack_distributor_mappings WHERE store_name IS NOT NULL AND store_name != ''`
-      );
-      for (const pm of pharmarackMappings) {
-        const normName = normalizeDistributorName(pm.store_name);
-        const hasId = pm.distributor_id && existingCanonicalSet.has(`id:${pm.distributor_id}`);
-        const hasNorm = normName && existingCanonicalSet.has(`norm:${normName}`);
-        const hasRaw = existingCanonicalSet.has(`raw:${pm.store_name.toLowerCase().trim()}`);
-
-        if (!hasId && !hasNorm && !hasRaw) {
-          if (pm.distributor_id) existingCanonicalSet.add(`id:${pm.distributor_id}`);
-          if (normName) existingCanonicalSet.add(`norm:${normName}`);
-          existingCanonicalSet.add(`raw:${pm.store_name.toLowerCase().trim()}`);
-          const phone = (pm.phone || '').replace(/\D/g, '').slice(-10);
-          todayReminders.push({
-            id: ++syntheticCounter,
-            distributor_id: pm.distributor_id || null,
-            distributor_name: pm.store_name.trim(),
-            distributor_phone: phone,
-            date: todayStr,
-            status: 'No Order Today',
-            auto_remind: 0,
-            delivery_boy_id: null,
-            last_reminded_at: null,
-            scheduled_send_time: null,
-            created_at: new Date().toISOString(),
-            delivery_boy_name: null,
-            delivery_boy_phone: null,
-            has_pharmarack_order_today: 0,
-            has_order_today: 0,
-            latest_notif_status: null,
-            latest_notif_error: null
-          });
-        }
-      }
-    } catch (err: any) {
-      console.warn('[DistributorReminderWorker] Error merging master saved distributors:', err.message);
-    }
+    await appendMasterDistributorsDirectory(db, todayReminders, todayStr);
 
     // Fetch placed orders, purchases, pending queue items, and synced orders for today
     try {

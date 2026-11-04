@@ -155,7 +155,9 @@ export function verifyManifestAuthenticity(
       const verifier = crypto.createVerify('SHA256');
       verifier.update(manifestJsonStr);
       verifier.end();
-      const sigBuffer = Buffer.from(signature, signature.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(signature) ? 'hex' : 'base64');
+      const cleanSig = signature.trim().replace(/\s+/g, '');
+      const isHex = cleanSig.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(cleanSig);
+      const sigBuffer = Buffer.from(cleanSig, isHex ? 'hex' : 'base64');
       return verifier.verify(keyOrSecret, sigBuffer);
     }
 

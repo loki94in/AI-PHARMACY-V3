@@ -4509,10 +4509,71 @@ router.get('/sent-orders', async (req, res) => {
       }
     }
 
+    // Enrich each parsed order with resolved contact and mapping status
+    for (const p of parsedOrders) {
+      try {
+        const contact = await resolveDistributorContact(db, (p as any).store_name);
+        const phone = (contact?.distributor_phone || '').replace(/\D/g, '').slice(-10);
+        (p as any).distributor_id = contact?.distributor_id || (p as any).store_id || null;
+        (p as any).distributor_name = contact?.distributor_name || (p as any).store_name;
+        (p as any).distributor_phone = phone;
+        (p as any).is_mapped = Boolean(phone && phone.length === 10);
+      } catch (_) {
+        (p as any).distributor_phone = '';
+        (p as any).is_mapped = false;
+      }
+    }
+
     res.json({ success: true, date: targetDate, is_recent_fallback: false, orders: parsedOrders });
   } catch (err: any) {
     console.error('Error fetching Pharmarack sent orders:', err);
     res.status(500).json({ error: 'Failed to fetch sent orders: ' + err.message });
+  }
+});
+
+/**
+ * POST /api/pharmarack/sent-orders/assign-phone
+ * Assigns or updates the verified phone number for a distributor in Sent PO history.
+ * Propagates phone across distributors and pharmarack_distributor_mappings.
+ */
+router.post('/sent-orders/assign-phone', async (req, res) => {
+  try {
+    const { store_name, phone, distributor_id } = req.body;
+    const cleanStore = String(store_name || '').trim();
+    const cleanPhone = String(phone || '').replace(/\D/g, '').slice(-10);
+
+    if (!cleanStore) {
+      return res.status(400).json({ error: 'Distributor/Store name is required' });
+    }
+    if (!cleanPhone || cleanPhone.length !== 10) {
+      return res.status(400).json({ error: 'Valid 10-digit phone number is required' });
+    }
+
+    const db = await dbManager.getConnection();
+    const result = await syncDistributorPhoneAcrossTables(db, {
+      id: distributor_id ? Number(distributor_id) : undefined,
+      store_name: cleanStore,
+      name: cleanStore,
+      phone: cleanPhone
+    });
+
+    // Also update today's distributor_dispatch_reminders for this distributor if any
+    const today = toLocalSqlDateTime(new Date()).slice(0, 10);
+    await db.run(
+      'UPDATE distributor_dispatch_reminders SET distributor_phone = ? WHERE date = ? AND LOWER(TRIM(distributor_name)) = LOWER(TRIM(?))',
+      [cleanPhone, today, cleanStore]
+    );
+
+    res.json({
+      success: true,
+      message: `Phone number +91 ${cleanPhone} saved for ${cleanStore}`,
+      distributor_name: cleanStore,
+      phone: cleanPhone,
+      mapping: result
+    });
+  } catch (err: any) {
+    console.error('Error assigning distributor phone in sent orders:', err);
+    res.status(500).json({ error: err.message || 'Failed to assign phone number' });
   }
 });
 

@@ -20,14 +20,20 @@ export function hashPassword(password: string): string {
 export function verifyPassword(providedPass: string, storedPass: string): boolean {
   if (!providedPass || !storedPass) return false;
 
+  const trimmedStored = storedPass.trim();
+
   // Handle PBKDF2 hashed password
-  if (storedPass.startsWith('pbkdf2:')) {
-    const parts = storedPass.split(':');
+  if (trimmedStored.startsWith('pbkdf2:')) {
+    const parts = trimmedStored.split(':');
     if (parts.length !== 4) return false;
     const iterations = parseInt(parts[1], 10);
-    const salt = parts[2];
-    const storedHash = parts[3];
-    if (isNaN(iterations) || !salt || !storedHash) return false;
+    const salt = parts[2].trim();
+    const rawStoredHash = parts[3].trim();
+    if (isNaN(iterations) || !salt || !rawStoredHash) return false;
+
+    // Sanitize hex string: strip whitespace, newlines, and any non-hex characters
+    const storedHash = rawStoredHash.replace(/[^0-9a-fA-F]/g, '');
+    if (!storedHash) return false;
 
     const testHash = crypto.pbkdf2Sync(providedPass, salt, iterations, 64, 'sha512').toString('hex');
     const bufA = Buffer.from(testHash, 'hex');

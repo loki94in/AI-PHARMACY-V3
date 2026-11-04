@@ -1697,6 +1697,11 @@ export async function ensureSchema(dbPath: string) {
 
         // Distributor and pharmarack mappings delivery_boy_id safety check (v61 fast-boot)
         await ensureColumns(db, 'distributors', { delivery_boy_id: 'INTEGER DEFAULT NULL' });
+        await ensureColumns(db, 'delivery_boys', {
+          shift_start_time: 'TEXT DEFAULT NULL',
+          shift_end_time: 'TEXT DEFAULT NULL',
+          store_id: 'INTEGER DEFAULT 1'
+        });
 
         try {
           await db.run(`

@@ -138,7 +138,7 @@ class CartQueueSyncService {
 
         if (!productCode || !storeId) {
           const link = await db.get(
-            `SELECT mdl.store_id, mdl.store_name, mdl.product_code, mdl.product_id, mdl.product_name, mdl.ptr
+            `SELECT mdl.store_id, mdl.store_name, mdl.product_code, mdl.product_id, mdl.product_name, mdl.rate AS ptr
              FROM medicine_distributor_links mdl
              JOIN medicines m ON m.id = mdl.medicine_id
              WHERE LOWER(m.name) = LOWER(?) OR LOWER(mdl.product_name) = LOWER(?)

@@ -808,6 +808,10 @@ interface LocalSentOrder {
   batch_sent?: boolean;
   batch_sent_at?: number | null;
   source?: string;
+  distributor_id?: number | null;
+  distributor_name?: string;
+  distributor_phone?: string;
+  is_mapped?: boolean;
 }
 
 type LocalSentMapEntry = { storeId: number | null; storeName: string; placedAt: number; items: LocalSentOrderItem[] };
@@ -1444,6 +1448,9 @@ export default function PharmarackCart() {
   const [sentOrdersLoading, setSentOrdersLoading] = useState<boolean>(false);
   const [readdingSentItems, setReaddingSentItems] = useState<boolean>(false);
   const [sendingDispatchOrderId, setSendingDispatchOrderId] = useState<number | null>(null);
+  const [editingPhoneOrder, setEditingPhoneOrder] = useState<LocalSentOrder | null>(null);
+  const [phoneInputValue, setPhoneInputValue] = useState<string>('');
+  const [savingPhone, setSavingPhone] = useState<boolean>(false);
   // Sent History: tick medicines (any orders), press the ONE Re-order button, finalize in a small popup (qty + distributor change).
   const [sentPopup, setSentPopup] = useState<{ rows: Array<{ key: string; item: LocalSentOrderItem; name: string; qty: number; storeId: number; storeName: string }> } | null>(null);
   const [sentSelection, setSentSelection] = useState<Record<string, boolean>>({});
@@ -5126,8 +5133,70 @@ export default function PharmarackCart() {
     }
   };
 
+  const handleStartAssignPhone = (order: LocalSentOrder) => {
+    setEditingPhoneOrder(order);
+    setPhoneInputValue(order.distributor_phone || '');
+  };
+
+  const handleSaveDistributorPhone = async () => {
+    if (!editingPhoneOrder || !editingPhoneOrder.store_name) return;
+    const cleanPhone = phoneInputValue.replace(/\D/g, '').slice(-10);
+    if (cleanPhone.length !== 10) {
+      toastEvent.trigger('Please enter a valid 10-digit mobile number', 'error');
+      return;
+    }
+    setSavingPhone(true);
+    try {
+      const res = await api.assignSentOrderDistributorPhone({
+        store_name: editingPhoneOrder.store_name,
+        phone: cleanPhone,
+        distributor_id: editingPhoneOrder.distributor_id || editingPhoneOrder.store_id || undefined,
+      });
+      toastEvent.trigger(res.message || `Assigned +91 ${cleanPhone} to ${editingPhoneOrder.store_name}`, 'success');
+
+      // Update local sentOrders state
+      setSentOrders(prev => prev.map(o => {
+        if (o.store_name?.toLowerCase().trim() === editingPhoneOrder.store_name?.toLowerCase().trim()) {
+          return {
+            ...o,
+            distributor_phone: cleanPhone,
+            is_mapped: true,
+          };
+        }
+        return o;
+      }));
+
+      // Update cached sent orders for current date
+      if (selectedSentDate && cachedSentOrdersMap[selectedSentDate]) {
+        cachedSentOrdersMap[selectedSentDate] = cachedSentOrdersMap[selectedSentDate].map(o => {
+          if (o.store_name?.toLowerCase().trim() === editingPhoneOrder.store_name?.toLowerCase().trim()) {
+            return {
+              ...o,
+              distributor_phone: cleanPhone,
+              is_mapped: true,
+            };
+          }
+          return o;
+        });
+      }
+
+      setEditingPhoneOrder(null);
+      setPhoneInputValue('');
+    } catch (err: any) {
+      const errMsg = err?.response?.data?.error || err?.message || 'Failed to save phone number';
+      toastEvent.trigger(errMsg, 'error');
+    } finally {
+      setSavingPhone(false);
+    }
+  };
+
   const handleSendSentOrderDispatch = async (order: LocalSentOrder) => {
     if (!order.id) return;
+    if (!order.is_mapped || !order.distributor_phone) {
+      handleStartAssignPhone(order);
+      toastEvent.trigger(`No phone assigned for ${order.store_name || 'distributor'} — please enter 10-digit number`, 'info');
+      return;
+    }
     setSendingDispatchOrderId(order.id);
     try {
       const res = await api.sendSentOrderDispatch(order.id);
@@ -5946,46 +6015,61 @@ export default function PharmarackCart() {
                   }).map((order) => (
                     <div key={order.order_no ? `${order.id}-${order.order_no}` : order.id} className="p-4 rounded-2xl border border-glass-border/60 bg-bg/40 flex flex-col justify-between gap-3 shadow-md hover:border-glass-border transition-all">
                       <div>
-                        <div className="flex items-center justify-between pb-2 border-b border-glass-border/30">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-sm font-extrabold text-text truncate" title={order.store_name}>
-                              {order.store_name}
-                            </span>
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-bg3 text-muted border border-glass-border">
-                              Order #{order.id}
-                            </span>
-                            {Array.isArray(order.pharmarack_order_nos) && order.pharmarack_order_nos.map((no: string) => (
-                              <span key={no} className="text-[10px] font-mono px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
-                                PO #{no.replace(/^#+/, '')}
+                        <div className="flex items-center justify-between pb-2 border-b border-glass-border/30 gap-2">
+                          <div className="flex flex-col gap-1 min-w-0">
+                            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                              <span className="text-xs font-bold text-text truncate" title={order.store_name}>
+                                {order.store_name}
                               </span>
-                            ))}
+                              {Array.isArray(order.pharmarack_order_nos) && order.pharmarack_order_nos.map((no: string) => (
+                                <span key={no} className="text-xs font-bold px-2 py-0.5 rounded-lg bg-primary/10 text-primary border border-primary/20 font-mono">
+                                  PO #{no.replace(/^#+/, '')}
+                                </span>
+                              ))}
+                            </div>
+
+                            {/* Unified Mapped & Non-Mapped Status with Inline Action */}
+                            <div className="flex items-center gap-2">
+                              {order.is_mapped && order.distributor_phone ? (
+                                <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-500 border border-emerald-500/30 font-mono" title="Phone number verified and mapped strictly to this distributor">
+                                  <CheckCircle2 size={11} className="text-emerald-500" />
+                                  Mapped: +91 {order.distributor_phone}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-lg bg-amber-500/15 text-amber-500 border border-amber-500/30" title="Distributor has no verified phone number attached">
+                                  <AlertTriangle size={11} className="text-amber-500" />
+                                  Unmapped
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleStartAssignPhone(order)}
+                                className="inline-flex items-center gap-1 text-xs text-muted hover:text-text px-1.5 py-0.5 rounded hover:bg-bg3 border border-transparent hover:border-glass-border transition-all cursor-pointer"
+                                title={order.is_mapped ? "Update verified phone number" : "Assign verified phone number"}
+                              >
+                                <Phone size={10} />
+                                <span>{order.is_mapped ? 'Change' : '+ Add Phone'}</span>
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            {order.source === 'pharmarack_sync' ? (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-400 border border-sky-500/30 font-mono" title="Order synced from official Pharmarack portal/app">
-                                Pharmarack Web/App
-                              </span>
-                            ) : (
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono" title="Order placed from this app">
-                                In-App Sent
-                              </span>
-                            )}
-                            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${order.batch_sent ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-lg ${order.batch_sent ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
                               {order.batch_sent ? '● Sent' : '○ Pending'}
                             </span>
                             <button
                               type="button"
                               onClick={() => handleSendSentOrderDispatch(order)}
                               disabled={sendingDispatchOrderId === order.id}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary hover:bg-primary-hover text-white text-[11px] font-bold shadow-xs transition-all active:scale-[.98] disabled:opacity-50 cursor-pointer"
-                              title="Send or re-send WhatsApp dispatch status reminder with confirmed PO number"
+                              className={`flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-bold shadow-xs transition-all active:scale-[.98] disabled:opacity-50 cursor-pointer ${order.is_mapped ? 'bg-primary hover:bg-primary-hover text-white' : 'bg-amber-600 hover:bg-amber-700 text-white'}`}
+                              title={order.is_mapped ? "Send or re-send WhatsApp dispatch status reminder with confirmed PO number" : "Assign phone number to send dispatch reminder"}
                             >
                               {sendingDispatchOrderId === order.id ? (
                                 <Loader2 size={11} className="animate-spin" />
                               ) : (
                                 <Send size={11} />
                               )}
-                              <span>{sendingDispatchOrderId === order.id ? 'Sending…' : 'Send Dispatch Msg'}</span>
+                              <span>{sendingDispatchOrderId === order.id ? 'Sending…' : order.is_mapped ? 'Send Dispatch Msg' : 'Assign Phone & Send'}</span>
                             </button>
                           </div>
                         </div>
@@ -9216,6 +9300,70 @@ export default function PharmarackCart() {
           onConfirm={handleAddSelectedSent}
           onClose={() => setSentPopup(null)}
         />
+      )}
+
+      {/* ── Assign Distributor Phone Modal (Human-In-The-Loop) ── */}
+      {editingPhoneOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-bg border border-glass-border rounded-2xl p-5 w-full max-w-md shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-glass-border pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-text">Assign Distributor Phone</h3>
+                <p className="text-xs text-muted truncate max-w-[280px]">{editingPhoneOrder.store_name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setEditingPhoneOrder(null); setPhoneInputValue(''); }}
+                className="text-muted hover:text-text p-1 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-text block">
+                WhatsApp Phone Number (10 digits)
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono font-bold text-muted bg-bg3 px-2.5 py-2 rounded-lg border border-glass-border">
+                  +91
+                </span>
+                <input
+                  type="text"
+                  maxLength={10}
+                  value={phoneInputValue}
+                  onChange={(e) => setPhoneInputValue(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="e.g. 9876543210"
+                  className="flex-1 bg-bg2 border border-glass-border text-text text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-primary font-mono"
+                  autoFocus
+                />
+              </div>
+              <p className="text-[11px] text-muted">
+                This phone number will be strictly saved to <strong>{editingPhoneOrder.store_name}</strong> and will never cross-contaminate or bleed into other distributors.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-glass-border">
+              <button
+                type="button"
+                onClick={() => { setEditingPhoneOrder(null); setPhoneInputValue(''); }}
+                disabled={savingPhone}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-muted hover:text-text bg-bg2 border border-glass-border cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveDistributorPhone}
+                disabled={savingPhone || phoneInputValue.replace(/\D/g, '').length !== 10}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-bold text-white bg-primary hover:bg-primary-hover shadow-xs cursor-pointer disabled:opacity-50 transition-all"
+              >
+                {savingPhone ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                <span>{savingPhone ? 'Saving…' : 'Save & Verify'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Purchase History Modal ── */}

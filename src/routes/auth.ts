@@ -200,7 +200,12 @@ router.post('/login', async (req, res) => {
         [user.id, targetStore.id]
       );
       if (tenantRow?.permissions_json) {
-        try { permissions = JSON.parse(tenantRow.permissions_json); } catch (_) {}
+        try { 
+          permissions = JSON.parse(tenantRow.permissions_json); 
+        } catch (parseErr) {
+          console.warn('[Auth] Corrupt permissions_json for user %s on store %s:', user.id, targetStore.id, parseErr);
+          permissions = [];
+        }
       }
     }
 

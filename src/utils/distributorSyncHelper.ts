@@ -40,8 +40,10 @@ export function normalizeDistributorName(rawName: string): string {
     .toLowerCase()
     .trim()
     .replace(/\(.*?\)/g, '')
-    .replace(/pvt|ltd|limited|private|distributors|distributor|distribitors|distribitor|pharma|pharmaceuticals|agency|agencies|medicals|medical|co|and|llp|delivery|surgical|surgicals|generic|cosmetics|cosmatics/gi, '')
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(pvt|ltd|limited|private|distributors|distributor|distribitors|distribitor|pharma|pharmaceuticals|agency|agencies|medicals|medical|co|company|and|llp|delivery|surgical|surgicals|generic|cosmetics|cosmatics|enterprises|enterprise)\b/gi, '')
+    .replace(/\s+/g, '')
+    .trim();
 }
 
 export interface ResolvedDistributorContact {
@@ -142,8 +144,7 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
         const normSaved = normalizeDistributorName(sName);
         return (
           (rawSavedNorm && rawSavedNorm === cleanStoreNorm) ||
-          (normSaved && normSaved === normStore) ||
-          (normSaved && normStore && (normStore.includes(normSaved) || normSaved.includes(normStore)))
+          (normSaved && normSaved === normStore)
         );
       });
       if (matched) {
@@ -197,20 +198,7 @@ export async function resolveDistributorContact(db: any, storeOrDistName: string
         });
       }
 
-      // Priority C: Substring includes match
-      if (!matched && (normStore || cleanStoreNorm)) {
-        matched = allDistributors.find((d: any) => {
-          if (!d || !d.name) return false;
-          const rawSavedNorm = d.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-          const normSaved = normalizeDistributorName(d.name);
-          const hasPhone = Boolean(cleanPhoneStr(d.phone || d.contact));
-          if (!hasPhone) return false;
-          return (
-            (normStore && normSaved && normSaved.length >= 4 && normStore.length >= 4 && (normStore.includes(normSaved) || normSaved.includes(normStore))) ||
-            (cleanStoreNorm && rawSavedNorm && rawSavedNorm.length >= 5 && cleanStoreNorm.length >= 5 && (cleanStoreNorm.includes(rawSavedNorm) || rawSavedNorm.includes(cleanStoreNorm)))
-          );
-        });
-      }
+      // Priority C: Strict exact match only (fuzzy substring includes match completely removed to prevent wrong distributor mappings)
 
       if (matched) {
         const phone = cleanPhoneStr(matched.phone || matched.contact);
@@ -526,8 +514,8 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
         await db.run(
           `UPDATE pharmarack_distributor_mappings
            SET phone = ?, updated_at = CURRENT_TIMESTAMP
-           WHERE distributor_id = ? AND (phone IS NULL OR phone = '' OR phone != ?)`,
-          [effectivePhone, targetId, effectivePhone]
+           WHERE store_name = ? AND (phone IS NULL OR phone = '' OR phone != ?)`,
+          [effectivePhone, storeMappingKey, effectivePhone]
         );
       }
 
