@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { loadDistributorPriority } from '../utils/pharmarackLinkCandidates';
 import { toastEvent } from '../services/events';
 import { useDropdownAutoScroll } from '../hooks/useDropdownAutoScroll';
+import { getFirstTwoAlphanumericTokens, hasMinStock15 } from '../utils/searchTokens';
 
 export interface SuggestionMedicine {
   medicine_name: string;
@@ -253,7 +254,8 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
       return;
     }
 
-    const cleanQuery = product.trim();
+    const cleanTokens = getFirstTwoAlphanumericTokens(product);
+    const cleanQuery = cleanTokens || product.trim();
 
     if (cleanQuery.length < 3) {
       setSuggestions([]);
@@ -366,6 +368,11 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
               const aMapped = Boolean(a.mapped);
               const bMapped = Boolean(b.mapped);
               if (aMapped !== bMapped) return aMapped ? -1 : 1;
+
+              // 2. Min 15 Qty Stock Priority: Items with >= 15 deliverable stock sorted ahead
+              const aHighStock = hasMinStock15(a.stock);
+              const bHighStock = hasMinStock15(b.stock);
+              if (aHighStock !== bHighStock) return aHighStock ? -1 : 1;
 
               // 2. Exact Title / Prefix match
               const aName = (a.medicine_name || a.shortName || '').toLowerCase().trim();

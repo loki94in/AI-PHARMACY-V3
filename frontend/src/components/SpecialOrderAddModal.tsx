@@ -6,7 +6,8 @@ import {
   Store, Tag, ArrowRight, CheckCircle2, Clock
 } from 'lucide-react';
 import { api, apiClient } from '../services/api';
-import { toastEvent, messageSendEvent } from '../services/events';
+import { toastEvent, messageSendEvent, specialOrdersEvent } from '../services/events';
+import { getFirstTwoAlphanumericTokens, hasMinStock15 } from '../utils/searchTokens';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import { useDropdownAutoScroll } from '../hooks/useDropdownAutoScroll';
 import { useOnClickOutside } from '../hooks/useOnClickOutside';
@@ -184,10 +185,33 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
     toastEvent.trigger('Special order draft discarded', 'info', '/crm');
   };
 
-  // High-performance search with client caching & 200ms debounce
+  // Handle item selection with ZERO blur-misses
+  const handleSelectPharmarackItem = useCallback((item: PharmarackSearchResult) => {
+    isSelectingRef.current = true;
+    setProduct(item.name);
+    setSelectedDistributor(item.distributor || '');
+    setSelectedRate(item.rate !== null && item.rate !== undefined ? item.rate : '');
+    setSelectedMrp(item.mrp !== null && item.mrp !== undefined ? item.mrp : '');
+    setSelectedMapped(!!item.mapped);
+    setSelectedScheme(item.scheme || '');
+    setSelectedProductId(item.productId || '');
+    setSelectedStoreId(item.storeId || '');
+    setSelectedProductCode(item.productCode || '');
+    setSelectedCompany(item.company || '');
+    setSelectedPackaging(item.packaging || '');
+    setShowPrDropdown(false);
+
+    // Re-enable typing after microtask
+    setTimeout(() => {
+      isSelectingRef.current = false;
+    }, 50);
+  }, []);
+
+  // High-performance search with client caching, first 2 words tokenization & min 15 stock auto-staging
   useEffect(() => {
     if (isSelectingRef.current) return;
-    const query = product.trim();
+    const cleanTokens = getFirstTwoAlphanumericTokens(product);
+    const query = cleanTokens || product.trim();
 
     if (!query || query.length < 2) {
       setPrSearchResults([]);
@@ -220,6 +244,15 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
         setPrSearchResults(matches);
         setShowPrDropdown(matches.length > 0);
         setActivePrIndex(0);
+
+        // Auto-select candidate if available with min 15 quantity from a mapped distributor
+        if (!selectedDistributor && matches.length > 0) {
+          const highStockCandidate = matches.find(m => m.mapped && hasMinStock15(m.stock))
+            || matches.find(m => hasMinStock15(m.stock));
+          if (highStockCandidate) {
+            handleSelectPharmarackItem(highStockCandidate);
+          }
+        }
       } catch (err) {
         console.error('Pharmarack query failed:', err);
       } finally {
@@ -228,29 +261,7 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
     }, 200);
 
     return () => clearTimeout(timer);
-  }, [product]);
-
-  // Handle item selection with ZERO blur-misses
-  const handleSelectPharmarackItem = useCallback((item: PharmarackSearchResult) => {
-    isSelectingRef.current = true;
-    setProduct(item.name);
-    setSelectedDistributor(item.distributor || '');
-    setSelectedRate(item.rate !== null && item.rate !== undefined ? item.rate : '');
-    setSelectedMrp(item.mrp !== null && item.mrp !== undefined ? item.mrp : '');
-    setSelectedMapped(!!item.mapped);
-    setSelectedScheme(item.scheme || '');
-    setSelectedProductId(item.productId || '');
-    setSelectedStoreId(item.storeId || '');
-    setSelectedProductCode(item.productCode || '');
-    setSelectedCompany(item.company || '');
-    setSelectedPackaging(item.packaging || '');
-    setShowPrDropdown(false);
-
-    // Re-enable typing after microtask
-    setTimeout(() => {
-      isSelectingRef.current = false;
-    }, 50);
-  }, []);
+  }, [product, selectedDistributor, handleSelectPharmarackItem]);
 
   const handleClearSelectedOption = () => {
     setSelectedDistributor('');
@@ -400,6 +411,8 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
       } catch (_) {}
 
       toastEvent.trigger('Special Request registered and queued successfully!', 'success', '/crm');
+      specialOrdersEvent.triggerUpdated();
+      window.dispatchEvent(new CustomEvent('refresh-special-orders'));
       await onOrderCreated();
       onClose();
     } catch (err: any) {

@@ -1183,6 +1183,30 @@
 | **Verified by** | `npm run guardrails` (PASS, 0 violations, clean TypeScript compilation); `node scripts/quick-update.mjs` (PASS); verified error classification and recovery button rendering. |
 
 
+### [Fixed] P2-120 — Special Order Arrival Preview Modal: Footer Action Button Clipping & Light Theme Contrast
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. In `SpecialOrderArrivalModal.tsx`, the primary action button on the bottom right was cut off at `[⚡ Resend Anyw` with the label "ay (2 Items)" sliced off outside the modal window border.<br>2. The 60-Minute Recent Notification Warning Banner ("Anti-Spam Guard Active") and warning pills used faint light yellow (`text-amber-200`/`300`), which was washed out and illegible against the light background.<br>3. The bottom timestamp `09:44 PM ✓✓` of the WhatsApp message bubble was cut off vertically at the bottom of the scroll container.<br>4. Green pill counters and phone status badges used light neon green (`text-emerald-400`) on white surfaces, resulting in low contrast in Light Mode. |
+| **Root cause** | 1. `w-[95vw] max-w-2xl` (672px) was insufficient to fit the footer notice text alongside three large action buttons (`Cancel`, `Ready in Store Only`, `Resend Anyway (N Items)`) on a single row, pushing the primary CTA outside the container where `overflow-hidden` clipped it.<br>2. Banner and badge styles used dark-mode pastel shades without light theme color variants (`text-amber-200`, `text-rose-200`, `text-emerald-400`).<br>3. The scrollable body lacked sufficient bottom padding (`pb-4`) before the footer border. |
+| **How it was fixed** | 1. **Expanded Modal Width & Proportions:** Upgraded modal container to `w-[96vw] max-w-3xl` (768px) and `h-[84vh] max-h-[780px]`.<br>2. **Responsive Button Layout:** Replaced rigid footer row with `flex flex-col md:flex-row items-center justify-between gap-3`, giving the notice text `min-w-0 flex-1` and the button cluster `shrink-0 whitespace-nowrap` so buttons never overflow or clip under any viewport.<br>3. **High-Contrast Light Theme Colors:** Upgraded Anti-Spam banner to `bg-amber-50/90 dark:bg-amber-500/10 border-amber-300/90 dark:border-amber-500/30 text-amber-900 dark:text-amber-200` with high-contrast strong tags. Upgraded WhatsApp Not Registered banner to `text-rose-900 dark:text-rose-200`.<br>4. **Theme-Safe Emerald Badges:** Upgraded avatar initials, item pills, and phone badges to `text-emerald-700 dark:text-emerald-400`.<br>5. **Scroll Clearance:** Added `pb-6 sm:pb-8` bottom padding to the scrollable body so the WhatsApp chat bubble and timestamp are never cut off. |
+| **Priority** | P2 |
+| **What not to touch** | WhatsApp arrival message generation; `useWaPhoneStatus` capability detection; `handleMarkReadyInStoreOnly` backend status update logic; Quick Assist and CRM opener contracts. |
+| **Verified by** | `npm run guardrails` (PASS, 0 violations); `npm run build` (tsc clean); `npm --prefix frontend run build` (Vite production bundle built clean in 47.28s); `node scripts/quick-update.mjs` synced. |
+
+
+### [Fixed] P2-121 — Special Order Live Cart Workflow, 2-Word Search Rule, Min-15 Stock Auto-Staging & QA Sync
+
+| Field | Content |
+|---|---|
+| **What the user saw** | 1. When creating or re-ordering a special order medicine from past orders, the item did not reflect in the Quick Assist (QA) sidebar.<br>2. Clicking "Cart" on a special order card pushed unverified/out-of-stock data blindly rather than using the standard "Add to Cart" pop-up workflow.<br>3. When distributors ran out of stock, users could not easily select an alternative distributor.<br>4. Medicine searches in Pharmarack returned 0 results because full packaging/strength descriptions (e.g. `TABLET`, `10'S`) caused suffix bleed. |
+| **Root cause** | 1. `SpecialOrderAddModal.tsx` and batch actions in `SpecialOrdersSection.tsx` omitted `specialOrdersEvent.triggerUpdated()` and `'refresh-special-orders'`, leaving `Layout.tsx`'s query cache stale for 30 seconds.<br>2. `handleAddToCart` bypassed `liveCartAddEvent` and attempted direct cart insertion without distributor stock validation.<br>3. Search strings sent raw text to Pharmarack instead of first-2-word alphanumeric tokens.<br>4. Live cart and modal search lacked min-15 stock delivery assurance priority. |
+| **How it was fixed** | 1. **Token Sanitizer (`searchTokens.ts`):** Created `getFirstTwoAlphanumericTokens` to extract strictly the first two alphanumeric words (letters + numbers), eliminating dosage form/pack size search bleed.<br>2. **Min 15 Qty Stock Priority & Auto-Staging:** Implemented `hasMinStock15` in `LiveCartSearchSection.tsx` and `SpecialOrderAddModal.tsx`. High deliverable stock (>= 15 units or 'High') from mapped distributors is prioritized and auto-staged, while leaving alternative distributors easily selectable from the dropdown.<br>3. **Add-to-Cart Modal Flow for Special Orders:** Updated `SpecialOrdersSection.tsx`'s "Cart" button to open `LiveCartAddModal` via `liveCartAddEvent.triggerOpen` with `sourceOrderId`.<br>4. **Instant QA Event Propagation:** Added `specialOrdersEvent.triggerUpdated()` and `window.dispatchEvent(new CustomEvent('refresh-special-orders'))` to `SpecialOrderAddModal`, `SpecialOrdersSection`, and modal callbacks, ensuring Quick Assist updates in 0ms. |
+| **Priority** | P2 |
+| **What not to touch** | `orderNameMatcher.ts` arrival matching score algorithm; `LiveCartAddModal` cart persistence logic; POS special-order selling integration. |
+| **Verified by** | `npm run guardrails` (PASS, 0 violations); `npm --prefix frontend run build` (built cleanly in 46.27s); `node scripts/quick-update.mjs` synced. |
+
+
 ### [Fixed] P1-26 — Pharmarack Live Cart Deletion Failure & Stale Page Flash Upon Navigation
 
 | Field | Content |

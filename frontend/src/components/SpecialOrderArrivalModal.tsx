@@ -275,7 +275,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
 
   return createPortal(
     <div className="fixed inset-0 z-global-modal flex items-center justify-center bg-black/50 p-3 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-bg2 border border-glass-border rounded-3xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] shadow-emerald-500/10 w-[95vw] max-w-2xl h-[80vh] min-h-[520px] max-h-[760px] flex flex-col overflow-hidden text-text transition-all">
+      <div className="bg-bg2 border border-glass-border rounded-3xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] shadow-emerald-500/10 w-[96vw] max-w-3xl h-[84vh] min-h-[520px] max-h-[780px] flex flex-col overflow-hidden text-text transition-all">
         
         {/* Top Accent Gradient Bar */}
         <div className="h-1.5 w-full bg-gradient-to-r from-emerald-500 via-teal-400 to-sky-500 shrink-0" />
@@ -284,7 +284,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
         <div className="p-4 sm:p-5 border-b border-glass-border flex items-center justify-between bg-bg3/30 shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             {/* Customer Avatar Initials Badge */}
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-extrabold text-sm shadow-inner shrink-0">
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-500/20 to-teal-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-700 dark:text-emerald-400 font-extrabold text-sm shadow-inner shrink-0">
               {customerInitials}
             </div>
             
@@ -293,7 +293,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                 <h3 className="text-sm sm:text-base font-black text-text tracking-tight truncate">
                   Special Order Arrival Preview
                 </h3>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono font-bold flex items-center gap-1">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 font-mono font-bold flex items-center gap-1">
                   <Package size={10} />
                   {orders.length} {orders.length === 1 ? 'Item' : 'Items'}
                 </span>
@@ -303,9 +303,9 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                 {customerPhone && (
                   <span className={`flex items-center gap-1 font-mono font-bold px-2 py-0.5 rounded-md border text-xs ${
                     isNotOnWa
-                      ? 'text-rose-400 bg-rose-500/10 border-rose-500/30'
+                      ? 'text-rose-700 dark:text-rose-400 bg-rose-500/10 border-rose-500/30'
                       : waStatus === 'AVAILABLE'
-                      ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
+                      ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
                       : 'text-text bg-bg3/60 border-border'
                   }`}>
                     <Phone size={10} />
@@ -317,12 +317,12 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                       </span>
                     )}
                     {isNotOnWa && (
-                      <span className="text-[10px] text-rose-400 font-sans font-bold ml-1">
+                      <span className="text-[10px] text-rose-700 dark:text-rose-400 font-sans font-bold ml-1">
                         🔴 Not on WA
                       </span>
                     )}
                     {waStatus === 'AVAILABLE' && (
-                      <span className="text-[10px] text-emerald-400 font-sans font-bold ml-1">
+                      <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-sans font-bold ml-1">
                         🟢 On WA
                       </span>
                     )}
@@ -343,7 +343,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
         </div>
 
         {/* Scrollable Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-5 custom-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 pb-6 sm:pb-8 space-y-5 custom-scrollbar">
           
           {/* Lets the pharmacist see the modal is live and just finishing its WhatsApp check, instead of appearing frozen */}
           {checkingRecent && (
@@ -355,17 +355,17 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
 
           {/* 60-Minute Recent Notification Warning Banner */}
           {recentNotif?.recentlyNotified && (
-            <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs animate-in fade-in">
-              <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-amber-50/90 dark:bg-amber-500/10 border border-amber-300/90 dark:border-amber-500/30 text-xs animate-in fade-in">
+              <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <div className="flex-1 space-y-1">
-                <div className="font-extrabold text-amber-200 flex items-center gap-1.5 flex-wrap">
+                <div className="font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5 flex-wrap">
                   <span>Notice already queued {recentNotif.minutesAgo || 1} min(s) ago</span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-200/80 dark:bg-amber-500/20 text-amber-900 dark:text-amber-300 border border-amber-400/80 dark:border-amber-500/40 font-bold">
                     Anti-Spam Guard Active
                   </span>
                 </div>
                 <p className="text-text text-[11px] leading-relaxed">
-                  A WhatsApp arrival message was recently queued for this customer. If you need to send another update right now, click <strong className="text-amber-300">"Resend Anyway"</strong> below.
+                  A WhatsApp arrival message was recently queued for this customer. If you need to send another update right now, click <strong className="text-amber-800 dark:text-amber-300 font-bold">"Resend Anyway"</strong> below.
                 </p>
               </div>
             </div>
@@ -373,17 +373,17 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
 
           {/* WhatsApp Not Registered Warning Banner */}
           {isNotOnWa && (
-            <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs animate-in fade-in">
-              <AlertTriangle size={18} className="text-rose-400 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-rose-50/90 dark:bg-rose-500/10 border border-rose-300/90 dark:border-rose-500/30 text-xs animate-in fade-in">
+              <AlertTriangle size={18} className="text-rose-600 dark:text-rose-400 shrink-0 mt-0.5" />
               <div className="flex-1 space-y-1">
-                <div className="font-extrabold text-rose-200 flex items-center gap-1.5 flex-wrap">
+                <div className="font-extrabold text-rose-900 dark:text-rose-200 flex items-center gap-1.5 flex-wrap">
                   <span>Customer Phone Not on WhatsApp</span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-200/80 dark:bg-rose-500/20 text-rose-900 dark:text-rose-300 border border-rose-400/80 dark:border-rose-500/40 font-bold">
                     WhatsApp Delivery Blocked
                   </span>
                 </div>
-                <p className="text-rose-200/90 text-[11px] leading-relaxed">
-                  This phone number ({customerPhone}) is not registered on WhatsApp. Use <strong>"Mark Ready in Store (No WA)"</strong> below to update the order status for your pharmacy staff, or contact the customer directly by voice call.
+                <p className="text-text text-[11px] leading-relaxed">
+                  This phone number ({customerPhone}) is not registered on WhatsApp. Use <strong className="text-rose-800 dark:text-rose-300 font-bold">"Mark Ready in Store (No WA)"</strong> below to update the order status for your pharmacy staff, or contact the customer directly by voice call.
                 </p>
               </div>
             </div>
@@ -392,11 +392,11 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
           {/* Summary & Bulk Quick Actions */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-bg3/60 border border-border">
             <div className="flex items-center gap-2 font-mono text-xs">
-              <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-extrabold flex items-center gap-1.5">
+              <span className="px-2.5 py-1 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 font-extrabold flex items-center gap-1.5">
                 <CheckCircle2 size={12} /> {arrivedCount} Arrived
               </span>
               {delayedCount > 0 && (
-                <span className="px-2.5 py-1 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/30 font-extrabold flex items-center gap-1.5">
+                <span className="px-2.5 py-1 rounded-xl bg-amber-500/10 dark:bg-amber-500/15 text-amber-800 dark:text-amber-400 border border-amber-500/30 font-extrabold flex items-center gap-1.5">
                   <Clock size={12} /> {delayedCount} Delayed
                 </span>
               )}
@@ -408,7 +408,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                 type="button"
                 onClick={() => handleMarkAll('arrived')}
                 disabled={arrivedCount === orders.length}
-                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-bg2 hover:bg-emerald-500/15 text-muted hover:text-emerald-400 border border-border hover:border-emerald-500/30 transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1"
+                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-bg2 hover:bg-emerald-500/15 text-muted hover:text-emerald-700 dark:hover:text-emerald-400 border border-border hover:border-emerald-500/30 transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1"
                 title="Mark all items as Arrived"
               >
                 <Check size={11} />
@@ -418,7 +418,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                 type="button"
                 onClick={() => handleMarkAll('delayed')}
                 disabled={delayedCount === orders.length}
-                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-bg2 hover:bg-amber-500/15 text-muted hover:text-amber-400 border border-border hover:border-amber-500/30 transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1"
+                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-bg2 hover:bg-amber-500/15 text-muted hover:text-amber-800 dark:hover:text-amber-400 border border-border hover:border-amber-500/30 transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1"
                 title="Mark all items as Delayed"
               >
                 <Clock size={11} />
@@ -663,10 +663,10 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
         </div>
 
         {/* Footer */}
-        <div className="p-4 sm:p-5 border-t border-glass-border flex flex-col sm:flex-row items-center justify-between bg-bg3/30 shrink-0 gap-3">
-          <div className="text-[11px] text-muted font-medium text-center sm:text-left">
+        <div className="p-4 sm:p-5 border-t border-glass-border flex flex-col md:flex-row items-center justify-between bg-bg3/30 shrink-0 gap-3">
+          <div className="text-[11px] text-muted font-medium text-center md:text-left min-w-0 flex-1">
             {isNotOnWa ? (
-              <span className="text-rose-400 font-semibold flex items-center gap-1">
+              <span className="text-rose-700 dark:text-rose-400 font-semibold flex items-center gap-1 justify-center md:justify-start">
                 <span>🔴</span> Number not registered on WhatsApp — messaging blocked
               </span>
             ) : (
@@ -674,11 +674,11 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
             )}
           </div>
 
-          <div className="flex items-center gap-2.5 w-full sm:w-auto">
+          <div className="flex items-center gap-2 w-full md:w-auto justify-end flex-wrap sm:flex-nowrap shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-bg2 text-muted border border-border hover:bg-bg3 hover:text-text text-xs font-bold transition-all cursor-pointer"
+              className="px-3.5 py-2.5 rounded-xl bg-bg2 text-muted border border-border hover:bg-bg3 hover:text-text text-xs font-bold transition-all cursor-pointer shrink-0"
             >
               Cancel
             </button>
@@ -688,7 +688,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
               type="button"
               onClick={handleMarkReadyInStoreOnly}
               disabled={isSubmitting || isMarkingReadyOnly || orders.length === 0}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 border ${
+              className={`flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer disabled:opacity-50 border shrink-0 whitespace-nowrap ${
                 isNotOnWa
                   ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/20 border-blue-500'
                   : 'bg-bg2 hover:bg-bg3 text-text border-border'
@@ -713,10 +713,10 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
               title={isNotOnWa ? 'Customer phone number is not registered on WhatsApp' : undefined}
               className={
                 isNotOnWa
-                  ? 'flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold transition-all cursor-not-allowed bg-rose-500/10 text-rose-400 border border-rose-500/30 opacity-70'
+                  ? 'flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-not-allowed bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30 opacity-70 shrink-0 whitespace-nowrap'
                   : recentNotif?.recentlyNotified
-                  ? 'flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-black shadow-lg transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-50 bg-amber-600 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 shadow-amber-500/25'
-                  : 'flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-black shadow-lg transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-50 bg-emerald-600 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/25'
+                  ? 'flex items-center justify-center gap-2 px-4.5 py-2.5 rounded-xl text-white text-xs font-black shadow-lg transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-50 bg-amber-600 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 shadow-amber-500/25 shrink-0 whitespace-nowrap'
+                  : 'flex items-center justify-center gap-2 px-4.5 py-2.5 rounded-xl text-white text-xs font-black shadow-lg transition-all hover:scale-[1.01] active:scale-95 cursor-pointer disabled:opacity-50 bg-emerald-600 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-500/25 shrink-0 whitespace-nowrap'
               }
             >
               {isSubmitting ? (

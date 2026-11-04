@@ -5,6 +5,7 @@ import { api, type SpecialOrder, type Refill } from '../services/api';
 import { loadDistributorPriority, priorityRankOf } from '../utils/pharmarackLinkCandidates';
 import { toastEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
+import { getFirstTwoAlphanumericTokens } from '../utils/searchTokens';
 import { findBestCartMatchForOrder } from '../utils/orderFuzzyMatcher';
 import { LiveCartSearchSection, type SuggestionMedicine } from './LiveCartSearchSection';
 import { isRefillFulfilledToday } from '../utils/refillSettled';
@@ -344,8 +345,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   }, []);
   
   // Input fields
-  const [product, setProduct] = useState(initialSearch || '');
-  const [externalSearchQuery, setExternalSearchQuery] = useState<string | undefined>(initialSearch);
+  const [product, setProduct] = useState(() => (initialSearch ? getFirstTwoAlphanumericTokens(initialSearch) || initialSearch : ''));
+  const [externalSearchQuery, setExternalSearchQuery] = useState<string | undefined>(() => (initialSearch ? getFirstTwoAlphanumericTokens(initialSearch) || initialSearch : undefined));
   // The search box owns its text (LiveCartSearchSection); bumping this empties it.
   const [searchClearToken, setSearchClearToken] = useState(0);
   const [qty, setQty] = useState(initialQty || 1);
@@ -416,8 +417,9 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   // Transfer medicine directly to Medicine Search box
   const handleTransferToSearch = (medName: string, targetQty: number = 1, srcOrderId?: number, srcRefillId?: number) => {
     if (!medName) return;
-    setProduct(medName);
-    setExternalSearchQuery(medName);
+    const cleanSearch = getFirstTwoAlphanumericTokens(medName) || medName;
+    setProduct(cleanSearch);
+    setExternalSearchQuery(cleanSearch);
     
     // Store target order quantity to be applied when user selects a medicine from suggestions
     setPendingTargetQty(targetQty || 1);

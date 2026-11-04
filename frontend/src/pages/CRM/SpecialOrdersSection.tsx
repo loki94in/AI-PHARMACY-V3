@@ -10,7 +10,8 @@ import {
   Pencil, Edit3, RotateCcw, QrCode, Package
 } from 'lucide-react';
 import { apiClient, api } from '../../services/api';
-import { toastEvent, specialOrdersEvent, messageSendEvent, whatsappQueueEvent } from '../../services/events';
+import { toastEvent, specialOrdersEvent, messageSendEvent, whatsappQueueEvent, liveCartAddEvent } from '../../services/events';
+import { getFirstTwoAlphanumericTokens } from '../../utils/searchTokens';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { useDropdownAutoScroll } from '../../hooks/useDropdownAutoScroll';
 import { useModalEscape } from '../../services/keyboardShortcuts';
@@ -350,56 +351,11 @@ export const SpecialOrdersSection: React.FC = () => {
     navigate('/pos', { state: { prefill } });
   };
 
-  const handleAddToCart = async (order: SpecialOrderItem) => {
-    setAddingCartId(order.id);
-    try {
-      const res = await api.addPharmarackCart([{
-        productId: order.pharmarack_product_id || 0,
-        productCode: order.pharmarack_product_code || undefined,
-        storeId: order.pharmarack_store_id || 0,
-        qty: order.qty || 1,
-        productName: order.pharmarack_product_name || order.product,
-        storeName: order.pharmarack_distributor || undefined,
-        rate: order.pharmarack_rate || undefined,
-        mrp: order.pharmarack_mrp || undefined,
-        scheme: order.pharmarack_scheme || undefined,
-        mapped: order.pharmarack_mapped === 1
-      }]);
-      if (res && res.success && !res.offline) {
-        toastEvent.trigger(`Added "${order.product}" to Pharmarack cart!`, 'success', '/crm');
-        await api.updateOrder(order.id, { status: 'Ordered' });
-
-        // Send booking confirmation WhatsApp message to the customer
-        if (order.phone) {
-          try {
-            messageSendEvent.triggerSendProgress(order.requester || order.phone || 'Customer', `Booking confirmation for ${order.product}`, 10);
-            await api.resendSpecialOrderBooking(order.id);
-            toastEvent.trigger(`Booking WhatsApp sent to ${order.requester || 'Customer'}!`, 'success', '/crm');
-            whatsappQueueEvent.triggerUpdated();
-          } catch (waErr) {
-            console.warn('Failed to send booking WhatsApp on add to cart:', waErr);
-          }
-        }
-
-        await loadOrders();
-        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
-      } else if (res?.offline || res?.reason === 'NO_TOKEN') {
-        toastEvent.trigger('Pharmarack session offline — item NOT added to live cart', 'error', '/crm');
-      } else {
-        toastEvent.trigger(res?.error || 'Failed to add item to cart', 'error', '/crm');
-      }
-    } catch (err) {
-      const e = err as LocalApiError;
-      const resData = e.response?.data as any;
-      const isOffline = resData?.offline || resData?.reason === 'NO_TOKEN';
-      if (isOffline) {
-        toastEvent.trigger('Pharmarack session offline — item NOT added to live cart', 'error', '/crm');
-      } else {
-        toastEvent.trigger(resData?.error || 'Failed to add to cart', 'error', '/crm');
-      }
-    } finally {
-      setAddingCartId(null);
-    }
+  const handleAddToCart = (order: SpecialOrderItem) => {
+    // Open the Live Cart Add pop-up using the first 2 words query and source order ID,
+    // exactly matching the rest of the application's Add-to-Cart workflow.
+    const cleanQuery = getFirstTwoAlphanumericTokens(order.product || (order as any).medicine_name);
+    liveCartAddEvent.triggerOpen(cleanQuery, order.qty || 1, order.id);
   };
 
   const handleSellAllSpecialOrders = (ordersList: SpecialOrderItem[]) => {
@@ -450,6 +406,8 @@ export const SpecialOrdersSection: React.FC = () => {
         }
         await loadOrders();
         window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        specialOrdersEvent.triggerUpdated();
+        window.dispatchEvent(new CustomEvent('refresh-special-orders'));
       } else if (res?.offline || res?.reason === 'NO_TOKEN') {
         toastEvent.trigger('Pharmarack session offline — items NOT added to live cart', 'error', '/crm');
       } else {
@@ -1518,7 +1476,11 @@ export const SpecialOrdersSection: React.FC = () => {
       <SpecialOrderAddModal
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}
-        onOrderCreated={loadOrders}
+        onOrderCreated={async () => {
+          await loadOrders();
+          specialOrdersEvent.triggerUpdated();
+          window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+        }}
         existingOrders={orders}
       />
 
