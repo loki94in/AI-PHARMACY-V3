@@ -437,15 +437,12 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
     }
     ignoreNextSearchRef.current = true;
 
-    setProduct('');
+    setProduct(med.medicine_name);
     setShowSuggestions(false);
     setActiveSuggestionIndex(-1);
 
     const validCandidates = suggestions.filter(s => !s.isErrorMessage);
     onSelectSuggestion(med, validCandidates);
-
-    // Keep focus directly in the search input so the user can immediately type the next medicine
-    inputRef.current?.focus();
   }, [suggestions, onSelectSuggestion, inputRef]);
 
   const handleProductKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -624,7 +621,7 @@ export const LiveCartSearchSection: React.FC<LiveCartSearchSectionProps> = React
                 </div>
                 {index === activeSuggestionIndex && !med.isErrorMessage && (
                   <span className="text-[11px] bg-primary text-white font-bold px-2 py-1 rounded-lg shadow-sm shrink-0 flex items-center gap-1">
-                    ↵ Enter to Add
+                    ↵ Select
                   </span>
                 )}
               </li>
