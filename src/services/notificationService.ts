@@ -938,6 +938,25 @@ export class NotificationService {
           return { ok: true, action: 'released', queueId: existingQueueItem.id };
         }
 
+        // ZERO-WAIT ASAP RELEASE: If this is an order announcement or followUp and item is pending with a future schedule,
+        // release it immediately (scheduled_at = scheduledAt || now + 15s) and append any fresh order numbers
+        if ((isOrderAnnouncement || followUp) && (existingQueueItem.status === 'pending' || existingQueueItem.status === 'sending' || existingQueueItem.status === 'failed_offline')) {
+          const targetScheduledAt = scheduledAt || (Date.now() + 15000);
+          const fullItem = await db.get("SELECT message FROM whatsapp_send_queue WHERE id = ?", [existingQueueItem.id]);
+          let newMsg = fullItem?.message || '';
+          const orderNos: string[] = (opts?.orderNos || []).filter(Boolean);
+          if (orderNos.length > 0) {
+            const missing = orderNos.filter(n => !String(newMsg).includes(`#${n}`));
+            if (missing.length > 0) {
+              newMsg = `📦 Pharmarack order ${missing.map(n => `#${n}`).join(', ')}\n${newMsg}`;
+            }
+          }
+          await db.run("UPDATE whatsapp_send_queue SET message = ?, scheduled_at = ? WHERE id = ?", [newMsg, targetScheduledAt, existingQueueItem.id]);
+          await whatsappQueueWorker.forceNext();
+          console.log(`[DistributorReminder] Auto-released existing queue item #${existingQueueItem.id} for ${reminder.distributor_name} to ASAP (scheduled_at=${targetScheduledAt})`);
+          return { ok: true, action: 'released', queueId: existingQueueItem.id };
+        }
+
         if (!customMessage && !followUp && !isOrderAnnouncement && !userClicked) {
           console.log(`[DistributorReminder] Reminder for ${reminder.distributor_name} is already queued today (#${existingQueueItem.id}, status: ${existingQueueItem.status}).`);
           return { ok: true, action: 'queued', queueId: existingQueueItem.id };

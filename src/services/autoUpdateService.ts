@@ -68,7 +68,7 @@ export async function resolveChangelogForVersion(version: string, existingChange
 
 // ── Update staging directory ─────────────────────────────────────────────────
 // PRODUCTION.md §21: download to {app}\updates\staging, NOT os.tmpdir()
-function getStagingDir(): string {
+export function getStagingDir(): string {
   // In production: app exe is in %LOCALAPPDATA%\AI Pharmacy OS\
   // In dev: falls back to a sibling of process.cwd()
   const appDir = path.dirname(process.execPath);
@@ -833,7 +833,7 @@ class AutoUpdateService {
 
       if (hasGui) {
         console.log('[AutoUpdate] Spawning Apple-style native UpdateGUI.ps1 (WPF)...');
-        // Spawn PowerShell STA with -WindowStyle Hidden and windowsHide: true so NO console window opens
+        // Spawn PowerShell STA with -WindowStyle Hidden and windowsHide: false so WPF window can render without SW_HIDE suppression
         const child = spawn('powershell.exe', [
           '-Sta',
           '-NoProfile',
@@ -848,7 +848,7 @@ class AutoUpdateService {
         ], {
           detached: true,
           stdio: 'ignore',
-          windowsHide: true,
+          windowsHide: false,
         });
         child.unref();
       } else {

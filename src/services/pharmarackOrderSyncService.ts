@@ -397,9 +397,9 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
     }
 
     // A reminder that is queued but NOT yet sent (reminders are queued ahead of their time slot):
-    // put the new order number into that waiting message. A second message would be a double send.
+    // put the new order number into that waiting message and release it to send ASAP (15s after Delivery Boy).
     const waiting = await db.get(
-      `SELECT id, message FROM whatsapp_send_queue
+      `SELECT id, message, scheduled_at FROM whatsapp_send_queue
        WHERE type = 'distributor_dispatch_reminder' AND status IN ('pending', 'failed_offline')
          AND LOWER(TRIM(target_name)) = LOWER(TRIM(?)) AND created_at >= ?
        ORDER BY id DESC LIMIT 1`,
@@ -407,11 +407,28 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
     );
     if (waiting) {
       const missing = orderNos.filter(n => !String(waiting.message).includes(`#${n}`));
-      if (missing.length > 0) {
-        const merged = `📦 Pharmarack order ${missing.map(n => `#${n}`).join(', ')}\n${waiting.message}`;
-        await db.run('UPDATE whatsapp_send_queue SET message = ? WHERE id = ?', [merged, waiting.id]);
-      }
-      await settle(db, orderNos, 'merged_into_waiting_reminder', true, { storeName, queueId: waiting.id, appAlreadySent });
+      const merged = missing.length > 0
+        ? `📦 Pharmarack order ${missing.map(n => `#${n}`).join(', ')}\n${waiting.message}`
+        : waiting.message;
+
+      // ZERO-WAIT ASAP FIX: Do NOT leave scheduled_at in the future (e.g. 12:30/13:00)!
+      // Release it to Date.now() + 15000 so it dispatches automatically 15s after Delivery Boy
+      const targetScheduledAt = Date.now() + 15000;
+      await db.run('UPDATE whatsapp_send_queue SET message = ?, scheduled_at = ? WHERE id = ?', [merged, targetScheduledAt, waiting.id]);
+
+      await db.run(
+        `UPDATE pharmarack_synced_orders 
+         SET announced_at = CURRENT_TIMESTAMP, announce_result = 'merged_and_released_asap'
+         WHERE order_no IN (${orderNos.map(() => '?').join(',')}) AND announced_at IS NULL`,
+        orderNos
+      ).catch(() => {});
+
+      await settle(db, orderNos, 'merged_into_waiting_reminder', true, { storeName, queueId: waiting.id, appAlreadySent, scheduledAt: targetScheduledAt });
+
+      const { whatsappQueueWorker } = await import('./whatsappQueueWorker.js');
+      await whatsappQueueWorker.forceNext().catch(() => {});
+
+      row.has_order_today = 1;
       directOrderRemindersToNotifyBoy.push(row);
       continue;
     }

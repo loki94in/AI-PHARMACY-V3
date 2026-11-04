@@ -1061,8 +1061,18 @@ export async function allocateDynamicReminderTimes(db: any, todayStr: string): P
       }
     }
 
-    // Unassigned reminders that need a new slot
-    const unassigned = reminders.filter((r: any) => !r.scheduled_send_time);
+    // Check distributors with orders placed today (they are dispatched ASAP, not lunch window)
+    const orderRowsToday = await db.all(
+      `SELECT DISTINCT LOWER(TRIM(store_name)) as store_name FROM pharmarack_synced_orders WHERE order_date = ?`,
+      [todayStr]
+    );
+    const storeOrdersToday = new Set(orderRowsToday.map((r: any) => String(r.store_name)));
+
+    // Unassigned reminders that need a new slot and DO NOT have orders placed today
+    const unassigned = reminders.filter((r: any) => 
+      !r.scheduled_send_time && 
+      !storeOrdersToday.has(String(r.distributor_name || '').toLowerCase().trim())
+    );
     if (unassigned.length === 0) return;
 
     const totalSlotsNeeded = unassigned.length;
@@ -1122,16 +1132,9 @@ export async function allocateDynamicReminderTimes(db: any, todayStr: string): P
       );
       rem.scheduled_send_time = formattedTime;
 
-      // SPEC SECTION 5 & 8: Pre-enqueue into single whatsapp_send_queue with calculated scheduled_at
-      // so T-5 prewarm, T-1 readiness check, and scheduled-time processing run reliably through existing worker.
-      try {
-        const sendDate = new Date();
-        sendDate.setHours(resH, resM, 0, 0);
-        const scheduledAtMs = sendDate.getTime();
-        await notificationService.sendDistributorDispatchReminder(rem.id, undefined, scheduledAtMs);
-      } catch (enqErr: any) {
-        console.warn(`[DistributorReminderWorker] Advance enqueue note for #${rem.id}:`, enqErr?.message || enqErr);
-      }
+      // Note: Advance pre-enqueuing into whatsapp_send_queue is removed to eliminate fake "Pending"
+      // holding queues. Reminders are dispatched on-the-fly when due by checkAndSendAutoReminders,
+      // and live orders are dispatched immediately with 10-15s safe pacing.
     }
   } catch (err: any) {
     console.error('[DistributorReminderWorker] Error allocating dynamic reminder times:', err.message);

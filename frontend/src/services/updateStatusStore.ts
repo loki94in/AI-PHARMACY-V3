@@ -16,6 +16,7 @@ export interface UpdateStatus {
   lastCheckedAt?: string;
   lastError?: string;
   hasUpdate: boolean;
+  isInstalling: boolean;
 }
 
 export interface RawUpdateFrame {
@@ -45,6 +46,7 @@ const INITIAL_STATUS: UpdateStatus = {
   totalMB: 0,
   changelog: '',
   hasUpdate: false,
+  isInstalling: false,
 };
 
 let store: UpdateStatus = INITIAL_STATUS;
@@ -177,10 +179,12 @@ export function normalizeUpdateFrame(frame: RawUpdateFrame, current: UpdateStatu
     lastCheckedAt,
     lastError,
     hasUpdate,
+    isInstalling: current.isInstalling ?? false,
   };
 }
 
 export function setUpdateStatus(frame: RawUpdateFrame): void {
+  if (typeof window !== 'undefined') (window as any).__setUpdateStatus = setUpdateStatus;
   publish(normalizeUpdateFrame(frame, store));
 }
 
@@ -250,4 +254,46 @@ export function subscribeUpdateStatus(listener: () => void): () => void {
 
 export function useUpdateStatus(): UpdateStatus {
   return useSyncExternalStore(subscribeUpdateStatus, getUpdateStatus, getUpdateStatus);
+}
+
+export function setIsInstalling(isInstalling: boolean): void {
+  publish({ ...store, isInstalling });
+}
+
+export async function applyUpdateNow(route?: string): Promise<{ success: boolean; error?: string }> {
+  const current = getUpdateStatus();
+  publish({ ...current, isInstalling: true });
+
+  const currentRoute = route || (typeof window !== 'undefined' ? window.location.pathname + window.location.search + window.location.hash : '/pos');
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('pharmacy_update_checkpoint', JSON.stringify({
+        route: currentRoute,
+        targetVersion: current.version,
+        timestamp: Date.now(),
+        resumed: false,
+      }));
+    } catch (_) {}
+  }
+
+  try {
+    const res = await fetch('/api/system/apply-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ route: currentRoute }),
+    });
+    const data = await res.json() as { success?: boolean; error?: string };
+    if (!data.success) {
+      publish({ ...getUpdateStatus(), isInstalling: false });
+      return { success: false, error: data.error || 'Failed to start update installation.' };
+    }
+    return { success: true };
+  } catch (err: unknown) {
+    publish({ ...getUpdateStatus(), isInstalling: false });
+    return { success: false, error: (err as Error)?.message || 'Update request failed.' };
+  }
+}
+
+if (typeof window !== 'undefined') {
+  (window as any).__setUpdateStatus = setUpdateStatus;
 }

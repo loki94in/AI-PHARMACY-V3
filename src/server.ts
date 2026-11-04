@@ -404,9 +404,11 @@ app.post('/api/system/apply-update', async (req, res) => {
     const { autoUpdateService } = await import('./services/autoUpdateService.js');
     const result = await autoUpdateService.applyUpdate({ route });
     res.json(result);
+    // Allow seamless handover: Give UpdateGUI.ps1 sufficient time (~2800ms) to load WPF assemblies,
+    // render its frameless window on top, and take ownership of process lifecycle
     setTimeout(() => {
       void gracefulShutdown('APPLY_UPDATE');
-    }, 1200);
+    }, 2800);
   } catch (err: any) {
     console.error('[System] Failed to apply update:', err.message);
     res.status(400).json({ success: false, error: err.message });
@@ -1282,10 +1284,8 @@ async function gracefulShutdown(signal: string) {
   try {
     closeAppBrowser();
     if (signal === 'APPLY_UPDATE' && process.platform === 'win32') {
-      try {
-        const { spawn } = await import('child_process');
-        spawn('cmd.exe', ['/c', 'taskkill /F /T /IM PharmacyOS.exe'], { detached: true, stdio: 'ignore' }).unref();
-      } catch (_) {}
+      // UpdateGUI.ps1 terminates PharmacyOS.exe upon rendering its native window (Add_ContentRendered).
+      // We do not issue a premature taskkill here so the in-app transition overlay stays visible until the native updater appears.
     }
   } catch (browserErr) {
     console.error('Error closing app browser window:', browserErr);

@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { RefreshCw, ArrowDownToLine, Sparkles } from 'lucide-react';
+import { ArrowDownToLine, Sparkles, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { toastEvent } from '../services/events';
-import { useUpdateStatus } from '../services/updateStatusStore';
+import { useUpdateStatus, applyUpdateNow } from '../services/updateStatusStore';
+import UpdateTransitionOverlay from './UpdateTransitionOverlay';
 
 function renderFormattedChangelog(text: string) {
   const lines = text
@@ -37,55 +38,22 @@ function renderFormattedChangelog(text: string) {
 }
 
 /**
- * UpdateBanner — Ready-only banner rendered when update package has downloaded
- * and verified in background. Progress is owned by the Topbar ticker.
+ * UpdateBanner — Discreet, non-intrusive floating card in the bottom-right corner.
+ * Never obscures top navigation or active counter-billing views.
+ * Owns the full-screen UpdateTransitionOverlay during active installation.
  */
 export default function UpdateBanner() {
   const updateStatus = useUpdateStatus();
   const [dismissed, setDismissed] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
-  const [isInstalling, setIsInstalling] = useState(false);
 
   const targetVersion = updateStatus.version;
   const isSkipped = Boolean(targetVersion && sessionStorage.getItem(`update_later_${targetVersion}`) === 'true');
 
-  if (updateStatus.state !== 'ready' || !targetVersion || dismissed || isSkipped) {
-    return null;
-  }
-
   const handleInstallNow = async () => {
-    setIsInstalling(true);
-    const timeout = setTimeout(() => {
-      setIsInstalling(false);
-    }, 15000);
-
-    try {
-      // Coucou parity: Persist session checkpoint before triggering in-place update
-      const currentRoute = window.location.pathname + window.location.search + window.location.hash;
-      try {
-        localStorage.setItem('pharmacy_update_checkpoint', JSON.stringify({
-          route: currentRoute,
-          targetVersion,
-          timestamp: Date.now(),
-          resumed: false,
-        }));
-      } catch (_) {}
-
-      const res = await fetch('/api/system/apply-update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ route: currentRoute }),
-      });
-      const data = await res.json() as { success?: boolean; error?: string };
-      if (!data.success) {
-        clearTimeout(timeout);
-        toastEvent.trigger(data.error || 'Failed to start update installation.', 'error');
-        setIsInstalling(false);
-      }
-    } catch (err: unknown) {
-      clearTimeout(timeout);
-      setIsInstalling(false);
-      toastEvent.trigger((err as Error)?.message || 'Update request failed.', 'error');
+    const res = await applyUpdateNow();
+    if (!res.success) {
+      toastEvent.trigger(res.error || 'Failed to start update installation.', 'error');
     }
   };
 
@@ -94,98 +62,92 @@ export default function UpdateBanner() {
       sessionStorage.setItem(`update_later_${targetVersion}`, 'true');
     }
     setDismissed(true);
-    toastEvent.trigger(`Update v${targetVersion} postponed until next app restart.`, 'info');
+    toastEvent.trigger(`Update v${targetVersion} postponed until next restart. You can install anytime in Settings.`, 'info');
   };
 
   return (
     <>
-      <div className="fixed top-0 left-0 right-0 z-[9999] flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 bg-primary text-white shadow-[0_4px_20px_rgba(0,0,0,0.25)] text-sm animate-fade-in border-b border-white/10">
-        {/* Left: icon + version info */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="p-1.5 rounded-lg bg-white/20 text-white shrink-0">
-            <Sparkles size={16} />
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
-            <span className="font-extrabold text-white text-xs sm:text-sm tracking-wide">
-              Update Available: v{targetVersion}
-            </span>
-            <span className="text-white/80 text-[11px] sm:text-xs">
-              Downloaded in background &amp; ready to install
-            </span>
-          </div>
-          {updateStatus.changelog && (
+      {/* Full-screen seamless transition screen when update install is executing */}
+      <UpdateTransitionOverlay isInstalling={updateStatus.isInstalling} version={targetVersion} />
+
+      {/* Floating Ready Pill / Card (Non-intrusive bottom-right position) */}
+      {updateStatus.state === 'ready' && targetVersion && !dismissed && !isSkipped && !updateStatus.isInstalling && (
+        <aside
+          role="region"
+          aria-label="Software update ready"
+          className="fixed bottom-5 right-5 z-[9990] max-w-sm w-[calc(100vw-2.5rem)] bg-bg2 border border-border/90 rounded-2xl shadow-2xl p-4 animate-fade-in text-text"
+        >
+          {/* Card Header */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0">
+                <Sparkles size={16} />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-extrabold text-text text-sm tracking-tight">
+                    Update Ready
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500 font-mono text-[10px] font-bold border border-emerald-500/20">
+                    v{targetVersion}
+                  </span>
+                </div>
+                <p className="text-muted text-[11px] leading-tight mt-0.5">
+                  Downloaded in background &amp; verified.
+                </p>
+              </div>
+            </div>
+
             <button
               type="button"
-              onClick={() => setShowChangelog(v => !v)}
-              className="underline underline-offset-2 opacity-80 hover:opacity-100 text-xs text-white cursor-pointer shrink-0 ml-1"
+              onClick={handleLater}
+              className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
+              title="Postpone update"
             >
-              {showChangelog ? 'Hide notes' : "What's new"}
+              <X size={15} />
             </button>
+          </div>
+
+          {/* Collapsible Release Highlights */}
+          {updateStatus.changelog && (
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={() => setShowChangelog(v => !v)}
+                className="flex items-center justify-between w-full text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+              >
+                <span>{showChangelog ? 'Hide notes' : "What's new in this update"}</span>
+                {showChangelog ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </button>
+
+              {showChangelog && (
+                <div className="mt-2 p-2.5 rounded-xl bg-bg border border-border/80 max-h-48 overflow-y-auto text-xs">
+                  {renderFormattedChangelog(updateStatus.changelog)}
+                </div>
+              )}
+            </div>
           )}
-        </div>
 
-        {/* Right: Later & Install Now actions */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={handleLater}
-            disabled={isInstalling}
-            className="px-3.5 py-1.5 rounded-xl font-bold text-white text-xs bg-white/15 hover:bg-white/25 border border-white/20 transition-all cursor-pointer active:scale-[0.97] disabled:opacity-50"
-            title="Postpone update until next app restart"
-          >
-            Later
-          </button>
+          {/* Action Buttons */}
+          <div className="mt-3.5 pt-3 border-t border-border flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleLater}
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold text-muted hover:text-text hover:bg-bg3 border border-border/70 transition-all cursor-pointer"
+            >
+              Later
+            </button>
 
-          <button
-            type="button"
-            id="update-action-btn"
-            onClick={handleInstallNow}
-            disabled={isInstalling}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl font-black text-white text-xs bg-emerald-600 hover:bg-emerald-700 shadow-md transition-all cursor-pointer active:scale-[0.97] disabled:opacity-50"
-            title="Install update and restart AI Pharmacy OS"
-          >
-            {isInstalling ? (
-              <>
-                <RefreshCw size={13} className="animate-spin" />
-                <span>Launching Updater...</span>
-              </>
-            ) : (
-              <>
-                <ArrowDownToLine size={13} />
-                <span>Install Now</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Expandable changelog notes (Coucou-style formatted release notes) */}
-        {showChangelog && updateStatus.changelog && (
-          <div className="w-full bg-bg border border-border rounded-xl px-4 py-3 text-text text-xs shadow-lg mt-1 max-h-60 overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-border pb-1.5">
-              <strong className="text-primary font-bold tracking-wide">What's New in v{targetVersion}</strong>
-              <span className="text-[10px] text-muted">Release Highlights</span>
-            </div>
-            {renderFormattedChangelog(updateStatus.changelog)}
+            <button
+              type="button"
+              onClick={handleInstallNow}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-md transition-all cursor-pointer active:scale-[0.97]"
+            >
+              <ArrowDownToLine size={13} />
+              <span>Install &amp; Restart</span>
+            </button>
           </div>
-        )}
-      </div>
-
-      {/* State C: Fullscreen transition overlay when user clicks Install Now */}
-      {isInstalling && (
-        <div className="fixed inset-0 z-[10000] bg-black/75 flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-bg2 border border-border max-w-md w-full p-6 rounded-3xl shadow-2xl flex flex-col items-center gap-4 text-center">
-            <div className="w-14 h-14 rounded-2xl bg-primary/15 text-primary border border-primary/25 flex items-center justify-center shadow-inner">
-              <RefreshCw size={28} className="animate-spin text-primary" />
-            </div>
-            <h3 className="text-lg font-black text-text tracking-tight">Applying Version v{targetVersion}...</h3>
-            <p className="text-xs text-muted leading-relaxed">
-              AI Pharmacy OS is switching to the dedicated update installer. The in-app console will stream live verification, safety backup, and installation before restarting automatically.
-            </p>
-            <div className="w-full bg-bg3 border border-border/60 h-2.5 rounded-full overflow-hidden mt-1 p-0.5 shadow-inner">
-              <div className="bg-primary h-full w-full animate-pulse rounded-full" />
-            </div>
-          </div>
-        </div>
+        </aside>
       )}
     </>
   );

@@ -195,4 +195,26 @@ router.get('/updater-log', (_req, res) => {
   }
 });
 
+// Non-production test hooks for end-to-end update simulation
+if (process.env.NODE_ENV !== 'production') {
+  router.post('/simulate-ready', async (req, res) => {
+    const { eventService } = await import('../services/eventService.js');
+    (autoUpdateService as any).lastResult = {
+      hasUpdate: true,
+      latestVersion: req.body?.latestVersion || '99.0.1',
+      readyToInstall: true,
+      downloading: false,
+      downloadProgress: 100,
+      changelog: 'Highlights\n- Critical performance upgrades\n- Rollback protection',
+    };
+    eventService.broadcast('update_available', (autoUpdateService as any).lastResult);
+    res.json({ success: true, status: autoUpdateService.getStatus() });
+  });
+
+  router.post('/simulate-reset', (_req, res) => {
+    (autoUpdateService as any).lastResult = null;
+    res.json({ success: true });
+  });
+}
+
 export default router;

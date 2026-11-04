@@ -36,11 +36,11 @@ describe('All 24 Primary App Pages Live Walkthrough', { tags: ['pages', 'walkthr
       await expect(browser).toHaveURL(new RegExp(page.route));
 
       // Assert page body is mounted and healthy
-      await expect(screen.getByRole('main').or(screen.locator('#root'))).toBeVisible();
+      await expect(browser.locator('#root')).toBeVisible();
 
       // Assert no React crash / ErrorBoundary overlay is active
-      const errorBoundaryText = screen.getByText('Something went wrong').or(screen.getByText('Application Error'));
-      await expect(errorBoundaryText).toHaveCount(0);
+      await expect(screen.getByText('Something went wrong')).toHaveCount(0);
+      await expect(screen.getByText('Application Error')).toHaveCount(0);
     });
   }
 });

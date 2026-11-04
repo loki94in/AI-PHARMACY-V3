@@ -1,51 +1,48 @@
-# Implementation Plan: Live Cart Quantity Confirmation Before Add & Instant Focus Flow
+# Implementation Plan: Instant Distributor WhatsApp ASAP Release (Eliminate Pending Wait)
 
-**Plan Name:** `live_cart_quantity_then_add_selection`  
-**Target:** Restore quantity selection (`qty`) before adding to live cart, while keeping zero-delay, zero-lag focus transitions between search, quantity, and next-medicine search in [`LiveCartAddModal.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartAddModal.tsx) and [`LiveCartSearchSection.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartSearchSection.tsx).
-
----
-
-## 1. Problem Statement
-
-In the previous change, selecting a medicine from the dropdown was made to immediately add the item with default quantity 1.
-However, user workflow requires selecting or confirming the **quantity** (`qty`) before the item is added to the live cart.
-At the same time, the process must feel instantaneous:
-1. Selecting a medicine from dropdown must immediately focus the Quantity input (with quantity value highlighted).
-2. Pressing `Enter` on Quantity must immediately add to cart, clear the search, and instantly restore focus to the search input.
-3. No timeouts or re-render stalls.
+**Plan Name:** `instant_distributor_asap_release_fix`  
+**Target:**
+1. **Zero Waiting in Pending:** Eliminate distributor WhatsApp messages sitting in "Pending" waiting for the 12:30–13:00 lunch window or for the pharmacist to manually click "Send Next Now".
+2. **Immediate Auto-Release:** When the app detects a new PO order in history:
+   - **Step 1:** Enqueue/Send Delivery Boy pickup WhatsApp message immediately (`scheduled_at = Date.now()`).
+   - **Step 2:** Automatically release/enqueue the Distributor confirmation WhatsApp message with `scheduled_at = Date.now() + 15000` (15s safe anti-spam gap) so it fires automatically right after the delivery boy.
+3. **Unblock Pre-enqueued Items:** If a distributor reminder was already pre-enqueued into `whatsapp_send_queue` with a future scheduled time, force its `scheduled_at` to `Date.now() + 15000` so it sends immediately following the delivery boy.
 
 ---
 
-## 2. Solution Workflow
+## Technical Strategy & Changes
 
-### Step 1: Select Medicine from Dropdown (`LiveCartSearchSection.tsx` & `LiveCartAddModal.tsx`)
-- When user clicks a suggestion or presses `Enter` on the dropdown:
-  - Populate selected medicine details (`product`, `distributor`, `rate`, `productId`, `storeId`, etc.).
-  - Close suggestion dropdown.
-  - Immediately focus the Quantity input (`qtyInputRef.current?.focus(); qtyInputRef.current?.select()`) with 0ms delay.
-  - Update dropdown badge to `↵ Select`.
+1. **Order Sync Service (`src/services/pharmarackOrderSyncService.ts`):**
+   - In `runSync()`, lines 401-417: When `waiting` queue item is found for a distributor, merge the order number AND immediately update `scheduled_at = Date.now() + 15000`.
+   - Update `pharmarack_synced_orders` (`announced_at = CURRENT_TIMESTAMP`, `announce_result = 'merged_and_released_asap'`).
+   - Settle order numbers as `merged_into_waiting_reminder`.
+   - Call `whatsappQueueWorker.forceNext()` so the worker executes it without delay.
+   - Pass row to `directOrderRemindersToNotifyBoy` so the delivery boy is notified first.
 
-### Step 2: Confirm Quantity & Add (`LiveCartAddModal.tsx`)
-- User is now in the Quantity field.
-- If user wants quantity 1, they simply tap `Enter`.
-- If user wants a custom quantity (e.g. `10`), they type `10` and tap `Enter`.
-- Form submits (`handleSubmit`):
-  - Item is queued to live cart (`pendingAdds`) with truthful `Adding...` status.
-  - Background Pharmarack sync runs detached.
+2. **Notification Service (`src/services/notificationService.ts`):**
+   - In `sendDistributorDispatchReminder()`: When `(isOrderAnnouncement || followUp)` is passed and an existing queue item is pending with a future `scheduled_at`, immediately auto-release it by updating `scheduled_at = scheduledAt || (Date.now() + 15000)`, merging fresh order numbers, and calling `whatsappQueueWorker.forceNext()`.
 
-### Step 3: Instant Next-Medicine Search
-- Upon submission, form resets immediately and focus jumps directly back to the Search input (`productInputRef.current?.focus()`).
-- User can immediately begin typing the next medicine name with zero delay and no dropped keystrokes.
+3. **Distributor Reminder Worker (`src/services/distributorDispatchReminderWorker.ts`):**
+   - In `allocateDynamicReminderTimes`:
+     - Filter out distributors who already have orders placed today so they are not assigned lunch window slots (their orders are dispatched ASAP).
+     - Removed the premature advance enqueue into `whatsapp_send_queue`. Reminders are dispatched on-the-fly when due by `checkAndSendAutoReminders`, completely eliminating fake pending items sitting in `whatsapp_send_queue` hours in advance.
+
+4. **Database Queue Unblocking (`data/app.db`):**
+   - Cleaned up stalled distributor reminders with future timestamps by updating `scheduled_at = Date.now() + 15000` and cancelling duplicate records.
 
 ---
 
-## 3. Tasks & Execution Status
+## Tasks & Progress Tracking
 
-- [x] Task 1: Update `selectSuggestion` in [`LiveCartAddModal.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartAddModal.tsx) to select medicine and focus Quantity input immediately
-  - **Completed**: In `selectSuggestion`, set medicine details and immediately called `qtyInputRef.current?.focus(); qtyInputRef.current?.select();` with 0ms delay.
-- [x] Task 2: Update [`LiveCartSearchSection.tsx`](file:///e:/CURRENT%20PROJECT%20ON%20WORKING/AI%20PHARMACY%20v2/frontend/src/components/LiveCartSearchSection.tsx) selection callback and dropdown badge to `↵ Select`
-  - **Completed**: Updated `selectSuggestion` to populate `med.medicine_name`, dismiss suggestions, and updated suggestion badge to `↵ Select`.
-- [x] Task 3: Ensure `handleSubmit` clears state and focuses search input instantly for next search
-  - **Completed**: In `handleSubmit`, queues item into `pendingAdds`, clears form and draft quantity, and immediately focuses `productInputRef.current?.focus()`.
-- [x] Task 4: Run performance guardrails and update knowledge graph
-  - **Completed**: Verified `npm run guardrails` passed (clean compile, 0 violations). Ran `node scripts/quick-update.mjs` (1440 nodes, 879 edges).
+- [x] Task 1: Update `pharmarackOrderSyncService.ts` to release waiting queue items to `Date.now() + 15000` instead of leaving them in the future.
+  - *Completed:* When `waiting` row exists, updated `scheduled_at` to `Date.now() + 15000`, updated `pharmarack_synced_orders.announced_at`, called `whatsappQueueWorker.forceNext()`, and enqueued delivery boy first.
+- [x] Task 2: Update `notificationService.ts` so order announcements auto-release existing future-scheduled queue items immediately.
+  - *Completed:* Added check in `sendDistributorDispatchReminder` for `(isOrderAnnouncement || followUp)` to update `scheduled_at = Date.now() + 15000`, merge order numbers, and call `forceNext()`.
+- [x] Task 3: Adjust `distributorDispatchReminderWorker.ts` to prevent locking today's active orders into future clock slots.
+  - *Completed:* Omitted advance pre-enqueue into `whatsapp_send_queue` and filtered out stores with orders today from lunch window allocation.
+- [x] Task 4: Verify TypeScript compilation and run performance guardrails (`npm run guardrails`).
+  - *Completed:* Verified with `npm run guardrails` (`tsc --noEmit` and speed architecture checks passed 100%).
+- [x] Task 5: Update Knowledge Graph (`node scripts/quick-update.mjs`).
+  - *Completed:* Quick knowledge graph updated with 1449 nodes and 881 edges.
+- [x] Task 6: Database queue cleanup.
+  - *Completed:* Stalled pending distributor reminders in `whatsapp_send_queue` reset to immediate safe offset (`Date.now() + 15000`) and duplicates cancelled.

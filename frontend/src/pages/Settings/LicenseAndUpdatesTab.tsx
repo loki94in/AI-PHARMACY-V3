@@ -3,7 +3,7 @@ import { apiClient, api } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import type { LocalApiError, StorageLocation, RegisteredDevice } from './settingsTypes';
 import { RefreshCw, Clock, Shield, ShieldCheck, AlertTriangle, CheckCircle2, Check, ArrowDownToLine, ExternalLink, Copy, History, ChevronDown, ChevronUp, Terminal } from 'lucide-react';
-import { useUpdateStatus, setUpdateStatus, type RawUpdateFrame } from '../../services/updateStatusStore';
+import { useUpdateStatus, setUpdateStatus, applyUpdateNow, type RawUpdateFrame } from '../../services/updateStatusStore';
 
 function LicenseManagementCard() {
   const [status, setStatus] = React.useState<{
@@ -423,21 +423,10 @@ function SoftwareUpdateCard() {
   const handleInstallAndRestart = async () => {
     setInstalling(true);
     setTerminalOpen(true);
-    const timeout = setTimeout(() => {
+    const res = await applyUpdateNow();
+    if (!res.success) {
+      toastEvent.trigger(res.error || 'Failed to start update installation.', 'error');
       setInstalling(false);
-    }, 15000);
-    try {
-      const res = await fetch('/api/system/apply-update', { method: 'POST' });
-      const data = await res.json() as { success?: boolean; error?: string };
-      if (!data.success) {
-        clearTimeout(timeout);
-        toastEvent.trigger(data.error || 'Failed to start update installation.', 'error');
-        setInstalling(false);
-      }
-    } catch (err: unknown) {
-      clearTimeout(timeout);
-      setInstalling(false);
-      toastEvent.trigger((err as Error)?.message || 'Update request failed.', 'error');
     }
   };
 
