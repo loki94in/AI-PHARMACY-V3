@@ -234,12 +234,20 @@ function Rollback-Update {
     $failJson = @{ version = $TargetVersion; error = $Reason; ts = (Get-Date).ToString("dd-MM-yyyy HH:mm:ss") } | ConvertTo-Json
     Set-Content (Join-Path $stagingDir "failure.json") $failJson -Encoding UTF8
 
+    if (-not [string]::IsNullOrWhiteSpace($ZipPath) -and (Test-Path -LiteralPath $ZipPath)) {
+        Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
+        Write-Log "Discarded faulty or unextracted update package: $ZipPath"
+    }
+
     $lockPath = Join-Path $InstallDir "updates\update.lock"
     if (Test-Path $lockPath) { Remove-Item $lockPath -Force -ErrorAction SilentlyContinue }
 
     Start-Sleep -Seconds 1
+    $vbsPath = Join-Path $InstallDir "RUN-PharmacyOS-Silent.vbs"
     $appExe = Join-Path $InstallDir "PharmacyOS.exe"
-    if (Test-Path -LiteralPath $appExe) {
+    if (Test-Path -LiteralPath $vbsPath) {
+        Start-Process -FilePath "wscript.exe" -ArgumentList "`"$vbsPath`"" -WorkingDirectory $InstallDir
+    } elseif (Test-Path -LiteralPath $appExe) {
         Start-Process -FilePath $appExe -WorkingDirectory $InstallDir
     }
     Start-Sleep -Seconds 2
@@ -483,7 +491,10 @@ $window.Add_ContentRendered({
         $footerText.Text = "Update successfully installed • Starting now"
         Start-Sleep -Milliseconds 1200
 
-        if (Test-Path -LiteralPath $installedApp) {
+        $vbsPath = Join-Path $InstallDir "RUN-PharmacyOS-Silent.vbs"
+        if (Test-Path -LiteralPath $vbsPath) {
+            Start-Process -FilePath "wscript.exe" -ArgumentList "`"$vbsPath`"" -WorkingDirectory $InstallDir
+        } elseif (Test-Path -LiteralPath $installedApp) {
             Start-Process -FilePath $installedApp -WorkingDirectory $InstallDir
         }
         Write-Log "Application launched. Closing updater GUI."

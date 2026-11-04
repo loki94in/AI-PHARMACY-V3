@@ -819,48 +819,40 @@ class AutoUpdateService {
       // Write a dedicated launcher script to avoid cmd.exe quote-escaping bugs on paths with spaces
       const targetVersion = this.lastResult.latestVersion;
       const launcherBat = path.join(stagingDir, 'launch-update.bat');
-      const launcherContent = [
-        '@echo off',
-        `title AI Pharmacy OS — Updating to v${targetVersion}`,
-        `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`,
-        'exit /b %ERRORLEVEL%',
-      ].join('\r\n');
-      fs.writeFileSync(launcherBat, launcherContent, 'utf8');
 
       // Check if Apple-style native WPF Update GUI is available
       const guiPath = getUpdateGuiPath();
       const hasGui = fs.existsSync(guiPath);
 
-      if (hasGui) {
-        console.log('[AutoUpdate] Spawning Apple-style native UpdateGUI.ps1 (WPF)...');
-        // Spawn PowerShell STA with -WindowStyle Hidden and windowsHide: false so WPF window can render without SW_HIDE suppression
-        const child = spawn('powershell.exe', [
-          '-Sta',
-          '-NoProfile',
-          '-ExecutionPolicy', 'Bypass',
-          '-WindowStyle', 'Hidden',
-          '-File', guiPath,
-          '-ZipPath', zipPath,
-          '-InstallDir', installDir,
-          '-TargetVersion', targetVersion,
-          '-ExpectedSha256', sha256,
-          '-LogPath', logPath,
-        ], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: false,
-        });
-        child.unref();
-      } else {
-        // Resilient fallback to Updater.bat running silently with windowsHide: true
-        console.log('[AutoUpdate] GUI script not found, falling back to silent Updater.bat...');
-        const child = spawn('cmd.exe', ['/c', launcherBat], {
-          detached: true,
-          stdio: 'ignore',
-          windowsHide: true,
-        });
-        child.unref();
-      }
+      const launcherContent = hasGui
+        ? [
+            '@echo off',
+            `title AI Pharmacy OS — Updating to v${targetVersion}`,
+            `powershell.exe -Sta -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${guiPath}" -ZipPath "${zipPath}" -InstallDir "${installDir}" -TargetVersion "${targetVersion}" -ExpectedSha256 "${sha256}" -LogPath "${logPath}"`,
+            'exit /b %ERRORLEVEL%',
+          ].join('\r\n')
+        : [
+            '@echo off',
+            `title AI Pharmacy OS — Updating to v${targetVersion}`,
+            `call "${updaterPath}" "${zipPath}" "${installDir}" "${targetVersion}" "${sha256}" "${logPath}"`,
+            'exit /b %ERRORLEVEL%',
+          ].join('\r\n');
+      fs.writeFileSync(launcherBat, launcherContent, 'utf8');
+
+      console.log(`[AutoUpdate] Spawning decoupled launcher (${hasGui ? 'UpdateGUI.ps1 WPF' : 'Updater.bat CLI'})...`);
+      console.log(`[AutoUpdate]   ZIP      : ${zipPath}`);
+      console.log(`[AutoUpdate]   InstDir  : ${installDir}`);
+      console.log(`[AutoUpdate]   Version  : ${this.lastResult.latestVersion}`);
+      console.log(`[AutoUpdate]   SHA-256  : ${sha256 || '(not provided)'}`);
+
+      // Crucial: Spawn via 'cmd.exe /c start "" cmd.exe /c launcherBat' to break away into an independent
+      // Windows process tree, ensuring parent server shutdown does not kill the updater during WPF load or extraction
+      const child = spawn('cmd.exe', ['/c', 'start', `AI Pharmacy OS — Updating to v${targetVersion}`, 'cmd.exe', '/c', launcherBat], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false,
+      });
+      child.unref();
 
       return { success: true, message: 'Installing update and restarting AI Pharmacy OS...' };
     }
@@ -913,11 +905,28 @@ class AutoUpdateService {
   async checkFailedUpdate(): Promise<string | null> {
     const stagingDir   = getStagingDir();
     const failurePath  = path.join(stagingDir, 'failure.json');
-    if (!fs.existsSync(failurePath)) return null;
+    const rollbackPath = path.join(stagingDir, 'rollback.json');
+    const hasFailure   = fs.existsSync(failurePath);
+    const hasRollback  = fs.existsSync(rollbackPath);
+
+    if (!hasFailure && !hasRollback) return null;
     try {
-      const raw  = fs.readFileSync(failurePath, 'utf8');
+      const activePath = hasFailure ? failurePath : rollbackPath;
+      const raw  = fs.readFileSync(activePath, 'utf8');
       const info = JSON.parse(raw) as { version?: string; error?: string };
-      fs.unlinkSync(failurePath); // consume flag
+
+      // Consume both failure and rollback flags
+      try { if (fs.existsSync(failurePath)) fs.unlinkSync(failurePath); } catch (_) {}
+      try { if (fs.existsSync(rollbackPath)) fs.unlinkSync(rollbackPath); } catch (_) {}
+
+      // Break update loop: purge the faulty or uninstalled staged package so boot does not immediately re-arm it
+      if (info.version) {
+        const failedZip = path.join(stagingDir, `AI-Pharmacy-OS-Update-v${info.version}.zip`);
+        try { if (fs.existsSync(failedZip)) fs.unlinkSync(failedZip); } catch (_) {}
+        const failedExe = path.join(stagingDir, `AI-Pharmacy-OS-Portable-Setup-v${info.version}.exe`);
+        try { if (fs.existsSync(failedExe)) fs.unlinkSync(failedExe); } catch (_) {}
+        console.warn(`[AutoUpdate] Purged failed/rolled-back staged package for v${info.version} to break update loop.`);
+      }
 
       const { reportCrashTelemetry } = await import('./licenseService.js');
       await reportCrashTelemetry({

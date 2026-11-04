@@ -384,6 +384,7 @@ if exist "!RBACK_DIR!\UpdateGUI.ps1" (
     copy /Y "!RBACK_DIR!\UpdateGUI.ps1" "%INSTALL_DIR%\UpdateGUI.ps1" >nul 2>&1
 )
 call :WRITE_FAILURE "!RBACK_REASON!"
+if exist "%ZIP_PATH%" del /f /q "%ZIP_PATH%" >nul 2>&1
 echo {"version":"%TARGET_VERSION%","error":"!RBACK_REASON!","ts":"%DATE% %TIME%","rollback":"attempted"} > "%STAGING_DIR%\rollback.json"
 call :CLEANUP_LOCK
 call :LOG "Rollback complete. Starting old PharmacyOS.exe..."

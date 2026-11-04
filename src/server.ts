@@ -1268,7 +1268,7 @@ async function gracefulShutdown(signal: string) {
   // Hard watchdog: under NO circumstance can shutdown stay hung longer than 6 seconds
   const shutdownWatchdog = setTimeout(async () => {
     console.warn('[Shutdown] Hard watchdog expired (6s). Forcing immediate process termination.');
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' && signal !== 'APPLY_UPDATE') {
       try {
         const pid = process.pid;
         const { spawn } = await import('child_process');
@@ -1402,7 +1402,9 @@ async function gracefulShutdown(signal: string) {
   } catch (_) {}
 
   // 8. On Windows: ensure terminal window and child process tree are cleanly killed
-  if (process.platform === 'win32') {
+  // When applying an update, the updater script (UpdateGUI.ps1 / Updater.bat) manages process
+  // termination after acquiring update.lock. Do NOT execute a broad tree-kill here.
+  if (process.platform === 'win32' && signal !== 'APPLY_UPDATE') {
     try {
       const pid = process.pid;
       const { spawn } = await import('child_process');
