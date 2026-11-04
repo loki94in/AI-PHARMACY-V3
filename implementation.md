@@ -1,13 +1,13 @@
-# Current Implementation Plan: Fix Auto-Update Loop, Process Handoff & Failure Purging
+# Current Implementation Plan: Systemic Unification on `medicine_name` Column & Removal of Stale `product` Queries
 
-**Plan File:** `AUTO_UPDATE_LOOP_PROCESS_HANDOFF_FIX_IMPLEMENTATION_PLAN.md`  
+**Plan File:** `SYSTEMIC_MEDICINE_NAME_COLUMN_UNIFICATION_FIX_PLAN.md`  
 **Status:** Completed & Verified (Zero-Bugs Gate Passed)
 
 ## Plan Overview
-Resolved the infinite auto-update loop caused by child process tree-killing (`taskkill /t /f`) during process handoff to Apple-design native WPF updater (`UpdateGUI.ps1`), decoupled updater launching into an independent process session via `cmd.exe /c start`, and purged failed/rolled-back staged packages to eliminate recursive boot re-triggering.
+Ensured 100% of backend queries and frontend callers use the single canonical column `special_orders.medicine_name` without creating or adding back any duplicate `product` column in the SQLite schema, and added defensive null-guards to all `.toLowerCase()` callers across frontend views.
 
 ## Tasks & Resume Log
-- [x] **Task 1: Process Decoupling via `launch-update.bat` with `cmd.exe /c start` (`src/services/autoUpdateService.ts`)**
-- [x] **Task 2: Exempt `APPLY_UPDATE` from Tree-Kill in `src/server.ts`**
-- [x] **Task 3: Failed Staged ZIP Purge on Boot & Rollback (`src/services/autoUpdateService.ts` & `UpdateGUI.ps1`)**
-- [x] **Task 4: Zero-Bugs Gate & Verification**
+- [x] **Task 1: Update Backend SQL Queries to query `medicine_name` (routes & services)**
+- [x] **Task 2: Update Frontend `.toLowerCase()` calls with safe guards**
+- [x] **Task 3: Run Guardrails, Production Build & Knowledge Graph Update**
+- [x] **Task 4: Human-in-the-Loop Verification**

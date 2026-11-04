@@ -943,15 +943,15 @@ export async function buildCustomerWelcomeMenu(
   try {
     const last10 = cleanDigits.slice(-10);
     const soRow = await db.get(
-      `SELECT product, status FROM special_orders 
+      `SELECT medicine_name, medicine_name AS product, status FROM special_orders 
        WHERE (phone LIKE ? OR phone LIKE ?) 
-         AND product IS NOT NULL AND TRIM(product) != ''
+         AND medicine_name IS NOT NULL AND TRIM(medicine_name) != ''
        ORDER BY id DESC LIMIT 1`,
       [`%${last10}`, `%${cleanDigits}%`]
     );
-    if (soRow && soRow.product) {
+    if (soRow && (soRow.medicine_name || soRow.product)) {
       hasSpecialOrders = true;
-      lastSpecialOrderProduct = soRow.product.trim();
+      lastSpecialOrderProduct = (soRow.medicine_name || soRow.product).trim();
     }
   } catch (_) {}
 
@@ -1193,11 +1193,11 @@ async function getCustomerHistory(customer: { id: number; phone: string }): Prom
   // 2. Special Orders (out-of-stock custom procurement requests)
   try {
     const soRows = await db.all(
-      `SELECT so.product AS medicine_name, so.qty AS quantity_needed, 30 AS refill_interval_days,
+      `SELECT so.medicine_name, so.medicine_name AS product, so.qty AS quantity_needed, 30 AS refill_interval_days,
               COALESCE(so.date, so.created_at) AS last_refill_date, NULL AS next_refill_date,
               'special_order' AS source_type, so.pharmarack_mrp AS estimated_mrp, so.pharmarack_distributor
        FROM special_orders so
-       WHERE so.phone LIKE ? AND so.product IS NOT NULL AND TRIM(so.product) != ''
+       WHERE so.phone LIKE ? AND so.medicine_name IS NOT NULL AND TRIM(so.medicine_name) != ''
        ORDER BY so.id DESC LIMIT 15`,
       [`%${last10}`]
     );
@@ -2596,9 +2596,9 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
       try {
         const last10 = cleanDigits;
         customerSpecialOrders = await db.all(
-          `SELECT id, product AS medicine_name, qty AS quantity_needed, status, pharmarack_mrp AS estimated_mrp
+          `SELECT id, medicine_name, medicine_name AS product, qty AS quantity_needed, status, pharmarack_mrp AS estimated_mrp
            FROM special_orders
-           WHERE (phone LIKE ? OR phone LIKE ?) AND product IS NOT NULL AND TRIM(product) != ''
+           WHERE (phone LIKE ? OR phone LIKE ?) AND medicine_name IS NOT NULL AND TRIM(medicine_name) != ''
            ORDER BY id DESC LIMIT 5`,
           [`%${last10}`, `%${cleanDigits}%`]
         );
@@ -5069,8 +5069,8 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
       );
     }
 
-    const soDetailRow = await db.get('SELECT product, pharmarack_mrp FROM special_orders WHERE id = ?', [orderId]).catch(() => null);
-    const displayProduct = soDetailRow?.product || medicineName;
+    const soDetailRow = await db.get('SELECT medicine_name, medicine_name AS product, pharmarack_mrp FROM special_orders WHERE id = ?', [orderId]).catch(() => null);
+    const displayProduct = soDetailRow?.medicine_name || soDetailRow?.product || medicineName;
     const mrpInfoLine = soDetailRow?.pharmarack_mrp != null && soDetailRow.pharmarack_mrp > 0
       ? `\n🏷️ *MRP*: ₹${Number(soDetailRow.pharmarack_mrp).toFixed(2)} per ${targetRow.unit || 'strip'}`
       : '';
@@ -5601,10 +5601,10 @@ export async function handleInbound(msg: any): Promise<void> {
         if (pendingRefills && pendingRefills.length > 0) {
           // Check if customer also has an active special order under this phone
           const activeSpecialOrders = await db.all(
-            `SELECT id, product, qty, status FROM special_orders 
+            `SELECT id, medicine_name, medicine_name AS product, qty, status FROM special_orders 
              WHERE (phone LIKE ? OR phone LIKE ?) 
                AND status IN ('Pending', 'Ordered', 'Confirmed', 'Arrived', 'Ready')
-               AND product IS NOT NULL AND TRIM(product) != ''
+               AND medicine_name IS NOT NULL AND TRIM(medicine_name) != ''
              ORDER BY id DESC LIMIT 5`,
             [`%${cleanDigits}`, `%${cleanDigits}%`]
           );
@@ -5612,7 +5612,7 @@ export async function handleInbound(msg: any): Promise<void> {
           if (activeSpecialOrders && activeSpecialOrders.length > 0) {
             const primaryRefill = pendingRefills[0];
             const refillList = pendingRefills.map((r: any) => `• *${r.medicine_name}* (Qty: ${r.quantity_needed || 1})`).join('\n');
-            const soList = activeSpecialOrders.map((s: any) => `• *${s.product}* (Qty: ${s.qty || 1})`).join('\n');
+            const soList = activeSpecialOrders.map((s: any) => `• *${s.medicine_name || s.product}* (Qty: ${s.qty || 1})`).join('\n');
 
             const { getStoreMedicalName } = await import('./storeSettingsService.js');
             const storeName = (await getStoreMedicalName(db)) || 'AI Pharmacy';

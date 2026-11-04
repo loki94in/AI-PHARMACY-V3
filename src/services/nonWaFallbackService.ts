@@ -127,7 +127,7 @@ export class NonWaFallbackService {
     } else if (resolvedCtx.taskType === 'special_order' || resolvedCtx.detailsJson?.type === 'special_order') {
       try {
         const orderRows = await db.all(
-          `SELECT id, product, medicine_name, qty, status
+          `SELECT id, medicine_name, medicine_name AS product, qty, status
            FROM special_orders
            WHERE (
              (phone IS NOT NULL AND (phone LIKE ? OR phone = ?))

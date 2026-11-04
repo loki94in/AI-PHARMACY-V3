@@ -153,7 +153,7 @@ export async function getMorningBriefing(): Promise<MorningBriefingSummary> {
 
   // 2. Special Orders (manual CRM orders)
   const specialOrderRows = await db.all(`
-    SELECT id, requester, phone, medicine_name, product, qty, priority, status,
+    SELECT id, requester, phone, medicine_name, medicine_name AS product, qty, priority, status,
            delivery_status, created_at, notes, customer_order_source, source
     FROM special_orders
     WHERE status NOT IN ('Fulfilled', 'Completed', 'Cancelled', 'Rejected')
@@ -169,7 +169,7 @@ export async function getMorningBriefing(): Promise<MorningBriefingSummary> {
 
   // 3. Online Orders (placed remotely via website or WhatsApp)
   const onlineOrderRows = await db.all(`
-    SELECT id, requester, phone, medicine_name, product, qty, priority, status,
+    SELECT id, requester, phone, medicine_name, medicine_name AS product, qty, priority, status,
            delivery_status, created_at, notes, customer_order_source, source,
            prescription_url, total_amount, payment_status, pharmacy_verification_status
     FROM special_orders

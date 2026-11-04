@@ -1917,8 +1917,8 @@ export async function executeCloseRefillCycles(
     if (conditions.length > 0) {
       try {
         const matchingOrders = await db.all(
-          `SELECT id, phone, requester, product 
-           FROM special_orders 
+          `SELECT id, phone, requester, medicine_name, medicine_name AS product
+            FROM special_orders 
            WHERE status IN ('Pending', 'Ordered', 'Confirmed', 'Ready', 'Inquiry') 
              AND (${conditions.join(' OR ')})`,
           params

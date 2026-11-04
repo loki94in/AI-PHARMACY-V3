@@ -446,8 +446,8 @@ export const QuickOrderModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
 
     // Check for similar item in currently staged items (case-insensitive & whitespace independent)
     const existingIndex = cart.findIndex(item => {
-      const itemClean = item.product.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const inputClean = newItem.product.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const itemClean = (item.product || (item as any).medicine_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const inputClean = (newItem.product || (newItem as any).medicine_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       return itemClean.includes(inputClean) || inputClean.includes(itemClean);
     });
 

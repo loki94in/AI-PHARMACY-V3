@@ -3120,10 +3120,11 @@ const POS = () => {
     }
 
     // Check if added item has special order request
-    const pendingMatches = specialOrders.filter(
-      o => o.product.toLowerCase().trim() === (med.name || '').toLowerCase().trim() ||
-           (med.name || '').toLowerCase().includes(o.product.toLowerCase().trim())
-    );
+    const pendingMatches = specialOrders.filter(o => {
+      const oName = (o.medicine_name || o.product || '').toLowerCase().trim();
+      const medName = (med.name || '').toLowerCase().trim();
+      return oName && medName && (oName === medName || medName.includes(oName));
+    });
     if (pendingMatches.length > 0) {
       toastEvent.trigger(
         `Pending request: ${pendingMatches[0].requester} asked for ${pendingMatches[0].qty} × ${med.name}`,
@@ -6176,10 +6177,11 @@ const POS = () => {
                                   {rowSearchResults.length > 0 ? (
                                     <div ref={rowSearchResultsRef} data-scrollable="true" className="flex-1 min-h-0 overflow-y-auto dropdown-scroll divide-y divide-border/10">
                                       {rowSearchResults.map((med, mIdx) => {
-                                        const rowPendingMatches = specialOrders.filter(
-                                          o => o.product.toLowerCase().trim() === (med.medicine_name || '').toLowerCase().trim() ||
-                                               (med.medicine_name || '').toLowerCase().includes(o.product.toLowerCase().trim())
-                                        );
+                                        const rowPendingMatches = specialOrders.filter(o => {
+                                          const oName = (o.medicine_name || o.product || '').toLowerCase().trim();
+                                          const medName = (med.medicine_name || '').toLowerCase().trim();
+                                          return oName && medName && (oName === medName || medName.includes(oName));
+                                        });
                                         const rowHasPending = rowPendingMatches.length > 0;
                                         const isRowHighlighted = rowSearchHighlightIndex === mIdx;
                                         const locTag = med.location || med.rack || (med as any).shelf || '';

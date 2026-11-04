@@ -639,7 +639,7 @@ export class OrderScheduleService {
 
     // 1. Fetch unfulfilled special/online orders
     const specialRows = await db.all(`
-      SELECT id, requester, phone, product, medicine_name, qty, status, customer_order_source,
+      SELECT id, requester, phone, medicine_name, medicine_name AS product, qty, status, customer_order_source,
              COALESCE(created_at, date, datetime('now', 'localtime')) as order_time
       FROM special_orders
       WHERE status IN ('Pending', 'Confirmed', 'Waiting')

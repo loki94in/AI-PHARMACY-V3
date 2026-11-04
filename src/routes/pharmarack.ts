@@ -5543,12 +5543,12 @@ router.post('/log-placed-order', async (req, res) => {
         storeName: store_name || it.storeName || it.StoreName
       })));
       try {
-        const pendingOrders = await db.all("SELECT id, product FROM special_orders WHERE status IN ('Pending', 'Confirmed', 'Waiting')");
+        const pendingOrders = await db.all("SELECT id, medicine_name, medicine_name AS product FROM special_orders WHERE status IN ('Pending', 'Confirmed', 'Waiting')");
         for (const item of items) {
           const prodName = (item.productName || item.product || item.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
           if (!prodName) continue;
           for (const order of pendingOrders) {
-            const reqName = (order.product || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const reqName = (order.medicine_name || order.product || '').toLowerCase().replace(/[^a-z0-9]/g, '');
             if (reqName && (reqName === prodName || (reqName.length >= 4 && prodName.length >= 4 && (reqName.includes(prodName) || prodName.includes(reqName))))) {
               await db.run("UPDATE special_orders SET status = 'Ordered', pharmarack_distributor = ? WHERE id = ?", [store_name, order.id]);
             }

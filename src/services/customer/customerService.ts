@@ -48,7 +48,7 @@ class CustomerService {
 
     // 5. Recent orders (from special_orders)
     const orders = await db.all(
-      `SELECT id, product, medicine_name, qty, status, priority, date, delivery_status, advance_payment
+      `SELECT id, medicine_name, medicine_name AS product, qty, status, priority, date, delivery_status, advance_payment
        FROM special_orders
        WHERE customer_id = ?
        ORDER BY date DESC LIMIT 5`,

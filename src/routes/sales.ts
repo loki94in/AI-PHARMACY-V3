@@ -1089,7 +1089,7 @@ router.post('/', async (req, res) => {
             const { executeCloseRefillCycles } = await import('./refills.js');
             const soPlaceholders = fulfilledSoIds.map(() => '?').join(',');
             const soRows = await db.all(
-              `SELECT id, source_refill_id, phone, product, medicine_name FROM special_orders WHERE id IN (${soPlaceholders})`,
+              `SELECT id, source_refill_id, phone, medicine_name, medicine_name AS product FROM special_orders WHERE id IN (${soPlaceholders})`,
               fulfilledSoIds
             );
             const refillIdsToClose = new Set<number>();
@@ -1369,11 +1369,11 @@ router.post('/', async (req, res) => {
 
         // A fulfilled order must leave no staged/pending messages or stale cards behind.
         const closeOutFulfilledOrder = async (ordId: number) => {
-          const so = await db!.get(`SELECT phone, product FROM special_orders WHERE id = ?`, [ordId]).catch(() => null);
+          const so = await db!.get(`SELECT phone, medicine_name, medicine_name AS product FROM special_orders WHERE id = ?`, [ordId]).catch(() => null);
           await purgePendingCustomerReminders(db!, {
             phone: so?.phone,
             specialOrderIds: [ordId],
-            medicineNames: so?.product ? [String(so.product)] : []
+            medicineNames: (so?.medicine_name || so?.product) ? [String(so.medicine_name || so.product)] : []
           });
           await db!.run(`UPDATE automation_notifications SET lifecycle_status = 'sent', status = 'sent_manually' WHERE reference_id = ?`, [String(ordId)]).catch(() => {});
           eventService.broadcast('order_updated', { at: Date.now(), orderId: ordId, action: 'fulfilled_pos' });
@@ -1395,7 +1395,7 @@ router.post('/', async (req, res) => {
         ));
         if (distinctMedNames.length === 0) return;
         const openOrders = await db!.all(
-          `SELECT id as order_id, product as medicine, qty as qty_ordered, requester, phone as customer_phone, status as order_status
+          `SELECT id as order_id, medicine_name as medicine, qty as qty_ordered, requester, phone as customer_phone, status as order_status
            FROM special_orders
            WHERE status IN ('CREATED', 'PENDING', 'IN_TRANSIT', 'OVERLAP_DETECTED', 'POTENTIAL_ARRIVAL', 'Pending', 'Ordered', 'Ready', 'ORDER_READY_FOR_PICKUP', 'Confirmed')`
         );

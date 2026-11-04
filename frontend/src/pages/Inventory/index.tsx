@@ -306,8 +306,9 @@ const Inventory = () => {
     const directMap = new Map<string, SpecialOrder>();
     const list: Array<{ lower: string; order: SpecialOrder }> = [];
     for (const o of specialOrders) {
-      if (!o.product) continue;
-      const lower = o.product.toLowerCase().trim().replace(/\s+/g, ' ');
+      const medName = (o.medicine_name || o.product || '').trim();
+      if (!medName) continue;
+      const lower = medName.toLowerCase().replace(/\s+/g, ' ');
       directMap.set(lower, o);
       list.push({ lower, order: o });
     }
@@ -1093,10 +1094,11 @@ const Inventory = () => {
               {/* Drawer Content */}
               <div className="flex-1 overflow-y-auto">
                 {/* Special Request Alert */}
-                {specialOrders.filter(
-                  o => o.product.toLowerCase().trim() === selectedItem.name.toLowerCase().trim() ||
-                       selectedItem.name.toLowerCase().includes(o.product.toLowerCase().trim())
-                ).map(o => (
+                {specialOrders.filter(o => {
+                  const oName = (o.medicine_name || o.product || '').toLowerCase().trim();
+                  const sName = (selectedItem.name || '').toLowerCase().trim();
+                  return oName && sName && (oName === sName || sName.includes(oName));
+                }).map(o => (
                   <div key={o.id} className="mx-4 mt-4 bg-amber/10 border border-amber/30 text-amber-200 p-3.5 rounded-xl flex items-start gap-3">
                     <AlertTriangle className="text-amber shrink-0 mt-0.5" size={17} />
                     <div>

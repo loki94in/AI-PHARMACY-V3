@@ -552,7 +552,7 @@ export const QuickAssistSidebar = memo(({
         const soPhoneDigits = (so.phone || '').replace(/\D/g, '').slice(-10);
         const phoneMatch = cleanDigits && soPhoneDigits && (cleanDigits === soPhoneDigits || soPhoneDigits.includes(cleanDigits) || cleanDigits.includes(soPhoneDigits));
         const medNames = new Set(group.medicines.map(m => (m.medicine_name || '').toLowerCase().trim()));
-        const medMatch = so.product && medNames.has(so.product.toLowerCase().trim());
+        const medMatch = (so.medicine_name || so.product) && medNames.has((so.medicine_name || so.product || '').toLowerCase().trim());
         const sourceRefillMatch = group.medicines.some(m => so.source_refill_id === m.id);
         return sourceRefillMatch || (phoneMatch && (so.source === 'refill' || medMatch));
       })
@@ -679,7 +679,7 @@ export const QuickAssistSidebar = memo(({
       .filter(so => {
         const soPhoneDigits = (so.phone || '').replace(/\D/g, '').slice(-10);
         const phoneMatch = cleanDigits && soPhoneDigits && (cleanDigits === soPhoneDigits || soPhoneDigits.includes(cleanDigits) || cleanDigits.includes(soPhoneDigits));
-        const medMatch = so.product && medNames.has(so.product.toLowerCase().trim());
+        const medMatch = (so.medicine_name || so.product) && medNames.has((so.medicine_name || so.product || '').toLowerCase().trim());
         const sourceRefillMatch = group.medicines.some(m => so.source_refill_id === m.id);
         return sourceRefillMatch || (phoneMatch && (so.source === 'refill' || medMatch));
       })
@@ -1324,7 +1324,7 @@ export const QuickAssistSidebar = memo(({
       }
       existing.items.push({
         id: order.id,
-        product: order.product || 'Item',
+        product: order.medicine_name || order.product || 'Medicine',
         qty: Number(order.qty || 1),
         status: order.status || 'Pending',
         priority: order.priority || 'Normal',
@@ -1390,7 +1390,7 @@ export const QuickAssistSidebar = memo(({
       }
       existing.items.push({
         id: order.id,
-        product: order.product || 'Item',
+        product: order.medicine_name || order.product || 'Medicine',
         qty: Number(order.qty || 1),
         status: order.status || 'Pending',
         priority: order.priority || 'Normal',

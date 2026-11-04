@@ -172,7 +172,7 @@ export function PortalAccountsManager() {
   }, [medSearchInput]);
 
   const handleAddMedicineToOrder = (med: any) => {
-    const existingIdx = orderItems.findIndex(it => it.product.toLowerCase() === med.name.toLowerCase());
+    const existingIdx = orderItems.findIndex(it => (it.product || (it as any).medicine_name || '').toLowerCase() === (med.name || med.medicine_name || '').toLowerCase());
     if (existingIdx !== -1) {
       const updated = [...orderItems];
       updated[existingIdx].qty += 1;

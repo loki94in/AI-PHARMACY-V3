@@ -59,21 +59,26 @@ router.get('/', async (req, res) => {
     const storeId = resolveStoreId(req);
     const allStores = req.query.all_stores === 'true';
 
-    let orders;
+    let orders: any[];
     try {
       if (allStores) {
-        orders = await db.all('SELECT * FROM special_orders ORDER BY created_at DESC, id DESC LIMIT 1000');
+        orders = await db.all('SELECT *, medicine_name AS product FROM special_orders ORDER BY created_at DESC, id DESC LIMIT 1000');
       } else {
-        orders = await db.all('SELECT * FROM special_orders WHERE store_id = ? ORDER BY created_at DESC, id DESC LIMIT 1000', [storeId]);
+        orders = await db.all('SELECT *, medicine_name AS product FROM special_orders WHERE store_id = ? ORDER BY created_at DESC, id DESC LIMIT 1000', [storeId]);
       }
     } catch (_) {
       if (allStores) {
-        orders = await db.all('SELECT * FROM special_orders ORDER BY id DESC LIMIT 1000');
+        orders = await db.all('SELECT *, medicine_name AS product FROM special_orders ORDER BY id DESC LIMIT 1000');
       } else {
-        orders = await db.all('SELECT * FROM special_orders WHERE store_id = ? ORDER BY id DESC LIMIT 1000', [storeId]);
+        orders = await db.all('SELECT *, medicine_name AS product FROM special_orders WHERE store_id = ? ORDER BY id DESC LIMIT 1000', [storeId]);
       }
     }
-    res.json(orders);
+    const normalizedOrders = (orders || []).map((o: any) => ({
+      ...o,
+      product: o.medicine_name || o.product || '',
+      medicine_name: o.medicine_name || o.product || ''
+    }));
+    res.json(normalizedOrders);
   } catch (err) {
     console.error('Orders fetch error:', err);
     res.status(500).json({ error: 'Internal server error' });

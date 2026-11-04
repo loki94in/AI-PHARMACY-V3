@@ -7,6 +7,29 @@
 
 ## Fixed
 
+### [Fixed] P2-145 — Systemic Unification on medicine_name Column & Removal of Stale product Queries
+
+- **Symptom:** After schema unification dropped redundant column `special_orders.product`, several backend routes (Pharmarack order placement, POS companion refill close-out, POS special order reminder cleanup, WhatsApp order placement, WhatsApp intent engine, morning briefing, non-WA fallback, and customer service) still queried `SELECT product FROM special_orders`, throwing `SQLITE_ERROR: no such column: product` or silently failing in `catch`. In addition, `.toLowerCase()` was called without null-protection across Inventory, POS, Quick Order, and Reorder Hub recent items.
+- **Root Cause:** Stale column references to `product` remained in raw SQL `SELECT` strings and `WHERE` clauses across 12 backend route/service files after `special_orders.product` was dropped.
+- **Fix:**
+  1. Updated all 12 backend route and service files to query canonical column `special_orders.medicine_name` (with backward-compatible `medicine_name AS product, medicine_name` alias) without adding any redundant column back to SQLite.
+  2. Guarded all frontend callers in Inventory, POS, Reorder Hub, Portal Accounts, and Quick Order with safe `(o.medicine_name || o.product || '').toLowerCase()` null-safe fallbacks.
+- **Priority:** P2
+- **Verified by:** `npm run guardrails` exit 0 (clean `tsc --noEmit`); frontend production build succeeded with 0 errors; `node scripts/quick-update.mjs` updated knowledge graph.
+
+### [Fixed] P2-144 — Fix Reorder Hub TypeError Crash & Quick Assist Special Request Medicine Name Display
+
+- **Symptom:** Opening Reorder Hub crashed with "Page Error Recovered: Cannot read properties of undefined (reading 'toLowerCase')", and customer Special Requests in the Quick Assist sidebar panel displayed as generic "Item x1" instead of the actual medicine name.
+- **Root Cause:** In schema simplification commit `67547e7c`, redundant column `special_orders.product` was dropped in favor of `special_orders.medicine_name`. Backend `GET /api/orders` returned database rows with `medicine_name` only, leaving `order.product` undefined. In Reorder Hub (`PharmarackCart/index.tsx`), evaluating `order.product.toLowerCase().trim()` threw a TypeError crash. In Quick Assist (`QuickAssistSidebar.tsx`), items evaluated `order.product || 'Item'`, falling back to generic "Item".
+- **Fix:**
+  1. In `src/routes/orders.ts`, updated `GET /` to query `medicine_name AS product` and normalized all returned order objects with both `product` and `medicine_name`.
+  2. In `frontend/src/types/api.ts`, expanded `SpecialOrder` interface to declare `medicine_name?: string` alongside `product: string`.
+  3. In `frontend/src/components/QuickAssistSidebar.tsx`, updated special order item mappings to use `order.medicine_name || order.product || 'Medicine'` and guarded group medicine lookups.
+  4. In `frontend/src/pages/PharmarackCart/index.tsx`, guarded Reorder Hub Special Requests mapping with safe `orderMedName = (order.medicine_name || order.product || '').trim()` and guarded pricing lookup so undefined values never throw.
+  5. In `frontend/src/components/LiveCartAddModal.tsx`, applied `order.medicine_name || order.product` fallbacks across cart matching, skip checks, and PO exclusions.
+- **Priority:** P2
+- **Verified by:** `npm run guardrails` exit 0 (clean `tsc --noEmit`); production client build (`npm run build --prefix frontend`) built cleanly in 55.40s with 0 errors; `node scripts/quick-update.mjs` synchronized.
+
 ### [Fixed] P2-143 - Release Packaging: Unbundle Qwen Model by Default for Fast Lightweight Builds
 
 - **Symptom:** Release build script (`scripts/release.mjs`) automatically bundled the ~1 GB Qwen GGUF model and `llama-server.exe` into every release installer whenever `models/local-ai` existed on disk, creating ~1 GB installers with slow download, slow LZMA2 compression, and slow installation.

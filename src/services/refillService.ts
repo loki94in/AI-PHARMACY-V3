@@ -802,7 +802,7 @@ export async function buildDailyOperationalBriefing(
 
   // Active special, website, and online orders — grouped by customer
   const activeOrders = await db.all(
-    `SELECT id, requester, phone, product, medicine_name, qty, status, customer_order_source
+    `SELECT id, requester, phone, medicine_name, medicine_name AS product, qty, status, customer_order_source
      FROM special_orders
      WHERE status IN ('Confirmed', 'Pending', 'Ready', 'In-Transit', 'Dispatched', 'Ordered')
        AND DATE(date) >= DATE('now', 'localtime', '-7 days')
@@ -857,7 +857,7 @@ export async function buildDailyOperationalBriefing(
 
   // Pending Shortage/Unavailable Requests (>23 Hours)
   const pendingShortages = await db.all(
-    `SELECT id, product, medicine_name, requester, phone, qty, pharmarack_distributor, date
+    `SELECT id, medicine_name, medicine_name AS product, requester, phone, qty, pharmarack_distributor, date
      FROM special_orders
      WHERE status IN ('Pending', 'PENDING')
        AND datetime(date) <= datetime('now', '-23 hours')

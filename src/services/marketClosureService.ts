@@ -381,7 +381,7 @@ export class MarketClosureService {
     // 1. Special Orders & Online Order Items
     try {
       const specialOrderRows = await db.all(`
-        SELECT so.id, so.requester, so.phone, so.medicine_name, so.product, so.qty, so.status,
+        SELECT so.id, so.requester, so.phone, so.medicine_name, so.medicine_name AS product, so.qty, so.status,
                so.customer_order_source, so.pharmarack_mrp, so.total_amount, so.created_at,
                ooi.product_name, ooi.requested_qty, ooi.mrp as ooi_mrp
         FROM special_orders so

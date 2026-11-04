@@ -80,6 +80,7 @@ export interface InventoryItem extends Medicine {
 export interface SpecialOrder {
   id: number;
   product: string;
+  medicine_name?: string;
   requester: string;
   phone: string;
   customer_id?: number | null;

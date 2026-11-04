@@ -2991,7 +2991,7 @@ export default function PharmarackCart() {
         const filtered = data.filter(o => 
           ['Pending', 'Confirmed', 'Waiting'].includes(o.status) && 
           !['Ordered', 'Fulfilled', 'Completed', 'Cancelled', 'Ready'].includes(o.status) &&
-          !isSoldAtPOSToday(o.product)
+          !isSoldAtPOSToday(o.medicine_name || o.product)
         );
         setPendingOrders(filtered);
         cachedPendingOrders = filtered;
@@ -3088,8 +3088,8 @@ export default function PharmarackCart() {
   const visiblePendingOrders = React.useMemo(() => {
     return pendingOrders.filter(order => {
       if (order.status === 'Ordered' || order.status === 'Fulfilled' || order.status === 'Completed' || order.status === 'Cancelled' || order.status === 'Ready') return false;
-      if (isMedicineInSentPO(order.product)) return false;
-      if (isSoldAtPOSToday(order.product)) return false;
+      if (isMedicineInSentPO(order.medicine_name || order.product)) return false;
+      if (isSoldAtPOSToday(order.medicine_name || order.product)) return false;
       return showAddedItems ? true : !getOrderItemInCart(order);
     });
   }, [pendingOrders, showAddedItems, isMedicineInSentPO, isSoldAtPOSToday]);
@@ -3123,7 +3123,7 @@ export default function PharmarackCart() {
   const filteredPendingOrders = React.useMemo(() => {
     if (!reorderQueryNorm) return visiblePendingOrders;
     return visiblePendingOrders.filter(order =>
-      medicineNameMatches(order.product) || (queryIsIdOnly && String(order.id) === reorderQueryNorm)
+      medicineNameMatches(order.medicine_name || order.product) || (queryIsIdOnly && String(order.id) === reorderQueryNorm)
     );
   }, [visiblePendingOrders, reorderQueryNorm, queryIsIdOnly, medicineNameMatches]);
 
@@ -5429,7 +5429,7 @@ export default function PharmarackCart() {
     const candidateNames = [
       ...distributors.flatMap(d => d.items.map(i => i.productName)),
       ...reorderSuggestions.map(s => s.medicineName),
-      ...pendingOrders.map(o => o.product),
+      ...pendingOrders.map(o => o.medicine_name || o.product),
       ...pendingRefills.map(r => r.medicine_name)
     ].filter(Boolean) as string[];
 
@@ -6322,14 +6322,15 @@ export default function PharmarackCart() {
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredPendingOrders.map((order) => {
+                          const orderMedName = (order.medicine_name || order.product || '').trim();
                           const inCart = Boolean(getOrderItemInCart(order));
-                          const pricing = reorderPricingLookup.byName.get(order.product.toLowerCase().trim());
+                          const pricing = orderMedName ? reorderPricingLookup.byName.get(orderMedName.toLowerCase()) : undefined;
                           const distOptions = pricing?.distributorOptions || [];
                           return (
                             <ReorderMedicineCard
                               key={`all-order-${order.id}`}
                               cardKey={`all-order-${order.id}`}
-                              medicineName={order.product}
+                              medicineName={orderMedName || 'Special Order'}
                               tag={
                                 <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${order.priority === 'Urgent' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-bg3 text-muted border border-glass-border'}`}>
                                   {order.priority || 'Normal'}
@@ -6354,11 +6355,11 @@ export default function PharmarackCart() {
                               productId={order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined}
                               sourceOrderId={order.id}
                               inCart={inCart}
-                              isAdding={addingItemKeys.has(`${order.product}:::${order.pharmarack_store_id || pricing?.storeId || 0}`)}
+                              isAdding={addingItemKeys.has(`${orderMedName}:::${order.pharmarack_store_id || pricing?.storeId || 0}`)}
                               searchQuery={reorderSearchQuery}
                               onAdd={(qty, selectedDist) => {
                                 executeReorderAdd({
-                                  medicineName: order.product,
+                                  medicineName: orderMedName,
                                   productCode: selectedDist?.productCode || order.pharmarack_product_code || undefined,
                                   productId: selectedDist?.productId || (order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined),
                                   storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (order.pharmarack_store_id ? Number(order.pharmarack_store_id) : pricing?.storeId),
@@ -6370,7 +6371,7 @@ export default function PharmarackCart() {
                                 }, qty);
                               }}
                               onOpenDetails={() => openReorderModalForItem({
-                                medicineName: order.product,
+                                medicineName: orderMedName,
                                 suggestedQty: order.qty || 1,
                                 sourceOrderId: order.id,
                                 storeName: order.pharmarack_distributor || pricing?.storeName,
@@ -6582,7 +6583,7 @@ export default function PharmarackCart() {
                           const itemQty = getReorderItemQty(rawKey, 1);
                           const isAdding = addingItemKeys.has(`${item.medicineName}:::${item.storeId || 0}`);
                           const inCart = isMedicineInAnyCart(item.medicineName);
-                          const pricing = reorderPricingLookup.byName.get(item.medicineName.toLowerCase().trim());
+                          const pricing = (item.medicineName || '').trim() ? reorderPricingLookup.byName.get(item.medicineName.toLowerCase().trim()) : undefined;
                           const distOptions = (item.distributorOptions && item.distributorOptions.length > 0) ? item.distributorOptions : (pricing?.distributorOptions || []);
                           return (
                             <ReorderMedicineCard
@@ -6797,14 +6798,15 @@ export default function PharmarackCart() {
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {filteredPendingOrders.map((order) => {
+                      const orderMedName = (order.medicine_name || order.product || '').trim();
                       const inCart = Boolean(getOrderItemInCart(order));
-                      const pricing = reorderPricingLookup.byName.get(order.product.toLowerCase().trim());
+                      const pricing = orderMedName ? reorderPricingLookup.byName.get(orderMedName.toLowerCase()) : undefined;
                       const distOptions = pricing?.distributorOptions || [];
                       return (
                         <ReorderMedicineCard
                           key={`order-tab-${order.id}`}
                           cardKey={`order-tab-${order.id}`}
-                          medicineName={order.product}
+                          medicineName={orderMedName || 'Special Order'}
                           tag={
                             <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${order.priority === 'Urgent' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-bg3 text-muted border border-glass-border'}`}>
                               {order.priority || 'Normal'}
@@ -6829,11 +6831,11 @@ export default function PharmarackCart() {
                           productId={order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined}
                           sourceOrderId={order.id}
                           inCart={inCart}
-                          isAdding={addingItemKeys.has(`${order.product}:::${order.pharmarack_store_id || pricing?.storeId || 0}`)}
+                          isAdding={addingItemKeys.has(`${orderMedName}:::${order.pharmarack_store_id || pricing?.storeId || 0}`)}
                           searchQuery={reorderSearchQuery}
                           onAdd={(qty, selectedDist) => {
                             executeReorderAdd({
-                              medicineName: order.product,
+                              medicineName: orderMedName,
                               productCode: selectedDist?.productCode || order.pharmarack_product_code || undefined,
                               productId: selectedDist?.productId || (order.pharmarack_product_id ? Number(order.pharmarack_product_id) : undefined),
                               storeId: selectedDist?.storeId ? Number(selectedDist.storeId) : (order.pharmarack_store_id ? Number(order.pharmarack_store_id) : pricing?.storeId),
@@ -6845,7 +6847,7 @@ export default function PharmarackCart() {
                             }, qty);
                           }}
                           onOpenDetails={() => openReorderModalForItem({
-                            medicineName: order.product,
+                            medicineName: orderMedName,
                             suggestedQty: order.qty || 1,
                             sourceOrderId: order.id,
                             storeName: order.pharmarack_distributor || pricing?.storeName,

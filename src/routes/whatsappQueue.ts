@@ -280,12 +280,12 @@ router.post('/enqueue-pharmarack-batch', async (req, res) => {
 
         // Auto-update matching pending special requests to status = 'Ordered'
         if (Array.isArray(order.items) && order.items.length > 0) {
-          const pendingOrders = await db.all("SELECT id, product FROM special_orders WHERE status = 'Pending'");
+          const pendingOrders = await db.all("SELECT id, medicine_name, medicine_name AS product FROM special_orders WHERE status = 'Pending'");
           for (const item of order.items) {
             const prodName = (item.productName || item.product || item.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
             if (!prodName) continue;
             for (const spOrder of pendingOrders) {
-              const reqName = (spOrder.product || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              const reqName = (spOrder.medicine_name || spOrder.product || '').toLowerCase().replace(/[^a-z0-9]/g, '');
               if (reqName && (reqName === prodName || (reqName.length >= 4 && prodName.length >= 4 && (reqName.includes(prodName) || prodName.includes(reqName))))) {
                 await db.run("UPDATE special_orders SET status = 'Ordered', pharmarack_distributor = ? WHERE id = ?", [order.storeName, spOrder.id]);
               }

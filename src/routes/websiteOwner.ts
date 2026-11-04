@@ -219,7 +219,7 @@ router.get('/orders', async (req: Request, res: Response) => {
     const orders = await db.all(
       `SELECT so.id, so.requester as customer_name, so.phone as customer_phone,
               so.status, so.payment_status, so.pharmacy_verification_status,
-              so.product, so.qty, so.notes, so.order_type, so.delivery_mode,
+              so.medicine_name as product, so.medicine_name, so.qty, so.notes, so.order_type, so.delivery_mode,
               so.created_at, so.updated_at, so.store_id,
               COUNT(oi.id) as item_count
        FROM special_orders so

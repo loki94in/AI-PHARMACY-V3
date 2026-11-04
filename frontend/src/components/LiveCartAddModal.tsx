@@ -967,7 +967,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   }, [cartLookup, cartDistributors]);
 
   const getOrderCartMatch = useCallback((order: SpecialOrder) => {
-    const orderName = (order.product || '').trim().toLowerCase();
+    const orderName = (order.medicine_name || order.product || '').trim().toLowerCase();
     const exact = cartLookup.get(orderName);
     if (exact) {
       return { item: exact, result: { isMatch: true, score: 100 } };
@@ -1647,12 +1647,12 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         order.status !== 'Fulfilled' && 
         order.status !== 'Completed' && 
         order.status !== 'Cancelled' && 
-        !isSoldAtPOSToday(order.product) && 
-        !isMedicineInSentPO(order.product, restrictStoreId)
+        !isSoldAtPOSToday(order.medicine_name || order.product || '') && 
+        !isMedicineInSentPO(order.medicine_name || order.product || '', restrictStoreId)
       )
       .map(order => {
         const itemKey = `order-${order.id}`;
-        const isSkipped = isItemSkipped(itemKey, order.product);
+        const isSkipped = isItemSkipped(itemKey, order.medicine_name || order.product || '');
         const cartMatch = orderCartMatches.get(order.id);
         const inCart = Boolean(cartMatch?.item);
         const matchScore = cartMatch?.result?.score || 0;

@@ -46,7 +46,7 @@ export class AutoMatchWorker {
         // never re-processed by this safety-net scan (once calculated, no
         // recalculation). Purchase-save arrival detection stays event-driven.
         const pendingOrders = await db.all(
-          `SELECT s.id, s.product, s.medicine_name, s.qty, s.requester, s.phone
+          `SELECT s.id, s.medicine_name, s.medicine_name AS product, s.qty, s.requester, s.phone
            FROM special_orders s
            WHERE s.status IN ('CREATED', 'PENDING', 'IN_TRANSIT', 'Pending', 'Ordered')
              AND NOT EXISTS (SELECT 1 FROM order_overlaps o WHERE o.special_order_id = s.id)`

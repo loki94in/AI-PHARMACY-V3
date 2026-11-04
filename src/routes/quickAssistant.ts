@@ -24,7 +24,7 @@ router.get('/', async (req, res) => {
       ).catch(() => []),
 
       db.all(
-        `SELECT o.*, s.product, s.requester, s.phone, s.store_id
+        `SELECT o.*, s.medicine_name as product, s.medicine_name, s.requester, s.phone, s.store_id
          FROM order_overlaps o
          JOIN special_orders s ON o.special_order_id = s.id
          WHERE o.overlap_status = 'detected'
