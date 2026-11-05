@@ -1378,13 +1378,21 @@ class WhatsAppQueueWorker {
           }
 
           if (item.type === 'distributor_dispatch_reminder') {
-            const todayStr = new Date().toISOString().split('T')[0];
+            const todayStr = toLocalSqlDateTime().slice(0, 10);
             await db.run(
               `UPDATE distributor_dispatch_reminders 
                SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
                WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
               [todayStr, item.target_name || '', item.id]
             ).catch(() => {});
+            if (item.target_name) {
+              await db.run(
+                `UPDATE pharmarack_synced_orders 
+                 SET announced_at = COALESCE(announced_at, ?), announce_result = 'dispatched_via_queue'
+                 WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND announced_at IS NULL`,
+                [Date.now(), todayStr, item.target_name]
+              ).catch(() => {});
+            }
           }
 
           if (item.type === 'refill_reminder') {
@@ -1442,13 +1450,21 @@ class WhatsAppQueueWorker {
                 await this.markPharmarackOrderSent(db, item.target_name);
               }
               if (item.type === 'distributor_dispatch_reminder') {
-                const todayStr = new Date().toISOString().split('T')[0];
+                const todayStr = toLocalSqlDateTime().slice(0, 10);
                 await db.run(
                   `UPDATE distributor_dispatch_reminders 
                    SET status = 'Dispatched', last_reminded_at = CURRENT_TIMESTAMP 
                    WHERE date = ? AND (LOWER(TRIM(distributor_name)) = LOWER(TRIM(?)) OR id = ?)`,
                   [todayStr, item.target_name || '', item.id]
                 ).catch(() => {});
+                if (item.target_name) {
+                  await db.run(
+                    `UPDATE pharmarack_synced_orders 
+                     SET announced_at = COALESCE(announced_at, ?), announce_result = 'dispatched_via_queue'
+                     WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND announced_at IS NULL`,
+                    [Date.now(), todayStr, item.target_name]
+                  ).catch(() => {});
+                }
               }
               if (item.type === 'refill_reminder') {
                 await db.run(

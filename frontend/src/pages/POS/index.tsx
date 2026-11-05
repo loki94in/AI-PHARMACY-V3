@@ -150,9 +150,19 @@ export const isLiquidOrSingleUnitForm = (name?: string, packaging?: string | nul
 
 export const resolveAllowLooseSale = (item?: { allow_loose_sale?: number | boolean | null; name?: string; medicine_name?: string; packaging?: string | null; packSize?: number | null; pack_size?: number | null } | null): number => {
   if (!item) return 1;
-  // A pack holding exactly one unit (typical syrup/suspension) has nothing to sell loose, so the cursor skips Loose.
-  // If the saved pack size is wrong, fix it in the medicine editor — this reads the stored value, never guesses.
-  if (Number(item.packSize ?? item.pack_size) === 1) return 0;
+  // A pack holding 1 unit (or unspecified default 1 unit) has nothing to sell loose, so cursor skips Loose.
+  const rawPack = item.packSize ?? item.pack_size;
+  let pSize = 0;
+  if (rawPack !== undefined && rawPack !== null && Number(rawPack) > 0) {
+    pSize = Number(rawPack);
+  } else if (item.packaging) {
+    pSize = parsePackSizeFromPackaging(item.packaging) || 0;
+  }
+  if (pSize <= 0) {
+    const det = detectPackSize(item.name || item.medicine_name, item.packaging);
+    pSize = det.detectedPackSize || 1;
+  }
+  if (pSize <= 1) return 0;
   if (item.allow_loose_sale !== undefined && item.allow_loose_sale !== null) {
     return item.allow_loose_sale ? 1 : 0;
   }
@@ -1005,6 +1015,13 @@ export function allocateMedicineBatches(params: {
         pack_size: pSize,
         pack_unit: (refItem as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
         packaging: (refItem as any).packaging || params.fallbackItem?.packaging || null,
+        allow_loose_sale: resolveAllowLooseSale({
+          allow_loose_sale: (refItem as any).allow_loose_sale,
+          name: medicineName || refItem.name,
+          packaging: (refItem as any).packaging || params.fallbackItem?.packaging,
+          packSize: pSize,
+          pack_size: pSize
+        }),
         availableStock: Number(refItem.availableStock || refItem.stock_qty || 0),
         availableLooseStock: Number(refItem.availableLooseStock || refItem.loose_quantity || 0),
         alternative_batches: [],
@@ -1115,7 +1132,9 @@ export function allocateMedicineBatches(params: {
           allow_loose_sale: resolveAllowLooseSale({
             allow_loose_sale: batch.allow_loose_sale !== undefined ? (batch.allow_loose_sale ? 1 : 0) : (params.fallbackItem?.allow_loose_sale !== undefined ? (params.fallbackItem.allow_loose_sale ? 1 : 0) : undefined),
             name: batch.medicine_name || params.medicineName,
-            packaging: batch.packaging || params.fallbackItem?.packaging
+            packaging: batch.packaging || params.fallbackItem?.packaging,
+            packSize: pSize,
+            pack_size: pSize
           }),
           costPrice: batch.cost_price != null ? batch.cost_price : (params.fallbackItem?.costPrice || null),
           availableStock: batch.stock_qty,
@@ -3146,9 +3165,8 @@ const POS = () => {
 
     updateCart((prevCart): CartRow[] => {
       const cleanPrev = prevCart.filter(item => !item.isEmptyRow);
-      const isLiquid = isLiquidOrSingleUnitForm(med.name || med.medicine_name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
-      // Sequential Enter-Key Hopping: Default to 1 unit/strip so Enter advances immediately; auto-select on focus allows instant overwrite
-      const incQty = 1;
+      const isLoose = resolveAllowLooseSale(med) === 1;
+      const incQty = isLoose ? 0 : 1;
       const incLooseQty = 0;
       
       if (existingIndex !== -1) {
@@ -3232,35 +3250,55 @@ const POS = () => {
         });
     }
 
-    // Direct focus to the newly added medicine's quantity input with auto-select
+    // Fast-cashier focus routing: loose-first if loose allowed, else auto-advance to next medicine row
     justSelectedMedicineRef.current = true;
     setTimeout(() => { justSelectedMedicineRef.current = false; }, 350);
 
-    let qtyDone = false;
-    let qtyTimer1: ReturnType<typeof setTimeout> | null = null;
-    let qtyTimer2: ReturnType<typeof setTimeout> | null = null;
+    const isLooseAllowed = resolveAllowLooseSale(med) === 1;
+    let targetDone = false;
+    let timer1: ReturnType<typeof setTimeout> | null = null;
+    let timer2: ReturnType<typeof setTimeout> | null = null;
 
-    const focusTargetQty = () => {
-      if (qtyDone) return true;
-      let qtyInput = (
-        document.getElementById(`row-qty-input-${targetIndex}`) ||
-        document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${targetIndex}"][data-pos-field="qty"]`)
-      ) as HTMLInputElement | null;
-      if (qtyInput && !qtyInput.disabled) {
-        qtyInput.focus();
-        qtyInput.select?.();
-        qtyDone = true;
-        if (qtyTimer1) clearTimeout(qtyTimer1);
-        if (qtyTimer2) clearTimeout(qtyTimer2);
-        return true;
+    const focusAppropriateTarget = () => {
+      if (targetDone) return true;
+      if (isLooseAllowed) {
+        // Direct focus to Loose Qty
+        const looseInput = (
+          document.getElementById(`row-loose-input-${targetIndex}`) ||
+          document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${targetIndex}"][data-pos-field="looseQty"]`)
+        ) as HTMLInputElement | null;
+        if (looseInput && !looseInput.disabled) {
+          looseInput.focus();
+          looseInput.select?.();
+          targetDone = true;
+          if (timer1) clearTimeout(timer1);
+          if (timer2) clearTimeout(timer2);
+          return true;
+        }
+      } else {
+        // Full Pack Only: Direct focus to Next Medicine search input
+        const targetNext = targetIndex + 1;
+        const nextInput = (
+          document.getElementById(`row-med-input-${targetNext}`) ||
+          document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+        ) as HTMLInputElement | null;
+        if (nextInput && !nextInput.disabled) {
+          nextInput.focus();
+          nextInput.select?.();
+          targetDone = true;
+          if (timer1) clearTimeout(timer1);
+          if (timer2) clearTimeout(timer2);
+          return true;
+        }
       }
       return false;
     };
-    if (!focusTargetQty()) {
-      qtyTimer1 = setTimeout(() => {
-        if (!focusTargetQty()) {
-          qtyTimer2 = setTimeout(() => {
-            focusTargetQty();
+
+    if (!focusAppropriateTarget()) {
+      timer1 = setTimeout(() => {
+        if (!focusAppropriateTarget()) {
+          timer2 = setTimeout(() => {
+            focusAppropriateTarget();
           }, 40);
         }
       }, 20);
@@ -3503,17 +3541,35 @@ const POS = () => {
       }).catch(err => console.error('Failed to post correction learning:', err));
     }
 
-    // Fast-billing: Liquids default to 1 unit; Tabs/Caps default to 1 strip with auto-select
-    const isLiquid = isLiquidOrSingleUnitForm(med.medicine_name || med.name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
-    const defaultQty = opts?.presetQty ?? (originalItem?.isEmptyRow ? 1 : ((originalItem?.qty ?? 0) || 1));
-    const defaultLooseQty = opts?.presetLooseQty ?? (originalItem?.isEmptyRow ? 0 : (originalItem?.looseQty ?? 0));
+    // Fast-billing: Loose-allowed items focus directly on loose units; full-pack items default to 1 strip
+    const isLoose = resolveAllowLooseSale(med) === 1;
+    const defaultLooseQty = opts?.presetLooseQty ?? (
+      !isLoose ? 0 : (originalItem?.isEmptyRow ? 0 : (originalItem?.looseQty ?? 0))
+    );
+    const defaultQty = opts?.presetQty ?? (
+      originalItem?.isEmptyRow
+        ? (isLoose ? 0 : 1)
+        : (isLoose && defaultLooseQty > 0 ? (originalItem?.qty ?? 0) : ((originalItem?.qty ?? 0) || (isLoose ? 0 : 1)))
+    );
     const compactInventory = getCompactInventoryCache();
+    const fallbackItem: Partial<CartRow> = {
+      id: med.inventory_id || med.id,
+      medicine_id: Number(med.medicine_id || med.id),
+      name: med.medicine_name || med.name,
+      packaging: (med as any).packaging || null,
+      packSize: Number(med.pack_size || (med as any).packSize || 1),
+      pack_size: Number(med.pack_size || (med as any).packSize || 1),
+      allow_loose_sale: resolveAllowLooseSale(med),
+      mrp: med.mrp || 0,
+      costPrice: med.cost_price != null ? med.cost_price : null
+    };
     const allocated = allocateMedicineBatches({
       medicineId: Number(med.medicine_id || (typeof med.id === 'number' && med.id < 1000000000 ? med.id : 0)),
       medicineName: med.medicine_name || med.name || '',
       requestedQty: defaultQty,
       requestedLooseQty: defaultLooseQty,
-      packSize: med.pack_size || 1,
+      packSize: Number(med.pack_size || (med as any).packSize || 1),
+      fallbackItem,
       compactInventory,
       editingInvoiceId,
       priorityBatchNo: med.batch_no || (med as any).batch,
@@ -3532,7 +3588,9 @@ const POS = () => {
         mrp: med.mrp || 0,
         costPrice: med.cost_price || 0,
         salts: med.salts || med.hsn_code || '',
-        packSize: med.pack_size || 1,
+        packaging: (med as any).packaging || null,
+        packSize: Number(med.pack_size || (med as any).packSize || 1),
+        pack_size: Number(med.pack_size || (med as any).packSize || 1),
         allow_loose_sale: resolveAllowLooseSale(med),
         qty: defaultQty,
         quantity: defaultQty,
@@ -3580,35 +3638,62 @@ const POS = () => {
     // Apply medicine selection synchronously for instant UI response (<5ms)
     changeRowMedicine(index, med, opts);
 
-    // Direct focus to the selected medicine's quantity input with auto-select
-    let qtyDone = false;
-    let qtyTimer1: ReturnType<typeof setTimeout> | null = null;
-    let qtyTimer2: ReturnType<typeof setTimeout> | null = null;
+    // Fast-cashier focus routing: loose-first if loose allowed, else auto-advance to next medicine row
+    const isLooseAllowed = resolveAllowLooseSale(med) === 1;
 
-    const focusRowQty = () => {
-      if (qtyDone) return true;
-      let qtyInput = (
-        document.getElementById(`row-qty-input-${index}`) ||
-        document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${index}"][data-pos-field="qty"]`)
-      ) as HTMLInputElement | null;
-      if (qtyInput && !qtyInput.disabled) {
-        qtyInput.focus();
-        qtyInput.select?.();
-        qtyDone = true;
-        if (qtyTimer1) clearTimeout(qtyTimer1);
-        if (qtyTimer2) clearTimeout(qtyTimer2);
-        return true;
+    let targetDone = false;
+    let timer1: ReturnType<typeof setTimeout> | null = null;
+    let timer2: ReturnType<typeof setTimeout> | null = null;
+    let timer3: ReturnType<typeof setTimeout> | null = null;
+
+    const focusAppropriateTarget = () => {
+      if (targetDone) return true;
+      if (isLooseAllowed) {
+        // Direct focus to Loose Qty
+        const looseInput = (
+          document.getElementById(`row-loose-input-${index}`) ||
+          document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${index}"][data-pos-field="looseQty"]`)
+        ) as HTMLInputElement | null;
+        if (looseInput && !looseInput.disabled) {
+          looseInput.focus();
+          looseInput.select?.();
+          targetDone = true;
+          if (timer1) clearTimeout(timer1);
+          if (timer2) clearTimeout(timer2);
+          if (timer3) clearTimeout(timer3);
+          return true;
+        }
+      } else {
+        // Full Pack Only: Direct focus to Next Medicine search input
+        const targetNext = index + 1;
+        const nextInput = document.getElementById(`row-med-input-${targetNext}`) as HTMLInputElement | null;
+        if (nextInput && !nextInput.disabled) {
+          nextInput.focus();
+          nextInput.select?.();
+          targetDone = true;
+          if (timer1) clearTimeout(timer1);
+          if (timer2) clearTimeout(timer2);
+          if (timer3) clearTimeout(timer3);
+          return true;
+        }
       }
       return false;
     };
-    if (!focusRowQty()) {
-      qtyTimer1 = setTimeout(() => {
-        if (!focusRowQty()) {
-          qtyTimer2 = setTimeout(() => {
-            focusRowQty();
+
+    if (!focusAppropriateTarget()) {
+      timer1 = setTimeout(() => {
+        if (!focusAppropriateTarget()) {
+          timer2 = setTimeout(() => {
+            if (!focusAppropriateTarget()) {
+              timer3 = setTimeout(() => {
+                if (!focusAppropriateTarget()) {
+                  focusCartMedicineInput(true);
+                }
+              }, 60);
+            }
           }, 40);
         }
-      }, 20);
+      }, 30);
     }
 
     // Enrich salts & alternatives asynchronously in the background
@@ -5984,6 +6069,16 @@ const POS = () => {
                                     }, 50);
                                     return;
                                   }
+                                  // Enter on empty trailing row: checkout the bill (Bill Discount, Payment, Save)
+                                  if (e.key === 'Enter' && item.isEmptyRow && (!rowSearchTerm || rowSearchTerm.trim().length === 0)) {
+                                    e.preventDefault();
+                                    setActiveRowSearchIndex(null);
+                                    setRowSearchTerm('');
+                                    setRowSearchHighlightIndex(-1);
+                                    const cdEl = document.getElementById('pos-bill-discount-input') as HTMLInputElement | null;
+                                    if (cdEl) { cdEl.focus(); cdEl.select?.(); }
+                                    return;
+                                  }
                                   // Tab with no dropdown pick: leave the cart -> bill CD, Payment, Direct Save, Save
                                   if (e.key === 'Tab' && !e.shiftKey && item.isEmptyRow && rowSearchResults.length === 0) {
                                     e.preventDefault();
@@ -6520,7 +6615,13 @@ const POS = () => {
                                             looseInput.focus();
                                             looseInput.select?.();
                                           } else {
-                                            focusCartMedicineInput();
+                                            const discIn = document.getElementById(`row-disc-input-${curIdx}`) as HTMLInputElement | null;
+                                            if (discIn && !discIn.disabled) {
+                                              discIn.focus();
+                                              discIn.select?.();
+                                            } else {
+                                              focusCartMedicineInput();
+                                            }
                                           }
                                         }
                                       }
@@ -6617,9 +6718,15 @@ const POS = () => {
                                           setTimeout(hopToNext, 20);
                                         }
                                       } else if (e.key === 'Tab' && !e.shiftKey) {
-                                        // Disc/Rate/MRP are skipped in the keyboard chain (still reachable by arrows/mouse)
                                         e.preventDefault();
-                                        focusCartMedicineInput();
+                                        const curIdx = cart.indexOf(item);
+                                        const discIn = document.getElementById(`row-disc-input-${curIdx}`) as HTMLInputElement | null;
+                                        if (discIn && !discIn.disabled) {
+                                          discIn.focus();
+                                          discIn.select?.();
+                                        } else {
+                                          focusCartMedicineInput();
+                                        }
                                       } else if (e.key === 'Tab' && e.shiftKey) {
                                         e.preventDefault();
                                         const curIdx = cart.indexOf(item);

@@ -143,10 +143,10 @@ export function detectPackSize(
     }
   }
 
-  // 5. Pack count with 'S suffix at word boundary:
-  // e.g. "15'S", "14'S", "10'S", "30'S", "100'S"
+  // 5. Pack count with 'S / NO'S / NOS suffix at word boundary:
+  // e.g. "15'S", "14'S", "10'S", "10 NO'S", "10 NOS", "30'S", "100'S"
   // Must NOT match strength numbers like 500MG or 650
-  const apostropheMatch = combined.match(/\b(\d+)\s*(?:'S)\b/i);
+  const apostropheMatch = combined.match(/\b(\d+)\s*(?:'S|NO'?S|NOS)\b/i);
   if (apostropheMatch) {
     const count = parseInt(apostropheMatch[1], 10);
     if (count > 0 && count <= 500) {

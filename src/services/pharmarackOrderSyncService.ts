@@ -639,17 +639,48 @@ export async function recoverTodayUnnotifiedOrders(): Promise<{ unnotifiedOrders
       try {
         const contact = await resolveDistributorContact(db, so.store_name);
 
-        // A. If distributor was not announced, send single follow-up with order #
+        // A. If distributor was not announced, check actual sent history before sending recovery follow-up
         if (!so.announced_at) {
-          const { syncTodayActiveDistributors } = await import('./distributorDispatchReminderWorker.js');
-          const reminders = await syncTodayActiveDistributors();
-          const row = reminders.find((r: any) => String(r.distributor_name || '').toLowerCase().trim() === String(so.store_name).toLowerCase().trim());
-          if (row && row.id && row.id < 800000) {
-            const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { followUp: true, orderNos: [so.order_no] });
-            const sent = sentRes.ok;
-            if (sent) {
-              await db.run('UPDATE pharmarack_synced_orders SET announced_at = ?, announce_result = ? WHERE order_no = ?', [Date.now(), 'recovered_on_boot', so.order_no]);
-              result.notifiedDistributors++;
+          const startOfDay = new Date();
+          startOfDay.setHours(0, 0, 0, 0);
+          const startOfDayMs = startOfDay.getTime();
+          const cleanOrderNo = String(so.order_no || '').trim();
+
+          let alreadyCommunicated = false;
+          if (cleanOrderNo) {
+            const alreadySentInRegister = await db.get(
+              `SELECT id FROM whatsapp_sent_register
+               WHERE message LIKE ? AND sent_at >= ? LIMIT 1`,
+              [`%${cleanOrderNo}%`, startOfDayMs]
+            );
+
+            const alreadyInQueue = await db.get(
+              `SELECT id FROM whatsapp_send_queue
+               WHERE message LIKE ? AND status IN ('sent', 'pending', 'sending') AND created_at >= ? LIMIT 1`,
+              [`%${cleanOrderNo}%`, startOfDayMs]
+            );
+
+            if (alreadySentInRegister || alreadyInQueue) {
+              alreadyCommunicated = true;
+              console.log(`[OrderRecovery] Order #${cleanOrderNo} for ${so.store_name} was already sent or queued today (register: ${alreadySentInRegister?.id || 'none'}, queue: ${alreadyInQueue?.id || 'none'}). Suppressing duplicate boot send.`);
+              await db.run(
+                'UPDATE pharmarack_synced_orders SET announced_at = ?, announce_result = ? WHERE order_no = ?',
+                [Date.now(), 'healed_from_sent_history', so.order_no]
+              );
+            }
+          }
+
+          if (!alreadyCommunicated) {
+            const { syncTodayActiveDistributors } = await import('./distributorDispatchReminderWorker.js');
+            const reminders = await syncTodayActiveDistributors();
+            const row = reminders.find((r: any) => String(r.distributor_name || '').toLowerCase().trim() === String(so.store_name).toLowerCase().trim());
+            if (row && row.id && row.id < 800000) {
+              const sentRes = await notificationService.sendDistributorDispatchReminder(row.id, undefined, undefined, { followUp: true, orderNos: [so.order_no] });
+              const sent = sentRes.ok;
+              if (sent) {
+                await db.run('UPDATE pharmarack_synced_orders SET announced_at = ?, announce_result = ? WHERE order_no = ?', [Date.now(), 'recovered_on_boot', so.order_no]);
+                result.notifiedDistributors++;
+              }
             }
           }
         }

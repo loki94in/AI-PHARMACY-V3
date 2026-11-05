@@ -462,6 +462,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
   const isPurchase = (t: string) => 
     t === 'distributor' || 
     t === 'distributor_collection' || 
+    t === 'distributor_dispatch_reminder' || 
     t === 'pharmarack_batch' || 
     t === 'pharmarack_distributor_order' || 
     t === 'distributor_cart_order' ||

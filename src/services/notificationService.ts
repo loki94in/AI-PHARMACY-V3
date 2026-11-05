@@ -1066,6 +1066,34 @@ export class NotificationService {
         [reminderId]
       );
 
+      // Stamp pharmarack_synced_orders.announced_at so boot recovery never treats already-dispatched orders as unannounced
+      if (queueId) {
+        try {
+          const stampNow = Date.now();
+          const todayDateStr = toLocalSqlDateTime().slice(0, 10);
+          const explicitNos = (opts?.orderNos || []).filter(Boolean);
+          if (explicitNos.length > 0) {
+            const placeholders = explicitNos.map(() => '?').join(',');
+            await db.run(
+              `UPDATE pharmarack_synced_orders 
+               SET announced_at = ?, announce_result = ?
+               WHERE order_no IN (${placeholders}) AND announced_at IS NULL`,
+              [stampNow, userClicked ? 'user_clicked_send' : 'dispatch_reminder_queued', ...explicitNos]
+            );
+          }
+          if (reminder.distributor_name) {
+            await db.run(
+              `UPDATE pharmarack_synced_orders
+               SET announced_at = ?, announce_result = ?
+               WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?)) AND announced_at IS NULL`,
+              [stampNow, userClicked ? 'user_clicked_send' : 'dispatch_reminder_queued', todayDateStr, reminder.distributor_name]
+            );
+          }
+        } catch (syncStampErr) {
+          console.warn('[DistributorReminder] Could not stamp pharmarack_synced_orders announced_at:', syncStampErr);
+        }
+      }
+
       const refId = queueId ? `queue_${queueId}` : `reminder_${reminderId}_${Date.now()}`;
       const notifStatus = queueId ? 'pending' : 'failed';
       await db.run(

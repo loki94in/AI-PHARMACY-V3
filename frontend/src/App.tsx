@@ -251,16 +251,25 @@ function App() {
           field.name = cleanName;
         }
 
-        // 2. Ensure id is strictly unique across the DOM
-        if (!field.id || seenIds.has(field.id)) {
-          const baseId = (field.id || field.name || 'field').replace(/^_+|_+$/g, '');
+        // 2. Ensure id is strictly unique across the DOM without corrupting re-rendered developer IDs
+        if (!field.id) {
+          const baseId = (field.name || 'field').replace(/^_+|_+$/g, '');
           let uniqueId = `${baseId}_${++fieldCount}`;
-          while (seenIds.has(uniqueId) || (typeof document !== 'undefined' && document.getElementById(uniqueId))) {
+          while (typeof document !== 'undefined' && document.getElementById(uniqueId)) {
             uniqueId = `${baseId}_${++fieldCount}`;
           }
           field.id = uniqueId;
+        } else {
+          // If developer already set an ID, only disambiguate if there is a genuine collision with a DIFFERENT node
+          const existing = typeof document !== 'undefined' ? document.getElementById(field.id) : null;
+          if (existing && existing !== field) {
+            let uniqueId = `${field.id}_${++fieldCount}`;
+            while (typeof document !== 'undefined' && document.getElementById(uniqueId)) {
+              uniqueId = `${field.id}_${++fieldCount}`;
+            }
+            field.id = uniqueId;
+          }
         }
-        seenIds.add(field.id);
 
         // 3. Ensure autocomplete attribute
         if (!field.getAttribute('autocomplete')) {

@@ -160,7 +160,7 @@ export class OutboundSecurityGateway {
       }
     } catch (_) {}
 
-    // 3. Check Verified Distributors Directory
+    // 3. Check Verified Distributors Directory & Distributor Mappings
     try {
       const distRow = await db.get(
         `SELECT id, name FROM distributors 
@@ -170,6 +170,24 @@ export class OutboundSecurityGateway {
       );
       if (distRow?.id) {
         return { role: 'distributor', name: distRow.name, id: distRow.id };
+      }
+      const mapRow = await db.get(
+        `SELECT store_name FROM pharmarack_distributor_mappings 
+         WHERE phone LIKE ? 
+         LIMIT 1`,
+        [`%${clean10}%`]
+      );
+      if (mapRow?.store_name) {
+        return { role: 'distributor', name: mapRow.store_name };
+      }
+      const remRow = await db.get(
+        `SELECT distributor_name FROM distributor_dispatch_reminders 
+         WHERE distributor_phone LIKE ? 
+         LIMIT 1`,
+        [`%${clean10}%`]
+      );
+      if (remRow?.distributor_name) {
+        return { role: 'distributor', name: remRow.distributor_name };
       }
     } catch (_) {}
 
