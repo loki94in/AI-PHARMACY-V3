@@ -1,59 +1,68 @@
-# IMPLEMENTATION PLAN: POS Fast-Cashier Workflow Verification (Syrups vs Loose vs Checkout)
+# IMPLEMENTATION PLAN: POS Loose Medicine Trailing Empty Row & Enter Checkout (Option B)
 
 ## Plan Name
-`POS_ASCORIL_SYRUP_AND_LOOSE_SALE_FAST_CASHIER_VERIFICATION`
+`POS_LOOSE_MEDICINE_TRAILING_EMPTY_ROW_AND_ENTER_CHECKOUT_OPTION_B`
 
 ---
 
 ## 1. Problem Formulation & Scope
-The cashier in POS needs a seamless, rapid keyboard workflow tailored to medicine form:
-1. **Full-Pack / Syrups / Liquids (e.g., `ASCORIL LS + SYP`)**:
-   - `packaging: "100 ML"`, `allow_loose_sale === 0`, or single unit.
-   - When selected via Enter or click:
-     - Sets default `qty = 1` and `looseQty = 0`.
-     - Automatically routes focus directly to the Next Medicine Search row (`#row-med-input-${nextIdx}`).
-     - Cashier can immediately type the next item without touching the mouse or keyboard arrows.
-2. **Loose-Sale Enabled Medicines (e.g., `TORSID PLUS 20/50MG TAB 10'S`)**:
-   - Multi-unit blister/strip with `allow_loose_sale === 1` and `pack_size > 1`.
-   - When selected via Enter or click:
-     - Focus routes directly into Loose Tablets Qty (`#row-loose-input-${curIdx}`).
-     - Cashier types loose tablet count.
-     - Pressing Enter in Loose Tablets Qty immediately advances focus to the Next Medicine Search row (`#row-med-input-${nextIdx}`).
-3. **Empty Row Concludes Bill (Checkout)**:
-   - When cashier reaches the trailing empty medicine row and presses Enter or Tab without entering a medicine:
-     - Automatically transitions focus to Bill Checkout / Discount input (`#pos-bill-discount-input`), allowing one-touch billing completion.
+
+### Selected Workflow (Option B)
+1. **Selection of Loose Medicine**:
+   - Cashier searches and selects a loose-sale enabled medicine (e.g., `TORSID 20MG`).
+   - Focus routes directly into **Loose Tablets Qty** (`#row-loose-input-${curIdx}`).
+   - Cashier types the number of loose units (or leaves it as default).
+2. **First Enter (Advance to Guaranteed Trailing Empty Row)**:
+   - Cashier presses `Enter` on `#row-loose-input-${curIdx}`.
+   - The app guarantees that a trailing empty row (`#row-med-input-${curIdx + 1}`) exists.
+   - Cursor advances directly into the trailing empty row `#row-med-input-${curIdx + 1}`.
+   - The empty row's search term is guaranteed clean (`""`), unblocking keyboard checkout.
+3. **Second Enter (Conclude the Bill)**:
+   - On the trailing empty row, when the search term is blank, pressing `Enter` immediately transitions focus to `#pos-bill-discount-input` (Bill Discount / Checkout), seamlessly concluding the bill.
 
 ---
 
-## 2. Architecture & File Ownership
-- Primary file: `frontend/src/pages/POS/index.tsx`
-  - `resolveAllowLooseSale(item)`: determines if item can be sold loose (pack size > 1, not liquid/syrup/drops).
-  - `addToCart` & `changeRowMedicine`: allocates batches with `incQty = isLoose ? 0 : 1`, sets focus routing timer to `#row-loose-input-${targetIndex}` or `#row-med-input-${targetIndex + 1}`.
-  - Table row rendering: keydown handlers on `#row-loose-input-${curIdx}` and `#row-med-input-${curIdx}`.
-- Test suite: `tests/pos-focus-and-enter.e2e.ts`
-  - E2E tests validating Full Pack / Syrup auto-advance with default `qty = 1`, Loose-first routing, and Empty row checkout.
+## 2. Technical Architecture & File Ownership
+
+### Primary Files
+- `frontend/src/pages/POS/index.tsx`
+  - **Guaranteed Trailing Empty Row Invariant**:
+    - In `rebalanceCartMedicine`: Added `if (!newCart.some(r => r.isEmptyRow)) { newCart.push(makeEmptyCartRow()); }` ensuring that updating loose or strip quantities never leaves the cart without a trailing empty row.
+    - In `cart` `useEffect`: Enhanced the auto-append check to ensure any non-empty last item in `cart` immediately triggers the addition of `makeEmptyCartRow()`.
+  - **Focus & State Cleanliness**:
+    - In `#row-med-input-${rowIdx}` `onFocus`: Unconditionally reset `activeRowSearchIndex` to `idx`, `rowSearchTerm` to `""`, and clear dropdown results whenever an empty row (`item.isEmptyRow`) is focused, preventing stale search term retention from blocking `Enter` checkout.
+  - **Checkout Conclude Transition**:
+    - In `#row-med-input-${rowIdx}` `onKeyDown`: When `item.isEmptyRow` and `e.key === 'Enter'`, checks `(!rowSearchTerm || rowSearchTerm.trim().length === 0 || !e.currentTarget.value.trim())`, routing focus directly to `#pos-bill-discount-input`.
+  - **Enter Navigation from Loose Qty**:
+    - In `#row-loose-input-${rowIdx}` `onKeyDown`: Pressing `Enter` runs `hopToNext` which targets `#row-med-input-${curIdx + 1}`.
+- `tests/pos-focus-and-enter.e2e.ts`
+  - Added step 6 to test 2 to verify that pressing `Enter` on the trailing empty row after a loose medicine selection concludes the bill into `#pos-bill-discount-input`.
 
 ---
 
-## 3. Implementation & Verification Steps
-1. Run existing test suite `tests/pos-focus-and-enter.e2e.ts` to ensure 100% green pass.
-2. Add explicit test coverage in `tests/pos-focus-and-enter.e2e.ts` for `ASCORIL LS + SYP` to verify exact database syrup behavior (packaging "100 ML", default qty 1, immediate hop to next row).
-3. Verify guardrails (`npm run guardrails`) with zero violations.
-4. Auto-knowledge graph synchronization (`node scripts/quick-update.mjs`).
+## 3. Implementation Steps
+
+1. **Step 1: Guarantee Empty Row Persistence in Cart Updates**
+   - In `rebalanceCartMedicine`: Added invariant ensuring `makeEmptyCartRow()` is present.
+   - In `cart` `useEffect`: Enhanced empty row auto-append with functional check `!prev[prev.length - 1].isEmptyRow`.
+2. **Step 2: Clean Empty Row Focus and Search State**
+   - In `row-med-input` `onFocus`: Ensured empty rows immediately clear `rowSearchTerm` to `""` and set `activeRowSearchIndex` to `rowIdx`.
+   - In `row-med-input` `onKeyDown`: Guaranteed Enter transitions to `#pos-bill-discount-input`.
+3. **Step 3: Verification with E2E Tests & Guardrails**
+   - Updated `tests/pos-focus-and-enter.e2e.ts` test 2 to verify the complete loose medicine -> new empty row -> Enter checkout flow.
+   - Verified with `npm run guardrails` (PASS, 0 violations, clean TypeScript compilation).
+   - Verified production build with `npm run build:client` (built in 42.98s).
+4. **Step 4: Knowledge Graph**
+   - Updated auto-knowledge graph with `node scripts/quick-update.mjs`.
 
 ---
 
 ## 4. Completed Tasks
-- [x] Implemented `resolveAllowLooseSale` with pack size and liquid detection.
-- [x] Fixed liquid/volume detection in `parsePackSizeFromPackaging` so volume measures (e.g. `100 ML`, `60 ML`, `15 ML`) are parsed as 1 bottle, preventing syrups from being misclassified as loose-sale items with pack size 100.
-- [x] Updated `resolveAllowLooseSale` to enforce that syrups and liquids (`isLiquidOrSingleUnitForm`) always return 0 (cannot be sold loose).
-- [x] Replaced all 38 instances of `cart.indexOf(item)` in table row JSX with true mapped `rowIdx`, eliminating negative index (-1) bugs and stale array references.
-- [x] Fixed `changeRowMedicine` and `fetchDetailsAndChangeRowMedicine` to guard against negative indexes and guarantee full-pack items default to at least 1 unit (`Math.max(1, originalItem?.qty || 1)`).
-- [x] Fixed `allocateMedicineBatches` to match active batches by normalized medicine name when catalog medicine ID differs from legacy inventory ID mapping.
-- [x] Refined `Shift+Tab` backwards navigation from empty medicine rows to land on previous row's quantity input (`prevLoose` if enabled, else `prevQty`).
-- [x] Implemented direct focus routing to `#row-loose-input-${targetIndex}` for loose-allowed medicines.
-- [x] Implemented direct focus routing to `#row-med-input-${targetIndex + 1}` for full-pack/syrup items with default `qty = 1`.
-- [x] Implemented empty row Enter -> `#pos-bill-discount-input` checkout transition.
-- [x] Added explicit E2E test verification for `ASCORIL LS + SYP` in `tests/pos-focus-and-enter.e2e.ts`.
-- [ ] Verify test suite completion for 6/6 tests.
-- [ ] Guardrails verification.
+- [x] Defined Option B workflow requirements.
+- [x] Implemented guaranteed empty row persistence in `rebalanceCartMedicine` and cart `useEffect`.
+- [x] Cleaned `row-med-input` `onFocus` so empty rows always reset `rowSearchTerm` and dropdown state.
+- [x] Enhanced `row-med-input` `onKeyDown` to ensure `Enter` on a blank empty row reliably focuses `#pos-bill-discount-input`.
+- [x] Updated `tests/pos-focus-and-enter.e2e.ts` with explicit assertion for concluding the bill via Enter from the new empty row.
+- [x] Passed performance guardrails (`npm run guardrails`) with zero violations.
+- [x] Verified complete frontend production build (`npm run build --prefix frontend`).
+- [x] Synchronized knowledge graph (`node scripts/quick-update.mjs`).

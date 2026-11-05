@@ -1990,11 +1990,13 @@ const POS = () => {
 
     // 2) Automatically append a new empty row at the bottom if the last row is filled
     const lastItem = cart[cart.length - 1];
-    if (lastItem && !lastItem.isEmptyRow && lastItem.name) {
-      setCart(prev => [
-        ...prev,
-        makeEmptyCartRow()
-      ]);
+    if (lastItem && !lastItem.isEmptyRow) {
+      setCart(prev => {
+        if (prev.length > 0 && !prev[prev.length - 1].isEmptyRow) {
+          return [...prev, makeEmptyCartRow()];
+        }
+        return prev;
+      });
     }
   }, [cart]);
 
@@ -3115,6 +3117,9 @@ const POS = () => {
     }
     if (!inserted) {
       newCart.push(...newMedRows);
+    }
+    if (!newCart.some(r => r.isEmptyRow)) {
+      newCart.push(makeEmptyCartRow());
     }
     return newCart;
   };
@@ -6008,8 +6013,15 @@ const POS = () => {
                                   setRowSearchTerm(val);
                                 }}
                                 onFocus={e => {
-                                  if (justSelectedMedicineRef.current) return;
                                   const idx = rowIdx;
+                                  if (item.isEmptyRow) {
+                                    setActiveRowSearchIndex(idx);
+                                    setRowSearchTerm('');
+                                    setRowSearchResults([]);
+                                    setRowSearchHighlightIndex(-1);
+                                    return;
+                                  }
+                                  if (justSelectedMedicineRef.current) return;
                                   const rect = e.currentTarget.getBoundingClientRect();
                                   if (window.innerHeight - rect.bottom < 240 && rect.top > 240) {
                                     setRowSearchDropUp(true);
@@ -6017,11 +6029,9 @@ const POS = () => {
                                     setRowSearchDropUp(false);
                                   }
                                   setActiveRowSearchIndex(idx);
-                                  const currentName = item.isEmptyRow ? '' : (item.name || '');
+                                  const currentName = item.name || '';
                                   setRowSearchTerm(currentName);
-                                  if (!item.isEmptyRow) {
-                                    (e.target as HTMLInputElement).select?.();
-                                  }
+                                  (e.target as HTMLInputElement).select?.();
                                 }}
                                 onBlur={() => {
                                   setTimeout(() => {
@@ -6074,7 +6084,7 @@ const POS = () => {
                                     return;
                                   }
                                   // Enter on empty trailing row: checkout the bill (Bill Discount, Payment, Save)
-                                  if (e.key === 'Enter' && item.isEmptyRow && (!rowSearchTerm || rowSearchTerm.trim().length === 0)) {
+                                  if (e.key === 'Enter' && item.isEmptyRow && (!rowSearchTerm || rowSearchTerm.trim().length === 0 || !e.currentTarget.value.trim())) {
                                     e.preventDefault();
                                     setActiveRowSearchIndex(null);
                                     setRowSearchTerm('');

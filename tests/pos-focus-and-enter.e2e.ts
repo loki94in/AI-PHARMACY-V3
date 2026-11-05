@@ -78,6 +78,12 @@ describe('POS Fast Cashier Workflow: Loose-First & Full-Pack Auto-Advance', { ta
     const medInput1 = browser.locator('#row-med-input-1');
     await expect(medInput1).toBeVisible({ timeout: 5000 });
     await expect(medInput1).toBeFocused();
+
+    // 6. Press Enter on the empty row -> immediately concludes bill into Bill Discount!
+    await browser.keyboard.press('Enter');
+    const billDiscountInput = browser.locator('#pos-bill-discount-input');
+    await expect(billDiscountInput).toBeVisible({ timeout: 5000 });
+    await expect(billDiscountInput).toBeFocused();
   });
 
   test('Empty Row: Enter or Tab transitions directly to Bill Checkout', async ({ app, browser, screen }) => {
