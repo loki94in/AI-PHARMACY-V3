@@ -10,7 +10,7 @@ export default {
         viewport: { width: 1366, height: 768 },
       }),
       app: {
-        url: process.env.E2E_BASE_URL || 'http://127.0.0.1:5176',
+        url: process.env.E2E_BASE_URL || 'http://127.0.0.1:5175',
       },
     },
   ],
