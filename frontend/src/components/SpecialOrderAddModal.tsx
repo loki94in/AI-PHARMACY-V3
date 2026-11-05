@@ -23,13 +23,15 @@ interface SpecialOrderAddModalProps {
   onClose: () => void;
   onOrderCreated: () => void | Promise<void>;
   existingOrders?: SpecialOrderItem[];
+  initialOrder?: Partial<SpecialOrderItem> | null;
 }
 
 export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
   isOpen,
   onClose,
   onOrderCreated,
-  existingOrders = []
+  existingOrders = [],
+  initialOrder = null
 }) => {
   // Form fields
   const [product, setProduct] = useState('');
@@ -88,39 +90,64 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
   // Universal Escape key dismissal
   useModalEscape(isOpen, onClose);
 
-  // Draft persistence & restoration
+  // Draft persistence & initialOrder prefill restoration
   useEffect(() => {
-    if (isOpen) {
-      try {
-        const saved = localStorage.getItem('crm_special_order_draft');
-        if (saved) {
-          const draft = JSON.parse(saved);
-          if (draft && (draft.product || draft.requester || draft.phone)) {
-            setProduct(draft.product || '');
-            setOrderSalutation(draft.orderSalutation || 'Mr.');
-            setOrderCustomSalutation(draft.orderCustomSalutation || '');
-            setRequester(draft.requester || '');
-            setPhone(draft.phone || '');
-            setQty(draft.qty || 1);
-            setAdvancePayment(draft.advancePayment || '');
-            setPriority(draft.priority || 'Normal');
-            setLanguage(draft.language || 'mr');
-            setSelectedDistributor(draft.selectedDistributor || '');
-            setSelectedRate(draft.selectedRate || '');
-            setSelectedMrp(draft.selectedMrp || '');
-            setSelectedMapped(draft.selectedMapped ?? true);
-            setSelectedScheme(draft.selectedScheme || '');
-            setSelectedProductId(draft.selectedProductId || '');
-            setSelectedStoreId(draft.selectedStoreId || '');
-            setSelectedProductCode(draft.selectedProductCode || '');
-            setSelectedCompany(draft.selectedCompany || '');
-            setSelectedPackaging(draft.selectedPackaging || '');
-            setHasDraft(true);
-          }
-        }
-      } catch (_) {}
+    if (!isOpen) return;
+
+    if (initialOrder) {
+      // Prioritize initialOrder pre-fill (from re-ordering an existing special order)
+      const { salutation, name } = parseSalutationAndName(initialOrder.requester || '');
+      setOrderSalutation(salutation || 'Mr.');
+      setOrderCustomSalutation('');
+      setRequester(name || initialOrder.requester || '');
+      setPhone(initialOrder.phone || '');
+      const medName = initialOrder.product || (initialOrder as any).medicine_name || '';
+      setProduct(medName);
+      setQty(initialOrder.qty || 1);
+      setAdvancePayment('');
+      setPriority((initialOrder.priority as any) || 'Normal');
+      if (initialOrder.language) setLanguage(initialOrder.language);
+      if (initialOrder.pharmarack_distributor) setSelectedDistributor(initialOrder.pharmarack_distributor);
+      if (initialOrder.pharmarack_rate) setSelectedRate(initialOrder.pharmarack_rate);
+      if (initialOrder.pharmarack_mrp) setSelectedMrp(initialOrder.pharmarack_mrp);
+      if (initialOrder.pharmarack_product_id) setSelectedProductId(initialOrder.pharmarack_product_id);
+      if (initialOrder.pharmarack_store_id) setSelectedStoreId(initialOrder.pharmarack_store_id);
+      if (initialOrder.pharmarack_product_code) setSelectedProductCode(initialOrder.pharmarack_product_code);
+      if ((initialOrder as any).company) setSelectedCompany((initialOrder as any).company);
+      if ((initialOrder as any).packaging) setSelectedPackaging((initialOrder as any).packaging);
+      setHasDraft(false);
+      return;
     }
-  }, [isOpen]);
+
+    try {
+      const saved = localStorage.getItem('crm_special_order_draft');
+      if (saved) {
+        const draft = JSON.parse(saved);
+        if (draft && (draft.product || draft.requester || draft.phone)) {
+          setProduct(draft.product || '');
+          setOrderSalutation(draft.orderSalutation || 'Mr.');
+          setOrderCustomSalutation(draft.orderCustomSalutation || '');
+          setRequester(draft.requester || '');
+          setPhone(draft.phone || '');
+          setQty(draft.qty || 1);
+          setAdvancePayment(draft.advancePayment || '');
+          setPriority(draft.priority || 'Normal');
+          setLanguage(draft.language || 'mr');
+          setSelectedDistributor(draft.selectedDistributor || '');
+          setSelectedRate(draft.selectedRate || '');
+          setSelectedMrp(draft.selectedMrp || '');
+          setSelectedMapped(draft.selectedMapped ?? true);
+          setSelectedScheme(draft.selectedScheme || '');
+          setSelectedProductId(draft.selectedProductId || '');
+          setSelectedStoreId(draft.selectedStoreId || '');
+          setSelectedProductCode(draft.selectedProductCode || '');
+          setSelectedCompany(draft.selectedCompany || '');
+          setSelectedPackaging(draft.selectedPackaging || '');
+          setHasDraft(true);
+        }
+      }
+    } catch (_) {}
+  }, [isOpen, initialOrder]);
 
   // Debounced auto-save draft to localStorage (500ms debounce to avoid typing lag)
   useEffect(() => {
@@ -444,13 +471,17 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-extrabold text-text tracking-tight">Register Out-of-Stock Special Request</h2>
+                <h2 className="text-base font-extrabold text-text tracking-tight">
+                  {initialOrder ? 'Re-order Special Request' : 'Register Out-of-Stock Special Request'}
+                </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-primary/15 text-primary border border-primary/30">
-                  Live Cart & 24/7 Sync Ready
+                  {initialOrder ? 'Re-order Mode' : 'Live Cart & 24/7 Sync Ready'}
                 </span>
               </div>
               <p className="text-xs text-muted mt-0.5">
-                Book patient shortages, link distributor options, and auto-dispatch localized WhatsApp confirmation.
+                {initialOrder
+                  ? 'Re-order medicine for this patient or assign to a different patient with live distributor stock.'
+                  : 'Book patient shortages, link distributor options, and auto-dispatch localized WhatsApp confirmation.'}
               </p>
             </div>
           </div>

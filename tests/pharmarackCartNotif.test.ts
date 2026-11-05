@@ -106,7 +106,7 @@ describe('Pharmarack Cart Notifications Tests', () => {
     // Verify distributor message content: concise PO dispatch reminder
     // (official-PO contract — distributor gets Order ID + pickup staff, never the item dump)
     const msg = notifs[0].message;
-    expect(msg).toContain("Pharmarack Order");
+    expect(msg.toLowerCase()).toContain("pharmarack order");
     expect(msg).toContain("Delivery Boy John");
     expect(msg).not.toContain("Medicines List:");
     expect(msg).not.toContain("Aspirin");
@@ -180,7 +180,7 @@ describe('Pharmarack Cart Notifications Tests', () => {
     const msg = notifs[0].message;
     expect(msg).toContain("#784512");
     expect(msg).toContain("#784519");
-    expect(msg).toContain("Pharmarack Order");
+    expect(msg.toLowerCase()).toContain("pharmarack order");
     // Distributor reminder carries no item dump
     expect(msg).not.toContain("Medicines List:");
     expect(msg).not.toContain("Aspirin");

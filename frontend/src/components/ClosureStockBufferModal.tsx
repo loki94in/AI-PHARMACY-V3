@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, CheckSquare, Square, ShoppingCart, MessageSquare, AlertCircle, Calendar, Package, RefreshCw } from 'lucide-react';
+import { X, CheckSquare, Square, ShoppingCart, MessageSquare, AlertCircle, Calendar, Package, RefreshCw, Minus, Plus } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
@@ -27,6 +27,9 @@ interface BufferItem {
   rate: number;
   distributor_name: string;
   status: 'shortfall' | 'sufficient';
+  is_in_cart?: boolean;
+  cart_store_name?: string;
+  linked_distributors_count?: number;
 }
 
 export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = ({
@@ -39,6 +42,7 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
   const [items, setItems] = useState<BufferItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [orderQtys, setOrderQtys] = useState<Record<number, number>>({});
+  const [mode, setMode] = useState<'shortage' | 'full'>('shortage');
   const [isAddingToCart, setIsAddingToCart] = useState(false);
   const [isStagingNotices, setIsStagingNotices] = useState(false);
 
@@ -51,11 +55,12 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
           const rawItems: BufferItem[] = res.items || [];
           setItems(rawItems);
           
-          // Pre-select items with shortfall by default
+          // Pre-select items with shortfall by default in 'shortage' mode
           const autoSelected = new Set<number>();
           const initialQtys: Record<number, number> = {};
           rawItems.forEach(it => {
-            initialQtys[it.refill_id] = it.recommended_order_qty || (it.shortfall_packs > 0 ? it.shortfall_packs : 1);
+            const qty = it.shortfall_packs > 0 ? it.shortfall_packs : (it.recommended_order_qty > 0 ? it.recommended_order_qty : 1);
+            initialQtys[it.refill_id] = qty;
             if (it.shortfall_packs > 0) {
               autoSelected.add(it.refill_id);
             }
@@ -91,10 +96,61 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
     setSelectedIds(new Set());
   };
 
-  const handleQtyChange = (refillId: number, val: number) => {
+  const handleModeChange = (newMode: 'shortage' | 'full') => {
+    setMode(newMode);
+    const updatedQtys: Record<number, number> = {};
+    const updatedSelected = new Set<number>();
+
+    items.forEach(it => {
+      if (newMode === 'shortage') {
+        const qty = it.shortfall_packs > 0 ? it.shortfall_packs : 1;
+        updatedQtys[it.refill_id] = qty;
+        if (it.shortfall_packs > 0) {
+          updatedSelected.add(it.refill_id);
+        }
+      } else {
+        const qty = it.quantity_needed > 0 ? it.quantity_needed : 1;
+        updatedQtys[it.refill_id] = qty;
+        updatedSelected.add(it.refill_id);
+      }
+    });
+
+    setOrderQtys(updatedQtys);
+    setSelectedIds(updatedSelected.size > 0 ? updatedSelected : new Set(items.map(i => i.refill_id)));
+  };
+
+  const handleStepQty = (refillId: number, delta: number) => {
+    setOrderQtys(prev => {
+      const current = prev[refillId] !== undefined && prev[refillId] > 0 ? prev[refillId] : 1;
+      return {
+        ...prev,
+        [refillId]: Math.max(1, current + delta)
+      };
+    });
+  };
+
+  const handleInputChange = (refillId: number, valStr: string) => {
+    if (valStr === '') {
+      // Allow user to clear the input without immediate snap-back to 1
+      setOrderQtys(prev => ({
+        ...prev,
+        [refillId]: 0
+      }));
+    } else {
+      const num = parseInt(valStr, 10);
+      if (!isNaN(num)) {
+        setOrderQtys(prev => ({
+          ...prev,
+          [refillId]: Math.min(999, Math.max(1, num))
+        }));
+      }
+    }
+  };
+
+  const handleInputBlur = (refillId: number) => {
     setOrderQtys(prev => ({
       ...prev,
-      [refillId]: Math.max(1, val)
+      [refillId]: prev[refillId] && prev[refillId] > 0 ? prev[refillId] : 1
     }));
   };
 
@@ -102,7 +158,8 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
   const totalPacksToOrder = useMemo(() => {
     let sum = 0;
     selectedIds.forEach(id => {
-      sum += orderQtys[id] || 1;
+      const val = orderQtys[id];
+      sum += (val !== undefined && val > 0) ? val : 1;
     });
     return sum;
   }, [selectedIds, orderQtys]);
@@ -117,17 +174,37 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
       const payload = items
         .filter(it => selectedIds.has(it.refill_id))
         .map(it => ({
+          refill_id: it.refill_id,
           medicine_id: it.medicine_id,
           medicine_name: it.medicine_name,
-          qty: orderQtys[it.refill_id] || it.recommended_order_qty || 1,
+          qty: orderQtys[it.refill_id] && orderQtys[it.refill_id] > 0
+            ? orderQtys[it.refill_id]
+            : (it.shortfall_packs > 0 ? it.shortfall_packs : 1),
           distributor_name: it.distributor_name,
         }));
 
       const res = await api.addClosureBufferToCart(payload);
-      toastEvent.trigger(
-        `Added ${res.addedCount || payload.length} buffer medicine(s) into Reorder Queue / Pharmarack Cart.`,
-        'info'
-      );
+      const totalSuccessful = (res?.addedCount || 0) + (res?.inCartCount || 0);
+
+      if (totalSuccessful > 0) {
+        toastEvent.trigger(
+          `Added ${totalSuccessful} buffer medicine(s) into Pharmarack Live Cart!`,
+          'info'
+        );
+      }
+      if (res?.needsLinkCount > 0) {
+        toastEvent.trigger(
+          `${res.needsLinkCount} medicine(s) need distributor linking in CRM. Staged in Special Orders.`,
+          'info'
+        );
+      }
+      if (totalSuccessful === 0 && (res?.needsLinkCount || 0) === 0 && (res?.failedCount || 0) > 0) {
+        toastEvent.trigger(
+          `Staged ${res.failedCount} item(s) in Special Orders (Distributor Out of Stock).`,
+          'info'
+        );
+      }
+
       onCartUpdated?.();
       onClose();
     } catch (err: any) {
@@ -158,7 +235,6 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
   };
 
   useModalEscape(isOpen, onClose);
-
 
   if (!isOpen) return null;
 
@@ -197,7 +273,7 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
 
         {/* Action Bar */}
         <div className="p-3 bg-bg3/30 border-b border-border/30 flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={selectAll}
@@ -219,15 +295,45 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={fetchBuffer}
-            className="flex items-center gap-1 text-muted hover:text-text cursor-pointer"
-            title="Refresh demand scan"
-          >
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-            <span>Refresh Scan</span>
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Shortage vs Full Demand Mode Toggle */}
+            <div className="flex items-center gap-1 bg-bg2 p-0.5 rounded-lg border border-border/60">
+              <button
+                type="button"
+                onClick={() => handleModeChange('shortage')}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                  mode === 'shortage'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-muted hover:text-text'
+                }`}
+                title="Order only the shortage quantity required to fulfill upcoming refills"
+              >
+                Shortage Only
+              </button>
+              <button
+                type="button"
+                onClick={() => handleModeChange('full')}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                  mode === 'full'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-muted hover:text-text'
+                }`}
+                title="Order the full prescribed quantity for every refill"
+              >
+                Full Demand
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={fetchBuffer}
+              className="flex items-center gap-1 text-muted hover:text-text cursor-pointer"
+              title="Refresh demand scan"
+            >
+              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+              <span>Refresh Scan</span>
+            </button>
+          </div>
         </div>
 
         {/* Content Table / Checklist */}
@@ -262,6 +368,11 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
                   {items.map(item => {
                     const isSelected = selectedIds.has(item.refill_id);
                     const isShortfall = item.shortfall_packs > 0;
+                    const curQty = orderQtys[item.refill_id];
+                    const displayVal = curQty === undefined
+                      ? (isShortfall ? item.shortfall_packs : 1)
+                      : (curQty === 0 ? '' : curQty);
+
                     return (
                       <tr
                         key={item.refill_id}
@@ -309,17 +420,45 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-center font-mono" onClick={e => e.stopPropagation()}>
-                          <input
-                            type="number"
-                            min={1}
-                            max={999}
-                            value={orderQtys[item.refill_id] || 1}
-                            onChange={e => handleQtyChange(item.refill_id, Number(e.target.value))}
-                            className="w-16 bg-bg border border-border/80 rounded-lg text-center font-bold font-mono py-1 text-sm focus:border-amber-500 focus:outline-none"
-                          />
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleStepQty(item.refill_id, -1)}
+                              className="w-6 h-6 rounded-md bg-bg2 hover:bg-bg3 border border-border/80 flex items-center justify-center text-muted hover:text-text cursor-pointer transition-colors"
+                              title="Decrease quantity"
+                            >
+                              <Minus size={11} />
+                            </button>
+                            <input
+                              type="number"
+                              min={1}
+                              max={999}
+                              value={displayVal}
+                              onChange={e => handleInputChange(item.refill_id, e.target.value)}
+                              onBlur={() => handleInputBlur(item.refill_id)}
+                              className="w-12 bg-bg border border-border/80 rounded-md text-center font-bold font-mono py-1 text-xs focus:border-amber-500 focus:outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleStepQty(item.refill_id, 1)}
+                              className="w-6 h-6 rounded-md bg-bg2 hover:bg-bg3 border border-border/80 flex items-center justify-center text-muted hover:text-text cursor-pointer transition-colors"
+                              title="Increase quantity"
+                            >
+                              <Plus size={11} />
+                            </button>
+                          </div>
                         </td>
-                        <td className="py-2.5 px-3 font-sans text-xs text-muted truncate max-w-[160px]">
-                          {item.distributor_name || 'Standard Distributor'}
+                        <td className="py-2.5 px-3 font-sans text-xs">
+                          {item.is_in_cart ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 font-bold text-[11px]">
+                              <ShoppingCart size={11} />
+                              <span className="truncate max-w-[130px]">{item.cart_store_name || item.distributor_name || 'In Cart'}</span>
+                            </span>
+                          ) : (
+                            <span className="text-muted truncate max-w-[150px] block" title={item.distributor_name}>
+                              {item.distributor_name || 'Standard Distributor'}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -356,7 +495,7 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
               className="px-5 py-2 rounded-xl text-xs font-bold bg-amber-600 text-white hover:bg-amber-500 transition-all cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
             >
               <ShoppingCart size={14} />
-              <span>{isAddingToCart ? 'Adding...' : `Add Selected (${selectedCount}) to Cart`}</span>
+              <span>{isAddingToCart ? 'Adding to Cart...' : `Add Selected (${selectedCount}) to Cart`}</span>
             </button>
           </div>
         </div>

@@ -1146,15 +1146,20 @@ export function allocateMedicineBatches(params: {
       expiry_date: firstB.expiry_date || '',
       mrp: mrp,
       sell_price: sellPrice,
-      qty: 0,
-      quantity: 0,
-      looseQty: 0,
+      qty: params.requestedQty || 0,
+      quantity: params.requestedQty || 0,
+      looseQty: params.requestedLooseQty || 0,
       unitPrice: Number(firstB.unit_price || mrp),
       discount: 0,
       packSize: pSize,
       pack_size: pSize,
       pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
       packaging: firstB.packaging || params.fallbackItem?.packaging || null,
+      allow_loose_sale: resolveAllowLooseSale({
+        allow_loose_sale: firstB.allow_loose_sale !== undefined ? (firstB.allow_loose_sale ? 1 : 0) : (params.fallbackItem?.allow_loose_sale !== undefined ? (params.fallbackItem.allow_loose_sale ? 1 : 0) : undefined),
+        name: firstB.name || firstB.medicine_name || params.medicineName,
+        packaging: firstB.packaging || params.fallbackItem?.packaging
+      }),
       costPrice: firstB.cost_price != null ? firstB.cost_price : (params.fallbackItem?.costPrice || null),
       availableStock: firstB.stock_qty,
       availableLooseStock: firstB.loose_quantity,
@@ -3232,34 +3237,21 @@ const POS = () => {
         });
     }
 
-    // Fast-billing keyboard routing:
+    // Fast-billing & Sequential Enter-Key Hopping keyboard routing:
     // 1. Liquids / single-unit forms (Qty=1, loose N/A): jump directly to Next Medicine row
-    // 2. Solid medicines with loose allowed: jump directly to Loose Tablets Qty
-    // 3. Full-pack only medicines: focus Strip Qty
+    // 2. Solid medicines (Tabs/Caps/Strips): jump directly to Strip Qty with auto-select
     const isLiquid = isLiquidOrSingleUnitForm(med.name || med.medicine_name, (med as any).packaging) || (Number(med.packSize ?? (med as any).pack_size) === 1);
-    const isLooseAllowed = resolveAllowLooseSale(med) === 1;
 
     if (isLiquid) {
       writeRef(skipEmptyRowAutofocusRef, false);
       focusCartMedicineInput();
-    } else if (isLooseAllowed) {
-      const focusLoose = () => {
-        const looseInput = document.getElementById(`row-loose-input-${targetIndex}`) as HTMLInputElement | null;
-        if (looseInput && !looseInput.disabled) {
-          looseInput.focus();
-          looseInput.select?.();
-          return true;
-        }
-        return false;
-      };
-      if (!focusLoose()) {
-        setTimeout(() => {
-          if (!focusLoose()) setTimeout(focusLoose, 90);
-        }, 50);
-      }
     } else {
       const focusTargetQty = () => {
-        const qtyInput = document.getElementById(`row-qty-input-${targetIndex}`) as HTMLInputElement | null;
+        let qtyInput = document.getElementById(`row-qty-input-${targetIndex}`) as HTMLInputElement | null;
+        if (!qtyInput || qtyInput.disabled) {
+          qtyInput = document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${targetIndex}"][data-pos-field="qty"]`)
+            || document.querySelector<HTMLInputElement>(`input[id^="row-qty-input-"]:not(:disabled)`);
+        }
         if (qtyInput && !qtyInput.disabled) {
           qtyInput.focus();
           qtyInput.select?.();
@@ -3270,9 +3262,11 @@ const POS = () => {
       if (!focusTargetQty()) {
         setTimeout(() => {
           if (!focusTargetQty()) {
-            setTimeout(focusTargetQty, 90);
+            setTimeout(() => {
+              if (!focusTargetQty()) setTimeout(focusTargetQty, 80);
+            }, 40);
           }
-        }, 50);
+        }, 20);
       }
     }
   };
@@ -3513,9 +3507,9 @@ const POS = () => {
       }).catch(err => console.error('Failed to post correction learning:', err));
     }
 
-    // Fast-billing: Liquids default to 1 unit; Tabs/Caps default to 0 for direct loose tablet entry
+    // Fast-billing: Liquids default to 1 unit; Tabs/Caps default to 1 strip with auto-select
     const isLiquid = isLiquidOrSingleUnitForm(med.medicine_name || med.name, (med as any).packaging) || resolveAllowLooseSale(med) === 0;
-    const defaultQty = opts?.presetQty ?? (originalItem?.isEmptyRow ? (isLiquid ? 1 : 0) : ((originalItem?.qty ?? 0) || (isLiquid ? 1 : 0)));
+    const defaultQty = opts?.presetQty ?? (originalItem?.isEmptyRow ? 1 : ((originalItem?.qty ?? 0) || 1));
     const defaultLooseQty = opts?.presetLooseQty ?? (originalItem?.isEmptyRow ? 0 : (originalItem?.looseQty ?? 0));
     const compactInventory = getCompactInventoryCache();
     const allocated = allocateMedicineBatches({
@@ -3543,6 +3537,7 @@ const POS = () => {
         costPrice: med.cost_price || 0,
         salts: med.salts || med.hsn_code || '',
         packSize: med.pack_size || 1,
+        allow_loose_sale: resolveAllowLooseSale(med),
         qty: defaultQty,
         quantity: defaultQty,
         looseQty: defaultLooseQty,
@@ -3578,34 +3573,21 @@ const POS = () => {
     // Apply medicine selection synchronously for instant UI response (<5ms)
     changeRowMedicine(index, med, opts);
 
-    // Fast-billing keyboard routing:
+    // Fast-billing & Sequential Enter-Key Hopping keyboard routing:
     // 1. Liquids / single-unit forms (Qty=1, loose N/A): jump directly to Next Medicine row
-    // 2. Solid medicines with loose allowed: jump directly to Loose Tablets Qty
-    // 3. Full-pack only medicines: focus Strip Qty
+    // 2. Solid medicines (Tabs/Caps/Strips): jump directly to Strip Qty with auto-select
     const isLiquid = isLiquidOrSingleUnitForm(med.medicine_name || med.name, (med as any).packaging) || (Number(med.pack_size ?? (med as any).packSize) === 1);
-    const isLooseAllowed = resolveAllowLooseSale(med) === 1;
 
     if (isLiquid) {
       writeRef(skipEmptyRowAutofocusRef, false);
       focusCartMedicineInput();
-    } else if (isLooseAllowed) {
-      const focusRowLoose = () => {
-        const looseInput = document.getElementById(`row-loose-input-${index}`) as HTMLInputElement | null;
-        if (looseInput && !looseInput.disabled) {
-          looseInput.focus();
-          looseInput.select?.();
-          return true;
-        }
-        return false;
-      };
-      if (!focusRowLoose()) {
-        setTimeout(() => {
-          if (!focusRowLoose()) setTimeout(focusRowLoose, 80);
-        }, 40);
-      }
     } else {
       const focusRowQty = () => {
-        const qtyInput = document.getElementById(`row-qty-input-${index}`) as HTMLInputElement | null;
+        let qtyInput = document.getElementById(`row-qty-input-${index}`) as HTMLInputElement | null;
+        if (!qtyInput || qtyInput.disabled) {
+          qtyInput = document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${index}"][data-pos-field="qty"]`)
+            || document.querySelector<HTMLInputElement>(`input[id^="row-qty-input-"]:not(:disabled)`);
+        }
         if (qtyInput && !qtyInput.disabled) {
           qtyInput.focus();
           qtyInput.select?.();
@@ -3616,9 +3598,11 @@ const POS = () => {
       if (!focusRowQty()) {
         setTimeout(() => {
           if (!focusRowQty()) {
-            setTimeout(focusRowQty, 80);
+            setTimeout(() => {
+              if (!focusRowQty()) setTimeout(focusRowQty, 80);
+            }, 40);
           }
-        }, 40);
+        }, 20);
       }
     }
 
@@ -6009,10 +5993,7 @@ const POS = () => {
                                     setActiveRowSearchIndex(null);
                                     setRowSearchTerm('');
                                     setRowSearchHighlightIndex(-1);
-                                    const isLooseAllowed = resolveAllowLooseSale(item) === 1;
-                                    const targetEl = isLooseAllowed
-                                      ? (document.getElementById(`row-loose-input-${idx}`) as HTMLInputElement | null)
-                                      : (document.getElementById(`row-qty-input-${idx}`) as HTMLInputElement | null);
+                                    const targetEl = document.getElementById(`row-qty-input-${idx}`) as HTMLInputElement | null;
                                     if (targetEl) {
                                       targetEl.focus();
                                       targetEl.select?.();

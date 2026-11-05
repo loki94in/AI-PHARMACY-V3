@@ -342,7 +342,7 @@ async function resolveDeliveryBoyPhones(db: any, orders: any[]): Promise<{ name:
   return result;
 }
 
-async function sendBatchToDeliveryBoys(db: any, orders: any[], isLate = false): Promise<void> {
+export async function sendBatchToDeliveryBoys(db: any, orders: any[], isLate = false, explicitScheduledAt?: number): Promise<void> {
   if (orders.length === 0) return;
 
   const enabledRow = await db.get("SELECT value FROM app_settings WHERE key = 'trigger_wa_pharmarack_batch_enabled'");
@@ -351,14 +351,12 @@ async function sendBatchToDeliveryBoys(db: any, orders: any[], isLate = false): 
     return;
   }
 
-  // Guard: skip entirely if WhatsApp was never configured / explicitly logged out
+  // Guard: try best-effort to ensure WhatsApp is ready, but never drop the queued summary
   try {
     const { ensureWhatsAppReady, isWhatsAppAutoConnectAllowed } = await import('../whatsappClient.js');
-    if (!(await isWhatsAppAutoConnectAllowed())) {
-      console.log('[PharmarackBatch] WhatsApp not configured \u2014 skipping batch dispatch send.');
-      return;
+    if (await isWhatsAppAutoConnectAllowed()) {
+      await ensureWhatsAppReady(5000).catch(() => {});
     }
-    await ensureWhatsAppReady(30000);
   } catch (_) {}
 
   const boys = await resolveDeliveryBoyPhones(db, orders);
@@ -425,7 +423,7 @@ async function sendBatchToDeliveryBoys(db: any, orders: any[], isLate = false): 
     try {
       // Enqueue ONLY the summary message tailored to this specific delivery boy
       const notifType = isLate ? 'pharmarack_additional_batch_summary' : 'pharmarack_daily_batch_summary';
-      const queueId = await whatsappQueueWorker.enqueue(boy.phone, summaryMessage, notifType, boy.name);
+      const queueId = await whatsappQueueWorker.enqueue(boy.phone, summaryMessage, notifType, boy.name, explicitScheduledAt);
       const refId = queueId ? `queue_${queueId}` : (isLate ? `batch_additional_${todayIST()}_${now}` : `batch_summary_${todayIST()}`);
 
       await db.run(
@@ -442,6 +440,14 @@ async function sendBatchToDeliveryBoys(db: any, orders: any[], isLate = false): 
       );
 
       console.log(`[PharmarackBatch] Enqueued summary message for ${boy.name} (${boy.phone}) [isLate=${isLate}]`);
+
+      // Instant SSE broadcast for WhatsApp Live Queue Controller UI updates
+      try {
+        const { eventService } = await import('./eventService.js');
+        eventService.broadcast('wa_queue_update', { active: true, at: Date.now() });
+        eventService.broadcast('automation_hub_updated', { type: 'enqueued', automationType: notifType, targetName: boy.name, at: Date.now() });
+      } catch (_) {}
+      await whatsappQueueWorker.forceNext().catch(() => {});
     } catch (err: any) {
       console.error(`[PharmarackBatch] Failed to enqueue for ${boy.name}:`, err.message);
       await db.run(

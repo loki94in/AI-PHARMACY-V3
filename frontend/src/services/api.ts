@@ -1601,7 +1601,7 @@ export const api = {
   saveMarketClosureStatus: (data: { enabled: boolean; type: 'market_closed' | 'pharmacy_closed'; startDate: string; endDate: string; reason?: string; lookaheadDays?: number }) => apiClient.post('/pharmarack/closure-status', data).then(res => res.data),
   getMarketClosureBuffer: () => apiClient.get('/pharmarack/closure-buffer').then(res => res.data),
   stageClosureNotices: (refillIds: number[], customTemplate?: string) => apiClient.post('/pharmarack/stage-closure-notices', { refillIds, customTemplate }).then(res => res.data),
-  addClosureBufferToCart: (items: Array<{ medicine_id: number; medicine_name: string; qty: number; distributor_name?: string }>) => apiClient.post('/pharmarack/add-closure-buffer-to-cart', { items }).then(res => res.data),
+  addClosureBufferToCart: (items: Array<{ refill_id?: number; medicine_id: number; medicine_name: string; qty: number; distributor_name?: string }>) => apiClient.post('/pharmarack/add-closure-buffer-to-cart', { items }).then(res => res.data),
   launchPharmarackLoginWindow: () => apiClient.post('/pharmarack/login-window').then(res => res.data),
   openOfficialPharmarackCartWindow: () => apiClient.post<{ ok: boolean; message: string }>('/pharmarack/cart/open-official-window').then(res => res.data),
   placeOfficialPharmarackOrders: (data: {

@@ -493,14 +493,20 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
   }
 
   // ─── ZERO-WAIT ASAP DISPATCH MESH (Delivery Boy 1st -> 10-15s Safe Gap -> Distributor 2nd) ───
-  // STEP 1: Notify assigned Delivery Boy ASAP (scheduled_at = NOW)
-  if (directOrderRemindersToNotifyBoy.length > 0) {
-    try {
-      console.log(`[PharmarackOrderSync] STEP 1: Enqueuing ASAP pickup dispatch to assigned Delivery Boy (${directOrderRemindersToNotifyBoy.length} distributor(s))...`);
-      await notificationService.sendConsolidatedDeliveryBoyDispatch(directOrderRemindersToNotifyBoy);
-    } catch (err: any) {
-      console.warn('[PharmarackOrderSync] Delivery boy ASAP dispatch failed:', err?.message || err);
+  // STEP 1: Notify assigned Delivery Boy ASAP via single Format 1 batch summary (scheduled_at = NOW)
+  try {
+    const pendingPlacedOrders = await db.all(
+      'SELECT * FROM pharmarack_placed_orders WHERE order_date = ? AND batch_sent = 0',
+      [today.iso]
+    );
+    if (pendingPlacedOrders.length > 0) {
+      console.log(`[PharmarackOrderSync] STEP 1: Enqueuing ASAP single summary dispatch to assigned Delivery Boy (${pendingPlacedOrders.length} order(s))...`);
+      const { sendBatchToDeliveryBoys, hasSentTodaysBatch } = await import('./pharmarackDailyDispatchService.js');
+      const alreadySentInitial = await hasSentTodaysBatch(db);
+      await sendBatchToDeliveryBoys(db, pendingPlacedOrders, alreadySentInitial, Date.now());
     }
+  } catch (err: any) {
+    console.warn('[PharmarackOrderSync] Delivery boy ASAP batch dispatch failed:', err?.message || err);
   }
 
   // STEP 2: Enqueue Distributor Announcement with 15s offset so Delivery Boy receives first

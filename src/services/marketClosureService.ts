@@ -40,6 +40,9 @@ export interface ClosureBufferItem {
   rate: number;
   distributor_name: string;
   status: 'shortfall' | 'sufficient';
+  is_in_cart?: boolean;
+  cart_store_name?: string;
+  linked_distributors_count?: number;
 }
 
 export interface AffectedClosureCustomer {
@@ -153,13 +156,22 @@ export class MarketClosureService {
         pr.medicine_id,
         pr.next_refill_date,
         pr.quantity_needed,
+        pr.status AS refill_status,
+        pr.cart_store_id,
+        pr.cart_store_name,
+        pr.cart_qty,
         m.name AS medicine_name,
         COALESCE(m.manufacturer, '') AS manufacturer,
         COALESCE(m.pack_size, '1') AS pack_size,
         COALESCE(m.mrp, 0) AS mrp,
         COALESCE(m.sell_price, m.mrp, 0) AS sell_price,
         COALESCE(m.last_purchase_ptr, m.rate, 0) AS rate,
-        COALESCE(m.last_distributor_name, '') AS distributor_name,
+        COALESCE(
+          (SELECT store_name FROM medicine_distributor_links WHERE medicine_id = pr.medicine_id ORDER BY pick_order ASC LIMIT 1),
+          m.last_distributor_name,
+          ''
+        ) AS distributor_name,
+        COALESCE((SELECT COUNT(*) FROM medicine_distributor_links WHERE medicine_id = pr.medicine_id), 0) AS linked_distributors_count,
         COALESCE((SELECT SUM(quantity) FROM inventory_master WHERE medicine_id = pr.medicine_id), 0) AS stock_qty,
         COALESCE((SELECT SUM(loose_quantity) FROM inventory_master WHERE medicine_id = pr.medicine_id), 0) AS loose_qty
       FROM patient_refills pr
@@ -200,11 +212,14 @@ export class MarketClosureService {
         quantity_needed: needed,
         current_stock: stock,
         shortfall_packs: shortfall,
-        recommended_order_qty: isShortfall ? shortfall : 0,
+        recommended_order_qty: isShortfall ? shortfall : 1,
         mrp: Number(r.mrp || 0),
         rate: Number(r.rate || 0),
         distributor_name: r.distributor_name,
         status: isShortfall ? 'shortfall' : 'sufficient',
+        is_in_cart: Boolean(r.cart_store_name || r.refill_status === 'ordered'),
+        cart_store_name: r.cart_store_name || undefined,
+        linked_distributors_count: Number(r.linked_distributors_count || 0),
       });
     }
 
@@ -311,32 +326,152 @@ export class MarketClosureService {
   }
 
   /**
-   * Add selected buffer items to special_orders / PO queue
+   * Add selected buffer items directly into Pharmarack Live Cart via processRefillCartItem,
+   * falling back to special_orders queue for unlinked or unmapped items.
    */
   async addBufferItemsToCart(
-    items: Array<{ medicine_id: number; medicine_name: string; qty: number; distributor_name?: string }>,
+    items: Array<{ refill_id?: number; medicine_id: number; medicine_name: string; qty: number; distributor_name?: string }>,
     dbInstance?: any
-  ): Promise<{ addedCount: number }> {
+  ): Promise<{
+    addedCount: number;
+    inCartCount: number;
+    needsLinkCount: number;
+    failedCount: number;
+    results: Array<{
+      refill_id?: number;
+      medicine_name: string;
+      qty: number;
+      status: string;
+      message?: string;
+      storeName?: string;
+    }>;
+  }> {
     const db = dbInstance || (await dbManager.getConnection());
     const config = await this.getConfig(db);
     const closureLabel = config.type === 'pharmacy_closed' ? 'Store Closure Buffer' : 'Market Closure Buffer';
     const reason = `${closureLabel}: ${config.startDate || 'Upcoming'} (${config.reason || 'Holiday'})`;
     const now = new Date().toISOString();
 
+    const { processRefillCartItem } = await import('./refillCartService.js');
+
     let addedCount = 0;
+    let inCartCount = 0;
+    let needsLinkCount = 0;
+    let failedCount = 0;
+    const results: Array<{
+      refill_id?: number;
+      medicine_name: string;
+      qty: number;
+      status: string;
+      message?: string;
+      storeName?: string;
+    }> = [];
+
     for (const it of items) {
+      const orderQty = Math.max(1, Math.floor(Number(it.qty) || 1));
       if (!it.qty || it.qty <= 0) continue;
-      await db.run(
-        `INSERT INTO special_orders 
-          (product, qty, requester, created_at, status, notes, pharmarack_mapped)
-         VALUES (?, ?, ?, ?, 'Pending', ?, 0)`,
-        [it.medicine_name, it.qty, 'Pharmacist', now, reason]
-      );
-      addedCount++;
+
+      if (it.refill_id && Number(it.refill_id) > 0) {
+        try {
+          const cartRes = await processRefillCartItem(Number(it.refill_id), {
+            qty: orderQty,
+            dryRun: false
+          });
+
+          const storeName = cartRes.line?.storeName || (cartRes.linked && cartRes.linked[0]?.storeName) || '';
+          if (cartRes.status === 'added') {
+            addedCount++;
+            results.push({
+              refill_id: it.refill_id,
+              medicine_name: it.medicine_name,
+              qty: orderQty,
+              status: 'added',
+              storeName: storeName || undefined,
+              message: cartRes.message || (storeName ? `Added ${orderQty} to ${storeName}` : `Added ${orderQty} to Live Cart`)
+            });
+          } else if (cartRes.status === 'in_cart') {
+            inCartCount++;
+            results.push({
+              refill_id: it.refill_id,
+              medicine_name: it.medicine_name,
+              qty: orderQty,
+              status: 'in_cart',
+              storeName: storeName || undefined,
+              message: cartRes.message || (storeName ? `Already in ${storeName} live cart` : 'Already in live cart')
+            });
+          } else if (cartRes.status === 'needs_link') {
+            needsLinkCount++;
+            await db.run(
+              `INSERT INTO special_orders 
+                (medicine_name, qty, requester, created_at, status, notes, pharmarack_mapped)
+               VALUES (?, ?, ?, ?, 'Pending', ?, 0)`,
+              [it.medicine_name, orderQty, 'Pharmacist', now, `${reason} (Needs distributor link)`]
+            );
+            results.push({
+              refill_id: it.refill_id,
+              medicine_name: it.medicine_name,
+              qty: orderQty,
+              status: 'needs_link',
+              message: 'Needs distributor link in CRM Refills; staged in Special Orders'
+            });
+          } else {
+            failedCount++;
+            await db.run(
+              `INSERT INTO special_orders 
+                (medicine_name, qty, requester, created_at, status, notes, pharmarack_mapped)
+               VALUES (?, ?, ?, ?, 'Pending', ?, 0)`,
+              [it.medicine_name, orderQty, 'Pharmacist', now, `${reason} (${cartRes.status}: ${cartRes.message || 'Distributor OOS'})`]
+            );
+            results.push({
+              refill_id: it.refill_id,
+              medicine_name: it.medicine_name,
+              qty: orderQty,
+              status: cartRes.status,
+              message: cartRes.message || 'Staged in Special Orders due to stock availability'
+            });
+          }
+        } catch (err: any) {
+          failedCount++;
+          await db.run(
+            `INSERT INTO special_orders 
+              (medicine_name, qty, requester, created_at, status, notes, pharmarack_mapped)
+             VALUES (?, ?, ?, ?, 'Pending', ?, 0)`,
+            [it.medicine_name, orderQty, 'Pharmacist', now, `${reason} (Error: ${err?.message || 'Cart exception'})`]
+          );
+          results.push({
+            refill_id: it.refill_id,
+            medicine_name: it.medicine_name,
+            qty: orderQty,
+            status: 'failed',
+            message: err?.message || 'Error processing refill'
+          });
+        }
+      } else {
+        await db.run(
+          `INSERT INTO special_orders 
+            (medicine_name, qty, requester, created_at, status, notes, pharmarack_mapped)
+           VALUES (?, ?, ?, ?, 'Pending', ?, 0)`,
+          [it.medicine_name, orderQty, 'Pharmacist', now, reason]
+        );
+        addedCount++;
+        results.push({
+          medicine_name: it.medicine_name,
+          qty: orderQty,
+          status: 'special_order_staged',
+          message: 'Staged in Special Orders'
+        });
+      }
     }
 
-    eventService.broadcast('special_orders_updated', { addedCount });
-    return { addedCount };
+    if (addedCount > 0 || inCartCount > 0) {
+      eventService.broadcast('cart_updated', { source: 'closure_buffer', addedCount, inCartCount });
+      eventService.broadcast('refills_updated', { source: 'closure_buffer' });
+    }
+    if (needsLinkCount > 0 || failedCount > 0) {
+      eventService.broadcast('special_orders_updated', { stagedCount: needsLinkCount + failedCount });
+    }
+
+    return { addedCount, inCartCount, needsLinkCount, failedCount, results };
   }
 
   /**

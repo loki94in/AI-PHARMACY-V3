@@ -87,6 +87,7 @@ export const SpecialOrdersSection: React.FC = () => {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [addingCartId, setAddingCartId] = useState<number | null>(null);
   const [convertingId, setConvertingId] = useState<number | null>(null);
+  const [reorderItem, setReorderItem] = useState<SpecialOrderItem | null>(null);
   const [loadingPaymentQrId, setLoadingPaymentQrId] = useState<number | null>(null);
   const [sendingPaymentQrId, setSendingPaymentQrId] = useState<number | null>(null);
   const [paymentQrModalData, setPaymentQrModalData] = useState<{
@@ -352,10 +353,10 @@ export const SpecialOrdersSection: React.FC = () => {
   };
 
   const handleAddToCart = (order: SpecialOrderItem) => {
-    // Open the Live Cart Add pop-up using the first 2 words query and source order ID,
-    // exactly matching the rest of the application's Add-to-Cart workflow.
-    const cleanQuery = getFirstTwoAlphanumericTokens(order.product || (order as any).medicine_name);
-    liveCartAddEvent.triggerOpen(cleanQuery, order.qty || 1, order.id);
+    // Open the Quick Special Order pop-up prefilled with this order's patient & medicine details,
+    // allowing re-ordering for the same patient or assigning to a new patient with live distributor stock.
+    setReorderItem(order);
+    setShowAddModal(true);
   };
 
   const handleSellAllSpecialOrders = (ordersList: SpecialOrderItem[]) => {
@@ -1472,16 +1473,20 @@ export const SpecialOrdersSection: React.FC = () => {
         )}
       </div>
 
-      {/* Add Special Request Modal inside CRM */}
+      {/* Add / Re-order Special Request Modal inside CRM */}
       <SpecialOrderAddModal
         isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
+        onClose={() => {
+          setShowAddModal(false);
+          setReorderItem(null);
+        }}
         onOrderCreated={async () => {
           await loadOrders();
           specialOrdersEvent.triggerUpdated();
           window.dispatchEvent(new CustomEvent('refresh-special-orders'));
         }}
         existingOrders={orders}
+        initialOrder={reorderItem}
       />
 
       {/* Edit Special Request Modal */}

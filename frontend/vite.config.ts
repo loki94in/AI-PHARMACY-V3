@@ -3,7 +3,20 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 // https://vitejs.dev/config/
+const backendPort = process.env.BACKEND_PORT || '5175';
+
 export default defineConfig({
+  preview: {
+    host: '127.0.0.1',
+    port: 5176,
+    strictPort: true,
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:' + backendPort, changeOrigin: true },
+      '/uploads': { target: 'http://127.0.0.1:' + backendPort, changeOrigin: true },
+      '/data': { target: 'http://127.0.0.1:' + backendPort, changeOrigin: true },
+      '/products': { target: 'http://127.0.0.1:' + backendPort, changeOrigin: true },
+    }
+  },
   plugins: [react()],
   resolve: {
     alias: {
@@ -22,7 +35,7 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:5174',
+        target: 'http://127.0.0.1:' + backendPort,
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('error', (err, req, res) => {
@@ -41,7 +54,7 @@ export default defineConfig({
         },
       },
       '/uploads': {
-        target: 'http://127.0.0.1:5174',
+        target: 'http://127.0.0.1:' + backendPort,
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('error', (err, _req, res) => {
@@ -53,7 +66,7 @@ export default defineConfig({
         },
       },
       '/data': {
-        target: 'http://127.0.0.1:5174',
+        target: 'http://127.0.0.1:' + backendPort,
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('error', (err, _req, res) => {
@@ -65,7 +78,7 @@ export default defineConfig({
         },
       },
       '/products': {
-        target: 'http://127.0.0.1:5174',
+        target: 'http://127.0.0.1:' + backendPort,
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('error', (err, _req, res) => {

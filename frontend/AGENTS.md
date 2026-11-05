@@ -246,11 +246,16 @@ Fast, mouse-free keyboard billing and purchase entry is a core pharmacy speed re
 2. **POS Fast-Billing Sequence (`pages/POS/index.tsx`)**:
    - **Batch Button Skipping**: `<button id="row-batch-input-...">` has `tabIndex={-1}` so keyboard Tab/Enter never lands on Batch and never opens the "Switch Batch" modal during typing (stays 100% mouse-clickable).
    - **Medicine Selection (Enter or Tab on Dropdown Item)**:
-     - **Liquids / Single-Unit Bottles / Syrups** (`resolveAllowLooseSale` = 0 / liquid form): Default Qty is 1, Loose is N/A. Focus jumps **directly to the Next Medicine Row** search input (`focusCartMedicineInput()`), allowing uninterrupted continuous typing!
-     - **Solid Medicines with Loose Sales Allowed** (`resolveAllowLooseSale` = 1): Focus jumps **directly to Loose Tablets Qty** (`#row-loose-input-${index}`) with `select()`. Pressing `Enter` or `Tab` advances directly to the Next Medicine row.
-     - **Solid Medicines Full-Pack Only**: Focus lands on **Strip Qty** (`#row-qty-input-${index}`) with `select()`. Pressing `Enter` or `Tab` advances to the Next Medicine row.
+     - **Liquids / Single-Unit Bottles / Syrups** (`isLiquid = true` / `packSize = 1`): Default Qty is 1, Loose is N/A. Focus jumps **directly to the Next Medicine Row** search input (`focusCartMedicineInput()`), allowing uninterrupted continuous rapid scanning!
+     - **Solid Medicines (Tablets / Capsules / Strips)**: Default Qty is 1 (auto-selected). Focus jumps **reliably to Strip Qty** (`#row-qty-input-${index}`) with `select()` (backed by resilient multi-tick DOM retry).
+   - **Sequential Hopping on Enter**:
+     - **Strip Qty** (`#row-qty-input-${index}`) ──(Enter)──>:
+       - If loose sales are allowed and enabled: jumps to **Loose Qty** (`#row-loose-input-${index}`) with `select()`.
+       - If loose sales are restricted / N/A: jumps directly to the Next Medicine Row (`focusCartMedicineInput()`).
+     - **Loose Qty** (`#row-loose-input-${index}`) ──(Enter)──>:
+       - Jumps directly to the Next Medicine Row (`focusCartMedicineInput()`).
    - **Arrow & Shift Navigation**:
-     - Operators can press `ArrowLeft` or `Shift+Tab` from Loose Tablets to edit Strip Qty if selling full strips.
+     - Operators can press `ArrowRight` from Strip Qty to jump directly into Loose Tablets, or `ArrowLeft` from Loose Tablets back to Strip Qty.
    - Every input auto-selects its text upon receiving focus (`el.select()`) so operators can immediately type new values without pressing backspace.
 
 ## Sent PO History Dispatch Actions (added 2026-10-24, bug P2-111)

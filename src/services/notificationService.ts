@@ -7,6 +7,7 @@ import { dbManager } from '../database/connection.js';
 import { recordPlacedOrder } from './pharmarackDailyDispatchService.js';
 import { resolveDistributorContact } from '../utils/distributorSyncHelper.js';
 import { formatPackagingAndUnit, buildStandardDistributorOrderMessage } from '../utils/whatsappTemplateBuilder.js';
+import { toLocalSqlDateTime } from '../utils/localTime.js';
 
 export interface NotificationData {
   type: 'whatsapp' | 'whatsapp_business' | 'telegram' | 'email';
@@ -1092,35 +1093,30 @@ export class NotificationService {
     boyName: string,
     reminders: any[]
   ): Promise<{ ok: boolean; queueId?: number }> {
-    let msg = `🏥 *${store.storeName}*\n`;
-    msg += `📍 *Delivery Location:* ${store.address}\n`;
-    msg += `📞 *Pharmacy Contact:* ${store.phone}\n\n`;
-    const isAfternoon = new Date().getHours() >= 13;
-    const headerTitle = isAfternoon ? 'AFTERNOON DISPATCH & COLLECTION LIST' : 'TODAY\'S DISPATCH & COLLECTION LIST';
-    msg += `🚚 *${headerTitle}*\n`;
-    if (boyName && boyName !== 'Delivery Staff') {
-      msg += `👤 *Assigned Staff:* ${boyName}\n`;
-    }
-    msg += `📅 *Date:* ${dateStr}\n`;
-    msg += `🏢 *Assigned Distributors:* ${reminders.length}\n\n`;
-    msg += `─────────────────────────\n`;
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    const ist = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+    const dateLabel = `${ist.getUTCDate()} ${months[ist.getUTCMonth()]}`;
 
+    const summaryLines: string[] = [];
+    let totalItems = 0;
     reminders.forEach((r, idx) => {
       const distName = r.distributor_name || 'Distributor';
       const rawP = (r.distributor_phone || '').replace(/\D/g, '');
-      const phoneFormatted = rawP.length >= 10 ? formatDisplayPhone(rawP) : (r.distributor_phone || 'N/A');
-      const orderCount = Number(r.order_count || 1);
-      const orderCountText = orderCount > 1 ? ` 🔥 *[${orderCount} Orders Placed Today]*` : '';
-      const statusText = r.status === 'Dispatched' ? '✅ Dispatched / Ready' : (r.status === 'Collected' ? '📦 Collected' : '⏳ Pending Collection');
-      const itemsCount = r.total_items_count ? ` (${r.total_items_count} items)` : '';
-
-      msg += `${idx + 1}. *${distName}*${orderCountText}\n`;
-      msg += `   📞 ${phoneFormatted}\n`;
-      msg += `   📊 Status: ${statusText}${itemsCount}\n\n`;
+      const last10 = rawP.slice(-10);
+      const displayPhoneNoGap = last10.length === 10 ? `+91 ${last10.slice(0, 5)} ${last10.slice(5)}` : (r.distributor_phone || 'N/A');
+      const count = Number(r.total_items_count || r.items_count || r.order_count || 1);
+      totalItems += count;
+      summaryLines.push(`${idx + 1}. *${distName}* (${count} items)\n    📞 Contact: ${displayPhoneNoGap}`);
     });
 
-    msg += `─────────────────────────\n`;
-    msg += `📝 *Note:* Please verify bills with distributor counter and collect invoices for ${store.storeName}.`;
+    let msg = `🏥 *${store.storeName}*\n`;
+    msg += `📋 *TODAY DISTRIBUTOR SUMMARY & TOTALS — ${dateLabel}*\n\n`;
+    msg += summaryLines.join('\n') + `\n\n`;
+    msg += `==================================\n`;
+    msg += `🚚 *Total Today Distributors:* ${reminders.length}\n`;
+    msg += `📦 *Total Today Order Items:* ${totalItems}\n`;
+    msg += `==================================`;
 
     // Deduplication check: prevent identical queue item sent to same delivery boy within 15 minutes
     const fifteenMinsAgo = Date.now() - 15 * 60 * 1000;
@@ -1139,10 +1135,11 @@ export class NotificationService {
       boyPhone,
       msg,
       'afternoon_delivery_boy_dispatch',
-      boyName
+      boyName,
+      Date.now()
     );
 
-    const todayIso = new Date().toISOString().split('T')[0];
+    const todayIso = toLocalSqlDateTime().slice(0, 10);
     const refId = queueId ? `queue_${queueId}` : `dispatch_summary_${todayIso}_${Date.now()}`;
     const notifStatus = queueId ? 'pending' : 'failed';
     await db.run(
@@ -1150,6 +1147,14 @@ export class NotificationService {
        VALUES (?, ?, ?, ?, ?, ?)`,
       ['afternoon_delivery_boy_dispatch', boyName, boyPhone, msg, notifStatus, refId]
     );
+
+    // Instant SSE broadcast for WhatsApp Live Queue Controller UI updates
+    try {
+      const { eventService } = await import('./eventService.js');
+      eventService.broadcast('wa_queue_update', { active: true, at: Date.now() });
+      eventService.broadcast('automation_hub_updated', { type: 'enqueued', automationType: 'afternoon_delivery_boy_dispatch', targetName: boyName, at: Date.now() });
+    } catch (_) {}
+    await whatsappQueueWorker.forceNext().catch(() => {});
 
     return { ok: Boolean(queueId), queueId };
   }

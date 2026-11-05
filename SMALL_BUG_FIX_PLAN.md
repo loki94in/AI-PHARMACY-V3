@@ -7,6 +7,53 @@
 
 ## Fixed
 
+### [Fixed] P2-148 — POS Medicine Selection Focus Shift Failure on Solid Medicines & Fast Billing Flow Restored
+
+- **Symptom:** When selecting a medicine in POS (tablets/capsules/strips), focus did not shift properly or got lost, while selecting syrup bottles worked smoothly by jumping to the next line.
+- **Root Cause:**
+  1. In commit `c359c275`, selecting a solid medicine with loose sale enabled (`resolveAllowLooseSale === 1`) was redirected directly to Loose Tablets (`#row-loose-input-${index}`) instead of Strip Quantity (`#row-qty-input-${index}`). This contradicted the standard pharmacy billing contract where cashiers want to bill packs/strips first.
+  2. In `allocateMedicineBatches` (when `allocations.length === 0`) and in `changeRowMedicine` (`rowsToAdd`), `allow_loose_sale` was omitted, causing loose sale restriction checks to evaluate inconsistently between selection and render.
+  3. In `changeRowMedicine`, default quantity was set to `0` for tablets when added to an empty row (`defaultQty = 0`), which resulted in 0 requested units, causing `allocateMedicineBatches` to return fallback allocations without default quantity.
+  4. Timing and DOM element query failure: Focusing depended strictly on `document.getElementById('row-loose-input-' + index)`. If cart rows re-rendered or IDs took a frame to update, focus failed and left the cursor stuck in the search input. Syrups worked because `isLiquid = true` called `focusCartMedicineInput()` to jump to the trailing empty row.
+- **Fix:**
+  1. Standardized focus routing in `addToCart` and `fetchDetailsAndChangeRowMedicine`:
+     - Syrups / liquids (`isLiquid = true` / `packSize = 1`): jump directly to Next Medicine Row (`focusCartMedicineInput()`) for continuous rapid scanning.
+     - Solid medicines (Tabs/Caps/Strips): reliably focus Strip Qty (`#row-qty-input-${index}`) with auto-select (`select()`), backed by resilient multi-tick DOM retry and `querySelector` fallback.
+  2. Preserved the Sequential Enter-Hopping chain: Pressing `Enter` on Strip Qty advances to Loose Qty (if allowed) or hops to the Next Medicine row. Pressing `Enter` on Loose Qty hops to the Next Medicine row.
+  3. Populated `allow_loose_sale: resolveAllowLooseSale(...)` consistently across `allocateMedicineBatches` and `changeRowMedicine`, and initialized default strip `qty = 1` for newly added medicines.
+- **Priority:** P2
+- **Verified by:** `npm run guardrails` exit 0 (clean `tsc --noEmit`); `frontend/AGENTS.md` DOX contract synchronized; `node scripts/quick-update.mjs` synchronized.
+
+### [Fixed] P2-147 — Special Order Card Re-order: Quick Special Order Modal Prefill & Multi-Distributor Auto-Linking
+
+- **Symptom:** Clicking "Cart" on a special order card opened the wholesale Live Cart Add modal (`LiveCartAddModal`), which lacked customer identity fields (name, phone, salutation, WhatsApp alert), preventing users from re-ordering the medicine for the same patient or adjusting it for a different patient as a true Special Order.
+- **Root Cause:**
+  1. `SpecialOrdersSection.tsx` routed `handleAddToCart` to `liveCartAddEvent.triggerOpen`, which opens the wholesale procurement modal instead of the CRM Special Order creation flow.
+  2. `SpecialOrderAddModal.tsx` lacked an `initialOrder` pre-fill prop, requiring users to re-enter customer and medicine data manually if creating a repeat shortage.
+- **Fix:**
+  1. Added `initialOrder?: Partial<SpecialOrderItem> | null` to `SpecialOrderAddModalProps` in `frontend/src/components/SpecialOrderAddModal.tsx`. When `initialOrder` is present, it pre-fills customer name, phone, salutation, medicine name, and quantity, displaying a dynamic "Re-order Mode" header. Users can keep the same patient or effortlessly change to a new patient.
+  2. Updated `handleAddToCart` in `frontend/src/pages/CRM/SpecialOrdersSection.tsx` to set `reorderItem(order)` and open `<SpecialOrderAddModal>`, treating the action as a customer Special Order.
+  3. Preserved live distributor search with the 2-word alphanumeric token rule, auto-staging $\ge 15$ stock from mapped distributors, allowing single-click switching if out of stock, and auto-persisting multi-distributor links in `medicine_distributor_links` on conflict `(medicine_id, store_id, product_code)`.
+- **Priority:** P2
+- **Verified by:** `npm run guardrails` exit 0 (clean `tsc --noEmit`); frontend production build (`tsc -b && vite build`) built cleanly in 46.15s; End-to-End test suite (`tests/special-order-reorder.e2e.ts`) passed 100% via `e2e` runner verifying UI navigation, modal launch, pre-fill, re-assignability, 2-word token extraction, and clean dismissal; `node scripts/quick-update.mjs` synchronized.
+
+### [Fixed] P2-146 — Market Closure Stock Buffer Review: Live Cart Addition Failure & Rigid Quantity Input
+
+- **Symptom:** In the *Market Closure Stock Buffer Review* modal, selecting an upcoming refill medicine and clicking "Add Selected to Cart" failed to actually add items to the Pharmarack Live Cart. Furthermore, the quantity field was rigid, snapping back to `1` on backspace and lacking stepper buttons (`-`/`+`), making editing cumbersome.
+- **Root Cause:**
+  1. In `frontend/src/components/ClosureStockBufferModal.tsx`, `handleAddToCart` omitted `refill_id` from the payload sent to `/api/pharmarack/add-closure-buffer-to-cart`. On the backend (`marketClosureService.ts:addBufferItemsToCart`), it only inserted rows into `special_orders` table and never called `refillCartService.processRefillCartItem`.
+  2. In `ClosureStockBufferModal.tsx`, `handleQtyChange` clamped values via `Math.max(1, Number(e.target.value))`, immediately resetting to `1` whenever the user erased the character to type a new number. There were no increment/decrement buttons or quick shortage vs full demand mode toggles.
+- **Fix:**
+  1. Updated `src/services/marketClosureService.ts:addBufferItemsToCart` to call `processRefillCartItem(it.refill_id, { qty, dryRun: false })`, checking live distributor stock, automatically executing fallback to next linked distributor if primary is OOS, updating `patient_refills` cart status, and broadcasting real-time `cart_updated` and `refills_updated` events. Kept pending special order fallback for unlinked items.
+  2. Enhanced `frontend/src/components/ClosureStockBufferModal.tsx` with:
+     - Ergonomic `[-]` and `[+]` quantity stepper buttons.
+     - Smooth keyboard typing allowing empty states during backspace with safe `onBlur` fallback.
+     - Quick "Shortage Only" vs "Full Demand" mode toggles in the action bar.
+     - Sending `refill_id` in the API payload and surfacing live cart status chips in the distributor column.
+  3. Aligned `api.ts:addClosureBufferToCart` type to accept `refill_id`.
+- **Priority:** P2
+- **Verified by:** `npm run guardrails` exit 0 (clean `tsc --noEmit`); frontend production build (`tsc -b && vite build`) built cleanly in 48.45s with 0 errors; `node scripts/quick-update.mjs` synchronized.
+
 ### [Fixed] P2-145 — Systemic Unification on medicine_name Column & Removal of Stale product Queries
 
 - **Symptom:** After schema unification dropped redundant column `special_orders.product`, several backend routes (Pharmarack order placement, POS companion refill close-out, POS special order reminder cleanup, WhatsApp order placement, WhatsApp intent engine, morning briefing, non-WA fallback, and customer service) still queried `SELECT product FROM special_orders`, throwing `SQLITE_ERROR: no such column: product` or silently failing in `catch`. In addition, `.toLowerCase()` was called without null-protection across Inventory, POS, Quick Order, and Reorder Hub recent items.
@@ -443,6 +490,12 @@
 - Fix: (1) Added `compareVersions(a, b)` to `frontend/src/services/updateStatusStore.ts`. In `normalizeUpdateFrame`, enforce `isTargetNewer = Boolean(rawVersion && currentVersion && compareVersions(rawVersion, currentVersion) > 0)`. If not strictly newer, clamp `version = currentVersion`, enforce `hasUpdate = false`, and strictly transition to `state = 'idle'` with `percent = 0, downloadedMB = 0`. Gated `state = 'downloading'` exclusively to `frame.downloading === true` or active non-zero progress on confirmed newer updates. (2) In `src/services/autoUpdateService.ts:getStatus` and `runCheck`, clamped `latestVersion` to at least `APP_VERSION`, and ensured `downloading: false, downloadProgress: 0` when `latestVersion <= APP_VERSION`. Added `downloading: true` to `update_progress` SSE broadcasts. (3) In `src/routes/license.ts`, clamped `latestVersion` to at least `APP_VERSION` and enforced `downloadProgress: 0` when idle. (4) In `website/api/updates.js`, updated `DEFAULT_LATEST_VERSION` to `0.1.154`, added GitHub token support to avoid 403 rate limits on Vercel, and clamped reported `latestVersion` to at least `clientVersion`. (5) Added P2-111 test suite to `tests/autoUpdateVersionGate.test.ts` (8/8 tests pass).
 - Priority: P2
 - Verified by: `PASS tests/autoUpdateVersionGate.test.ts` (8/8 tests pass); `npx tsc --noEmit` exit 0; `npx tsc -p frontend/tsconfig.app.json --noEmit` exit 0; `npm run build:client` exit 0; `npm run guardrails` exit 0.
+
+### [Fixed] P2-120 — Duplicate Delivery Boy Messages & Missing Real-time Live Queue SSE Updates on PO History Sync
+- Cause: (1) When Pharmarack PO history was noticed/synced in `src/services/pharmarackOrderSyncService.ts:500`, it called `notificationService.sendConsolidatedDeliveryBoyDispatch(directOrderRemindersToNotifyBoy)`, sending an obsolete verbose message (`TODAY'S DISPATCH & COLLECTION LIST`). (2) Simultaneously, `pharmarackDailyDispatchService.ts` called `sendBatchToDeliveryBoys()`, which sent `TODAY DISTRIBUTOR SUMMARY & TOTALS`. The delivery boy received two messages in two conflicting formats for the same orders. (3) Neither service passed `explicitScheduledAt = NOW` or broadcast immediate SSE queue updates, leaving the WhatsApp Live Queue Controller popover without real-time state until manual refresh.
+- Fix: (1) In `src/services/pharmarackOrderSyncService.ts`, removed `sendConsolidatedDeliveryBoyDispatch` and wired direct invocation of `pharmarackDailyDispatchService.sendBatchToDeliveryBoys(db, pendingOrders, alreadySentInitial, Date.now())`. (2) In `src/services/pharmarackDailyDispatchService.ts`, exported `sendBatchToDeliveryBoys`, accepted `explicitScheduledAt?: number`, passed it to `whatsappQueueWorker.enqueue`, broadcast SSE `wa_queue_update` and `automation_hub_updated`, and called `whatsappQueueWorker.forceNext()`. (3) In `src/services/notificationService.ts:_sendSingleBoySummary`, standardized the template to strictly use Format 1 (`TODAY DISTRIBUTOR SUMMARY & TOTALS`), used `toLocalSqlDateTime().slice(0, 10)` for shop-local dates (B4 guardrail compliant), and added immediate SSE broadcast + `forceNext()`.
+- Priority: P2
+- Verified by: `PASS tests/pharmarackCartNotif.test.ts` (2/2 tests pass); `npx e2e run tests/whatsapp-live-queue-single-summary.e2e.ts` (2/2 tests pass, code 0); `npm run guardrails` exit 0 (`tsc --noEmit` clean, speed architecture intact); `node scripts/quick-update.mjs` completed in 4.4s.
 
 ### [Fixed] P2-114 — Dispatch Send Failure, 5-Minute Grace Timer Delay & Sent PO History Dispatch Send
 - Cause: (1) In `src/routes/dispatch.ts:597-600`, user-clicked manual sends on `/distributor-reminders/:id/send-now` were rejected with HTTP 409 if the background automation toggle `trigger_dispatch_reminder_enabled` was set to false. (2) In `src/services/notificationService.ts:895-907`, the duplicate-today guard returned `true` (success) without queueing or sending when ANY reminder was queued earlier today, leading callers and the UI to report false success while nothing was sent. (3) In `notificationService.ts:878-881`, non-Pending status returned generic `false` (500 error) preventing resend. (4) In `notificationService.ts:883-887`, missing phone returned generic `false` without identifying which distributor was missing a phone. (5) In `src/routes/whatsappQueue.ts:591`, releasing a scheduled item called `triggerProcessing()`, which does not cancel an in-flight pacing sleep (`interruptibleSleep`), causing releases to wait up to 15s. (6) In `src/routes/pharmarack.ts:3090`, Step 4 of Send All placed orders with an unconditional 5-minute review grace period hold (`Date.now() + 5 * 60 * 1000`). (7) Sent PO History in `frontend/src/pages/PharmarackCart/index.tsx` lacked an action to send/re-send WhatsApp dispatch messages carrying confirmed PO numbers.
