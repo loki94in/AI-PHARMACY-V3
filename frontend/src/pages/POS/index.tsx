@@ -123,6 +123,10 @@ function POSRefillToggleButton({
 const parsePackSizeFromPackaging = (packaging: string | null | undefined): number | null => {
   if (!packaging) return null;
   const trimmed = packaging.trim();
+  // Volumes/weights (e.g. 100 ML, 60 ML, 15 ML, 5 GM) represent single unit containers, not loose multi-pack counts
+  if (/\b(?:ml|gm|gms|mg|kg|ltr|litre)\b/i.test(trimmed)) {
+    return 1;
+  }
   const stripOfMatch = trimmed.match(/^\s*(?:STRIP|PACK|BOX|BLISTER)\s+OF\s+(\d+)/i);
   if (stripOfMatch) {
     const size = parseInt(stripOfMatch[1], 10);
@@ -150,6 +154,8 @@ export const isLiquidOrSingleUnitForm = (name?: string, packaging?: string | nul
 
 export const resolveAllowLooseSale = (item?: { allow_loose_sale?: number | boolean | null; name?: string; medicine_name?: string; packaging?: string | null; packSize?: number | null; pack_size?: number | null } | null): number => {
   if (!item) return 1;
+  // Syrups, liquids, drops, and single unit items are NEVER loose-sellable
+  if (isLiquidOrSingleUnitForm(item.name || item.medicine_name, item.packaging)) return 0;
   // A pack holding 1 unit (or unspecified default 1 unit) has nothing to sell loose, so cursor skips Loose.
   const rawPack = item.packSize ?? item.pack_size;
   let pSize = 0;
@@ -166,7 +172,7 @@ export const resolveAllowLooseSale = (item?: { allow_loose_sale?: number | boole
   if (item.allow_loose_sale !== undefined && item.allow_loose_sale !== null) {
     return item.allow_loose_sale ? 1 : 0;
   }
-  return isLiquidOrSingleUnitForm(item.name || item.medicine_name, item.packaging) ? 0 : 1;
+  return 1;
 };
 
 const UniversalMedicineEditModal = lazy(() => import('../../components/UniversalMedicineEditModal').then(m => ({ default: m.UniversalMedicineEditModal })));
@@ -954,7 +960,7 @@ export function allocateMedicineBatches(params: {
         )
       );
       const hasStock = ((item.stock_qty !== undefined ? item.stock_qty : item.quantity) || 0) > 0 || (item.loose_quantity || 0) > 0 || isEditingThisBatch;
-      return (medicineId > 0 ? idMatch : nameMatch) && hasStock;
+      return (idMatch || nameMatch) && hasStock;
     })
     .map(item => {
       const expiryStr = item.expiry_date || '';
@@ -3533,7 +3539,8 @@ const POS = () => {
   };
 
   const changeRowMedicine = (index: number, med: CartRow | PosBatchItem, opts?: { presetQty?: number; presetLooseQty?: number }) => {
-    const originalItem = cart[index];
+    const targetIndex = (index >= 0 && index < cart.length) ? index : (cart.length > 0 ? cart.length - 1 : 0);
+    const originalItem = cart[targetIndex];
     if (originalItem && originalItem.rawOcrText && (originalItem.name || '').toLowerCase().trim() !== (med.medicine_name || '').toLowerCase().trim()) {
       apiClient.post('/aicamera/learn', {
         ocrText: originalItem.rawOcrText,
@@ -3543,13 +3550,14 @@ const POS = () => {
 
     // Fast-billing: Loose-allowed items focus directly on loose units; full-pack items default to 1 strip
     const isLoose = resolveAllowLooseSale(med) === 1;
+    const isOrigEmpty = Boolean(originalItem?.isEmptyRow);
     const defaultLooseQty = opts?.presetLooseQty ?? (
-      !isLoose ? 0 : (originalItem?.isEmptyRow ? 0 : (originalItem?.looseQty ?? 0))
+      !isLoose ? 0 : (isOrigEmpty ? 0 : (originalItem?.looseQty ?? 0))
     );
     const defaultQty = opts?.presetQty ?? (
-      originalItem?.isEmptyRow
+      isOrigEmpty
         ? (isLoose ? 0 : 1)
-        : (isLoose && defaultLooseQty > 0 ? (originalItem?.qty ?? 0) : ((originalItem?.qty ?? 0) || (isLoose ? 0 : 1)))
+        : (isLoose && defaultLooseQty > 0 ? (originalItem?.qty ?? 0) : Math.max(1, originalItem?.qty || 1))
     );
     const compactInventory = getCompactInventoryCache();
     const fallbackItem: Partial<CartRow> = {
@@ -3577,8 +3585,7 @@ const POS = () => {
     });
 
     updateCart(prev => {
-      const clean = prev.filter((_, idx) => idx !== index);
-      const isOrigEmpty = originalItem?.isEmptyRow;
+      const clean = prev.filter((_, idx) => idx !== targetIndex);
       const rowsToAdd: CartRow[] = allocated.length > 0 ? allocated : ([{
         id: med.inventory_id || med.id,
         medicine_id: med.medicine_id || med.id,
@@ -3604,7 +3611,7 @@ const POS = () => {
         return [...clean, ...rowsToAdd, makeEmptyCartRow()];
       }
       const next = [...prev];
-      next.splice(index, 1, ...rowsToAdd);
+      next.splice(targetIndex, 1, ...rowsToAdd);
       if (!next.some(r => r.isEmptyRow)) {
         next.push(makeEmptyCartRow());
       }
@@ -3625,6 +3632,7 @@ const POS = () => {
   };
 
   const fetchDetailsAndChangeRowMedicine = (index: number, med: CartRow | PosBatchItem, opts?: { presetQty?: number; presetLooseQty?: number }) => {
+    const targetIndex = (index >= 0 && index < cart.length) ? index : (cart.length > 0 ? cart.length - 1 : 0);
     writeRef(skipEmptyRowAutofocusRef, true);
     justSelectedMedicineRef.current = true;
     setTimeout(() => { justSelectedMedicineRef.current = false; }, 350);
@@ -3636,7 +3644,7 @@ const POS = () => {
     setRowSearchHighlightIndex(-1);
 
     // Apply medicine selection synchronously for instant UI response (<5ms)
-    changeRowMedicine(index, med, opts);
+    changeRowMedicine(targetIndex, med, opts);
 
     // Fast-cashier focus routing: loose-first if loose allowed, else auto-advance to next medicine row
     const isLooseAllowed = resolveAllowLooseSale(med) === 1;
@@ -3651,8 +3659,8 @@ const POS = () => {
       if (isLooseAllowed) {
         // Direct focus to Loose Qty
         const looseInput = (
-          document.getElementById(`row-loose-input-${index}`) ||
-          document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${index}"][data-pos-field="looseQty"]`)
+          document.getElementById(`row-loose-input-${targetIndex}`) ||
+          document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${targetIndex}"][data-pos-field="looseQty"]`)
         ) as HTMLInputElement | null;
         if (looseInput && !looseInput.disabled) {
           looseInput.focus();
@@ -3665,7 +3673,7 @@ const POS = () => {
         }
       } else {
         // Full Pack Only: Direct focus to Next Medicine search input
-        const targetNext = index + 1;
+        const targetNext = targetIndex + 1;
         const nextInput = document.getElementById(`row-med-input-${targetNext}`) as HTMLInputElement | null;
         if (nextInput && !nextInput.disabled) {
           nextInput.focus();
@@ -5909,7 +5917,7 @@ const POS = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {cart.map(item => {
+                  {cart.map((item, rowIdx) => {
                     const stripPrice = Number(item.unitPrice !== undefined && item.unitPrice !== null ? item.unitPrice : (item.sell_price !== undefined && item.sell_price !== null ? item.sell_price : (item.mrp || 0)));
                     const unitRate = (item.packSize || 0) > 0 ? stripPrice / (item.packSize || 1) : stripPrice;
                     const itemTotal = ((stripPrice * (item.qty || 0)) + (unitRate * (item.looseQty || 0))) * (1 - (item.discount || 0) / 100);
@@ -5957,7 +5965,7 @@ const POS = () => {
                     ) : null);
 
                     return (
-                      <tr key={item.id} data-medicine-id={item.medicine_id} className={`transition-all h-[44px] ${rowStatusClass} ${!item.isEmptyRow ? 'motion-row-pop' : ''} ${(activeRowSearchIndex === cart.indexOf(item) || activeBatchRowId === String(item.id)) ? 'relative z-dropdown' : ''}`}>
+                      <tr key={item.id} data-medicine-id={item.medicine_id} className={`transition-all h-[44px] ${rowStatusClass} ${!item.isEmptyRow ? 'motion-row-pop' : ''} ${(activeRowSearchIndex === rowIdx || activeBatchRowId === String(item.id)) ? 'relative z-dropdown' : ''}`}>
                         {/* Medicine Search/Change */}
                         <td className="py-1 px-2.5 min-w-[190px] relative">
                           <div className="flex items-center">
@@ -5979,17 +5987,17 @@ const POS = () => {
                                 </div>
                               </div>
                             )}
-                            <div ref={activeRowSearchIndex === cart.indexOf(item) ? activeRowRef : null} className="flex-1 relative">
+                            <div ref={activeRowSearchIndex === rowIdx ? activeRowRef : null} className="flex-1 relative">
                               <input 
-                                id={`row-med-input-${cart.indexOf(item)}`}
-                                name={`row_med_name_${cart.indexOf(item)}`}
+                                id={`row-med-input-${rowIdx}`}
+                                name={`row_med_name_${rowIdx}`}
                                 type="text" 
                                 autoComplete="off"
                                 className="w-full bg-transparent border-0 border-b border-transparent hover:border-border/60 focus:border-primary/60 focus:ring-0 text-base font-semibold text-text py-0.5 px-1 rounded"
-                                value={activeRowSearchIndex === cart.indexOf(item) ? rowSearchTerm : item.name}
+                                value={activeRowSearchIndex === rowIdx ? rowSearchTerm : item.name}
                                 onChange={e => {
                                   const val = e.target.value;
-                                  const idx = cart.indexOf(item);
+                                  const idx = rowIdx;
                                   const rect = e.currentTarget.getBoundingClientRect();
                                   if (window.innerHeight - rect.bottom < 240 && rect.top > 240) {
                                     setRowSearchDropUp(true);
@@ -6001,7 +6009,7 @@ const POS = () => {
                                 }}
                                 onFocus={e => {
                                   if (justSelectedMedicineRef.current) return;
-                                  const idx = cart.indexOf(item);
+                                  const idx = rowIdx;
                                   const rect = e.currentTarget.getBoundingClientRect();
                                   if (window.innerHeight - rect.bottom < 240 && rect.top > 240) {
                                     setRowSearchDropUp(true);
@@ -6024,7 +6032,7 @@ const POS = () => {
                                   }, 250);
                                 }}
                                 onKeyDown={e => {
-                                  const idx = cart.indexOf(item);
+                                  const idx = rowIdx;
                                   if (e.key === 'Tab' && e.shiftKey) {
                                     e.preventDefault();
                                     setActiveRowSearchIndex(null);
@@ -6032,14 +6040,10 @@ const POS = () => {
                                     setRowSearchResults([]);
                                     setRowSearchHighlightIndex(-1);
                                     if (idx > 0) {
-                                      const prevMrp = document.getElementById(`row-mrp-input-${idx - 1}`) as HTMLInputElement | null;
-                                      const prevDisc = document.getElementById(`row-disc-input-${idx - 1}`) as HTMLInputElement | null;
                                       const prevLoose = document.getElementById(`row-loose-input-${idx - 1}`) as HTMLInputElement | null;
                                       const prevQty = document.getElementById(`row-qty-input-${idx - 1}`) as HTMLInputElement | null;
-                                      // Loose locked = one-unit pack: Shift+Tab lands on its Qty so it is quick to edit
-                                      const targetEl = (prevLoose && prevLoose.disabled && prevQty)
-                                        ? prevQty
-                                        : (prevMrp || prevDisc || (prevLoose && !prevLoose.disabled ? prevLoose : null) || prevQty);
+                                      // Step back into previous row's quantity input (Loose if enabled, else strip Qty)
+                                      const targetEl = (prevLoose && !prevLoose.disabled) ? prevLoose : prevQty;
                                       if (targetEl) { targetEl.focus(); targetEl.select?.(); }
                                     } else {
                                       const docEl = document.getElementById('doctor-name-input');
@@ -6206,7 +6210,7 @@ const POS = () => {
                                 );
                               })()}
                               
-                              {activeRowSearchIndex === cart.indexOf(item) && rowSearchTerm.trim().length >= 2 && (
+                              {activeRowSearchIndex === rowIdx && rowSearchTerm.trim().length >= 2 && (
                                 <div 
                                   className={`absolute left-0 z-[9999] bg-bg2 border-2 border-primary/40 rounded-xl overflow-hidden w-[380px] max-h-72 shadow-[0_20px_50px_rgba(0,0,0,0.8)] [will-change:scroll-position] flex flex-col ${
                                     rowSearchDropUp
@@ -6222,7 +6226,7 @@ const POS = () => {
                                           e.preventDefault();
                                           const term = rowSearchTerm.trim();
                                           const updated = [...cart];
-                                          const idx = cart.indexOf(item);
+                                          const idx = rowIdx;
                                           if (updated[idx]) {
                                             updated[idx] = {
                                               ...updated[idx],
@@ -6277,7 +6281,7 @@ const POS = () => {
                                             onMouseMove={() => { if (rowSearchHighlightIndex !== mIdx) setRowSearchHighlightIndex(mIdx); }}
                                             onMouseDown={(e) => {
                                               e.preventDefault();
-                                              const idx = cart.indexOf(item);
+                                              const idx = rowIdx;
                                               const remaining = getRemainingSellableUnits(med, cart, idx);
                                               if (remaining <= 0) {
                                                 toastEvent.trigger(`Cannot add more ${med.medicine_name || med.name} — maximum available stock is already in cart!`, 'error');
@@ -6288,7 +6292,7 @@ const POS = () => {
                                             onKeyDown={(e) => {
                                               if (e.key === 'Enter' || e.key === ' ') {
                                                 e.preventDefault();
-                                                const idx = cart.indexOf(item);
+                                                const idx = rowIdx;
                                                 const remaining = getRemainingSellableUnits(med, cart, idx);
                                                 if (remaining <= 0) {
                                                   toastEvent.trigger(`Cannot add more ${med.medicine_name || med.name} — maximum available stock is already in cart!`, 'error');
@@ -6364,7 +6368,7 @@ const POS = () => {
                         <td className="py-1 px-2.5 relative">
                           <div className="relative inline-block" data-pos-batch-container="true">
                             <button
-                              id={`row-batch-input-${cart.indexOf(item)}`}
+                              id={`row-batch-input-${rowIdx}`}
                               type="button"
                               tabIndex={-1}
                               disabled={item.isEmptyRow}
@@ -6533,9 +6537,9 @@ const POS = () => {
                               <div className="flex items-center justify-center">
                                 <div className="flex items-center gap-1 bg-bg/40 border border-border/40 hover:border-border/80 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 rounded-lg px-2 py-0.5 h-8">
                                   <input 
-                                    id={`row-qty-input-${cart.indexOf(item)}`}
-                                    name={`row_qty_${cart.indexOf(item)}`}
-                                    data-pos-row-index={cart.indexOf(item)}
+                                    id={`row-qty-input-${rowIdx}`}
+                                    name={`row_qty_${rowIdx}`}
+                                    data-pos-row-index={rowIdx}
                                     data-pos-field="qty"
                                     type="number"
                                     autoComplete="off" 
@@ -6548,7 +6552,7 @@ const POS = () => {
                                     disabled={item.isEmptyRow}
                                     onKeyDown={e => {
                                       if (e.key === 'ArrowRight') {
-                                        const looseEl = document.getElementById(`row-loose-input-${cart.indexOf(item)}`) as HTMLInputElement | null;
+                                        const looseEl = document.getElementById(`row-loose-input-${rowIdx}`) as HTMLInputElement | null;
                                         if (looseEl && !looseEl.disabled) {
                                           e.preventDefault();
                                           looseEl.focus();
@@ -6557,10 +6561,10 @@ const POS = () => {
                                         }
                                       }
                                       if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
-                                        handlePosRowInputKeyDown(e, cart.indexOf(item), 'qty');
+                                        handlePosRowInputKeyDown(e, rowIdx, 'qty');
                                       } else if (e.key === 'Enter') {
                                         e.preventDefault();
-                                        const curIdx = cart.indexOf(item);
+                                        const curIdx = rowIdx;
                                         const isLooseAllowed = resolveAllowLooseSale(item) === 1;
                                         const looseEl = document.getElementById(`row-loose-input-${curIdx}`) as HTMLInputElement | null;
                                         if (isLooseAllowed && looseEl && !looseEl.disabled) {
@@ -6588,7 +6592,7 @@ const POS = () => {
                                           setTimeout(hopToNext, 20);
                                         }
                                       } else if (e.key === 'Tab') {
-                                        const curIdx = cart.indexOf(item);
+                                        const curIdx = rowIdx;
                                         if (e.shiftKey) {
                                           e.preventDefault();
                                           const medInput = document.getElementById(`row-med-input-${curIdx}`) as HTMLInputElement | null;
@@ -6659,9 +6663,9 @@ const POS = () => {
                                     : 'bg-rose-500/5 border-rose-500/20 opacity-75'
                                 }`}>
                                   <input 
-                                    id={`row-loose-input-${cart.indexOf(item)}`}
-                                    name={`row_loose_qty_${cart.indexOf(item)}`}
-                                    data-pos-row-index={cart.indexOf(item)}
+                                    id={`row-loose-input-${rowIdx}`}
+                                    name={`row_loose_qty_${rowIdx}`}
+                                    data-pos-row-index={rowIdx}
                                     data-pos-field="looseQty"
                                     type="number"
                                     autoComplete="off" 
@@ -6688,16 +6692,16 @@ const POS = () => {
                                     onKeyDown={e => {
                                       if (e.key === 'ArrowLeft') {
                                         e.preventDefault();
-                                        const curIdx = cart.indexOf(item);
+                                        const curIdx = rowIdx;
                                         const qtyIn = document.getElementById(`row-qty-input-${curIdx}`) as HTMLInputElement | null;
                                         if (qtyIn && !qtyIn.disabled) { qtyIn.focus(); qtyIn.select?.(); }
                                         return;
                                       }
                                       if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-                                        handlePosRowInputKeyDown(e, cart.indexOf(item), 'looseQty');
+                                        handlePosRowInputKeyDown(e, rowIdx, 'looseQty');
                                       } else if (e.key === 'Enter') {
                                         e.preventDefault();
-                                        const curIdx = cart.indexOf(item);
+                                        const curIdx = rowIdx;
                                         const hopToNext = () => {
                                           const nextMedInput = (
                                             document.getElementById(`row-med-input-${curIdx + 1}`) ||
@@ -6719,7 +6723,7 @@ const POS = () => {
                                         }
                                       } else if (e.key === 'Tab' && !e.shiftKey) {
                                         e.preventDefault();
-                                        const curIdx = cart.indexOf(item);
+                                        const curIdx = rowIdx;
                                         const discIn = document.getElementById(`row-disc-input-${curIdx}`) as HTMLInputElement | null;
                                         if (discIn && !discIn.disabled) {
                                           discIn.focus();
@@ -6729,7 +6733,7 @@ const POS = () => {
                                         }
                                       } else if (e.key === 'Tab' && e.shiftKey) {
                                         e.preventDefault();
-                                        const curIdx = cart.indexOf(item);
+                                        const curIdx = rowIdx;
                                         const qtyIn = document.getElementById(`row-qty-input-${curIdx}`) as HTMLInputElement | null;
                                         if (qtyIn) { qtyIn.focus(); qtyIn.select?.(); }
                                       }
@@ -6852,9 +6856,9 @@ const POS = () => {
                                 : 'border-border/40 hover:border-border/80 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20'
                             }`}>
                               <input 
-                                id={`row-disc-input-${cart.indexOf(item)}`}
-                                name={`row_disc_${cart.indexOf(item)}`}
-                                data-pos-row-index={cart.indexOf(item)}
+                                id={`row-disc-input-${rowIdx}`}
+                                name={`row_disc_${rowIdx}`}
+                                data-pos-row-index={rowIdx}
                                 data-pos-field="discount"
                                 type="number" 
                                 step="0.5"
@@ -6871,12 +6875,12 @@ const POS = () => {
                                 title="Item Discount Percentage (%) — modify manually"
                                 onKeyDown={e => {
                                   if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-                                    handlePosRowInputKeyDown(e, cart.indexOf(item), 'discount');
+                                    handlePosRowInputKeyDown(e, rowIdx, 'discount');
                                   } else if (e.key === 'Enter') {
                                     e.preventDefault();
                                     focusCartMedicineInput();
                                   } else if (e.key === 'Tab') {
-                                    const curIdx = cart.indexOf(item);
+                                    const curIdx = rowIdx;
                                     if (e.shiftKey) {
                                       e.preventDefault();
                                       const looseIn = document.getElementById(`row-loose-input-${curIdx}`) as HTMLInputElement | null;
@@ -6910,9 +6914,9 @@ const POS = () => {
                         {/* MRP */}
                         <td className="py-1 px-2.5 text-right">
                           <input 
-                            id={`row-mrp-input-${cart.indexOf(item)}`}
-                            name={`row_mrp_${cart.indexOf(item)}`}
-                            data-pos-row-index={cart.indexOf(item)}
+                            id={`row-mrp-input-${rowIdx}`}
+                            name={`row_mrp_${rowIdx}`}
+                            data-pos-row-index={rowIdx}
                             data-pos-field="mrp"
                             type="number"
                             autoComplete="off" 
@@ -6923,12 +6927,12 @@ const POS = () => {
                             disabled={item.isEmptyRow}
                             onKeyDown={e => {
                               if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-                                handlePosRowInputKeyDown(e, cart.indexOf(item), 'mrp');
+                                handlePosRowInputKeyDown(e, rowIdx, 'mrp');
                               } else if (e.key === 'Enter') {
                                 e.preventDefault();
                                 focusCartMedicineInput();
                               } else if (e.key === 'Tab') {
-                                const curIdx = cart.indexOf(item);
+                                const curIdx = rowIdx;
                                 if (e.shiftKey) {
                                   e.preventDefault();
                                   const discIn = document.getElementById(`row-disc-input-${curIdx}`) as HTMLInputElement | null;

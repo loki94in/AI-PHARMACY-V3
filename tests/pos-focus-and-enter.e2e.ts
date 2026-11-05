@@ -199,4 +199,38 @@ describe('POS Fast Cashier Workflow: Loose-First & Full-Pack Auto-Advance', { ta
     await browser.keyboard.press('Enter');
     await expect(medInput1).toBeFocused();
   });
+
+  test('Syrup bottle (ASCORIL LS + SYP): auto-sets qty=1 and advances directly to next medicine search', async ({ app, browser, screen }) => {
+    await app.open('/pos');
+    await expect(browser).toHaveURL(/\/pos/);
+
+    const medInput0 = screen.getByPlaceholder('Search medicine...');
+    await expect(medInput0).toBeVisible({ timeout: 20000 });
+    await expect(medInput0).toBeFocused();
+
+    // 1. Search specifically for ASCORIL LS + SYP
+    await medInput0.fill('ASCORIL LS + SYP');
+
+    const dropdownItem = browser.locator('div[role="button"][data-highlighted="true"]').first();
+    await expect(dropdownItem).toBeVisible({ timeout: 8000 });
+
+    // 2. Select via Enter
+    await browser.keyboard.press('Enter');
+    await expect(browser.locator('.z-dropdown')).toHaveCount(0);
+
+    // 3. Verify Ascoril LS (syrup/liquid, not loose) defaults qty to 1
+    const qtyInput0 = browser.locator('#row-qty-input-0');
+    await expect(qtyInput0).toHaveValue('1');
+
+    // 4. Verify focus automatically routed directly to Row 1 medicine search
+    const medInput1 = browser.locator('#row-med-input-1');
+    await expect(medInput1).toBeVisible({ timeout: 5000 });
+    await expect(medInput1).toBeFocused();
+
+    // 5. Press Enter on empty Row 1 -> concludes bill directly to bill discount input
+    await browser.keyboard.press('Enter');
+    const billDiscount = browser.locator('#pos-bill-discount-input');
+    await expect(billDiscount).toBeVisible({ timeout: 5000 });
+    await expect(billDiscount).toBeFocused();
+  });
 });

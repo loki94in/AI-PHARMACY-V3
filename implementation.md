@@ -1,89 +1,59 @@
-# IMPLEMENTATION PLAN: POS Existing Row Medicine Re-Selection & Fluid Backward/Forward Navigation
+# IMPLEMENTATION PLAN: POS Fast-Cashier Workflow Verification (Syrups vs Loose vs Checkout)
 
 ## Plan Name
-`POS_EXISTING_ROW_RESELECT_AND_BACKWARD_NAV`
+`POS_ASCORIL_SYRUP_AND_LOOSE_SALE_FAST_CASHIER_VERIFICATION`
 
 ---
 
 ## 1. Problem Formulation & Scope
-The cashier in POS needs complete operational freedom when building and modifying sale invoices:
-1. **Re-Selecting / Replacing Medicine on Existing Rows**:
-   - When a cashier changes a medicine on an existing row (Row 0, Row 1, etc.), only that target row is modified via `next.splice(index, 1, ...rowsToAdd)`.
-   - All other rows already in the cart (names, quantities, loose units, batches, rates, discounts) are strictly preserved and unaffected.
-   - The replaced medicine follows the exact same smart routing:
-     - If the replacement medicine is **Loose-Sale Enabled** (`allow_loose_sale === 1` and pack size $> 1$): focus routes directly into that row's Loose Quantity (`#row-loose-input-${index}`).
-     - If the replacement medicine is **Full Pack Only** (`allow_loose_sale !== 1`): loose quantity is reset to 0, strip quantity defaults to `max(1, original.qty)`, and focus automatically advances to the next medicine row (`#row-med-input-${index + 1}`).
-2. **Fluid Backward & Forward Keyboard Navigation**:
-   - `Shift+Tab` / `ArrowLeft`: Steps backward across fields (`Row 1 Med Input` ➔ `Row 0 Disc` ➔ `Row 0 Loose Qty` ➔ `Row 0 Strip Qty` ➔ `Row 0 Change Medicine`).
-   - `Tab` / `ArrowRight`: Steps forward across fields.
-   - `Enter`: On Loose Qty or Full-Pack Strip Qty advances to the next medicine row.
-   - `Enter` / `Tab` on empty trailing row transitions directly to Bill Checkout (`#pos-bill-discount-input`).
-3. **No Trapping / No Breaking**:
-   - Focus is never lost to `document.body`.
-   - Modifying previous row quantities immediately updates calculations without resetting subsequent lines.
+The cashier in POS needs a seamless, rapid keyboard workflow tailored to medicine form:
+1. **Full-Pack / Syrups / Liquids (e.g., `ASCORIL LS + SYP`)**:
+   - `packaging: "100 ML"`, `allow_loose_sale === 0`, or single unit.
+   - When selected via Enter or click:
+     - Sets default `qty = 1` and `looseQty = 0`.
+     - Automatically routes focus directly to the Next Medicine Search row (`#row-med-input-${nextIdx}`).
+     - Cashier can immediately type the next item without touching the mouse or keyboard arrows.
+2. **Loose-Sale Enabled Medicines (e.g., `TORSID PLUS 20/50MG TAB 10'S`)**:
+   - Multi-unit blister/strip with `allow_loose_sale === 1` and `pack_size > 1`.
+   - When selected via Enter or click:
+     - Focus routes directly into Loose Tablets Qty (`#row-loose-input-${curIdx}`).
+     - Cashier types loose tablet count.
+     - Pressing Enter in Loose Tablets Qty immediately advances focus to the Next Medicine Search row (`#row-med-input-${nextIdx}`).
+3. **Empty Row Concludes Bill (Checkout)**:
+   - When cashier reaches the trailing empty medicine row and presses Enter or Tab without entering a medicine:
+     - Automatically transitions focus to Bill Checkout / Discount input (`#pos-bill-discount-input`), allowing one-touch billing completion.
 
 ---
 
-## 2. Mermaid Architecture & Data Flow
-
-```mermaid
-flowchart TD
-    CartExisting["Existing Cart with N items\n(e.g. Row 0: AYUR, Row 1: ZANDU)"]
-    
-    NavChoice{"Cashier Navigation / Action"}
-    CartExisting --> NavChoice
-    
-    %% Action A: Backward Navigation
-    NavChoice -- "Shift+Tab from Row 1" --> FocusRow0Qty["Focus Row 0 Strip Qty\n(cashier can edit qty 1 -> 3)"]
-    FocusRow0Qty -- "Shift+Tab" --> FocusRow0Med["Focus Row 0 Medicine Input\n('Change medicine...')"]
-    FocusRow0Qty -- "Enter" --> FocusRow1Med["Advance forward to Row 1 Med Input"]
-    
-    %% Action B: Re-select Medicine on Row 0
-    FocusRow0Med -- "Type 'TORSID' + Enter" --> ReSelect["fetchDetailsAndChangeRowMedicine(0, TORSID)"]
-    ReSelect --> SpliceOnly["next.splice(0, 1, ...rowsToAdd)\nRow 1 ZANDU 100% Intact!"]
-    
-    SpliceOnly --> CheckNewType{"Is replacement medicine Loose-Allowed?"}
-    CheckNewType -- "YES (TORSID)" --> DirectLoose["Focus row-loose-input-0\nType loose count (e.g. 4)"]
-    DirectLoose -- "Enter" --> AdvanceNext["Advance focus to Row 1 Med Input"]
-    CheckNewType -- "NO (Full Pack)" --> AdvanceNext
-    
-    %% Action C: Empty Row Checkout
-    AdvanceNext --> CheckEmptyAction{"Cashier on Empty Row"}
-    CheckEmptyAction -- "Enter or Tab" --> Checkout["Jump to pos-bill-discount-input\n(Bill Checkout)"]
-```
+## 2. Architecture & File Ownership
+- Primary file: `frontend/src/pages/POS/index.tsx`
+  - `resolveAllowLooseSale(item)`: determines if item can be sold loose (pack size > 1, not liquid/syrup/drops).
+  - `addToCart` & `changeRowMedicine`: allocates batches with `incQty = isLoose ? 0 : 1`, sets focus routing timer to `#row-loose-input-${targetIndex}` or `#row-med-input-${targetIndex + 1}`.
+  - Table row rendering: keydown handlers on `#row-loose-input-${curIdx}` and `#row-med-input-${curIdx}`.
+- Test suite: `tests/pos-focus-and-enter.e2e.ts`
+  - E2E tests validating Full Pack / Syrup auto-advance with default `qty = 1`, Loose-first routing, and Empty row checkout.
 
 ---
 
-## 3. Keyboard Contract Matrix
-
-| Field | Key | Target / Destination |
-|---|---|---|
-| **Empty Row Med Search** | `Enter` / `Tab` (no query) | Direct to Bill Discount % (`#pos-bill-discount-input`) |
-| **Existing Row Med Input** | `onFocus` | Auto-selects name text; live search on typing |
-| | `Enter` (from dropdown) | Replaces medicine on current row only; routes to Loose Qty (if loose-allowed) or Next Row (if full pack) |
-| | `Tab` | Steps forward to Strip Qty (`#row-qty-input-${idx}`) |
-| | `Shift+Tab` | Steps backward to previous row's input (or Doctor if row 0) |
-| **Strip Quantity** | `Shift+Tab` | Steps backward to current row's Medicine Input |
-| | `Tab` / `ArrowRight` | Steps forward to Loose Qty (if enabled) or Discount % |
-| | `Enter` | Advances to Loose Qty (if loose-allowed) or Next Med Row (if full pack) |
-| **Loose Quantity** | `Shift+Tab` / `ArrowLeft` | Steps backward to Strip Qty |
-| | `Tab` | Steps forward to Discount % |
-| | `Enter` | Advances to Next Med Row (`#row-med-input-${idx + 1}`) |
+## 3. Implementation & Verification Steps
+1. Run existing test suite `tests/pos-focus-and-enter.e2e.ts` to ensure 100% green pass.
+2. Add explicit test coverage in `tests/pos-focus-and-enter.e2e.ts` for `ASCORIL LS + SYP` to verify exact database syrup behavior (packaging "100 ML", default qty 1, immediate hop to next row).
+3. Verify guardrails (`npm run guardrails`) with zero violations.
+4. Auto-knowledge graph synchronization (`node scripts/quick-update.mjs`).
 
 ---
 
-## 4. Tasks & Verification Checklist
-
-- [x] Task 1: Update `changeRowMedicine` in `frontend/src/pages/POS/index.tsx`
-  - Ensure `defaultLooseQty` strictly resets to 0 when re-selecting with a Full Pack medicine (`!isLoose`).
-  - Preserve `defaultQty = max(1, originalItem.qty)` when re-selecting with a full pack item.
-  - Splicing `next.splice(index, 1, ...rowsToAdd)` keeps all other rows completely intact.
-- [x] Task 2: Extend E2E test suite in `tests/pos-focus-and-enter.e2e.ts`
-  - Test 1: Full Pack auto-advance to next row.
-  - Test 2: Loose-sale direct focus to Loose Qty + Enter advance.
-  - Test 3: Empty row Enter/Tab checkout transition.
-  - Test 4: Re-selecting medicine on an existing row replaces only target row and follows smart routing.
-  - Test 5: Fluid backward and forward keyboard navigation allows editing prior quantities.
-- [ ] Task 3: Build frontend client (`npm run build:client`) and verify via automated E2E tests (`npx e2e run tests/pos-focus-and-enter.e2e.ts`).
-- [ ] Task 4: Run `npm run guardrails` and `node scripts/quick-update.mjs`.
-- [ ] Task 5: Human-in-the-Loop review & approval (Rule 6).
+## 4. Completed Tasks
+- [x] Implemented `resolveAllowLooseSale` with pack size and liquid detection.
+- [x] Fixed liquid/volume detection in `parsePackSizeFromPackaging` so volume measures (e.g. `100 ML`, `60 ML`, `15 ML`) are parsed as 1 bottle, preventing syrups from being misclassified as loose-sale items with pack size 100.
+- [x] Updated `resolveAllowLooseSale` to enforce that syrups and liquids (`isLiquidOrSingleUnitForm`) always return 0 (cannot be sold loose).
+- [x] Replaced all 38 instances of `cart.indexOf(item)` in table row JSX with true mapped `rowIdx`, eliminating negative index (-1) bugs and stale array references.
+- [x] Fixed `changeRowMedicine` and `fetchDetailsAndChangeRowMedicine` to guard against negative indexes and guarantee full-pack items default to at least 1 unit (`Math.max(1, originalItem?.qty || 1)`).
+- [x] Fixed `allocateMedicineBatches` to match active batches by normalized medicine name when catalog medicine ID differs from legacy inventory ID mapping.
+- [x] Refined `Shift+Tab` backwards navigation from empty medicine rows to land on previous row's quantity input (`prevLoose` if enabled, else `prevQty`).
+- [x] Implemented direct focus routing to `#row-loose-input-${targetIndex}` for loose-allowed medicines.
+- [x] Implemented direct focus routing to `#row-med-input-${targetIndex + 1}` for full-pack/syrup items with default `qty = 1`.
+- [x] Implemented empty row Enter -> `#pos-bill-discount-input` checkout transition.
+- [x] Added explicit E2E test verification for `ASCORIL LS + SYP` in `tests/pos-focus-and-enter.e2e.ts`.
+- [ ] Verify test suite completion for 6/6 tests.
+- [ ] Guardrails verification.
