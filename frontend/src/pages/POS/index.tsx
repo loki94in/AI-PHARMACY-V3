@@ -753,8 +753,9 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
 
     let tier = 0;
 
-    // 1. Direct Prefix on Name, Item Code, Batch, or Space-compact Name
-    if (name.startsWith(term) || normName.startsWith(term) || (compactTerm.length >= 2 && compactName.startsWith(compactTerm)) || code.startsWith(term) || batch.startsWith(term)) {
+    // 1. Direct Prefix on Name, Item Code, or Space-compact Name
+    // (Pure batch matches are handled in Tier 5 so medicine name/strength strictly outranks batch numbers)
+    if (name.startsWith(term) || normName.startsWith(term) || (compactTerm.length >= 2 && compactName.startsWith(compactTerm)) || code.startsWith(term)) {
       tier = 1;
     }
     // 2. Acronym / Shorthand (e.g. "cd 12" or "cd12" matching "crocin ds 12")
@@ -798,7 +799,8 @@ const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatc
     if (!tier) continue;
 
     const targetMap = tier === 1 ? tier1Map : (tier === 2 ? tier2Map : (tier === 3 ? tier3Map : (tier === 4 ? tier4Map : tier5Map)));
-    const key = normKey(item.medicine_name || item.name) || String(item.medicine_id || item.inventory_id || i);
+    const mrpKey = Math.round(Number(item.mrp || 0) * 100);
+    const key = `${normKey(item.medicine_name || item.name) || String(item.medicine_id || item.inventory_id || i)}_mrp_${mrpKey}`;
     const stripQty = Number(item.stock_qty || item.quantity || 0);
     const looseQty = Number(item.loose_quantity || item.loose_qty || 0);
 
@@ -926,7 +928,7 @@ export function allocateMedicineBatches(params: {
   const targetNormName = normKey(medicineName);
 
   // 1. Find all active unexpired batches for this medicine
-  const activeBatches = (compactInventory || [])
+  let activeBatches = (compactInventory || [])
     .filter(item => {
       const itemNorm = normKey(item.medicine_name || item.name);
       const idMatch = medicineId > 0 && (
@@ -1010,6 +1012,15 @@ export function allocateMedicineBatches(params: {
       }];
     }
     return [];
+  }
+
+  // 2b. Enforce uniform MRP matching: match batches with identical MRP first so different MRPs are not mixed
+  const targetMrp = Number(params.fallbackItem?.mrp || 0);
+  if (targetMrp > 0) {
+    const matchedSameMrp = activeBatches.filter(b => Math.abs(Number(b.mrp || 0) - targetMrp) < 0.05);
+    if (matchedSameMrp.length > 0) {
+      activeBatches = matchedSameMrp;
+    }
   }
 
   // 3. Sort active batches:
@@ -1962,39 +1973,7 @@ const POS = () => {
     }
   }, [cart]);
 
-  // Autofocus the next empty row's medicine input when cart length increases or changes,
-  // respecting mouse user focus so active clicks into customer, doctor, discount or other rows are never hijacked
-  useEffect(() => {
-    if (skipEmptyRowAutofocusRef.current) {
-      writeRef(skipEmptyRowAutofocusRef, false);
-      return;
-    }
-    if (cart.length > 0) {
-      const lastIndex = cart.length - 1;
-      const lastItem = cart[lastIndex];
-      if (lastItem && lastItem.isEmptyRow) {
-        setTimeout(() => {
-          const active = document.activeElement as HTMLElement | null;
-          const isUserInOtherControl = active && active !== document.body && (
-            active.id?.startsWith('customer-') ||
-            active.id?.startsWith('doctor-') ||
-            active.id?.startsWith('pos-bill-') ||
-            active.id?.startsWith('row-') ||
-            active.tagName === 'BUTTON' ||
-            (active.tagName === 'INPUT' && active.id !== `row-med-input-${lastIndex}`)
-          );
-          if (isUserInOtherControl && active.id !== `row-med-input-${lastIndex}`) {
-            return;
-          }
-          const input = document.getElementById(`row-med-input-${lastIndex}`);
-          if (input && !(input as HTMLInputElement).disabled) {
-            input.focus();
-          }
-        }, 80);
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- length-only trigger avoids focus loops
-  }, [cart.length]);
+
 
   // Clinical drug interaction real-time check
   const [drugInteractions, setDrugInteractions] = useState<any[]>([]);
@@ -2237,6 +2216,7 @@ const POS = () => {
   const [rowSearchDropUp, setRowSearchDropUp] = useState<boolean>(false);
 
   const justSelectedDoctorRef = useRef<boolean>(false);
+  const justSelectedMedicineRef = useRef<boolean>(false);
 
   const focusMedicineSearch = useCallback(() => {
     setIsSearchExpanded(true);
@@ -2254,7 +2234,12 @@ const POS = () => {
 
   // Keyboard-first medicine entry lives in the cart's trailing empty row, not the top search box.
   const focusCartMedicineInput = useCallback((force = false) => {
+    let done = false;
+    let timer1: ReturnType<typeof setTimeout> | null = null;
+    let timer2: ReturnType<typeof setTimeout> | null = null;
+
     const tryFocus = () => {
+      if (done) return true;
       const active = document.activeElement as HTMLElement | null;
       if (!force && active && active !== document.body) {
         const isUserInOtherControl = (
@@ -2264,28 +2249,38 @@ const POS = () => {
           (active.id?.startsWith('row-') && !active.id.startsWith('row-med-input-')) ||
           active.tagName === 'BUTTON'
         );
-        if (isUserInOtherControl) return true; // Respect user's active focus
+        if (isUserInOtherControl) {
+          done = true;
+          return true; // Respect user's active focus
+        }
       }
 
+      const emptyRowInput = document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]');
       const inputs = document.querySelectorAll<HTMLInputElement>('input[id^="row-med-input-"]');
-      const target = inputs.length > 0 ? inputs[inputs.length - 1] : null;
+      const target = emptyRowInput || (inputs.length > 0 ? inputs[inputs.length - 1] : null);
       if (target && !target.disabled) {
         target.focus();
         target.select?.();
+        done = true;
+        if (timer1) clearTimeout(timer1);
+        if (timer2) clearTimeout(timer2);
         return true;
       }
       const topSearch = document.getElementById('medicine-search-input') as HTMLInputElement | null;
       if (topSearch && !topSearch.disabled) {
         topSearch.focus();
         topSearch.select?.();
+        done = true;
+        if (timer1) clearTimeout(timer1);
+        if (timer2) clearTimeout(timer2);
         return true;
       }
       return false;
     };
     if (!tryFocus()) {
-      setTimeout(() => {
+      timer1 = setTimeout(() => {
         if (!tryFocus()) {
-          setTimeout(tryFocus, 90);
+          timer2 = setTimeout(tryFocus, 90);
         }
       }, 50);
     }
@@ -3217,9 +3212,9 @@ const POS = () => {
       });
 
       if (allocated.length > 0) {
-        return [...cleanPrev, ...allocated];
+        return [...cleanPrev, ...allocated, makeEmptyCartRow()];
       }
-      return [...cleanPrev, newItem as CartRow];
+      return [...cleanPrev, newItem as CartRow, makeEmptyCartRow()];
     });
 
     // Fetch doctor combination recommendations
@@ -3237,37 +3232,38 @@ const POS = () => {
         });
     }
 
-    // Fast-billing & Sequential Enter-Key Hopping keyboard routing:
-    // 1. Liquids / single-unit forms (Qty=1, loose N/A): jump directly to Next Medicine row
-    // 2. Solid medicines (Tabs/Caps/Strips): jump directly to Strip Qty with auto-select
-    const isLiquid = isLiquidOrSingleUnitForm(med.name || med.medicine_name, (med as any).packaging) || (Number(med.packSize ?? (med as any).pack_size) === 1);
+    // Direct focus to the newly added medicine's quantity input with auto-select
+    justSelectedMedicineRef.current = true;
+    setTimeout(() => { justSelectedMedicineRef.current = false; }, 350);
 
-    if (isLiquid) {
-      writeRef(skipEmptyRowAutofocusRef, false);
-      focusCartMedicineInput();
-    } else {
-      const focusTargetQty = () => {
-        let qtyInput = document.getElementById(`row-qty-input-${targetIndex}`) as HTMLInputElement | null;
-        if (!qtyInput || qtyInput.disabled) {
-          qtyInput = document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${targetIndex}"][data-pos-field="qty"]`)
-            || document.querySelector<HTMLInputElement>(`input[id^="row-qty-input-"]:not(:disabled)`);
-        }
-        if (qtyInput && !qtyInput.disabled) {
-          qtyInput.focus();
-          qtyInput.select?.();
-          return true;
-        }
-        return false;
-      };
-      if (!focusTargetQty()) {
-        setTimeout(() => {
-          if (!focusTargetQty()) {
-            setTimeout(() => {
-              if (!focusTargetQty()) setTimeout(focusTargetQty, 80);
-            }, 40);
-          }
-        }, 20);
+    let qtyDone = false;
+    let qtyTimer1: ReturnType<typeof setTimeout> | null = null;
+    let qtyTimer2: ReturnType<typeof setTimeout> | null = null;
+
+    const focusTargetQty = () => {
+      if (qtyDone) return true;
+      let qtyInput = (
+        document.getElementById(`row-qty-input-${targetIndex}`) ||
+        document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${targetIndex}"][data-pos-field="qty"]`)
+      ) as HTMLInputElement | null;
+      if (qtyInput && !qtyInput.disabled) {
+        qtyInput.focus();
+        qtyInput.select?.();
+        qtyDone = true;
+        if (qtyTimer1) clearTimeout(qtyTimer1);
+        if (qtyTimer2) clearTimeout(qtyTimer2);
+        return true;
       }
+      return false;
+    };
+    if (!focusTargetQty()) {
+      qtyTimer1 = setTimeout(() => {
+        if (!focusTargetQty()) {
+          qtyTimer2 = setTimeout(() => {
+            focusTargetQty();
+          }, 40);
+        }
+      }, 20);
     }
   };
 
@@ -3547,10 +3543,13 @@ const POS = () => {
       }]) as CartRow[];
 
       if (isOrigEmpty) {
-        return [...clean, ...rowsToAdd];
+        return [...clean, ...rowsToAdd, makeEmptyCartRow()];
       }
       const next = [...prev];
       next.splice(index, 1, ...rowsToAdd);
+      if (!next.some(r => r.isEmptyRow)) {
+        next.push(makeEmptyCartRow());
+      }
       return next;
     });
 
@@ -3569,41 +3568,47 @@ const POS = () => {
 
   const fetchDetailsAndChangeRowMedicine = (index: number, med: CartRow | PosBatchItem, opts?: { presetQty?: number; presetLooseQty?: number }) => {
     writeRef(skipEmptyRowAutofocusRef, true);
+    justSelectedMedicineRef.current = true;
+    setTimeout(() => { justSelectedMedicineRef.current = false; }, 350);
+
+    // Clean teardown of active row search dropdown to prevent re-dropping
+    setActiveRowSearchIndex(null);
+    setRowSearchTerm('');
+    setRowSearchResults([]);
+    setRowSearchHighlightIndex(-1);
 
     // Apply medicine selection synchronously for instant UI response (<5ms)
     changeRowMedicine(index, med, opts);
 
-    // Fast-billing & Sequential Enter-Key Hopping keyboard routing:
-    // 1. Liquids / single-unit forms (Qty=1, loose N/A): jump directly to Next Medicine row
-    // 2. Solid medicines (Tabs/Caps/Strips): jump directly to Strip Qty with auto-select
-    const isLiquid = isLiquidOrSingleUnitForm(med.medicine_name || med.name, (med as any).packaging) || (Number(med.pack_size ?? (med as any).packSize) === 1);
+    // Direct focus to the selected medicine's quantity input with auto-select
+    let qtyDone = false;
+    let qtyTimer1: ReturnType<typeof setTimeout> | null = null;
+    let qtyTimer2: ReturnType<typeof setTimeout> | null = null;
 
-    if (isLiquid) {
-      writeRef(skipEmptyRowAutofocusRef, false);
-      focusCartMedicineInput();
-    } else {
-      const focusRowQty = () => {
-        let qtyInput = document.getElementById(`row-qty-input-${index}`) as HTMLInputElement | null;
-        if (!qtyInput || qtyInput.disabled) {
-          qtyInput = document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${index}"][data-pos-field="qty"]`)
-            || document.querySelector<HTMLInputElement>(`input[id^="row-qty-input-"]:not(:disabled)`);
-        }
-        if (qtyInput && !qtyInput.disabled) {
-          qtyInput.focus();
-          qtyInput.select?.();
-          return true;
-        }
-        return false;
-      };
-      if (!focusRowQty()) {
-        setTimeout(() => {
-          if (!focusRowQty()) {
-            setTimeout(() => {
-              if (!focusRowQty()) setTimeout(focusRowQty, 80);
-            }, 40);
-          }
-        }, 20);
+    const focusRowQty = () => {
+      if (qtyDone) return true;
+      let qtyInput = (
+        document.getElementById(`row-qty-input-${index}`) ||
+        document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${index}"][data-pos-field="qty"]`)
+      ) as HTMLInputElement | null;
+      if (qtyInput && !qtyInput.disabled) {
+        qtyInput.focus();
+        qtyInput.select?.();
+        qtyDone = true;
+        if (qtyTimer1) clearTimeout(qtyTimer1);
+        if (qtyTimer2) clearTimeout(qtyTimer2);
+        return true;
       }
+      return false;
+    };
+    if (!focusRowQty()) {
+      qtyTimer1 = setTimeout(() => {
+        if (!focusRowQty()) {
+          qtyTimer2 = setTimeout(() => {
+            focusRowQty();
+          }, 40);
+        }
+      }, 20);
     }
 
     // Enrich salts & alternatives asynchronously in the background
@@ -5910,6 +5915,7 @@ const POS = () => {
                                   setRowSearchTerm(val);
                                 }}
                                 onFocus={e => {
+                                  if (justSelectedMedicineRef.current) return;
                                   const idx = cart.indexOf(item);
                                   const rect = e.currentTarget.getBoundingClientRect();
                                   if (window.innerHeight - rect.bottom < 240 && rect.top > 240) {
@@ -6459,13 +6465,33 @@ const POS = () => {
                                         handlePosRowInputKeyDown(e, cart.indexOf(item), 'qty');
                                       } else if (e.key === 'Enter') {
                                         e.preventDefault();
-                                        const looseEl = document.getElementById(`row-loose-input-${cart.indexOf(item)}`) as HTMLInputElement | null;
-                                        if (looseEl && !looseEl.disabled) {
+                                        const curIdx = cart.indexOf(item);
+                                        const isLooseAllowed = resolveAllowLooseSale(item) === 1;
+                                        const looseEl = document.getElementById(`row-loose-input-${curIdx}`) as HTMLInputElement | null;
+                                        if (isLooseAllowed && looseEl && !looseEl.disabled) {
                                           looseEl.focus();
                                           looseEl.select?.();
                                           return;
                                         }
-                                        focusCartMedicineInput();
+                                        const hopToNext = () => {
+                                          const nextMedInput = (
+                                            document.getElementById(`row-med-input-${curIdx + 1}`) ||
+                                            document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+                                          ) as HTMLInputElement | null;
+                                          if (nextMedInput && !nextMedInput.disabled) {
+                                            nextMedInput.focus();
+                                            nextMedInput.select?.();
+                                            return true;
+                                          }
+                                          return false;
+                                        };
+                                        if (!hopToNext()) {
+                                          setTimeout(() => {
+                                            if (!hopToNext()) focusCartMedicineInput(true);
+                                          }, 30);
+                                        } else {
+                                          setTimeout(hopToNext, 20);
+                                        }
                                       } else if (e.key === 'Tab') {
                                         const curIdx = cart.indexOf(item);
                                         if (e.shiftKey) {
@@ -6570,7 +6596,26 @@ const POS = () => {
                                         handlePosRowInputKeyDown(e, cart.indexOf(item), 'looseQty');
                                       } else if (e.key === 'Enter') {
                                         e.preventDefault();
-                                        focusCartMedicineInput();
+                                        const curIdx = cart.indexOf(item);
+                                        const hopToNext = () => {
+                                          const nextMedInput = (
+                                            document.getElementById(`row-med-input-${curIdx + 1}`) ||
+                                            document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+                                          ) as HTMLInputElement | null;
+                                          if (nextMedInput && !nextMedInput.disabled) {
+                                            nextMedInput.focus();
+                                            nextMedInput.select?.();
+                                            return true;
+                                          }
+                                          return false;
+                                        };
+                                        if (!hopToNext()) {
+                                          setTimeout(() => {
+                                            if (!hopToNext()) focusCartMedicineInput(true);
+                                          }, 30);
+                                        } else {
+                                          setTimeout(hopToNext, 20);
+                                        }
                                       } else if (e.key === 'Tab' && !e.shiftKey) {
                                         // Disc/Rate/MRP are skipped in the keyboard chain (still reachable by arrows/mouse)
                                         e.preventDefault();

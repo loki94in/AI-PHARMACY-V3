@@ -92,13 +92,13 @@ export function matchMedicineSearch(
 
   const compactQ = q.replace(/[^a-z0-9]/g, '');
 
-  // Tier 1: Direct Prefix on Name, Item Code, Batch, or Space-compact Name
+  // Tier 1: Direct Prefix on Name, Item Code, or Space-compact Name
+  // (Pure batch prefix matches are excluded here so medicine name/strength strictly outranks batch numbers)
   if (
     name.startsWith(q) ||
     normName.startsWith(q) ||
     (compactQ.length >= 2 && compactName.startsWith(compactQ)) ||
-    (code && code.startsWith(q)) ||
-    (batch && batch.startsWith(q))
+    (code && code.startsWith(q))
   ) {
     return { matched: true, tier: 1 };
   }

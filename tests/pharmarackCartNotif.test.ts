@@ -59,7 +59,7 @@ describe('Pharmarack Cart Notifications Tests', () => {
 
   afterAll(async () => {
     await dbManager.close(true);
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) { }
   });
 
   beforeEach(async () => {
