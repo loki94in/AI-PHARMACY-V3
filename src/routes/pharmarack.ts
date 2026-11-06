@@ -114,7 +114,7 @@ function cleanSearchQuery(query: string): { cleaned: string; detectedForms: stri
     'powder', 'powders', 'sachet', 'sachets', 'granules',
     'patch', 'patches', 'inhaler', 'inhalers'
   ];
-  
+
   let cleaned = query;
   const detectedForms: string[] = [];
   for (const word of stopwords) {
@@ -180,18 +180,18 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
           }
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // 1. Check local distributor catalog cache (synced Pharmarack products)
     try {
       const offlineResults = await pharmarackCatalogCache.searchCatalog(q);
       const combined = [...offlineResults.mapped, ...offlineResults.nonMapped];
-      
+
       let filtered = combined;
       if (storeId !== null && storeId !== undefined && !isNaN(storeId)) {
         filtered = combined.filter(p => p.storeId === storeId && (isMapped === undefined || p.isMapped === isMapped));
       }
-      
+
       for (const p of filtered) {
         const key = `${(p.name || '').toLowerCase()}|${(p.packaging || '').toLowerCase()}|${p.storeId}|${p.distributorPrice}|${p.mrp ?? ''}`;
         if (!seenKeys.has(key)) {
@@ -215,7 +215,7 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
           });
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // 2. Query local pharmacy purchase history & local medicines ONLY if explicitly requested
     const db = await dbManager.getConnection();
@@ -268,8 +268,8 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
             if (!seenKeys.has(key)) {
               seenKeys.add(key);
               const mappedStatus = isMapped !== undefined ? isMapped : (lp.isMappedProfile === 1);
-//               const _stockDisplay = lp.currentStock > 0 ? (lp.currentStock >= 10 ? 'High' : String(lp.currentStock)) : 'Low';
-              
+              //               const _stockDisplay = lp.currentStock > 0 ? (lp.currentStock >= 10 ? 'High' : String(lp.currentStock)) : 'Low';
+
               results.push({
                 name: lp.medicineName,
                 shortName: lp.medicineName,
@@ -291,7 +291,7 @@ async function searchOfflineCatalogFallback(q: string, storeId?: number | null, 
             }
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     return results;
@@ -371,7 +371,7 @@ async function getMappedStoreIds(): Promise<number[]> {
         }
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // Fallback to locally known mapped stores from database if network call failed or cold
   try {
@@ -384,7 +384,7 @@ async function getMappedStoreIds(): Promise<number[]> {
         return dbIds;
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   return mappedStoreIdsCache?.ids || [];
 }
@@ -446,7 +446,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
 
     // If API returned 401/403, session is expired or restoring — do not treat as "0 items found from distributors"
     if (response && (response.status === 401 || response.status === 403)) {
-      tokenRefreshScheduler.executeRefresh().catch(() => {});
+      tokenRefreshScheduler.executeRefresh().catch(() => { });
       const offline = await searchOfflineCatalogFallback(qRaw, storeId, isMapped);
       const filteredOffline = offline;
       if (filteredOffline.length > 0) {
@@ -486,7 +486,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
       if (altCase.length >= 2 && altCase !== qRaw && !candidates.includes(altCase)) {
         candidates.push(altCase);
       }
-      
+
 
       if (candidates.length > 0) {
         const parallelFetches = candidates.map(term =>
@@ -589,7 +589,7 @@ export async function performPharmarackSearch(qRaw: string, storeId: number | nu
         searchCache.set(qRaw, storeId, isMapped, filteredOffline);
         return { status: 'ok', items: filteredOffline };
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // The live call genuinely failed (timeout/network/server error) and the
     // offline catalog had nothing either — surface this as a real failure,
@@ -606,7 +606,7 @@ function revalidateStaleSearch(qRaw: string, storeId: number | null, isMapped: b
   const key = searchCache.keyFor(qRaw, storeId, isMapped);
   if (searchRevalidations.has(key)) return;
   const p = performPharmarackSearch(qRaw, storeId, isMapped)
-    .catch(() => {})
+    .catch(() => { })
     .finally(() => {
       searchRevalidations.delete(key);
     });
@@ -694,7 +694,7 @@ router.get('/warmup-terms', async (_req, res) => {
 router.get('/distributors', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
-    
+
     // Fetch all local distributors saved in AI learning page & local DB
     const rows = await db.all(`
       SELECT 
@@ -778,7 +778,7 @@ export async function getAllConnectedPharmarackStores(): Promise<Array<{ storeId
         }
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // 2. Union ONLY with genuine Pharmarack stores from local cache (distributor_catalog & medicine_distributor_links)
   // NEVER include external local distributors or synthetic IDs
@@ -810,7 +810,7 @@ export async function getAllConnectedPharmarackStores(): Promise<Array<{ storeId
         storeMap.set(id, { storeId: id, storeName: String(r.store_name).trim(), isMapped: Boolean(r.mapped) });
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   const resultList = Array.from(storeMap.values()).sort((a, b) => {
     return a.storeName.localeCompare(b.storeName);
@@ -928,7 +928,7 @@ router.post('/catalog/sync', async (_req, res) => {
 // Trigger silent background keep-alive check (e.g. on window focus or Live Cart modal hover)
 router.post('/session/warmup', async (_req, res) => {
   res.json({ success: true, message: 'Session warm-up probe triggered' });
-  tokenRefreshScheduler.runSessionHeartbeat('heartbeat').catch(() => {});
+  tokenRefreshScheduler.runSessionHeartbeat('heartbeat').catch(() => { });
 });
 
 // Launch non-headless login window
@@ -991,13 +991,13 @@ router.post('/login-window', async (_req, res) => {
           await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', ?)", [token]);
           await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
           await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'active')");
-          import('../services/pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => {});
+          import('../services/pharmarackCatalogCache.js').then(m => m.ensureCatalogSyncCron()).catch(() => { });
         } catch (dbErr: any) {
           console.error('[LoginWindow] Failed to persist token:', dbErr.message);
         }
 
         // Run heartbeat probe to verify live connection and warm up cart
-        tokenRefreshScheduler.runSessionHeartbeat('heartbeat').catch(() => {});
+        tokenRefreshScheduler.runSessionHeartbeat('heartbeat').catch(() => { });
 
         // Broadcast session state so UI updates in real-time without needing to close window
         try {
@@ -1006,7 +1006,7 @@ router.post('/login-window', async (_req, res) => {
             status: 'success',
             message: 'Pharmarack B2B account linked successfully!'
           });
-        } catch (_) {}
+        } catch (_) { }
       };
 
       // Poll profile LevelDB storage every 2 seconds while Chrome is active
@@ -1021,7 +1021,7 @@ router.post('/login-window', async (_req, res) => {
             if (pollTimer) clearInterval(pollTimer);
             await saveTokenAndBroadcast(token, 'active-poll');
           }
-        } catch (_) {}
+        } catch (_) { }
       }, 2000);
 
       chromeProc.on('error', (e: Error) => {
@@ -1055,7 +1055,7 @@ router.post('/login-window', async (_req, res) => {
                   status: 'failed',
                   error: 'Login window closed without capturing token'
                 });
-              } catch (_) {}
+              } catch (_) { }
             }
           }
         }
@@ -1084,7 +1084,7 @@ router.post('/logout', async (_req, res) => {
         status: 'logged_out',
         message: 'Pharmarack session cleared and logged out successfully.'
       });
-    } catch (_) {}
+    } catch (_) { }
 
     res.json({
       success: true,
@@ -1272,8 +1272,8 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
     if (hasNestedItems) {
       distributors = rawList.map((store: any) => {
         const rawItems = store.lineItems || store.LineItems || store.items || store.Items ||
-                         store.products || store.Products || store.ProductList || store.productList ||
-                         store.CartItemList || store.cartItemList || [];
+          store.products || store.Products || store.ProductList || store.productList ||
+          store.CartItemList || store.cartItemList || [];
 
         const rawStoreTotal = Number(store.lineTotal || store.LineTotal || store.totalAmount || store.TotalAmount || 0);
         const rawItemsSum = rawItems.reduce((s: number, it: any) => {
@@ -1391,9 +1391,9 @@ export async function loadLiveCartCore(): Promise<{ distributors: any[]; totalIt
         if (contact && contact.delivery_boy_id !== undefined && contact.delivery_boy_id !== null) {
           dist.delivery_boy_id = contact.delivery_boy_id;
         }
-      } catch (_) {}
+      } catch (_) { }
     }));
-  } catch (_) {}
+  } catch (_) { }
 
   // Background auto-ingest live cart medicines into store-scoped product registry
   try {
@@ -1646,7 +1646,7 @@ export async function rankSpecialOrderDistributorCandidates(
       `).catch(() => []);
       purchaseRows = (rows || []).map((r: any) => ({ name: String(r.name || ''), cnt: Number(r.cnt || 0) }));
     }
-  } catch (_) {}
+  } catch (_) { }
 
   // Check active Live Cart distributor for top affinity boost
   const activeCartDistributorNames = new Set<string>();
@@ -1661,7 +1661,7 @@ export async function rankSpecialOrderDistributorCandidates(
         }
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   const cleanNameForMatch = (str: string): string => {
     return (str || '')
@@ -1884,7 +1884,7 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
             const catRow = await db.get('SELECT store_name FROM distributor_catalog WHERE store_id = ? LIMIT 1', [storeId]);
             if (catRow?.store_name) storeName = String(catRow.store_name).trim();
           }
-        } catch (_) {}
+        } catch (_) { }
       }
 
       let medId = Number(item.medicineId || item.medicine_id || 0);
@@ -1929,7 +1929,7 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
               [prodName, company || null, ptr, mrp, packaging || null]
             );
             medId = Number(insertMedRes?.lastID || 0);
-          } catch (_) {}
+          } catch (_) { }
         }
       }
 
@@ -1945,7 +1945,7 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
 
         try {
           await db.run('ALTER TABLE medicine_distributor_links ADD COLUMN medicine_name TEXT');
-        } catch (_) {}
+        } catch (_) { }
 
         await db.run(
           `INSERT INTO medicine_distributor_links 
@@ -1970,6 +1970,26 @@ export async function autoSaveMedicineDistributorLinks(items: any[]): Promise<vo
   } catch (err) {
     console.warn('[AutoSaveLink] Failed to auto-save medicine distributor link:', err);
   }
+}
+
+export function isPharmarackCartSuccess(resJson: any): boolean {
+  if (!resJson || typeof resJson !== 'object') return false;
+
+  const sc = resJson.StatusCode ?? resJson.statusCode ?? resJson.Code ?? resJson.code;
+  if (sc === 200 || sc === 1 || sc === 100 || String(sc) === '200' || String(sc) === '1') {
+    return true;
+  }
+
+  const st = resJson.Status ?? resJson.status ?? resJson.Success ?? resJson.success;
+  if (st === true || st === 1 || st === '1') return true;
+  if (typeof st === 'string' && /^(success|ok|true)$/i.test(st.trim())) return true;
+
+  const msg = String(resJson.Message || resJson.message || resJson.Msg || resJson.msg || '').toLowerCase();
+  if (/success|added|in\s*cart|item.*cart|product.*cart|updated.*cart|already.*cart/i.test(msg)) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -2203,7 +2223,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
                 if (matchedLine.mrp && !item.mrp) item.mrp = Number(matchedLine.mrp);
                 break;
               }
-            } catch (_) {}
+            } catch (_) { }
           }
         }
       } catch (linkErr) {
@@ -2324,10 +2344,10 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
               const isTargetingSpecificStore = Number(item.storeId) > 0 || Boolean(wantStore);
               const isNameMatch = (p: any) => sameProductName(p.ProductName || p.ProductFullName, cleanKeyword);
 
-              const matched = searchData.data.find((p: any) => 
+              const matched = searchData.data.find((p: any) =>
                 (p.PrProductId === item.productId || String(p.ProductCode).toLowerCase() === String(item.productCode).toLowerCase()) &&
                 (Number(item.storeId) > 0 ? Number(p.StoreId) === Number(item.storeId) : true)
-              ) || searchData.data.find((p: any) => 
+              ) || searchData.data.find((p: any) =>
                 (Number(item.storeId) > 0 ? Number(p.StoreId) === Number(item.storeId) : (wantStore && String(p.StoreName || '').toLowerCase().includes(wantStore))) &&
                 isNameMatch(p)
               ) || (!isTargetingSpecificStore && isNameMatch(searchData.data[0]) ? searchData.data[0] : null);
@@ -2427,7 +2447,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
             if (!item.mrp && m.mrp > 0) item.mrp = Number(m.mrp);
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
   }
 
@@ -2439,7 +2459,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
   let activeCart: any = null;
   try {
     activeCart = await loadLiveCartCore();
-  } catch (_) {}
+  } catch (_) { }
 
   // Apply unified same-medicine merge normalization
   items = normalizeCartAddRequest(items, activeCart);
@@ -2563,7 +2583,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
                     signal: AbortSignal.timeout(30000)
                   });
                   if (altRes.ok) return altRes;
-                } catch (_) {}
+                } catch (_) { }
               } else if (endpoint.includes('UpdateUserProductCartDetail')) {
                 try {
                   const altRes = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/AddUserProductCartDetail', {
@@ -2572,7 +2592,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
                     signal: AbortSignal.timeout(30000)
                   });
                   if (altRes.ok) return altRes;
-                } catch (_) {}
+                } catch (_) { }
               }
             }
             return res;
@@ -2588,17 +2608,29 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
       })();
 
       if (response.ok) {
-        const resJson = await response.json().catch(() => ({}));
-        const isOk = resJson && (
-          resJson.StatusCode === 200 || 
-          resJson.statusCode === 200 || 
-          String(resJson.StatusCode) === '200' || 
-          resJson.status === 200 || 
-          resJson.status === 'success' || 
-          resJson.success === true ||
-          (resJson.Message && String(resJson.Message).toLowerCase().includes('success')) ||
-          (resJson.message && String(resJson.message).toLowerCase().includes('success'))
-        );
+        let resJson: any = await response.json().catch(() => ({}));
+        let isOk = isPharmarackCartSuccess(resJson);
+
+        // Symmetrical fallback on HTTP 200 if response indicates already exists / duplicate in cart
+        if (!isOk) {
+          const upstreamMsg = String(resJson?.message || resJson?.Message || resJson?.Error || resJson?.error || '').toLowerCase();
+          if (/already.*cart|already.*exist|duplicate|already\s*added/i.test(upstreamMsg)) {
+            try {
+              const altRes = await fetchPharmarack('https://pharmretail-api.pharmarack.com/cart/api/v1/UpdateUserProductCartDetail', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                signal: AbortSignal.timeout(30000)
+              });
+              if (altRes.ok) {
+                const altJson = await altRes.json().catch(() => ({}));
+                if (isPharmarackCartSuccess(altJson) || altRes.status === 200) {
+                  isOk = true;
+                  resJson = altJson;
+                }
+              }
+            } catch (_) { }
+          }
+        }
 
         if (isOk) {
           cartSuccess = true;
@@ -2619,6 +2651,36 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
     lastError = err.message;
     cartSuccess = false;
   }
+
+  // If direct API call failed or timed out, perform Truthful Verification:
+  // check if the medicine was actually added to the upstream distributor cart before claiming failure
+  if (!cartSuccess) {
+    try {
+      invalidatePharmarackCartCache();
+      const liveSnapshot = await loadLiveCartCore();
+      if (liveSnapshot && Array.isArray(liveSnapshot.distributors)) {
+        const storeIdNum = Number(failedItem?.storeId || 0);
+        const pCode = String(failedItem?.productCode || '').toLowerCase().trim();
+        const pName = String(failedItem?.productName || failedItem?.product || failedItem?.name || '').trim();
+
+        const storeMatch = liveSnapshot.distributors.find(d => !storeIdNum || Number(d.storeId) === storeIdNum);
+        if (storeMatch && Array.isArray(storeMatch.items)) {
+          const itemFound = storeMatch.items.some((it: any) => {
+            const itCode = String(it.productCode || it.ProductCode || '').toLowerCase().trim();
+            const itName = it.productName || it.ProductName || it.name || '';
+            const codeMatches = Boolean(pCode && itCode && pCode === itCode);
+            const nameMatches = Boolean(pName && sameProductName(itName, pName));
+            return codeMatches || nameMatches;
+          });
+          if (itemFound) {
+            cartSuccess = true;
+            console.log(`[Pharmarack Cart] Truthful verification: "${pName || pCode}" confirmed present in live cart for store ${storeMatch.storeName || storeIdNum}. Reconciled failure to success.`);
+          }
+        }
+      }
+    } catch (_) { /* Best-effort verification; preserves original lastError if check throws */ }
+  }
+
   // If direct API call failed, do not block main thread with synchronous Puppeteer launches
   if (!cartSuccess) {
     console.warn('[Pharmarack Cart] Direct AddUserProductCartDetail API did not succeed:', lastError);
@@ -2820,9 +2882,9 @@ async function executeSingleItemDelete(item: PharmarackDeleteQueueItem): Promise
             } else {
               // Fallback for non-array responses: check status code
               const isSecOk = secJson && (
-                secJson.StatusCode === 200 || 
-                secJson.statusCode === 200 || 
-                secJson.status === 'success' || 
+                secJson.StatusCode === 200 ||
+                secJson.statusCode === 200 ||
+                secJson.status === 'success' ||
                 secJson.success === true
               );
               if (isSecOk) {
@@ -2910,7 +2972,7 @@ router.post('/delete-cart-item', async (req, res) => {
   };
 
   try {
-    const task = pharmarackDeleteChain.catch(() => {}).then(() => executeSingleItemDelete(deleteItem));
+    const task = pharmarackDeleteChain.catch(() => { }).then(() => executeSingleItemDelete(deleteItem));
     pharmarackDeleteChain = task;
 
     // Race task with a 2.5s responsiveness window so the client/UI never hangs
@@ -3067,7 +3129,7 @@ export async function adjustSpecialOrderInLiveCart(order: {
         storeName: storeName
       };
 
-      const task = pharmarackDeleteChain.catch(() => {}).then(() => executeSingleItemDelete(deleteItem));
+      const task = pharmarackDeleteChain.catch(() => { }).then(() => executeSingleItemDelete(deleteItem));
       pharmarackDeleteChain = task;
       if (order.exactOnly) {
         const deleted = await task.catch(() => false);
@@ -3077,7 +3139,7 @@ export async function adjustSpecialOrderInLiveCart(order: {
       } else {
         // Non-blocking race: wait up to 2.5s for fast response, otherwise continue in background
         await Promise.race([
-          task.catch(() => {}),
+          task.catch(() => { }),
           new Promise(r => setTimeout(r, 2500))
         ]);
       }
@@ -3363,7 +3425,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
     // STEP 2: Execute official cart checkout on Pharmarack via direct REST API
     console.log('[PharmarackRoute] Step 2: Executing direct REST API cart checkout (SaveOrderCartForRetailerManager)...');
     const checkoutResult = await pharmarackCheckoutService.placeOrdersViaApi(targetStoreNames, targetStoreIds);
-    
+
     // Invalidate local cart caches so UI sees fresh cart immediately
     invalidatePharmarackCartCache();
 
@@ -3392,7 +3454,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
                 [today, ord.storeId || 0, ord.storeName, itemsJson, Date.now(), ord.orderNo || null]
               );
             }
-          } catch (_) {}
+          } catch (_) { }
         }
       }
     }
@@ -3444,7 +3506,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
         await new Promise(r => setTimeout(r, 3000));
         try {
           await syncPharmarackOrders(true);
-        } catch (_) {}
+        } catch (_) { }
         syncedToday = await db.all(
           `SELECT order_no, store_name, order_amount FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at DESC`,
           [today]
@@ -3462,7 +3524,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
       for (const ord of orders) {
         if (!ord.phone) continue;
         const normOrdStore = (ord.storeName || '').toLowerCase().trim();
-        
+
         // Find if this store was placed and what official orderNo it received
         const matchedPlaced = placedOrders.find(p => {
           const normP = (p.storeName || '').toLowerCase().trim();
@@ -3523,7 +3585,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
         if (alreadySent) {
           // Node H: Skip Distributor Message Permanently
           console.log(`[PharmarackRoute] Step 4 (Node H): Distributor message for Order #${resolvedOrderNo} was already sent previously. Skipping permanently.`);
-          
+
           // Ensure pharmarack_placed_orders records official order_no & notified state
           const nowLocal = toLocalSqlDateTime(new Date());
           await db.run(
@@ -3531,7 +3593,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
              SET order_no = ?, distributor_notified = 1, distributor_notified_at = COALESCE(distributor_notified_at, ?) 
              WHERE order_date = ? AND LOWER(TRIM(store_name)) = LOWER(TRIM(?))`,
             [resolvedOrderNo, nowLocal, today, ord.storeName]
-          ).catch(() => {});
+          ).catch(() => { });
 
           // Node H -> Node K: Continue Order Packing Workflow
           continue;
@@ -3587,7 +3649,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
               await whatsappQueueWorker.forceNext();
               console.log(`[PharmarackRoute] Step 4 (Node I): Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) (queue #${queueId})`);
             }
-            
+
             // Node J: Record Order ID, Distributor and Send Status
             const nowLocal = toLocalSqlDateTime(new Date());
             const targetPlacedRow = await db.get(
@@ -3652,7 +3714,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
     try {
       eventService.broadcast('pharmarack_orders_changed', { today });
       eventService.broadcast('whatsapp_queue_updated', {});
-    } catch (_) {}
+    } catch (_) { }
 
     // Single fresh live cart read to evaluate remaining items for target stores
     let liveCartRemaining: Array<{ storeId: number; storeName: string; remainingItemsCount: number; items: any[] }> = [];
@@ -3693,7 +3755,7 @@ router.post('/cart/place-official-orders', async (req, res) => {
       remainingCount,
       cartEmptyForTargets: remainingCount === 0,
       error: isSuccess ? null : checkoutResult.error,
-      message: isSuccess 
+      message: isSuccess
         ? `Successfully placed ${placedTotal} official order(s) on Pharmarack!`
         : (checkoutResult.error || 'Failed to place official orders on Pharmarack')
     });
@@ -3718,7 +3780,7 @@ router.post('/cart/sync-post-checkout', async (req, res) => {
   try {
     const today = toLocalSqlDateTime(new Date()).slice(0, 10);
     const { targetStoreNames, targetStoreIds } = req.body || {};
-    await syncPharmarackOrders(true).catch(() => {});
+    await syncPharmarackOrders(true).catch(() => { });
     invalidatePharmarackCartCache();
     const db = await dbManager.getConnection();
     const syncedToday = await db.all(
@@ -3749,12 +3811,12 @@ router.post('/cart/sync-post-checkout', async (req, res) => {
           remainingCount += dist.items.length;
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     try {
       eventService.broadcast('pharmarack_orders_changed', { today });
       eventService.broadcast('pharmarack_cart_changed', {});
-    } catch (_) {}
+    } catch (_) { }
 
     res.json({
       success: true,
@@ -3831,7 +3893,7 @@ export async function reconcilePaidAndFulfilledCartItems(distributors: any[]): P
           });
 
           // Queue background deletion
-          pharmarackDeleteChain = pharmarackDeleteChain.catch(() => {}).then(() => executeSingleItemDelete({
+          pharmarackDeleteChain = pharmarackDeleteChain.catch(() => { }).then(() => executeSingleItemDelete({
             storeId: distStoreId,
             productId: itemProdId || null,
             productCode: itemCode,
@@ -3890,7 +3952,7 @@ router.get('/cart', async (req, res) => {
     // Auto-notification transition logic
     try {
       const db = await dbManager.getConnection();
-      
+
       // 1. Get all stored snapshots
       const snapshots = await db.all("SELECT store_id, store_name, items_json, delivery_persons_json FROM pharmarack_cart_snapshots");
       const snapshotMap = new Map<number, any>();
@@ -3909,7 +3971,7 @@ router.get('/cart', async (req, res) => {
       for (const [storeId, snap] of snapshotMap.entries()) {
         if (!activeStoreIds.has(storeId) && snap.items.length > 0) {
           console.log(`[AutoNotif] Detected empty cart transition for store ${storeId} (${snap.storeName})`);
-          
+
           // Verify with Pharmarack Order List that order was actually placed
           const isOrderPlaced = await verifyOrderPlacedInPharmarack(storeId);
           if (isOrderPlaced) {
@@ -4026,8 +4088,8 @@ router.get('/live-cart-summary', async (_req, res) => {
             if (hasNestedItems) {
               cartDistributors = rawList.map((store: any) => {
                 const rawItems = store.lineItems || store.LineItems || store.items || store.Items ||
-                                 store.products || store.Products || store.ProductList || store.productList ||
-                                 store.CartItemList || store.cartItemList || [];
+                  store.products || store.Products || store.ProductList || store.productList ||
+                  store.CartItemList || store.cartItemList || [];
 
                 return {
                   storeId: store.StoreId || store.storeId || store.Id || store.id || 0,
@@ -4173,7 +4235,7 @@ router.get('/live-cart-summary', async (_req, res) => {
             if (resolved && isValidIndianMobile(resolved.distributor_phone)) {
               phoneMap.set(sLower, resolved.distributor_phone);
             }
-          } catch (_) {}
+          } catch (_) { }
         })
       );
     }
@@ -4325,7 +4387,7 @@ router.post('/logout', async (_req, res) => {
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_username', '')");
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_password', '')");
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_token', '')");
-    import('../services/pharmarackCatalogCache.js').then(m => m.stopCatalogSyncCron()).catch(() => {});
+    import('../services/pharmarackCatalogCache.js').then(m => m.stopCatalogSyncCron()).catch(() => { });
     await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_mode', 'Live')");
 
     const pharmarackProfilePath = path.resolve(getAppDataDir(), 'data', 'pharmarack_profile');
@@ -4436,8 +4498,8 @@ router.get('/sent-orders', async (req, res) => {
     const parsedOrders = rows.map(r => {
       let items = [];
       let deliveryPersons = [];
-      try { items = JSON.parse(r.items_json || '[]'); } catch (_) {}
-      try { deliveryPersons = JSON.parse(r.delivery_persons_json || '[]'); } catch (_) {}
+      try { items = JSON.parse(r.items_json || '[]'); } catch (_) { }
+      try { deliveryPersons = JSON.parse(r.delivery_persons_json || '[]'); } catch (_) { }
 
       let effectiveOrderNo = r.order_no ? String(r.order_no).trim() : null;
 
@@ -4497,7 +4559,7 @@ router.get('/sent-orders', async (req, res) => {
 
         let items = [];
         if (placed?.items_json) {
-          try { items = JSON.parse(placed.items_json); } catch (_) {}
+          try { items = JSON.parse(placed.items_json); } catch (_) { }
         }
         parsedOrders.push({
           id: placed?.id || s.pharmarack_order_id || s.id || Date.now(),
@@ -4723,7 +4785,7 @@ router.get('/sent-orders/latest-map', async (_req, res) => {
 
     rows.forEach(r => {
       let items = [];
-      try { items = JSON.parse(r.items_json || '[]'); } catch (_) {}
+      try { items = JSON.parse(r.items_json || '[]'); } catch (_) { }
 
       const storeKey = r.store_id ? String(r.store_id) : (r.store_name || '').toLowerCase().trim();
       const normNameKey = (r.store_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -5473,7 +5535,7 @@ router.get('/order-by-id/:orderId', async (req, res) => {
     }
 
     let items = [];
-    try { items = JSON.parse(row.items_json || '[]'); } catch (_) {}
+    try { items = JSON.parse(row.items_json || '[]'); } catch (_) { }
 
     res.json({
       success: true,
@@ -5582,7 +5644,7 @@ router.post('/log-placed-order', async (req, res) => {
                 refillIds: [refill.id],
                 customerId: refill.customer_id,
                 medicineNames: [refill.medicine_name]
-              }).catch(() => {});
+              }).catch(() => { });
             }
           }
         }
@@ -5595,7 +5657,7 @@ router.post('/log-placed-order', async (req, res) => {
     try {
       await resolveDistributorContact(db, store_name);
       syncTodayActiveDistributors().catch(err => console.warn('Background sync reminders error on placed order:', err));
-    } catch (_) {}
+    } catch (_) { }
 
     // Broadcast SSE update so Dispatch, CRM, Refills, Special Orders, and Cart update across kept-alive pages
     eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'log_placed_order', store_name });
@@ -5630,7 +5692,7 @@ router.post('/check-overstock', async (req, res) => {
     // 1. Clean product name & extract core brand tokens
     const rawClean = productName.replace(/\s*\([^)]*\)/g, '').trim().toLowerCase();
     const { cleaned } = cleanSearchQuery(productName);
-    
+
     // Extract core brand name & strength digits (e.g. "dolo 650" from "DOLO 650 TAB 15 ()")
     const brandTokens = rawClean
       .replace(/\b(new|tab|tabs|tablet|tablets|cap|caps|capsule|inj|syrup|10tab|15tab|10s|15s|10|15|30|60|100)\b/gi, '')
@@ -5689,7 +5751,7 @@ router.post('/check-overstock', async (req, res) => {
 
     if (matchedIds.length > 0) {
       const placeholders = matchedIds.map(() => '?').join(',');
-      
+
       // Calculate total current stock across ALL matching medicine IDs
       const stockRow = await db.get(
         `SELECT COALESCE(SUM(quantity), 0) as total_qty, MAX(max_stock_level) as inv_max 
@@ -5750,7 +5812,7 @@ router.post('/check-overstock', async (req, res) => {
           lowestPurchasePTR = Number(minPriceRow.min_rate);
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // 5. Calculate existing cart quantity across distributors (fast in-memory cache)
     let cartQty = 0;
@@ -5767,7 +5829,7 @@ router.post('/check-overstock', async (req, res) => {
           cartQty += Number(it.qty || 0);
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     const totalInHandAndCart = currentStock + cartQty;
     const reqQtyNum = Number(requestedQty) || 1;
@@ -5897,7 +5959,7 @@ router.get('/dispatch-schedule', async (_req, res) => {
 
     let pausedDates: string[] = [];
     if (pausedRow?.value) {
-      try { pausedDates = JSON.parse(pausedRow.value); } catch (_) {}
+      try { pausedDates = JSON.parse(pausedRow.value); } catch (_) { }
     }
 
     const timerSec = timerRow?.value ? Math.round(Number(timerRow.value) / 1000) : 10;

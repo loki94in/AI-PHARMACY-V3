@@ -549,6 +549,7 @@ export interface RefillCartCandidate extends RefillCartPick {
 /** POST /refills/:id/add-to-cart — one medicine, real outcome (see services/refillCartService.ts). */
 export interface RefillCartResult {
   success: boolean;
+  medicineId?: number;
   status: 'added' | 'ready' | 'in_cart' | 'needs_link' | 'linked_oos' | 'not_found' | 'failed';
   message: string;
   refillId: number;

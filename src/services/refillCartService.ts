@@ -48,6 +48,7 @@ export interface RefillCartCandidate extends RefillCartPick {
 
 export interface RefillCartResult {
   status: RefillCartStatus;
+  medicineId?: number;
   message: string;
   refillId: number;
   medicineName: string;
@@ -266,20 +267,36 @@ export async function processRefillCartItem(
 ): Promise<RefillCartResult> {
   const db = await dbManager.getConnection();
   const refill = await db.get(
-    `SELECT pr.id, pr.medicine_id, pr.quantity_needed, pr.is_active, pr.status,
+    `SELECT pr.id, pr.medicine_id, pr.medicine_name AS pr_medicine_name,
+            pr.quantity_needed, pr.is_active, pr.status,
             pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name,
             c.name AS customer_name, c.phone AS customer_phone, c.language
      FROM patient_refills pr 
-     JOIN medicines m ON m.id = pr.medicine_id
+     LEFT JOIN medicines m ON m.id = pr.medicine_id
      LEFT JOIN customers c ON c.id = pr.customer_id
      WHERE pr.id = ?`,
     [refillId]
   );
-  if (!refill) throw Object.assign(new Error('Refill not found'), { httpStatus: 404 });
+  if (!refill) throw Object.assign(new Error('Refill record not found in system'), { httpStatus: 404 });
 
-  const medicineName = String(refill.medicine_name || '');
+  let medicineName = String(refill.medicine_name || refill.pr_medicine_name || '').trim();
+
+  // If medicine_id is missing or points to a non-existent record, attempt name resolution
+  if ((!refill.medicine_id || !refill.medicine_name) && medicineName) {
+    try {
+      const match = await db.get(
+        'SELECT id, name FROM medicines WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1',
+        [medicineName]
+      );
+      if (match) {
+        refill.medicine_id = match.id;
+        medicineName = match.name;
+        await db.run('UPDATE patient_refills SET medicine_id = ? WHERE id = ?', [match.id, refillId]).catch(() => {});
+      }
+    } catch (_) {}
+  }
   const qty = Math.max(1, Math.floor(Number(opts.qty) || Number(refill.quantity_needed) || 1));
-  const base = { refillId, medicineName, qty, linked: [] as RefillCartResult['linked'], candidates: [] as RefillCartCandidate[] };
+  const base = { refillId, medicineId: refill.medicine_id || undefined, medicineName, qty, linked: [] as RefillCartResult['linked'], candidates: [] as RefillCartCandidate[] };
   const fail = (message: string, extra: Partial<RefillCartResult> = {}): RefillCartResult =>
     ({ ...base, ...extra, status: 'failed', message });
 
@@ -291,9 +308,18 @@ export async function processRefillCartItem(
   if (Array.isArray(opts.pick) && opts.pick.length > 0) {
     const picks = opts.pick.filter(isValidPick);
     if (picks.length === 0) return fail('Tick a distributor product from the list.');
-    const prioMap = await loadPriorityMap();
-    const orderedPicks = orderByPriority(picks, p => p.storeName, prioMap);
-    await saveMedicineLinks(refill.medicine_id, orderedPicks);
+    if (!refill.medicine_id && medicineName) {
+      try {
+        const ins = await db.run('INSERT INTO medicines (name) VALUES (?)', [medicineName]);
+        refill.medicine_id = ins.lastID;
+        await db.run('UPDATE patient_refills SET medicine_id = ? WHERE id = ?', [ins.lastID, refillId]).catch(() => {});
+      } catch (_) {}
+    }
+    if (refill.medicine_id) {
+      const prioMap = await loadPriorityMap();
+      const orderedPicks = orderByPriority(picks, p => p.storeName, prioMap);
+      await saveMedicineLinks(refill.medicine_id, orderedPicks);
+    }
   }
 
   const pr = await import('../routes/pharmarack.js');
@@ -308,7 +334,9 @@ export async function processRefillCartItem(
 
   // Saved links: preserves explicit per-medicine pick_order (#1, #2, ...), falling back to global priority on ties.
   const prioMap = await loadPriorityMap();
-  const rawLinks: any[] = await db.all('SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id', [refill.medicine_id]);
+  const rawLinks: any[] = refill.medicine_id
+    ? await db.all('SELECT * FROM medicine_distributor_links WHERE medicine_id = ? ORDER BY pick_order, id', [refill.medicine_id])
+    : [];
   const links: any[] = [...rawLinks].sort((a, b) => {
     const poA = a.pick_order != null ? Number(a.pick_order) : Infinity;
     const poB = b.pick_order != null ? Number(b.pick_order) : Infinity;

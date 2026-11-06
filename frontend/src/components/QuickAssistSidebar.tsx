@@ -126,7 +126,7 @@ export const QuickAssistSidebar = memo(({
             setAutoRemindMaster(res.enabled);
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [expanded]);
 
@@ -218,7 +218,7 @@ export const QuickAssistSidebar = memo(({
           setImageReviewCount(res.counts.pending_review || 0);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [expanded]);
 
   const toggleRefillKey = (key: string) => {
@@ -375,7 +375,7 @@ export const QuickAssistSidebar = memo(({
       return next;
     });
     try {
-      await Promise.all(ids.map(id => api.markRefillOrdered(id, { note: 'Manual / Phone Order' }).catch(() => {})));
+      await Promise.all(ids.map(id => api.markRefillOrdered(id, { note: 'Manual / Phone Order' }).catch(() => { })));
       toastEvent.trigger(`Marked all refills for ${group.patient_name} as Ordered`, 'success');
       refillEvent.triggerRefresh();
       onRefreshDailyLog();
@@ -800,8 +800,8 @@ export const QuickAssistSidebar = memo(({
         }
         toastEvent.trigger(queuedCount > 0
           ? (opts?.resend
-              ? `Arrival reminder WhatsApp re-queued for "${group.requester}"!`
-              : `Marked ready & arrival WhatsApp queued for ${queuedCount} customer(s)!`)
+            ? `Arrival reminder WhatsApp re-queued for "${group.requester}"!`
+            : `Marked ready & arrival WhatsApp queued for ${queuedCount} customer(s)!`)
           : `Marked all requests for "${group.requester}" as Ready!`, 'success');
       } else if (newStatus === 'Pending' && group.overallStatus === 'Inquiry') {
         toastEvent.trigger(`Approved inquiry! Special order created for "${group.requester}".`, 'success');
@@ -878,7 +878,7 @@ export const QuickAssistSidebar = memo(({
     try {
       const normalizeP = (p?: string | null) => (p || '').replace(/\D/g, '').slice(-10);
       const normGroupPhone = normalizeP(group.recipient_phone);
-      const refillGroup = groupedActionableRefills.find(r => 
+      const refillGroup = groupedActionableRefills.find(r =>
         (normGroupPhone && normalizeP(r.patient_phone) === normGroupPhone) ||
         (r.patient_name && r.patient_name.trim().toLowerCase() === group.recipient_name.trim().toLowerCase())
       );
@@ -906,7 +906,7 @@ export const QuickAssistSidebar = memo(({
       // Mark staged notifications as sent manually
       await Promise.all(
         group.messages.map(m =>
-          api.manualNotification(m.id).catch(() => {})
+          api.manualNotification(m.id).catch(() => { })
         )
       );
 
@@ -917,7 +917,7 @@ export const QuickAssistSidebar = memo(({
           for (const refId of ids) {
             try {
               await apiClient.post(`/refills/${refId}/status`, { status: 'notified' });
-            } catch (_) {}
+            } catch (_) { }
           }
         }
       }
@@ -954,7 +954,7 @@ export const QuickAssistSidebar = memo(({
     try {
       await Promise.all(
         ids.map(id =>
-          api.cancelNotification(id).catch(() => {})
+          api.cancelNotification(id).catch(() => { })
         )
       );
 
@@ -964,7 +964,7 @@ export const QuickAssistSidebar = memo(({
         if (m.reference_id) {
           const refIds = String(m.reference_id).split(',').map(s => Number(s.trim())).filter(Boolean);
           for (const refId of refIds) {
-            refIdPromises.push(apiClient.post(`/refills/${refId}/status`, { status: 'notified' }).catch(() => {}));
+            refIdPromises.push(apiClient.post(`/refills/${refId}/status`, { status: 'notified' }).catch(() => { }));
           }
         }
       }
@@ -1061,7 +1061,7 @@ export const QuickAssistSidebar = memo(({
       timingCategory: 'Overdue' | 'Today' | 'Tomorrow' | 'Within 7 Days' | 'Upcoming';
       hasHoldStock: boolean;
       isPatientConfirmed: boolean;
-      reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
+      reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' | 'SNOOZED';
       reminder_sent_at?: string | null;
       auto_remind?: number;
       collection_reminder_count?: number;
@@ -1083,7 +1083,7 @@ export const QuickAssistSidebar = memo(({
         quick_bill_id?: number | null;
         next_refill_date: string;
         diffDays: number;
-        reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED';
+        reminder_status: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' | 'SNOOZED';
         reminder_sent_at?: string | null;
         patient_confirmed?: number;
         confirmed_at?: string | null;
@@ -1167,7 +1167,7 @@ export const QuickAssistSidebar = memo(({
         existing.diffDays = diffDays;
         existing.timingCategory = diffDays < 0 ? 'Overdue' : diffDays === 0 ? 'Today' : diffDays === 1 ? 'Tomorrow' : diffDays <= 7 ? 'Within 7 Days' : 'Upcoming';
       }
-      const medReminderStatus: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' = r.reminder_status || (r.status === 'notified' ? 'SENT' : 'NOT_SENT');
+      const medReminderStatus: 'NOT_SENT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' | 'SNOOZED' = r.reminder_status || (r.status === 'notified' ? 'SENT' : 'NOT_SENT');
       existing.medicines.push({
         id: r.id,
         medicine_id: r.medicine_id,
@@ -1227,6 +1227,8 @@ export const QuickAssistSidebar = memo(({
           group.reminder_status = 'QUEUED';
         } else if (group.medicines.some(m => m.reminder_status === 'FAILED')) {
           group.reminder_status = 'FAILED';
+        } else if (group.medicines.some(m => m.reminder_status === 'SNOOZED')) {
+          group.reminder_status = 'SNOOZED';
         } else {
           group.reminder_status = 'NOT_SENT';
         }
@@ -1253,6 +1255,7 @@ export const QuickAssistSidebar = memo(({
       if (gDigits && optimisticHiddenRefillKeys.has(gDigits)) return false;
       if (g.patient_name && optimisticHiddenRefillKeys.has(g.patient_name.trim())) return false;
       if (g.medicines.some(m => optimisticHiddenRefillKeys.has(String(m.id)))) return false;
+      if (g.reminder_status === 'SNOOZED') return false;
       return true;
     });
   }, [actionableRefills, optimisticHiddenRefillKeys]);
@@ -1264,9 +1267,9 @@ export const QuickAssistSidebar = memo(({
   const activeSpecialOrders = useMemo(() => {
     return Array.isArray(specialOrders)
       ? specialOrders.filter(s => {
-          const st = (s.status || '').toLowerCase().trim();
-          return st !== 'completed' && st !== 'fulfilled' && st !== 'cancelled' && !optimisticHiddenOrderIds.has(s.id);
-        })
+        const st = (s.status || '').toLowerCase().trim();
+        return st !== 'completed' && st !== 'fulfilled' && st !== 'cancelled' && !optimisticHiddenOrderIds.has(s.id);
+      })
       : [];
   }, [specialOrders, optimisticHiddenOrderIds]);
 
@@ -1482,7 +1485,7 @@ export const QuickAssistSidebar = memo(({
     // Merge full multi-medicine lists for any refill patients whose stored message is only partial
     for (const group of map.values()) {
       const normP = normalizePhone(group.recipient_phone);
-      const refillGroup = groupedActionableRefills.find(r => 
+      const refillGroup = groupedActionableRefills.find(r =>
         (normP && normalizePhone(r.patient_phone) === normP) ||
         (r.patient_name && r.patient_name.trim().toLowerCase() === group.recipient_name.trim().toLowerCase())
       );
@@ -1592,11 +1595,10 @@ export const QuickAssistSidebar = memo(({
           <button
             type="button"
             onClick={handleToggleMasterAutoRemind}
-            className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider transition-all border flex items-center gap-1 cursor-pointer shadow-xs ${
-              autoRemindMaster
+            className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider transition-all border flex items-center gap-1 cursor-pointer shadow-xs ${autoRemindMaster
                 ? 'bg-purple-500/20 text-purple-300 border-purple-500/40 hover:bg-purple-500/30'
                 : 'bg-bg3 text-muted border-border hover:text-text'
-            }`}
+              }`}
             title={
               autoRemindMaster
                 ? 'Auto Remind Master: ON (Sending daily 10 AM - 6 PM). Click to pause globally.'
@@ -1668,13 +1670,12 @@ export const QuickAssistSidebar = memo(({
                 return (
                   <div
                     key={group.key}
-                    className={`p-2.5 rounded-xl bg-bg2/95 border border-border flex flex-col gap-2 shadow-xs min-w-0 overflow-hidden transition-all hover:border-purple-500/30 ${
-                      group.timingCategory === 'Overdue'
+                    className={`p-2.5 rounded-xl bg-bg2/95 border border-border flex flex-col gap-2 shadow-xs min-w-0 overflow-hidden transition-all hover:border-purple-500/30 ${group.timingCategory === 'Overdue'
                         ? 'border-l-4 border-l-rose-500'
                         : group.timingCategory === 'Today'
-                        ? 'border-l-4 border-l-emerald-500'
-                        : 'border-l-4 border-l-purple-500'
-                    }`}
+                          ? 'border-l-4 border-l-emerald-500'
+                          : 'border-l-4 border-l-purple-500'
+                      }`}
                   >
                     {/* Patient Header (Click to toggle expansion / fold & unfold) */}
                     <div
@@ -2173,15 +2174,14 @@ export const QuickAssistSidebar = memo(({
                 return (
                   <div
                     key={group.key}
-                    className={`p-2.5 rounded-xl border border-border border-l-4 bg-bg2/95 flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs ${
-                      group.overallStatus === 'Inquiry'
+                    className={`p-2.5 rounded-xl border border-border border-l-4 bg-bg2/95 flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs ${group.overallStatus === 'Inquiry'
                         ? 'border-l-amber-500 hover:border-amber-500/30'
                         : group.overallStatus === 'Ready'
-                        ? 'border-l-sky-500 hover:border-sky-500/30'
-                        : group.overallStatus === 'Ordered'
-                        ? 'border-l-indigo-500 hover:border-indigo-500/30'
-                        : 'border-l-cyan-500 hover:border-cyan-500/30'
-                    }`}
+                          ? 'border-l-sky-500 hover:border-sky-500/30'
+                          : group.overallStatus === 'Ordered'
+                            ? 'border-l-indigo-500 hover:border-indigo-500/30'
+                            : 'border-l-cyan-500 hover:border-cyan-500/30'
+                      }`}
                   >
                     {/* Header (Click to toggle expansion / fold & unfold) */}
                     <div
@@ -2203,11 +2203,10 @@ export const QuickAssistSidebar = memo(({
                               x{group.items[0]?.qty || 1}
                             </span>
                           )}
-                          <span className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold shrink-0 border ${
-                            group.deliveryMode === 'Home Delivery'
+                          <span className={`px-1.5 py-0.5 rounded text-[8.5px] font-bold shrink-0 border ${group.deliveryMode === 'Home Delivery'
                               ? 'bg-amber-500/15 text-amber-300 border-amber-500/25'
                               : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25'
-                          }`}>
+                            }`}>
                             {group.deliveryMode}
                           </span>
                         </div>
@@ -2229,25 +2228,24 @@ export const QuickAssistSidebar = memo(({
                           const maxCount = Math.max(0, ...group.items.map(i => Number(i.notification_count || 0)));
                           return (
                             <span
-                              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8.5px] font-mono font-bold uppercase ${
-                                group.overallStatus === 'Inquiry'
+                              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8.5px] font-mono font-bold uppercase ${group.overallStatus === 'Inquiry'
                                   ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
                                   : group.overallStatus === 'Ready'
-                                  ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
-                                  : group.overallStatus === 'Ordered'
-                                  ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30'
-                                  : group.overallStatus === 'Confirmed'
-                                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                                  : 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
-                              }`}
+                                    ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+                                    : group.overallStatus === 'Ordered'
+                                      ? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30'
+                                      : group.overallStatus === 'Confirmed'
+                                        ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                        : 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30'
+                                }`}
                             >
                               <ClockIcon size={9} className="shrink-0" />
                               <span>
                                 {group.overallStatus === 'Inquiry'
                                   ? 'WhatsApp Inquiry'
                                   : group.overallStatus === 'Ready' && maxCount > 0
-                                  ? `Ready (${maxCount}x)`
-                                  : group.overallStatus}
+                                    ? `Ready (${maxCount}x)`
+                                    : group.overallStatus}
                               </span>
                             </span>
                           );
@@ -2459,11 +2457,10 @@ export const QuickAssistSidebar = memo(({
                                   e.stopPropagation();
                                   handleToggleOrderAutoRemind(group.items, !isOrderAutoArmed);
                                 }}
-                                className={`h-5 px-1.5 rounded-full text-[8.5px] font-bold transition-all flex items-center gap-0.5 cursor-pointer border shrink-0 ${
-                                  isOrderAutoArmed
+                                className={`h-5 px-1.5 rounded-full text-[8.5px] font-bold transition-all flex items-center gap-0.5 cursor-pointer border shrink-0 ${isOrderAutoArmed
                                     ? 'bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25'
                                     : 'bg-bg3 text-muted hover:text-text border-border'
-                                }`}
+                                  }`}
                                 title={
                                   isOrderAutoArmed
                                     ? `Auto collection reminder is ACTIVE (${collCount} sent). Daily follow-up 10 AM - 6 PM until sold in POS. Click to switch to Manual.`
@@ -2553,9 +2550,8 @@ export const QuickAssistSidebar = memo(({
                 return (
                   <div
                     key={group.key}
-                    className={`p-2.5 rounded-xl border border-border border-l-4 ${
-                      group.overallStatus === 'Inquiry' ? 'border-l-amber-400 bg-amber-500/5 hover:border-amber-400/40' : 'border-l-amber-500 bg-bg2/95 hover:border-amber-500/30'
-                    } flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs`}
+                    className={`p-2.5 rounded-xl border border-border border-l-4 ${group.overallStatus === 'Inquiry' ? 'border-l-amber-400 bg-amber-500/5 hover:border-amber-400/40' : 'border-l-amber-500 bg-bg2/95 hover:border-amber-500/30'
+                      } flex flex-col gap-2 transition-all min-w-0 overflow-hidden shadow-xs`}
                   >
                     {/* Header (Click to toggle expansion / fold & unfold) */}
                     <div
@@ -2592,23 +2588,22 @@ export const QuickAssistSidebar = memo(({
                           const maxCount = Math.max(0, ...group.items.map(i => Number(i.notification_count || 0)));
                           return (
                             <span
-                              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8.5px] font-mono font-bold uppercase ${
-                                group.overallStatus === 'Inquiry'
+                              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8.5px] font-mono font-bold uppercase ${group.overallStatus === 'Inquiry'
                                   ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
                                   : group.overallStatus === 'Ready'
-                                  ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
-                                  : group.overallStatus === 'Ordered'
-                                  ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                                  : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
-                              }`}
+                                    ? 'bg-sky-500/15 text-sky-300 border border-sky-500/30'
+                                    : group.overallStatus === 'Ordered'
+                                      ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                      : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                                }`}
                             >
                               <ClockIcon size={9} className="shrink-0" />
                               <span>
                                 {group.overallStatus === 'Inquiry'
                                   ? 'Inquiry (Needs Approval)'
                                   : group.overallStatus === 'Ready' && maxCount > 0
-                                  ? `Ready (${maxCount}x)`
-                                  : group.overallStatus}
+                                    ? `Ready (${maxCount}x)`
+                                    : group.overallStatus}
                               </span>
                             </span>
                           );
@@ -2820,11 +2815,10 @@ export const QuickAssistSidebar = memo(({
                                   e.stopPropagation();
                                   handleToggleOrderAutoRemind(group.items, !isOrderAutoArmed);
                                 }}
-                                className={`h-5 px-1.5 rounded-full text-[8.5px] font-bold transition-all flex items-center gap-0.5 cursor-pointer border shrink-0 ${
-                                  isOrderAutoArmed
+                                className={`h-5 px-1.5 rounded-full text-[8.5px] font-bold transition-all flex items-center gap-0.5 cursor-pointer border shrink-0 ${isOrderAutoArmed
                                     ? 'bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25'
                                     : 'bg-bg3 text-muted hover:text-text border-border'
-                                }`}
+                                  }`}
                                 title={
                                   isOrderAutoArmed
                                     ? `Auto collection reminder is ACTIVE (${collCount} sent). Daily follow-up 10 AM - 6 PM until sold in POS. Click to switch to Manual.`
@@ -2950,7 +2944,7 @@ export const QuickAssistSidebar = memo(({
                           {(() => {
                             const normalizeP = (p?: string | null) => (p || '').replace(/\D/g, '').slice(-10);
                             const normGP = normalizeP(group.recipient_phone);
-                            const matchedRefillGroup = groupedActionableRefills.find(r => 
+                            const matchedRefillGroup = groupedActionableRefills.find(r =>
                               (normGP && normalizeP(r.patient_phone) === normGP) ||
                               (r.patient_name && r.patient_name.trim().toLowerCase() === group.recipient_name.trim().toLowerCase())
                             );
@@ -3084,182 +3078,182 @@ export const QuickAssistSidebar = memo(({
             </button>
           </div>
         )}
-        </div>
-        {arrivalModalGroup && (
-          <SpecialOrderArrivalModal
-            isOpen={!!arrivalModalGroup}
-            onClose={() => setArrivalModalGroup(null)}
-            customerName={arrivalModalGroup.requester}
-            customerPhone={arrivalModalGroup.phone || ''}
-            orders={arrivalModalGroup.items}
-            onSuccess={() => {
-              queryClient.invalidateQueries({ queryKey: ['orders'] });
-              specialOrdersEvent.triggerUpdated();
-              window.dispatchEvent(new CustomEvent('refresh-special-orders'));
-              onActionComplete();
-            }}
-          />
-        )}
-        {editingGroup && (
-          <QuickAssistOrderEditModal
-            isOpen={!!editingGroup}
-            onClose={() => setEditingGroup(null)}
-            editGroup={editingGroup}
-            onOpenArrivalModal={(arrGroup) => {
-              setEditingGroup(null);
-              setArrivalModalGroup(arrGroup);
-            }}
-            onSuccess={() => {
-              setEditingGroup(null);
-              queryClient.invalidateQueries({ queryKey: ['orders'] });
-              queryClient.invalidateQueries({ queryKey: ['refills'] });
-              specialOrdersEvent.triggerUpdated();
-              refillEvent.triggerRefresh();
-              window.dispatchEvent(new CustomEvent('refresh-special-orders'));
-              window.dispatchEvent(new CustomEvent('refresh-refills'));
-              onActionComplete();
-            }}
-          />
-        )}
-        {refillOrderModalGroup && (
-          <RefillOrderModal
-            patientName={refillOrderModalGroup.patient_name}
-            patientPhone={refillOrderModalGroup.patient_phone}
-            medicines={refillOrderModalGroup.medicines.map((m: any) => ({
-              id: m.id,
-              medicine_id: m.medicine_id,
-              medicine_name: m.medicine_name,
-              quantity_needed: Number(m.quantity_needed || 3),
-              in_stock_qty: Number(m.in_stock_qty || 0),
-              packaging: m.packaging,
-              status: m.status || 'pending',
-              is_active: m.is_active ?? 1,
-              cart_store_name: m.cart_store_name,
-              cart_qty: m.cart_qty,
-              in_live_cart: Boolean(m.in_live_cart || m.cart_store_name),
-              linked_distributors: m.linked_distributors
-            }))}
-            onClose={() => setRefillOrderModalGroup(null)}
-            onConfirm={(_selectedItems) => {
-              refillEvent.triggerRefresh();
-              queryClient.invalidateQueries({ queryKey: ['refills'] });
-              queryClient.invalidateQueries({ queryKey: ['pharmarack-cart'] });
-            }}
-            onMarkReady={(selectedIds) => handleMarkRefillGroupReady(refillOrderModalGroup, selectedIds)}
-            onPostAndComplete={(selectedIds) => handleCompleteRefillGroup(refillOrderModalGroup, selectedIds)}
-            onMedicineLinked={() => {
-              queryClient.invalidateQueries({ queryKey: ['refills'] });
-              refillEvent.triggerRefresh();
-              window.dispatchEvent(new CustomEvent('refresh-refills'));
-            }}
-          />
-        )}
-        {earlyBookingConfirm && createPortal(
+      </div>
+      {arrivalModalGroup && (
+        <SpecialOrderArrivalModal
+          isOpen={!!arrivalModalGroup}
+          onClose={() => setArrivalModalGroup(null)}
+          customerName={arrivalModalGroup.requester}
+          customerPhone={arrivalModalGroup.phone || ''}
+          orders={arrivalModalGroup.items}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['orders'] });
+            specialOrdersEvent.triggerUpdated();
+            window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+            onActionComplete();
+          }}
+        />
+      )}
+      {editingGroup && (
+        <QuickAssistOrderEditModal
+          isOpen={!!editingGroup}
+          onClose={() => setEditingGroup(null)}
+          editGroup={editingGroup}
+          onOpenArrivalModal={(arrGroup) => {
+            setEditingGroup(null);
+            setArrivalModalGroup(arrGroup);
+          }}
+          onSuccess={() => {
+            setEditingGroup(null);
+            queryClient.invalidateQueries({ queryKey: ['orders'] });
+            queryClient.invalidateQueries({ queryKey: ['refills'] });
+            specialOrdersEvent.triggerUpdated();
+            refillEvent.triggerRefresh();
+            window.dispatchEvent(new CustomEvent('refresh-special-orders'));
+            window.dispatchEvent(new CustomEvent('refresh-refills'));
+            onActionComplete();
+          }}
+        />
+      )}
+      {refillOrderModalGroup && (
+        <RefillOrderModal
+          patientName={refillOrderModalGroup.patient_name}
+          patientPhone={refillOrderModalGroup.patient_phone}
+          medicines={refillOrderModalGroup.medicines.map((m: any) => ({
+            id: m.id,
+            medicine_id: m.medicine_id,
+            medicine_name: m.medicine_name,
+            quantity_needed: Number(m.quantity_needed || 3),
+            in_stock_qty: Number(m.in_stock_qty || 0),
+            packaging: m.packaging,
+            status: m.status || 'pending',
+            is_active: m.is_active ?? 1,
+            cart_store_name: m.cart_store_name,
+            cart_qty: m.cart_qty,
+            in_live_cart: Boolean(m.in_live_cart || m.cart_store_name),
+            linked_distributors: m.linked_distributors
+          }))}
+          onClose={() => setRefillOrderModalGroup(null)}
+          onConfirm={(_selectedItems) => {
+            refillEvent.triggerRefresh();
+            queryClient.invalidateQueries({ queryKey: ['refills'] });
+            queryClient.invalidateQueries({ queryKey: ['pharmarack-cart'] });
+          }}
+          onMarkReady={(selectedIds) => handleMarkRefillGroupReady(refillOrderModalGroup, selectedIds)}
+          onPostAndComplete={(selectedIds) => handleCompleteRefillGroup(refillOrderModalGroup, selectedIds)}
+          onMedicineLinked={() => {
+            queryClient.invalidateQueries({ queryKey: ['refills'] });
+            refillEvent.triggerRefresh();
+            window.dispatchEvent(new CustomEvent('refresh-refills'));
+          }}
+        />
+      )}
+      {earlyBookingConfirm && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          data-modal="true"
+          className="z-modal fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setEarlyBookingConfirm(null);
+            }
+          }}
+        >
           <div
-            role="dialog"
-            aria-modal="true"
-            data-modal="true"
-            className="z-modal fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                setEarlyBookingConfirm(null);
-              }
-            }}
+            className="bg-bg2 border border-border rounded-2xl shadow-2xl max-w-md w-full p-5 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div
-              className="bg-bg2 border border-border rounded-2xl shadow-2xl max-w-md w-full p-5 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-150"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
-                    <RotateCw size={18} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-text text-sm">Early Refill Booking</h3>
-                    <p className="text-xs text-muted">Confirming early medicine dispensing</p>
-                  </div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400 shrink-0">
+                  <RotateCw size={18} />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setEarlyBookingConfirm(null)}
-                  className="text-muted hover:text-text p-1 rounded-lg hover:bg-bg3 transition-colors cursor-pointer"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              <div className="bg-bg3/70 rounded-xl p-3 border border-border flex flex-col gap-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted">Patient:</span>
-                  <span className="font-semibold text-text">{earlyBookingConfirm.group.patient_name}</span>
-                </div>
-                {earlyBookingConfirm.group.patient_phone && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted">Phone:</span>
-                    <span className="font-mono text-text">{earlyBookingConfirm.group.patient_phone}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between">
-                  <span className="text-muted">Scheduled Due Date:</span>
-                  <span className="font-semibold text-purple-400">
-                    {earlyBookingConfirm.nextDueDate ? new Date(earlyBookingConfirm.nextDueDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted">Days Early:</span>
-                  <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold text-[11px]">
-                    {earlyBookingConfirm.daysEarly} day(s) before schedule
-                  </span>
+                <div>
+                  <h3 className="font-bold text-text text-sm">Early Refill Booking</h3>
+                  <p className="text-xs text-muted">Confirming early medicine dispensing</p>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setEarlyBookingConfirm(null)}
+                className="text-muted hover:text-text p-1 rounded-lg hover:bg-bg3 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
 
-              <p className="text-xs text-muted leading-relaxed">
-                This refill is not yet due. You can either mark it complete to advance the cycle by 30 days and remove it from Quick Assist, or open POS to bill the patient immediately.
-              </p>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-                <button
-                  type="button"
-                  onClick={() => setEarlyBookingConfirm(null)}
-                  className="px-3 py-1.5 rounded-xl text-xs font-semibold text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const group = earlyBookingConfirm.group;
-                    setEarlyBookingConfirm(null);
-                    handleCompleteRefillGroup(group);
-                  }}
-                  className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
-                  title="Mark refill complete and remove from Quick Assist"
-                >
-                  <CheckCircle2 size={13} />
-                  <span>Mark Complete</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const group = earlyBookingConfirm.group;
-                    setEarlyBookingConfirm(null);
-                    handleBookRefillToPos(group, true, earlyBookingConfirm.selectedIds);
-                  }}
-                  className="px-4 py-1.5 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
-                  title="Open POS and transfer items to bill"
-                >
-                  <ShoppingCart size={13} />
-                  <span>Confirm & Open POS</span>
-                </button>
+            <div className="bg-bg3/70 rounded-xl p-3 border border-border flex flex-col gap-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Patient:</span>
+                <span className="font-semibold text-text">{earlyBookingConfirm.group.patient_name}</span>
+              </div>
+              {earlyBookingConfirm.group.patient_phone && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Phone:</span>
+                  <span className="font-mono text-text">{earlyBookingConfirm.group.patient_phone}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Scheduled Due Date:</span>
+                <span className="font-semibold text-purple-400">
+                  {earlyBookingConfirm.nextDueDate ? new Date(earlyBookingConfirm.nextDueDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted">Days Early:</span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold text-[11px]">
+                  {earlyBookingConfirm.daysEarly} day(s) before schedule
+                </span>
               </div>
             </div>
-          </div>,
-          document.body
-        )}
-      </div>
-    );
 
-  });
+            <p className="text-xs text-muted leading-relaxed">
+              This refill is not yet due. You can either mark it complete to advance the cycle by 30 days and remove it from Quick Assist, or open POS to bill the patient immediately.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+              <button
+                type="button"
+                onClick={() => setEarlyBookingConfirm(null)}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold text-muted hover:text-text hover:bg-bg3 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const group = earlyBookingConfirm.group;
+                  setEarlyBookingConfirm(null);
+                  handleCompleteRefillGroup(group);
+                }}
+                className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                title="Mark refill complete and remove from Quick Assist"
+              >
+                <CheckCircle2 size={13} />
+                <span>Mark Complete</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const group = earlyBookingConfirm.group;
+                  setEarlyBookingConfirm(null);
+                  handleBookRefillToPos(group, true, earlyBookingConfirm.selectedIds);
+                }}
+                className="px-4 py-1.5 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-white transition-all shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                title="Open POS and transfer items to bill"
+              >
+                <ShoppingCart size={13} />
+                <span>Confirm & Open POS</span>
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+
+});
 
 export default QuickAssistSidebar;

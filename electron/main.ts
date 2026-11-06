@@ -53,6 +53,9 @@ const HEALTH_URL = `${BACKEND_URL}/api/health/ready`;
 let backendProcess: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
 let isExternalDevBackend = false;
+let shutdownInProgress = false;
+let shutdownForceTimer: NodeJS.Timeout | null = null;
+let shutdownProcExitHandler: (() => void) | null = null;
 
 // Single-instance lock to protect port 5175
 const gotTheLock = app.requestSingleInstanceLock();
@@ -61,13 +64,48 @@ if (!gotTheLock) {
   app.quit();
   process.exit(0);
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', async () => {
+    console.log('[ElectronMain] Second instance event received.');
+    if (shutdownInProgress) {
+      console.log('[ElectronMain] User reopened app while shutdown was in progress. Aborting shutdown...');
+      shutdownInProgress = false;
+      if (shutdownForceTimer) {
+        clearTimeout(shutdownForceTimer);
+        shutdownForceTimer = null;
+      }
+      if (backendProcess && shutdownProcExitHandler) {
+        backendProcess.removeListener('exit', shutdownProcExitHandler);
+        shutdownProcExitHandler = null;
+      }
+    }
+
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     } else {
       console.log('[ElectronMain] Second instance launched while window was closed. Recreating window...');
       createWindow();
+    }
+
+    // Fast-reopen health check: if backend was already terminating, revive it cleanly
+    const alive = await checkBackendAlive(1000);
+    if (!alive && !isExternalDevBackend) {
+      console.log('[ElectronMain] Backend child is down on fast reopen. Restarting...');
+      const exeDir = path.dirname(process.execPath);
+      await reclaimPort(PORT);
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      cleanAllSessionLocks(exeDir);
+      backendProcess = startBackend();
+      try {
+        await waitForBackend();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.loadURL(BACKEND_URL).catch(() => {});
+        }
+      } catch (err) {
+        console.error('[ElectronMain] Failed to revive backend on fast reopen:', err);
+      }
+    } else if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadURL(BACKEND_URL).catch(() => {});
     }
   });
 }
@@ -544,8 +582,13 @@ app.on('window-all-closed', () => {
     return;
   }
 
+  shutdownInProgress = true;
   let settled = false;
   const finish = () => {
+    if (!shutdownInProgress) {
+      console.log('[ElectronMain] Shutdown was aborted by fast-reopen second instance. Skipping app.quit().');
+      return;
+    }
     if (settled) return;
     settled = true;
     const exeDir = path.dirname(process.execPath);
@@ -558,16 +601,19 @@ app.on('window-all-closed', () => {
   // then exits itself) — give it a bounded window to finish that path on its own before
   // falling back to the old hard taskkill, which always produced an unclean shutdown.
   const GRACE_MS = 5000;
-  const forceTimer = setTimeout(() => {
+  shutdownForceTimer = setTimeout(() => {
+    if (!shutdownInProgress) return;
     console.warn('[ElectronMain] Graceful shutdown did not finish in time — forcing kill.');
     forceKillBackendTree(pid);
     finish();
   }, GRACE_MS);
 
-  proc.once('exit', () => {
-    clearTimeout(forceTimer);
+  shutdownProcExitHandler = () => {
+    if (shutdownForceTimer) clearTimeout(shutdownForceTimer);
+    if (!shutdownInProgress) return;
     finish();
-  });
+  };
+  proc.once('exit', shutdownProcExitHandler);
 
   try {
     const req = http.request(

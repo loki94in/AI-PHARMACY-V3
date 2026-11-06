@@ -126,7 +126,7 @@ function runRow(jobId: number, row: RefillCartRow, mode: 'add' | 'plan'): void {
     try {
       const res = await api.addRefillToCart(row.refillId, { qty: row.qty, dryRun: mode === 'plan' });
       patchRow(jobId, row.refillId, {
-        state: res.status, message: res.message, linked: res.linked || [], line: res.line, candidates: res.candidates || []
+        state: res.status, message: res.message, linked: res.linked || [], line: res.line, candidates: res.candidates || [], medicineId: res.medicineId || row.medicineId
       });
       if (res.status === 'added' || res.status === 'in_cart') {
         refillEvent.triggerRefresh();

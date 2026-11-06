@@ -134,7 +134,7 @@ export const RefillsSection: React.FC = () => {
   const [addPatientPhone, setAddPatientPhone] = useState('');
   const [addLanguage, setAddLanguage] = useState<'en' | 'hi' | 'mr'>('en');
   const [addReminderMode, setAddReminderMode] = useState<'manual' | 'auto'>('manual');
-  
+
   // Staged reminders & Mode automation state
   const [stagedSummary, setStagedSummary] = useState<{
     total_staged: number;
@@ -152,7 +152,7 @@ export const RefillsSection: React.FC = () => {
   const [sendingBriefing, setSendingBriefing] = useState(false);
   const [showStagedDetails, setShowStagedDetails] = useState(false);
   const [actioningNotifId, setActioningNotifId] = useState<number | null>(null);
-  
+
   // Frequency state: preset vs custom
   const [freqMode, setFreqMode] = useState<'preset' | 'custom'>('preset');
   const [addInterval, setAddInterval] = useState(30);
@@ -205,7 +205,7 @@ export const RefillsSection: React.FC = () => {
             setHasRefillDraft(true);
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
   }, [showAddModal, editingPatient]);
 
@@ -496,8 +496,8 @@ export const RefillsSection: React.FC = () => {
         setFulfillments([]);
         setInvoices([]);
       }
-    } catch { 
-      if (!silent) toastEvent.trigger('Failed to load refills', 'error', '/crm'); 
+    } catch {
+      if (!silent) toastEvent.trigger('Failed to load refills', 'error', '/crm');
     }
     finally { setLoading(false); }
   }, [loadPatientFulfillments, loadPatientInvoices]);
@@ -506,7 +506,7 @@ export const RefillsSection: React.FC = () => {
     try {
       const res = await apiClient.get('/refills/staged-summary');
       if (res.data) setStagedSummary(res.data);
-    } catch (_) {}
+    } catch (_) { }
   }, []);
 
   const handleTogglePatientReminderMode = async (patient: RefillPatient, e?: React.MouseEvent) => {
@@ -805,7 +805,7 @@ export const RefillsSection: React.FC = () => {
     if (ids.length === 0) return;
     setMarkingOrdered(true);
     try {
-      await Promise.all(ids.map(id => api.markRefillOrdered(id, { note: 'Manual / Phone Order' }).catch(() => {})));
+      await Promise.all(ids.map(id => api.markRefillOrdered(id, { note: 'Manual / Phone Order' }).catch(() => { })));
       toastEvent.trigger(`Marked all refills for ${patient.patient_name} as Ordered`, 'success', '/crm');
       refillEvent.triggerRefresh();
       automationHubEvent.triggerUpdated();
@@ -859,14 +859,24 @@ export const RefillsSection: React.FC = () => {
         days
       });
       toastEvent.trigger(`Refill reminder for ${patient.patient_name} snoozed for ${days} day(s)`, 'success', '/crm');
+      setData(prev => prev.map(p => (
+        (p.patient_phone && p.patient_phone === patient.patient_phone) || p.patient_name === patient.patient_name
+          ? { ...p, reminder_status: 'SNOOZED' }
+          : p
+      )));
+      setSelectedPatient(prev => (
+        prev && ((prev.patient_phone && prev.patient_phone === patient.patient_phone) || prev.patient_name === patient.patient_name)
+          ? { ...prev, reminder_status: 'SNOOZED' }
+          : prev
+      ));
       refillEvent.triggerRefresh();
       automationHubEvent.triggerUpdated();
-      await load(true);
     } catch {
       toastEvent.trigger('Failed to snooze reminder', 'error', '/crm');
     } finally {
       setSnoozing(false);
       setShowMoreMenu(false);
+      load(true).catch(() => { });
     }
   };
 
@@ -1237,14 +1247,14 @@ export const RefillsSection: React.FC = () => {
         } else if (cleanPh) {
           await api.addPatient({ name: fullPatientName, phone: cleanPh });
         }
-      } catch (_) {}
+      } catch (_) { }
 
       // Persist reminder mode preference for this patient
       await apiClient.put('/refills/patient-reminder-mode', {
         patient_phone: addPatientPhone.trim(),
         customer_id: resolvedCustId,
         reminder_mode: addReminderMode
-      }).catch(() => {});
+      }).catch(() => { });
 
       localStorage.removeItem('crm_refill_draft');
       setHasRefillDraft(false);
@@ -1286,12 +1296,13 @@ export const RefillsSection: React.FC = () => {
       const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
       const isLeadWindow = !isOverdue && diffDays <= 6 && diffDays >= 0;
 
+      const isSnoozed = p.reminder_status === 'SNOOZED' || p.medicines?.some(m => m.reminder_status === 'SNOOZED');
       const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
       const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
 
-      // Action tabs hide patients already fully handled (ordered + reminder sent, or fulfilled today); master tabs keep everyone
-      if (filterTab === 'overdue' && !showSettledOverdue && (isSettled || isFulfilledToday)) return false;
-      if (filterTab === 'lead' && (isSettled || isFulfilledToday)) return false;
+      // Action tabs hide patients already fully handled (ordered + reminder sent, fulfilled today, or snoozed); master tabs keep everyone
+      if (filterTab === 'overdue' && !showSettledOverdue && (isSettled || isFulfilledToday || isSnoozed)) return false;
+      if (filterTab === 'lead' && (isSettled || isFulfilledToday || isSnoozed)) return false;
       if (filterTab === 'overdue') return isOverdue;
       if (filterTab === 'lead') return isLeadWindow;
       if (filterTab === 'active') {
@@ -1311,9 +1322,10 @@ export const RefillsSection: React.FC = () => {
   const totalPrescriptions = data.reduce((sum, p) => sum + (p.medicines?.length || 0), 0);
   const actionableOverdueCount = data.filter(p => {
     const isOverdue = new Date(p.next_refill_date) < new Date();
+    const isSnoozed = p.reminder_status === 'SNOOZED' || p.medicines?.some(m => m.reminder_status === 'SNOOZED');
     const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
     const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
-    return isOverdue && !isSettled && !isFulfilledToday;
+    return isOverdue && !isSettled && !isFulfilledToday && !isSnoozed;
   }).length;
   const settledOverdueCount = data.filter(p => {
     const isOverdue = new Date(p.next_refill_date) < new Date();
@@ -1325,9 +1337,10 @@ export const RefillsSection: React.FC = () => {
     const today = new Date();
     const dueDate = new Date(p.next_refill_date);
     const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
+    const isSnoozed = p.reminder_status === 'SNOOZED' || p.medicines?.some(m => m.reminder_status === 'SNOOZED');
     const isSettled = isPatientRefillsSettled(p.medicines.map(m => ({ ...m, reminder_status: m.reminder_status ?? p.reminder_status, last_refill_date: m.last_refill_date ?? p.last_refill_date })));
     const isFulfilledToday = isRefillFulfilledToday(p) || (p.medicines && p.medicines.length > 0 && p.medicines.every(isRefillFulfilledToday));
-    return dueDate >= today && diffDays <= 6 && diffDays >= 0 && !isSettled && !isFulfilledToday;
+    return dueDate >= today && diffDays <= 6 && diffDays >= 0 && !isSettled && !isFulfilledToday && !isSnoozed;
   }).length;
 
   // Patients with an active refill medicine that has no linked distributor.
@@ -1408,11 +1421,10 @@ export const RefillsSection: React.FC = () => {
           type="button"
           onClick={() => handleFilterChange('all')}
           title="Filter to all prescribed refill patients"
-          className={`h-[76px] p-3.5 rounded-2xl border transition-all text-left flex items-center justify-between cursor-pointer active:scale-[0.99] ${
-            filterTab === 'all'
+          className={`h-[76px] p-3.5 rounded-2xl border transition-all text-left flex items-center justify-between cursor-pointer active:scale-[0.99] ${filterTab === 'all'
               ? 'bg-primary/10 border-primary/50 shadow-sm ring-1 ring-primary/30'
               : 'bg-bg border-border hover:bg-bg2'
-          }`}
+            }`}
         >
           <div className="min-w-0 pr-2">
             <div className="flex items-center gap-1.5">
@@ -1427,11 +1439,10 @@ export const RefillsSection: React.FC = () => {
               {data.length} <span className="text-xs font-semibold text-muted">({totalPrescriptions} Meds)</span>
             </h3>
           </div>
-          <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 transition-colors ${
-            filterTab === 'all'
+          <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 transition-colors ${filterTab === 'all'
               ? 'bg-primary text-white border-primary shadow-xs'
               : 'bg-primary/10 text-primary border-primary/20'
-          }`}>
+            }`}>
             <Repeat2 size={18} />
           </div>
         </button>
@@ -1441,11 +1452,10 @@ export const RefillsSection: React.FC = () => {
           type="button"
           onClick={() => handleFilterChange('overdue')}
           title="Filter to overdue refill patients (click again to show all)"
-          className={`h-[76px] p-3.5 rounded-2xl border transition-all text-left flex items-center justify-between cursor-pointer active:scale-[0.99] ${
-            filterTab === 'overdue'
+          className={`h-[76px] p-3.5 rounded-2xl border transition-all text-left flex items-center justify-between cursor-pointer active:scale-[0.99] ${filterTab === 'overdue'
               ? 'bg-red-500/10 border-red-500/50 shadow-sm ring-1 ring-red-500/30'
               : 'bg-bg border-border hover:bg-bg2'
-          }`}
+            }`}
         >
           <div className="min-w-0 pr-2">
             <div className="flex items-center gap-1.5">
@@ -1467,11 +1477,10 @@ export const RefillsSection: React.FC = () => {
               )}
             </div>
           </div>
-          <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 transition-colors ${
-            filterTab === 'overdue'
+          <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 transition-colors ${filterTab === 'overdue'
               ? 'bg-red-500 text-white border-red-500 shadow-xs'
               : (actionableOverdueCount > 0 ? 'bg-red-500/10 text-red-400 border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20')
-          }`}>
+            }`}>
             <AlertCircle size={18} />
           </div>
         </button>
@@ -1481,11 +1490,10 @@ export const RefillsSection: React.FC = () => {
           type="button"
           onClick={() => handleFilterChange('lead')}
           title="Filter to upcoming refill patients due in 5-6 days (click again to show all)"
-          className={`h-[76px] p-3.5 rounded-2xl border transition-all text-left flex items-center justify-between cursor-pointer active:scale-[0.99] ${
-            filterTab === 'lead'
+          className={`h-[76px] p-3.5 rounded-2xl border transition-all text-left flex items-center justify-between cursor-pointer active:scale-[0.99] ${filterTab === 'lead'
               ? 'bg-amber-500/10 border-amber-500/50 shadow-sm ring-1 ring-amber-500/30'
               : 'bg-bg border-border hover:bg-bg2'
-          }`}
+            }`}
         >
           <div className="min-w-0 pr-2">
             <div className="flex items-center gap-1.5">
@@ -1500,11 +1508,10 @@ export const RefillsSection: React.FC = () => {
               {leadWindowCount} Upcoming
             </h3>
           </div>
-          <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 transition-colors ${
-            filterTab === 'lead'
+          <div className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 transition-colors ${filterTab === 'lead'
               ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
               : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-          }`}>
+            }`}>
             <Bell size={18} />
           </div>
         </button>
@@ -1591,11 +1598,10 @@ export const RefillsSection: React.FC = () => {
                 <div key={item.id} className="p-2.5 bg-bg border border-border rounded-xl flex flex-col justify-between gap-1.5 text-xs">
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-text truncate">{item.recipient_name}</span>
-                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                      item.reminder_mode === 'auto'
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${item.reminder_mode === 'auto'
                         ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                         : 'bg-sky-500/15 text-sky-400 border border-sky-500/30'
-                    }`}>
+                      }`}>
                       {item.reminder_mode === 'auto' ? '🤖 Auto' : '👆 Manual'}
                     </span>
                   </div>
@@ -1680,11 +1686,10 @@ export const RefillsSection: React.FC = () => {
                 key={tab.id}
                 type="button"
                 onClick={() => handleFilterChange(tab.id)}
-                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all shrink-0 cursor-pointer ${
-                  filterTab === tab.id
+                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg transition-all shrink-0 cursor-pointer ${filterTab === tab.id
                     ? 'bg-primary text-white shadow-xs'
                     : 'text-muted hover:text-text hover:bg-bg3'
-                }`}
+                  }`}
               >
                 {tab.label}
               </button>
@@ -1753,11 +1758,10 @@ export const RefillsSection: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowSettledOverdue(v => !v)}
-                className={`px-2 py-1 rounded-xl border text-[10px] font-bold transition-colors cursor-pointer shrink-0 ${
-                  showSettledOverdue
+                className={`px-2 py-1 rounded-xl border text-[10px] font-bold transition-colors cursor-pointer shrink-0 ${showSettledOverdue
                     ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
                     : 'bg-bg2 border-border text-muted hover:text-text'
-                }`}
+                  }`}
                 title="Toggle display of overdue patients who are already ordered & reminded"
               >
                 {showSettledOverdue ? 'Hide Handled' : `+${settledOverdueCount} Handled`}
@@ -1817,8 +1821,8 @@ export const RefillsSection: React.FC = () => {
               filtered.map(patient => {
                 const isSelected = selectedPatient
                   ? (selectedPatient.customer_id && patient.customer_id
-                      ? selectedPatient.customer_id === patient.customer_id
-                      : (selectedPatient.patient_phone === patient.patient_phone && selectedPatient.patient_name === patient.patient_name))
+                    ? selectedPatient.customer_id === patient.customer_id
+                    : (selectedPatient.patient_phone === patient.patient_phone && selectedPatient.patient_name === patient.patient_name))
                   : false;
                 const dueDate = new Date(patient.next_refill_date);
                 const isOverdue = dueDate < new Date();
@@ -1831,21 +1835,19 @@ export const RefillsSection: React.FC = () => {
                   <div
                     key={patient.customer_id ? `cust_${patient.customer_id}` : `${patient.patient_phone}_${patient.patient_name}`}
                     onClick={() => selectPatientAndLoadDetails(patient)}
-                    className={`p-3 cursor-pointer transition-all flex items-center justify-between hover:bg-bg/60 ${
-                      isSelected ? 'bg-primary/10 border-l-4 border-primary font-semibold' : ''
-                    }`}
+                    className={`p-3 cursor-pointer transition-all flex items-center justify-between hover:bg-bg/60 ${isSelected ? 'bg-primary/10 border-l-4 border-primary font-semibold' : ''
+                      }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0 pr-2">
                       <div
-                        className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 border ${
-                          allPaused
+                        className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-bold shrink-0 border ${allPaused
                             ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
                             : isOverdue
-                            ? 'bg-red-500/15 text-red-400 border-red-500/30'
-                            : isLead
-                            ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                            : 'bg-primary/15 text-primary border-primary/30'
-                        }`}
+                              ? 'bg-red-500/15 text-red-400 border-red-500/30'
+                              : isLead
+                                ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                                : 'bg-primary/15 text-primary border-primary/30'
+                          }`}
                       >
                         {patient.patient_name?.[0]?.toUpperCase() || '?'}
                       </div>
@@ -1868,11 +1870,10 @@ export const RefillsSection: React.FC = () => {
                           <button
                             type="button"
                             onClick={(e) => handleTogglePatientReminderMode(patient, e)}
-                            className={`text-[9px] px-1.5 py-0.5 rounded border shrink-0 font-bold transition-all cursor-pointer ${
-                              (patient.reminder_mode || 'manual') === 'auto'
+                            className={`text-[9px] px-1.5 py-0.5 rounded border shrink-0 font-bold transition-all cursor-pointer ${(patient.reminder_mode || 'manual') === 'auto'
                                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
                                 : 'bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/25'
-                            }`}
+                              }`}
                             title="Click to toggle: Auto dispatch 🤖 vs Manual review 👆"
                           >
                             {(patient.reminder_mode || 'manual') === 'auto' ? '🤖 Auto' : '👆 Manual'}
@@ -1897,9 +1898,8 @@ export const RefillsSection: React.FC = () => {
 
                     <div className="text-right shrink-0">
                       <div
-                        className={`text-[10px] font-bold ${
-                          allPaused ? 'text-amber-400' : isOverdue ? 'text-red-400' : isLead ? 'text-amber-400' : 'text-emerald-400'
-                        }`}
+                        className={`text-[10px] font-bold ${allPaused ? 'text-amber-400' : isOverdue ? 'text-red-400' : isLead ? 'text-amber-400' : 'text-emerald-400'
+                          }`}
                       >
                         {allPaused ? '⏸️ Paused' : isOverdue ? `Overdue ${Math.abs(diffDays)}d` : isLead ? `Due in ${diffDays}d` : formatDate(patient.next_refill_date)}
                       </div>
@@ -1908,6 +1908,8 @@ export const RefillsSection: React.FC = () => {
                           <span className="text-emerald-400 font-medium" title="Reminder sent">✓ Sent</span>
                         ) : patient.reminder_status === 'QUEUED' ? (
                           <span className="text-amber-400 font-medium" title="Reminder queued">⏳ Queued</span>
+                        ) : patient.reminder_status === 'SNOOZED' ? (
+                          <span className="text-sky-400 font-medium" title="Reminder snoozed">💤 Snoozed</span>
                         ) : (
                           <span>{isOverdue ? 'Action Needed' : 'Scheduled'}</span>
                         )}
@@ -1942,14 +1944,15 @@ export const RefillsSection: React.FC = () => {
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="text-sm font-bold text-text">{selectedPatient.patient_name || 'Unnamed Patient'}</h2>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                        isSelectedOverdue
-                          ? 'bg-red-500/10 text-red-400 border-red-500/20'
-                          : isSelectedLeadWindow
-                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                          : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                      }`}>
-                        {isSelectedOverdue ? '🚨 OVERDUE REFILL' : isSelectedLeadWindow ? '🔔 PREP WINDOW ACTIVE' : 'ACTIVE SCHEDULE'}
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${selectedPatient.reminder_status === 'SNOOZED'
+                          ? 'bg-sky-500/10 text-sky-400 border-sky-500/20'
+                          : isSelectedOverdue
+                            ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                            : isSelectedLeadWindow
+                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                        }`}>
+                        {selectedPatient.reminder_status === 'SNOOZED' ? '💤 SNOOZED' : isSelectedOverdue ? '🚨 OVERDUE REFILL' : isSelectedLeadWindow ? '🔔 PREP WINDOW ACTIVE' : 'ACTIVE SCHEDULE'}
                       </span>
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-bg3 text-text border border-border">
                         {selectedPatient.language === 'hi' ? '🇮🇳 HI' : selectedPatient.language === 'mr' ? '🇮🇳 MR' : '🇬🇧 EN'}
@@ -1957,11 +1960,10 @@ export const RefillsSection: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleTogglePatientReminderMode(selectedPatient)}
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
-                          (selectedPatient.reminder_mode || 'manual') === 'auto'
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${(selectedPatient.reminder_mode || 'manual') === 'auto'
                             ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
                             : 'bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/25'
-                        }`}
+                          }`}
                         title="Click to toggle reminder dispatch mode for this patient"
                       >
                         {(selectedPatient.reminder_mode || 'manual') === 'auto' ? '🤖 Auto Dispatch' : '👆 Manual Approval'}
@@ -2230,11 +2232,10 @@ export const RefillsSection: React.FC = () => {
               <div className="px-4 pt-2.5 border-b border-border bg-bg3/20 flex items-center gap-4 shrink-0">
                 <button
                   onClick={() => setActiveDetailTab('prescriptions')}
-                  className={`pb-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
-                    activeDetailTab === 'prescriptions'
+                  className={`pb-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${activeDetailTab === 'prescriptions'
                       ? 'border-primary text-primary'
                       : 'border-transparent text-muted hover:text-text'
-                  }`}
+                    }`}
                 >
                   <Package size={13} />
                   <span>Prescriptions &amp; Stock ({selectedPatient.medicines?.length || 0})</span>
@@ -2245,11 +2246,10 @@ export const RefillsSection: React.FC = () => {
                     setActiveDetailTab('fulfillments');
                     loadPatientFulfillments(selectedPatient.patient_phone, selectedPatient.customer_id);
                   }}
-                  className={`pb-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
-                    activeDetailTab === 'fulfillments'
+                  className={`pb-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${activeDetailTab === 'fulfillments'
                       ? 'border-primary text-primary'
                       : 'border-transparent text-muted hover:text-text'
-                  }`}
+                    }`}
                 >
                   <Clock size={13} />
                   <span>Fulfillment History ({fulfillments.length})</span>
@@ -2260,11 +2260,10 @@ export const RefillsSection: React.FC = () => {
                     setActiveDetailTab('invoices');
                     loadPatientInvoices(selectedPatient.patient_phone, selectedPatient.customer_id);
                   }}
-                  className={`pb-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${
-                    activeDetailTab === 'invoices'
+                  className={`pb-2.5 text-xs font-bold border-b-2 transition-all flex items-center gap-1.5 cursor-pointer ${activeDetailTab === 'invoices'
                       ? 'border-primary text-primary'
                       : 'border-transparent text-muted hover:text-text'
-                  }`}
+                    }`}
                 >
                   <FileText size={13} />
                   <span>Sales &amp; Purchase Bills ({invoices.length})</span>
@@ -2316,19 +2315,17 @@ export const RefillsSection: React.FC = () => {
                         return (
                           <div
                             key={med.id}
-                            className={`p-3.5 rounded-xl border flex flex-col gap-3 transition-all ${
-                              isCanceled
+                            className={`p-3.5 rounded-xl border flex flex-col gap-3 transition-all ${isCanceled
                                 ? 'bg-red-500/5 border-red-500/20 opacity-75'
                                 : isPaused
-                                ? 'bg-amber-500/5 border-amber-500/20'
-                                : 'bg-bg border-border hover:border-border/80 shadow-xs'
-                            }`}
+                                  ? 'bg-amber-500/5 border-amber-500/20'
+                                  : 'bg-bg border-border hover:border-border/80 shadow-xs'
+                              }`}
                           >
                             <div className="flex items-start justify-between gap-3 flex-wrap">
                               <div className="flex items-start gap-2.5 min-w-[220px]">
-                                <div className={`p-2 rounded-xl mt-0.5 shrink-0 ${
-                                  isCanceled ? 'bg-red-500/10 text-red-400' : isPaused ? 'bg-amber-500/10 text-amber-400' : 'bg-primary/10 text-primary'
-                                }`}>
+                                <div className={`p-2 rounded-xl mt-0.5 shrink-0 ${isCanceled ? 'bg-red-500/10 text-red-400' : isPaused ? 'bg-amber-500/10 text-amber-400' : 'bg-primary/10 text-primary'
+                                  }`}>
                                   <Package size={16} />
                                 </div>
                                 <div>
@@ -2455,9 +2452,8 @@ export const RefillsSection: React.FC = () => {
                                             e.stopPropagation();
                                             setPriorityDropdownMedId(prev => prev === med.medicine_id ? null : (med.medicine_id as number));
                                           }}
-                                          className={`px-1.5 py-1.5 border-l border-border hover:bg-bg3 text-muted hover:text-text cursor-pointer transition-colors ${
-                                            priorityDropdownMedId === med.medicine_id ? 'bg-bg3 text-text' : ''
-                                          }`}
+                                          className={`px-1.5 py-1.5 border-l border-border hover:bg-bg3 text-muted hover:text-text cursor-pointer transition-colors ${priorityDropdownMedId === med.medicine_id ? 'bg-bg3 text-text' : ''
+                                            }`}
                                           title={`Change priority among ${med.linked_distributors.length} linked distributors`}
                                         >
                                           <span className="text-[10px] font-bold">+{med.linked_distributors.length - 1}</span>
@@ -2484,11 +2480,10 @@ export const RefillsSection: React.FC = () => {
                                                 key={dist}
                                                 type="button"
                                                 onClick={() => handleSetPriorityDistributor(med.medicine_id as number, med.medicine_name, dist)}
-                                                className={`flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
-                                                  idx === 0
+                                                className={`flex items-center justify-between gap-1.5 px-2 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${idx === 0
                                                     ? 'bg-primary/15 text-primary font-bold border border-primary/20'
                                                     : 'hover:bg-bg3 text-text font-medium'
-                                                }`}
+                                                  }`}
                                               >
                                                 <div className="flex items-center gap-1.5 truncate">
                                                   <span className="text-[10px] font-mono text-muted shrink-0">#{idx + 1}</span>
@@ -2520,11 +2515,10 @@ export const RefillsSection: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => handleToggleOverride(med.id)}
-                                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
-                                    isOverridden
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${isOverridden
                                       ? 'bg-purple-500/15 border-purple-500/40 text-purple-400'
                                       : 'bg-bg2 border-border text-muted hover:text-text'
-                                  }`}
+                                    }`}
                                   title="Force enable sell in POS even if inventory shows 0"
                                 >
                                   <Zap size={11} />
@@ -2549,11 +2543,10 @@ export const RefillsSection: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => handleTogglePauseRefill(med.id, med.is_active !== 0)}
-                                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
-                                    med.is_active !== 0
+                                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${med.is_active !== 0
                                       ? 'bg-amber-500/15 hover:bg-amber-500/25 border-amber-500/40 text-amber-400'
                                       : 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/40 text-emerald-400'
-                                  }`}
+                                    }`}
                                   title={med.is_active !== 0 ? 'Pause refill notifications for this medicine' : 'Resume refill schedule'}
                                 >
                                   {med.is_active !== 0 ? '⏸️ Pause' : '▶️ Resume'}
@@ -2773,7 +2766,7 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Add / Edit Refill Modal ── */}
       {showAddModal && createPortal(
-        <div 
+        <div
           className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4 animate-fade-in"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
@@ -2893,11 +2886,10 @@ export const RefillsSection: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setAddLanguage('en')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                      addLanguage === 'en'
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${addLanguage === 'en'
                         ? 'bg-primary/15 border-primary text-primary shadow-sm'
                         : 'bg-bg border-border text-muted hover:text-text hover:bg-bg3'
-                    }`}
+                      }`}
                   >
                     <span>🇬🇧</span>
                     <span>English</span>
@@ -2905,11 +2897,10 @@ export const RefillsSection: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setAddLanguage('hi')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                      addLanguage === 'hi'
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${addLanguage === 'hi'
                         ? 'bg-primary/15 border-primary text-primary shadow-sm'
                         : 'bg-bg border-border text-muted hover:text-text hover:bg-bg3'
-                    }`}
+                      }`}
                   >
                     <span>🇮🇳</span>
                     <span>हिंदी (Hindi)</span>
@@ -2917,11 +2908,10 @@ export const RefillsSection: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setAddLanguage('mr')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                      addLanguage === 'mr'
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${addLanguage === 'mr'
                         ? 'bg-primary/15 border-primary text-primary shadow-sm'
                         : 'bg-bg border-border text-muted hover:text-text hover:bg-bg3'
-                    }`}
+                      }`}
                   >
                     <span>🇮🇳</span>
                     <span>मराठी (Marathi)</span>
@@ -2939,11 +2929,10 @@ export const RefillsSection: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setAddReminderMode('manual')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                      addReminderMode === 'manual'
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-2 cursor-pointer ${addReminderMode === 'manual'
                         ? 'bg-sky-500/15 border-sky-500/40 text-sky-400 shadow-sm'
                         : 'bg-bg border-border text-muted hover:text-text hover:bg-bg3'
-                    }`}
+                      }`}
                   >
                     <span>👆</span>
                     <span>Manual Approval (Safe)</span>
@@ -2951,11 +2940,10 @@ export const RefillsSection: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setAddReminderMode('auto')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                      addReminderMode === 'auto'
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-2 cursor-pointer ${addReminderMode === 'auto'
                         ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-sm'
                         : 'bg-bg border-border text-muted hover:text-text hover:bg-bg3'
-                    }`}
+                      }`}
                   >
                     <span>🤖</span>
                     <span>Auto Dispatch</span>
@@ -2990,11 +2978,10 @@ export const RefillsSection: React.FC = () => {
                         setFreqMode('preset');
                         setAddInterval(opt.days);
                       }}
-                      className={`px-2.5 py-1.5 rounded-xl text-xs text-center border font-bold transition-all cursor-pointer ${
-                        freqMode === 'preset' && addInterval === opt.days
+                      className={`px-2.5 py-1.5 rounded-xl text-xs text-center border font-bold transition-all cursor-pointer ${freqMode === 'preset' && addInterval === opt.days
                           ? 'bg-primary border-primary text-white shadow-md'
                           : 'bg-bg border-border text-muted hover:text-text hover:bg-bg2'
-                      }`}
+                        }`}
                     >
                       {opt.label}
                     </button>
@@ -3124,11 +3111,10 @@ export const RefillsSection: React.FC = () => {
 
                           {/* Dropdown Suggestions List */}
                           {row.isOpen && (
-                            <div className={`absolute left-0 right-0 z-30 bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden max-h-56 overflow-y-auto dropdown-scroll ${
-                              dropUpIndex === idx
+                            <div className={`absolute left-0 right-0 z-30 bg-bg2 border border-border rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.12)] overflow-hidden max-h-56 overflow-y-auto dropdown-scroll ${dropUpIndex === idx
                                 ? 'bottom-full mb-1'
                                 : 'top-full mt-1'
-                            }`}>
+                              }`}>
                               {row.loadingSuggestions && (
                                 <div className="p-3 text-center text-xs text-muted flex items-center justify-center gap-2">
                                   <RefreshCw size={12} className="animate-spin" /> Fetching inventory…
@@ -3163,11 +3149,10 @@ export const RefillsSection: React.FC = () => {
                                         <span className="text-[11px] font-medium text-text">₹{s.mrp}</span>
                                       ) : null}
                                       <span
-                                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                                          inStock
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${inStock
                                             ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                                             : 'bg-red-500/15 text-red-400 border border-red-500/30'
-                                        }`}
+                                          }`}
                                       >
                                         {inStock ? `${s.in_stock_qty} in stock` : 'Out of Stock'}
                                       </span>
@@ -3226,13 +3211,12 @@ export const RefillsSection: React.FC = () => {
                             {row.mrp && <span className="text-muted">· ₹{row.mrp}</span>}
                           </div>
                           <div
-                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                              (row.inStockQty || 0) >= row.quantity_needed
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${(row.inStockQty || 0) >= row.quantity_needed
                                 ? 'bg-emerald-500/15 text-emerald-400'
                                 : (row.inStockQty || 0) > 0
-                                ? 'bg-amber-500/15 text-amber-400'
-                                : 'bg-red-500/15 text-red-400'
-                            }`}
+                                  ? 'bg-amber-500/15 text-amber-400'
+                                  : 'bg-red-500/15 text-red-400'
+                              }`}
                           >
                             {(row.inStockQty || 0) >= row.quantity_needed ? (
                               <><Check size={10} /> In Stock ({row.inStockQty} available)</>
@@ -3363,7 +3347,7 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Inline Edit Refill Frequency Modal ── */}
       {editingRefill && createPortal(
-        <div 
+        <div
           className="fixed inset-0 bg-black/60 z-modal flex items-center justify-center p-4 animate-fade-in"
           onClick={(e) => {
             if (e.target === e.currentTarget) setEditingRefill(null);
@@ -3394,11 +3378,10 @@ export const RefillsSection: React.FC = () => {
                   key={days}
                   type="button"
                   onClick={() => setEditIntervalVal(days)}
-                  className={`py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                    editIntervalVal === days
+                  className={`py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${editIntervalVal === days
                       ? 'bg-primary border-primary text-white shadow-md'
                       : 'bg-bg border-border text-muted hover:text-text'
-                  }`}
+                    }`}
                 >
                   {days} Days
                 </button>
@@ -3459,7 +3442,7 @@ export const RefillsSection: React.FC = () => {
 
       {/* ── Bill / Invoice Preview Modal ── */}
       {viewInvoice && createPortal(
-        <div 
+        <div
           className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4 animate-fade-in"
           onClick={(e) => {
             if (e.target === e.currentTarget) setViewInvoice(null);

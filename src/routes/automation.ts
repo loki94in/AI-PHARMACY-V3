@@ -49,7 +49,7 @@ router.post('/catalog/:id/toggle', async (req, res) => {
     try {
       const { triggerSchedulerService } = await import('../services/triggerSchedulerService.js');
       await triggerSchedulerService.reloadSchedules(db);
-    } catch (_) {}
+    } catch (_) { }
     res.json({ success: true });
   } catch (err: any) {
     console.error('Failed to toggle automation:', err);
@@ -111,7 +111,7 @@ router.get('/hub-summary', async (_req, res) => {
     const pendingRow = [...queueRows].reverse().find((r: any) => ['pending', 'waiting'].includes(r.status));
     const activeSendingRow = sendingRow || pendingRow;
     const hasActiveSend = Boolean(activeSendingRow);
-    
+
     // Count unacknowledged/unresolved failed messages
     const unresolvedFailures = activity.filter(a => String(a.status).startsWith('failed') && a.acknowledged === 0);
     const unresolvedFailuresCount = unresolvedFailures.length;
@@ -168,7 +168,7 @@ router.post('/resolve-failure', async (req, res) => {
         const refStr = String(notifRow.reference_id);
         const qId = refStr.startsWith('queue-') ? refStr.replace('queue-', '') : (refStr.startsWith('queue_') ? refStr.replace('queue_', '') : refStr);
         if (/^\d+$/.test(qId)) {
-          await db.run("UPDATE whatsapp_send_queue SET acknowledged = 1, resolved_at = ? WHERE id = ?", [now, Number(qId)]).catch(() => {});
+          await db.run("UPDATE whatsapp_send_queue SET acknowledged = 1, resolved_at = ? WHERE id = ?", [now, Number(qId)]).catch(() => { });
         }
       }
     } else if (rawId) {
@@ -302,9 +302,10 @@ router.post('/notifications/:id/snooze', async (req, res) => {
       return res.status(404).json({ error: 'Notification not found' });
     }
 
-    const snoozeUntilDate = new Date();
-    snoozeUntilDate.setDate(snoozeUntilDate.getDate() + days);
-    const snoozedUntilStr = snoozeUntilDate.toISOString().slice(0, 10);
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const snoozeUntilDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + days);
+    const snoozedUntilStr = `${snoozeUntilDate.getFullYear()}-${pad(snoozeUntilDate.getMonth() + 1)}-${pad(snoozeUntilDate.getDate())}`;
 
     await db.run(
       `UPDATE automation_notifications 
@@ -316,17 +317,17 @@ router.post('/notifications/:id/snooze', async (req, res) => {
       [snoozedUntilStr, `Snoozed for ${days} day(s) until ${snoozedUntilStr}`, id]
     );
 
-    // If associated with patient_refills, shift next_refill_date by +days
+    // If associated with patient_refills, safely postpone next_refill_date by +days
     if (existing.reference_id && (existing.type === 'refill_collection' || existing.type === 'refill_reminder')) {
       const refIds = String(existing.reference_id).split(',').map((s: string) => Number(s.trim())).filter(Boolean);
       for (const refId of refIds) {
         await db.run(
           `UPDATE patient_refills 
-           SET next_refill_date = DATE(COALESCE(next_refill_date, 'now'), ?),
-               reminder_status = 'NOT_SENT'
+           SET next_refill_date = DATE(MAX(COALESCE(DATE(next_refill_date), DATE('now', 'localtime')), DATE('now', 'localtime')), ?),
+               reminder_status = 'SNOOZED'
            WHERE id = ?`,
           [`+${days} day`, refId]
-        ).catch(() => {});
+        ).catch(() => { });
       }
     }
 
@@ -375,11 +376,11 @@ router.post('/notifications/group/snooze', async (req, res) => {
         for (const refId of refIds) {
           await db.run(
             `UPDATE patient_refills 
-             SET next_refill_date = DATE('now', 'localtime', ?),
+             SET next_refill_date = DATE(MAX(COALESCE(DATE(next_refill_date), DATE('now', 'localtime')), DATE('now', 'localtime')), ?),
                  reminder_status = 'SNOOZED'
              WHERE id = ?`,
             [`+${snoozeDays} day`, refId]
-          ).catch(() => {});
+          ).catch(() => { });
         }
       }
     }
@@ -416,8 +417,8 @@ router.post('/notifications/snooze-patient', async (req, res) => {
     const rawName = String(patient_name || '').trim();
     const cleanName = rawName.replace(/^(mr|mrs|ms|dr|master|shri|smt)\.?\s+/i, '').trim();
 
-    // Update notifications
-    await db.run(
+    // 1. Update existing notifications if any are already staged or snoozed
+    const notifUpdateResult = await db.run(
       `UPDATE automation_notifications 
        SET status = 'snoozed', 
            lifecycle_status = 'snoozed',
@@ -437,10 +438,10 @@ router.post('/notifications/snooze-patient', async (req, res) => {
       ]
     );
 
-    // Shift next_refill_date on patient_refills
+    // 2. Safely postpone next_refill_date from either future date or today
     await db.run(
       `UPDATE patient_refills 
-       SET next_refill_date = DATE('now', 'localtime', ?),
+       SET next_refill_date = DATE(MAX(COALESCE(DATE(next_refill_date), DATE('now', 'localtime')), DATE('now', 'localtime')), ?),
            reminder_status = 'SNOOZED'
        WHERE (
          (patient_phone LIKE '%' || ? AND ? != '')
@@ -454,6 +455,37 @@ router.post('/notifications/snooze-patient', async (req, res) => {
         cleanName, cleanName
       ]
     );
+
+    // 3. If no existing notification was updated (Stage A upcoming refill), create a snoozed entry
+    // to shield against premature re-staging during background sync
+    if ((notifUpdateResult as any)?.changes === 0) {
+      const matchingRefills = await db.all(
+        `SELECT id FROM patient_refills 
+         WHERE (
+           (patient_phone LIKE '%' || ? AND ? != '')
+           OR patient_name = ?
+           OR (patient_name LIKE '%' || ? AND ? != '')
+         ) AND is_active = 1`,
+        [cleanPhone, cleanPhone, rawName, cleanName, cleanName]
+      );
+      if (matchingRefills.length > 0) {
+        const refIdsStr = matchingRefills.map((r: any) => r.id).join(',');
+        await db.run(
+          `INSERT INTO automation_notifications 
+           (type, recipient_name, recipient_phone, message, status, lifecycle_status, snoozed_until, error_message, reference_id, needs_confirmation)
+           VALUES (?, ?, ?, ?, 'snoozed', 'snoozed', ?, ?, ?, 1)`,
+          [
+            'refill_reminder',
+            rawName || cleanName,
+            cleanPhone || rawPhone,
+            `Refill reminder for ${rawName || cleanName} is snoozed until ${snoozedUntilStr}`,
+            snoozedUntilStr,
+            `Snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}`,
+            refIdsStr
+          ]
+        ).catch(() => { });
+      }
+    }
 
     const { eventService } = await import('../services/eventService.js');
     eventService.broadcast('automation_hub_updated', { type: 'patient_snoozed', patient_phone: cleanPhone || rawPhone });
@@ -505,14 +537,14 @@ router.post('/notifications/:id/cancel', async (req, res) => {
         await db.run(
           "UPDATE patient_refills SET status = 'notified', reminder_status = 'SENT', reminder_sent_at = datetime('now') WHERE id = ?",
           [refId]
-        ).catch(() => {});
+        ).catch(() => { });
       }
     }
 
     try {
       const { messagingQueue } = await import('../services/messagingQueue.js');
       await messagingQueue.cancelMessage(Number(id));
-    } catch (_) {}
+    } catch (_) { }
 
     res.json({ success: true, message: 'Notification successfully cancelled / dismissed' });
   } catch (err: any) {
@@ -544,7 +576,7 @@ router.post('/notifications/:id/manual', async (req, res) => {
         await db.run(
           "UPDATE patient_refills SET status = 'notified', reminder_status = 'SENT', reminder_sent_at = datetime('now') WHERE id = ?",
           [refId]
-        ).catch(() => {});
+        ).catch(() => { });
       }
     }
 
@@ -602,7 +634,7 @@ router.post('/notifications/:id/send', async (req, res) => {
         await db.run(
           "UPDATE patient_refills SET status = 'notified', reminder_status = 'SENT', reminder_sent_at = datetime('now') WHERE id = ?",
           [refId]
-        ).catch(() => {});
+        ).catch(() => { });
       }
     }
 

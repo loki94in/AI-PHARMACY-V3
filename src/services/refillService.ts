@@ -56,7 +56,7 @@ export async function checkAllRefills(db: Database): Promise<void> {
           notes: `Paused at patient request, auto-shifted to ${openDay.ymd}`,
           dbInstance: db
         });
-      } catch (_) {}
+      } catch (_) { }
     }
   } catch (cleanErr) {
     console.warn('[RefillService] Cleanup of paused refills warning:', cleanErr);
@@ -87,8 +87,8 @@ export async function checkAllRefills(db: Database): Promise<void> {
   today.setHours(0, 0, 0, 0);
   const todayYmd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-//   const _dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-//   const _weeklyOffLower = (operatingSchedule.weeklyOff || 'monday').toLowerCase();
+  //   const _dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  //   const _weeklyOffLower = (operatingSchedule.weeklyOff || 'monday').toLowerCase();
 
   for (const refill of activeRefills) {
     // Durable guard: if this refill cycle was already fulfilled today, do not resurrect quick bill or special orders today
@@ -199,6 +199,7 @@ export async function checkAllRefills(db: Database): Promise<void> {
        FROM patient_refills pr
        WHERE pr.is_active = 1
          AND pr.status NOT IN ('completed', 'canceled', 'notified', 'ordered')
+         AND COALESCE(pr.reminder_status, 'NOT_SENT') != 'SNOOZED'
          AND COALESCE(pr.patient_confirmed, 0) = 0
          AND pr.cart_store_name IS NULL
          AND (pr.next_refill_date IS NULL OR DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days'))
@@ -229,7 +230,7 @@ export async function checkAllRefills(db: Database): Promise<void> {
 export async function createQuickBillForRefill(db: any, refill: any): Promise<number> {
   const invoice_no = `H-REF-${Date.now()}`;
   const temp_label = `Refill - ${refill.patient_name}`;
-  
+
   const invRow = await db.get(
     `SELECT im.id as inventory_id, im.batch_no, im.expiry_date, im.mrp, im.unit_price, COALESCE(im.unit_price, im.mrp, m.mrp, 0) as price, COALESCE(m.pack_size, 1) as pack_size
      FROM inventory_master im
@@ -256,7 +257,7 @@ export async function createQuickBillForRefill(db: any, refill: any): Promise<nu
     pack_size: invRow ? (invRow.pack_size || 1) : 1,
     discount_per: 0
   }];
-  
+
   const cart_data = JSON.stringify(cartItems);
 
   const billResult = await db.run(
@@ -338,7 +339,7 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
     if (closure.isOffDayUpcoming) {
       timingInfo += `\n⚠️ *Notice:* Our pharmacy will remain closed on ${closure.closedLabel || sched.weeklyOff}. Please collect before closure!`;
     }
-  } catch (_) {}
+  } catch (_) { }
 
   let msg: string;
   if (anyReady) {
@@ -354,7 +355,7 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
       const { getLivePortalUrl } = await import('../routes/customerPortal.js');
       const portalUrl = await getLivePortalUrl(db, patientPhone);
       if (portalUrl) portalLink = `\n🌐 *24/7 1-Click Refill Link:* ${portalUrl}`;
-    } catch (_) {}
+    } catch (_) { }
 
     if (items.length === 1) {
       msg = `🔔 *MEDICINE REFILL REMINDER — ${configuredName}*\n\nDear ${patientName},\nYour regular prescription for *${items[0].medicine_name}* (Qty: ${items[0].quantity}) is due for refill.\n\nYou may collect from ${storeLabel}.${timingInfo}\n👉 *Reply "1" or "REFILL" to confirm.*${hoursPill}${portalLink}`;
@@ -383,7 +384,7 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
     );
   } catch (queryErr: any) {
     if (queryErr?.message?.includes('snoozed_until')) {
-      await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL').catch(() => {});
+      await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL').catch(() => { });
       existing = await db.get(
         `SELECT id, status, type, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
          WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
@@ -402,7 +403,9 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
     }
   }
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 
   if (existing) {
     if (existing.status === 'snoozed') {
@@ -411,6 +414,16 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
         return;
       }
       // If snooze duration expired, transition back to staged
+      if (existing.reference_id) {
+        const expiredRefIds = String(existing.reference_id).split(',').map((s: string) => Number(s.trim())).filter(Boolean);
+        if (expiredRefIds.length > 0) {
+          const ph = expiredRefIds.map(() => '?').join(',');
+          await db.run(
+            `UPDATE patient_refills SET reminder_status = 'NOT_SENT' WHERE id IN (${ph}) AND reminder_status = 'SNOOZED'`,
+            expiredRefIds
+          ).catch(() => { });
+        }
+      }
       await db.run(
         `UPDATE automation_notifications 
          SET type = ?, message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL, snoozed_until = NULL
@@ -418,7 +431,7 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
         [notifType, msg, referenceIdStr, patientName, patientPhone, existing.id]
       ).catch(async (updErr: any) => {
         if (updErr?.message?.includes('snoozed_until')) {
-          await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL').catch(() => {});
+          await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL').catch(() => { });
           await db.run(
             `UPDATE automation_notifications 
              SET type = ?, message = ?, reference_id = ?, recipient_name = ?, recipient_phone = ?, status = 'staged', lifecycle_status = 'staged', needs_confirmation = 1, error_message = NULL
@@ -640,7 +653,7 @@ export async function purgePendingCustomerReminders(
          SET status = 'cancelled', lifecycle_status = 'cancelled' 
          WHERE reference_id IN (${orderPlaceholders})`,
         orderIdStrs
-      ).catch(() => {});
+      ).catch(() => { });
     }
 
     if (last10) {
@@ -652,7 +665,7 @@ export async function purgePendingCustomerReminders(
              AND status = 'staged' 
              AND type IN ('refill_collection', 'refill_reminder', 'special_order_arrived', 'order_ready')`,
           [`%${last10}%`]
-        ).catch(() => {});
+        ).catch(() => { });
       } else if (medNames.length > 0) {
         const stagedByPhone = await db.all(
           `SELECT id, message FROM automation_notifications
@@ -676,7 +689,7 @@ export async function purgePendingCustomerReminders(
              SET status = 'cancelled', lifecycle_status = 'cancelled' 
              WHERE id IN (${ph})`,
             stagedIdsToCancel
-          ).catch(() => {});
+          ).catch(() => { });
         }
       }
     }
@@ -998,10 +1011,10 @@ export async function buildDailyOperationalBriefing(
     .filter((n: number) => !isNaN(n));
 
   const isMilestoneDate = Boolean(options?.forceMilestone) ||
-                          todayDayOfMonth === 1 ||
-                          (todayDayOfMonth >= 15 && todayDayOfMonth <= 18) ||
-                          todayDayOfMonth === lastDayOfMonth ||
-                          configuredScanDays.includes(todayDayOfMonth);
+    todayDayOfMonth === 1 ||
+    (todayDayOfMonth >= 15 && todayDayOfMonth <= 18) ||
+    todayDayOfMonth === lastDayOfMonth ||
+    configuredScanDays.includes(todayDayOfMonth);
 
   let expCount = 0;
   let overdueCreditCount = 0;
@@ -1423,7 +1436,7 @@ export async function dispatchDueRefillReminders(db: Database): Promise<{ dispat
              SET reminder_status = 'QUEUED', status = 'notified', reminder_job_id = ? 
              WHERE id IN (${placeholders})`,
             [queueId, ...refIds]
-          ).catch(() => {});
+          ).catch(() => { });
         }
       }
       dispatched++;

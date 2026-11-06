@@ -630,9 +630,20 @@ router.put('/patient-medicines', async (req, res) => {
       for (const med of medicines) {
         let medId = Number(med.medicine_id || med.medicineId || 0);
         const medName = (med.medicine_name || med.name || '').trim() || null;
+        if (medId) {
+          const verify = await db.get('SELECT id FROM medicines WHERE id = ?', [medId]);
+          if (!verify) {
+            medId = 0;
+          }
+        }
         if (!medId && medName) {
           const match = await db.get('SELECT id FROM medicines WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [medName]);
-          if (match) medId = match.id;
+          if (match) {
+            medId = match.id;
+          } else {
+            const ins = await db.run('INSERT INTO medicines (name) VALUES (?)', [medName]).catch(() => null);
+            if (ins?.lastID) medId = ins.lastID;
+          }
         }
         if (!medId && !medName) continue;
         processedMedicineIds.add(medId);
@@ -1081,6 +1092,8 @@ router.get('/panel', async (req, res) => {
           group.reminder_status = 'QUEUED';
         } else if (activeMeds.some((m: any) => m.reminder_status === 'FAILED')) {
           group.reminder_status = 'FAILED';
+        } else if (activeMeds.some((m: any) => m.reminder_status === 'SNOOZED')) {
+          group.reminder_status = 'SNOOZED';
         } else {
           group.reminder_status = 'NOT_SENT';
         }
