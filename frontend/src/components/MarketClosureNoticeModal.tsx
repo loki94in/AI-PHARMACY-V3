@@ -31,7 +31,10 @@ interface MarketClosureNoticeModalProps {
   onSuccess?: (sentCount: number) => void;
 }
 
-const DEFAULT_MESSAGE_TEMPLATE = `*Order Delivery Update — {{PHARMACY_NAME}}* 🛵
+export type ClosureNoticeLanguage = 'en' | 'hi' | 'mr';
+
+export const CLOSURE_NOTICE_TEMPLATES: Record<ClosureNoticeLanguage, string> = {
+  en: `*Order Delivery Update — {{PHARMACY_NAME}}* 🛵
 
 Dear {{PATIENT_NAME}},
 Please note that due to {{REASON}}, our market dispatch is paused on {{PAUSED_DATE}}.
@@ -41,7 +44,32 @@ Your order ({{ORDER_REF}}) containing:
 
 is scheduled for priority delivery on *{{NEXT_WORKING_DATE}}* during *{{NEXT_DELIVERY_TIME}}*.
 
-Thank you for trusting us! For urgent assistance, feel free to reply to this message.`;
+Thank you for trusting us! For urgent assistance, feel free to reply to this message.`,
+
+  hi: `*दवा डिलीवरी अपडेट — {{PHARMACY_NAME}}* 🛵
+
+नमस्ते {{PATIENT_NAME}} जी,
+कृपया ध्यान दें कि {{REASON}} के कारण {{PAUSED_DATE}} को हमारी मार्केट डिलीवरी बंद रहेगी।
+
+आपका ऑर्डर ({{ORDER_REF}}):
+{{MEDICINES}}
+
+अब *{{NEXT_WORKING_DATE}}* को समय *{{NEXT_DELIVERY_TIME}}* के दौरान प्राथमिकता से डिलीवर किया जाएगा।
+
+हम पर भरोसा रखने के लिए धन्यवाद! किसी भी जरूरी सहायता के लिए इस मैसेज का उत्तर दें।`,
+
+  mr: `*औषध डिलिव्हरी अपडेट — {{PHARMACY_NAME}}* 🛵
+
+सस्नेह नमस्कार {{PATIENT_NAME}},
+कृपया नोंद घ्यावी की {{REASON}} निमित्त {{PAUSED_DATE}} रोजी आमची मार्केट डिलिव्हरी बंद राहील.
+
+आपली ऑर्डर ({{ORDER_REF}}):
+{{MEDICINES}}
+
+आता प्राधान्याने *{{NEXT_WORKING_DATE}}* रोजी वेळेत *{{NEXT_DELIVERY_TIME}}* दरम्यान डिलिव्हर केली जाईल.
+
+आपल्या सहकार्याबद्दल धन्यवाद! तातडीच्या मदतीसाठी या मेसेजला रिप्लाय करा.`
+};
 
 export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> = ({
   isOpen,
@@ -60,7 +88,8 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
   const [nextWorkingDate, setNextWorkingDate] = useState<string>('');
   const [nextDeliveryTime, setNextDeliveryTime] = useState<string>('9:00 AM – 11:00 AM');
   const [reason, setReason] = useState<string>(closureReason || 'Market Holiday / Paused Dispatch');
-  const [messageTemplate, setMessageTemplate] = useState<string>(DEFAULT_MESSAGE_TEMPLATE);
+  const [selectedLang, setSelectedLang] = useState<ClosureNoticeLanguage>('en');
+  const [messageTemplate, setMessageTemplate] = useState<string>(CLOSURE_NOTICE_TEMPLATES.en);
   const [activeTab, setActiveTab] = useState<'list' | 'message'>('list');
 
   // Load affected patients when modal opens
@@ -128,6 +157,11 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
     setExpandedPhones(new Set());
   };
 
+  const handleLanguageChange = (lang: ClosureNoticeLanguage) => {
+    setSelectedLang(lang);
+    setMessageTemplate(CLOSURE_NOTICE_TEMPLATES[lang]);
+  };
+
   // Preview generated message for first selected customer
   const previewMessage = useMemo(() => {
     const sample = patients.find((p) => selectedPhones.has(p.phone)) || patients[0];
@@ -136,6 +170,7 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
     const medList = sample && sample.medicines.length > 0
       ? sample.medicines.map((m) => `• ${m.name} (${m.qty} ${m.unit || 'unit'})`).join('\n')
       : '• Your prescribed medications';
+    const dateDisplay = endDate && endDate !== targetDate ? `${targetDate} to ${endDate}` : targetDate;
 
     return messageTemplate
       .replace(/\{\{PHARMACY_NAME\}\}/g, 'AI Pharmacy')
@@ -143,7 +178,7 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
       .replace(/\{patient_name\}/g, patientName)
       .replace(/\{\{ORDER_REF\}\}/g, orderRef)
       .replace(/\{order_ref\}/g, orderRef)
-      .replace(/\{\{PAUSED_DATE\}\}/g, targetDate)
+      .replace(/\{\{PAUSED_DATE\}\}/g, dateDisplay)
       .replace(/\{\{REASON\}\}/g, reason)
       .replace(/\{\{MEDICINES\}\}/g, medList)
       .replace(/\{medicines\}/g, medList)
@@ -151,7 +186,7 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
       .replace(/\{next_date\}/g, nextWorkingDate || 'our next working day')
       .replace(/\{\{NEXT_DELIVERY_TIME\}\}/g, nextDeliveryTime)
       .replace(/\{delivery_time\}/g, nextDeliveryTime);
-  }, [messageTemplate, patients, selectedPhones, targetDate, reason, nextWorkingDate, nextDeliveryTime]);
+  }, [messageTemplate, patients, selectedPhones, targetDate, endDate, reason, nextWorkingDate, nextDeliveryTime]);
 
   const handleSendNotices = async () => {
     const toSend = patients.filter((p) => selectedPhones.has(p.phone));
@@ -454,25 +489,51 @@ export const MarketClosureNoticeModal: React.FC<MarketClosureNoticeModalProps> =
           ) : (
             /* Tab 2: WhatsApp Message Template Customizer */
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="text-xs font-bold text-text flex items-center gap-1.5">
                   <MessageSquare size={14} className="text-emerald-500" />
                   <span>Customize WhatsApp Message Notice</span>
                 </label>
-                <button
-                  type="button"
-                  onClick={() => setMessageTemplate(DEFAULT_MESSAGE_TEMPLATE)}
-                  className="text-[11px] text-primary hover:underline cursor-pointer"
-                >
-                  Reset Template
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* Apple-Style Segmented Language Selector */}
+                  <div className="flex items-center gap-1 bg-bg p-0.5 rounded-xl border border-border shadow-2xs">
+                    {(
+                      [
+                        { id: 'en', label: 'English' },
+                        { id: 'hi', label: 'हिंदी' },
+                        { id: 'mr', label: 'मराठी' },
+                      ] as const
+                    ).map((lang) => (
+                      <button
+                        key={lang.id}
+                        type="button"
+                        onClick={() => handleLanguageChange(lang.id)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all duration-100 active:scale-95 cursor-pointer ${
+                          selectedLang === lang.id
+                            ? 'bg-primary text-white shadow-2xs'
+                            : 'text-muted hover:text-text hover:bg-bg3'
+                        }`}
+                      >
+                        {lang.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setMessageTemplate(CLOSURE_NOTICE_TEMPLATES[selectedLang])}
+                    className="text-[11px] text-primary hover:underline cursor-pointer active:scale-95"
+                  >
+                    Reset Template
+                  </button>
+                </div>
               </div>
 
               <textarea
                 rows={7}
                 value={messageTemplate}
                 onChange={(e) => setMessageTemplate(e.target.value)}
-                className="w-full p-3 rounded-xl bg-bg border border-border text-text font-mono text-xs focus:outline-none focus:border-primary resize-y"
+                className="w-full p-3 rounded-xl bg-bg border border-border text-text font-mono text-xs focus:outline-none focus:border-primary resize-y shadow-2xs"
                 placeholder="Enter customized WhatsApp message..."
               />
 

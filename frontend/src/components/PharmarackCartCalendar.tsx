@@ -6,45 +6,7 @@ import { useStore } from '../context/StoreContext';
 import { ClosureCalendarModal } from './ClosureCalendarModal';
 import { ClosureStockBufferModal } from './ClosureStockBufferModal';
 import { MarketClosureNoticeModal } from './MarketClosureNoticeModal';
-
-// Indian Public & National Holidays (2025-2027 reference)
-const INDIAN_HOLIDAYS: Record<string, string> = {
-  // 2025
-  '2025-01-26': 'Republic Day',
-  '2025-03-14': 'Holi',
-  '2025-03-31': 'Id-ul-Fitr',
-  '2025-04-18': 'Good Friday',
-  '2025-08-15': 'Independence Day',
-  '2025-10-02': 'Gandhi Jayanti',
-  '2025-10-21': 'Dussehra',
-  '2025-10-20': 'Diwali',
-  '2025-12-25': 'Christmas',
-  // 2026
-  '2026-01-01': 'New Year',
-  '2026-01-26': 'Republic Day',
-  '2026-03-04': 'Mahashivratri',
-  '2026-03-14': 'Holi',
-  '2026-03-20': 'Id-ul-Fitr',
-  '2026-04-03': 'Good Friday',
-  '2026-04-14': 'Ambedkar Jayanti',
-  '2026-05-01': 'May Day',
-  '2026-05-27': 'Bakrid',
-  '2026-08-15': 'Independence Day',
-  '2026-08-26': 'Janmashtami',
-  '2026-09-16': 'Milad-un-Nabi',
-  '2026-10-02': 'Gandhi Jayanti',
-  '2026-10-20': 'Dussehra',
-  '2026-11-08': 'Diwali',
-  '2026-11-24': 'Guru Nanak Jayanti',
-  '2026-12-25': 'Christmas',
-  // 2027
-  '2027-01-26': 'Republic Day',
-  '2027-03-22': 'Holi',
-  '2027-08-15': 'Independence Day',
-  '2027-10-02': 'Gandhi Jayanti',
-  '2027-11-09': 'Diwali',
-  '2027-12-25': 'Christmas',
-};
+import { getHolidayName } from '../utils/indianHolidays';
 
 interface DateCardItem {
   dateStr: string; // YYYY-MM-DD
@@ -376,7 +338,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const isSunday = d.getDay() === 0;
       const isToday = dateStr === todayStr;
-      const holidayName = INDIAN_HOLIDAYS[dateStr];
+      const holidayName = getHolidayName(dateStr, occasions);
       const isPaused = pausedDates.includes(dateStr);
       const dayFullName = d.toLocaleDateString('en-US', { weekday: 'long' });
       const isShopWeeklyOff = shopWeeklyOff.toLowerCase() !== 'none' && dayFullName.toLowerCase() === shopWeeklyOff.toLowerCase();
@@ -396,7 +358,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
       });
     }
     return cards;
-  }, [pausedDates, shopWeeklyOff, pharmacyClosedDates]);
+  }, [pausedDates, shopWeeklyOff, pharmacyClosedDates, occasions]);
 
   // Center scroll on today's card on initial load
   useEffect(() => {
@@ -538,7 +500,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
           <button
             type="button"
             onClick={() => setIsCalendarOpen(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer shadow-2xs ${
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-[11px] font-bold transition-all duration-100 active:scale-95 cursor-pointer shadow-2xs ${
               closureConfig?.enabled
                 ? closureConfig.type === 'pharmacy_closed'
                   ? 'bg-rose-500/20 text-rose-500 border border-rose-500/50 hover:bg-rose-500/30'
@@ -547,7 +509,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             }`}
             title="Mark market closed / store closed dates"
           >
-            <Calendar size={12} />
+            <Calendar size={13} />
             <span>
               {closureConfig?.enabled && closureConfig?.startDate
                 ? `${closureConfig.type === 'pharmacy_closed' ? 'Store' : 'Market'} Closed (${closureConfig.startDate.slice(5)}${closureConfig.endDate && closureConfig.endDate !== closureConfig.startDate ? ` - ${closureConfig.endDate.slice(5)}` : ''})`
@@ -560,10 +522,10 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
             <button
               type="button"
               onClick={() => setIsBufferModalOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-black bg-amber-500/20 text-amber-500 border border-amber-500/50 hover:bg-amber-500/30 transition-all cursor-pointer shadow-2xs animate-pulse"
+              className="flex items-center gap-1.5 px-3 py-1 rounded-xl text-[11px] font-black bg-amber-500/20 text-amber-500 border border-amber-500/50 hover:bg-amber-500/30 transition-all duration-100 active:scale-95 cursor-pointer shadow-2xs"
               title="Review interactive checklist of upcoming refill medicines affected by market closure"
             >
-              <Package size={12} />
+              <Package size={13} />
               <span>Buffer Review ({bufferCount})</span>
             </button>
           )}
@@ -571,7 +533,7 @@ export const PharmarackCartCalendar: React.FC<PharmarackCartCalendarProps> = ({
           <button
             type="button"
             onClick={scrollToToday}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-bg border border-border hover:bg-bg2 text-[11px] font-bold text-sky-700 hover:text-sky-800 transition-all cursor-pointer shadow-2xs"
+            className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-bg border border-border hover:bg-bg2 text-[11px] font-bold text-sky-700 hover:text-sky-800 transition-all duration-100 active:scale-95 cursor-pointer shadow-2xs"
             title="Jump back to Today in calendar strip"
           >
             <Calendar size={12} className="text-sky-500" />

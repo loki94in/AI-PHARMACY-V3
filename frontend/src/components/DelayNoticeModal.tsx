@@ -27,26 +27,50 @@ interface DelayNoticeModalProps {
   onDispatched?: () => void;
 }
 
-const TEMPLATE_PRESETS = [
+export type DelayNoticeLang = 'mr' | 'hi' | 'en';
+
+interface PresetItem {
+  id: string;
+  label: string;
+  text: Record<DelayNoticeLang, string>;
+}
+
+const TEMPLATE_PRESETS: PresetItem[] = [
   {
     id: 'festival',
     label: '🪔 Festival / Holiday',
-    text: 'Dear {patient_name}, due to a festival/market closure today, your scheduled medicine ({medicine_name}) from our distributor will be delayed by 1 day. We apologize for the inconvenience and will update you as soon as it arrives! — {pharmacy_name}',
+    text: {
+      mr: 'सस्नेह नमस्कार {patient_name}, आज सण/बाजार बंद असल्यामुळे आपल्या {medicine_name} या औषधाची डिलिव्हरी १ दिवस पुढे ढकलण्यात आली आहे. औषध येताच आम्ही आपल्याला त्वरित कळवू! — {pharmacy_name}',
+      hi: 'नमस्ते {patient_name}, आज त्योहार/मार्केट अवकाश के कारण आपकी दवा ({medicine_name}) की डिलीवरी में 1 दिन का विलंब होगा। दवा आते ही हम आपको तुरंत सूचित करेंगे! — {pharmacy_name}',
+      en: 'Dear {patient_name}, due to a festival/market closure today, your scheduled medicine ({medicine_name}) from our distributor will be delayed by 1 day. We apologize for the inconvenience and will update you as soon as it arrives! — {pharmacy_name}',
+    },
   },
   {
     id: 'weather',
     label: '🌧️ Weather / Strike',
-    text: 'Dear {patient_name}, due to severe weather/transport disruption today, wholesale supply of your medicine ({medicine_name}) is delayed by 1 day. We are monitoring arrivals and will notify you promptly! — {pharmacy_name}',
+    text: {
+      mr: 'सस्नेह नमस्कार {patient_name}, खराब हवामान/वाहतूक समस्येमुळे आपल्या {medicine_name} या औषधाचा पुरवठा १ दिवस उशिराने होणार आहे. आम्ही लक्ष ठेवून आहोत आणि औषध येताच कळवू! — {pharmacy_name}',
+      hi: 'नमस्ते {patient_name}, खराब मौसम/यातायात बाधा के कारण आपकी दवा ({medicine_name}) की सप्लाई में 1 दिन का विलंब होगा। दवा आते ही हम आपको तुरंत सूचित करेंगे! — {pharmacy_name}',
+      en: 'Dear {patient_name}, due to severe weather/transport disruption today, wholesale supply of your medicine ({medicine_name}) is delayed by 1 day. We are monitoring arrivals and will notify you promptly! — {pharmacy_name}',
+    },
   },
   {
     id: 'distributor_delay',
     label: '📦 Distributor Delay',
-    text: 'Dear {patient_name}, the distributor shipment containing your medicine ({medicine_name}) has been delayed. It is now expected tomorrow. We apologize for the delay! — {pharmacy_name}',
+    text: {
+      mr: 'सस्नेह नमस्कार {patient_name}, वितरकाकडील पार्सल उशिरा आल्यामुळे आपले {medicine_name} हे औषध उद्या मिळण्याची शक्यता आहे. झालेल्या विलगबद्दल क्षमस्व! — {pharmacy_name}',
+      hi: 'नमस्ते {patient_name}, डिस्ट्रीब्यूटर की तरफ से डिलीवरी में देरी के कारण आपकी दवा ({medicine_name}) अब कल तक उपलब्ध होगी। असुविधा के लिए खेद है! — {pharmacy_name}',
+      en: 'Dear {patient_name}, the distributor shipment containing your medicine ({medicine_name}) has been delayed. It is now expected tomorrow. We apologize for the delay! — {pharmacy_name}',
+    },
   },
   {
     id: 'custom',
     label: '✍️ Custom Reason',
-    text: 'Dear {patient_name}, your scheduled medicine ({medicine_name}) is delayed today. We expect it to be ready tomorrow. Thank you for your patience! — {pharmacy_name}',
+    text: {
+      mr: 'सस्नेह नमस्कार {patient_name}, आपले {medicine_name} हे औषध आज उपलब्ध होण्यास विलंब होत असून उद्या उपलब्ध होईल. आपल्या सहकार्याबद्दल धन्यवाद! — {pharmacy_name}',
+      hi: 'नमस्ते {patient_name}, आपकी दवा ({medicine_name}) आज आने में देरी हो रही है और यह कल तैयार रहेगी। आपके धैर्य के लिए धन्यवाद! — {pharmacy_name}',
+      en: 'Dear {patient_name}, your scheduled medicine ({medicine_name}) is delayed today. We expect it to be ready tomorrow. Thank you for your patience! — {pharmacy_name}',
+    },
   },
 ];
 
@@ -56,8 +80,9 @@ export function DelayNoticeModal({ isOpen, onClose, onDispatched }: DelayNoticeM
   const [loading, setLoading] = useState(false);
   const [candidates, setCandidates] = useState<DelayCandidate[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedLang, setSelectedLang] = useState<DelayNoticeLang>('mr');
   const [activePreset, setActivePreset] = useState<string>('festival');
-  const [messageTemplate, setMessageTemplate] = useState<string>(TEMPLATE_PRESETS[0].text);
+  const [messageTemplate, setMessageTemplate] = useState<string>(TEMPLATE_PRESETS[0].text.mr);
   const [postponeDays, setPostponeDays] = useState<number>(1);
   const [postponeDate, setPostponeDate] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -104,8 +129,14 @@ export function DelayNoticeModal({ isOpen, onClose, onDispatched }: DelayNoticeM
     setActivePreset(presetId);
     const found = TEMPLATE_PRESETS.find(p => p.id === presetId);
     if (found) {
-      setMessageTemplate(found.text);
+      setMessageTemplate(found.text[selectedLang]);
     }
+  };
+
+  const handleLanguageChange = (lang: DelayNoticeLang) => {
+    setSelectedLang(lang);
+    const found = TEMPLATE_PRESETS.find(p => p.id === activePreset) || TEMPLATE_PRESETS[0];
+    setMessageTemplate(found.text[lang]);
   };
 
   const handleInsertTag = (tag: string) => {
@@ -233,23 +264,49 @@ export function DelayNoticeModal({ isOpen, onClose, onDispatched }: DelayNoticeM
             <div className="flex items-center justify-between flex-wrap gap-2">
               <span className="text-[11px] font-bold text-muted uppercase tracking-wider flex items-center gap-1.5">
                 <Sparkles size={12} className="text-purple-400" />
-                1. Select Reason Preset & Edit Message
+                1. Select Reason Preset &amp; Edit Message
               </span>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {TEMPLATE_PRESETS.map(preset => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => handleSelectPreset(preset.id)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                      activePreset === preset.id
-                        ? 'bg-purple-600 text-white shadow-sm'
-                        : 'bg-bg2 hover:bg-bg3 text-muted hover:text-text border border-border'
-                    }`}
-                  >
-                    {preset.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Apple-Style Segmented Language Selector */}
+                <div className="flex items-center bg-bg2 p-0.5 rounded-xl border border-border text-[10px] font-bold shadow-2xs">
+                  {(
+                    [
+                      { id: 'mr', label: 'मराठी' },
+                      { id: 'hi', label: 'हिंदी' },
+                      { id: 'en', label: 'English' },
+                    ] as const
+                  ).map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => handleLanguageChange(l.id)}
+                      className={`px-2 py-0.5 rounded-lg transition-all duration-100 active:scale-95 cursor-pointer ${
+                        selectedLang === l.id
+                          ? 'bg-purple-600 text-white shadow-2xs'
+                          : 'text-muted hover:text-text'
+                      }`}
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {TEMPLATE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => handleSelectPreset(preset.id)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                        activePreset === preset.id
+                          ? 'bg-purple-600 text-white shadow-sm'
+                          : 'bg-bg2 hover:bg-bg3 text-muted hover:text-text border border-border'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 

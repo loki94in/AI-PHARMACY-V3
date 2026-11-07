@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, CheckSquare, Square, ShoppingCart, MessageSquare, AlertCircle, Calendar, Package, RefreshCw, Minus, Plus } from 'lucide-react';
 import { api } from '../services/api';
-import { toastEvent } from '../services/events';
+import { toastEvent, refillEvent } from '../services/events';
+import { startRefillCartJob } from '../services/refillCartJobs';
 import { useModalEscape } from '../services/keyboardShortcuts';
 
 interface ClosureStockBufferModalProps {
@@ -76,6 +77,10 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
   useEffect(() => {
     if (isOpen) {
       fetchBuffer();
+      const unsub = refillEvent.subscribeRefresh(() => {
+        fetchBuffer();
+      });
+      return () => unsub();
     }
   }, [isOpen]);
 
@@ -361,7 +366,7 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
                     <th className="py-2.5 px-3">Patient & Refill Date</th>
                     <th className="py-2.5 px-3 text-center">Stock / Needed</th>
                     <th className="py-2.5 px-3 text-center">Order Qty</th>
-                    <th className="py-2.5 px-3">Distributor</th>
+                    <th className="py-2.5 px-3 text-center">Live Cart</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/20 font-mono">
@@ -448,16 +453,30 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
                             </button>
                           </div>
                         </td>
-                        <td className="py-2.5 px-3 font-sans text-xs">
+                        <td className="py-2.5 px-3 font-sans text-xs text-center" onClick={e => e.stopPropagation()}>
                           {item.is_in_cart ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-500 font-bold text-[11px]">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold text-[11px] shadow-xs">
                               <ShoppingCart size={11} />
-                              <span className="truncate max-w-[130px]">{item.cart_store_name || item.distributor_name || 'In Cart'}</span>
+                              <span className="truncate max-w-[130px]">In Cart: {item.cart_store_name || item.distributor_name || 'Live Cart'}</span>
                             </span>
                           ) : (
-                            <span className="text-muted truncate max-w-[150px] block" title={item.distributor_name}>
-                              {item.distributor_name || 'Standard Distributor'}
-                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const qtyToOrder = orderQtys[item.refill_id] && orderQtys[item.refill_id] > 0
+                                  ? orderQtys[item.refill_id]
+                                  : (item.shortfall_packs > 0 ? item.shortfall_packs : 1);
+                                startRefillCartJob(item.patient_name || 'Patient Refill', [
+                                  { refillId: item.refill_id, medicineId: item.medicine_id, medicineName: item.medicine_name, qty: qtyToOrder }
+                                ]);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/40 text-primary text-[11px] font-bold transition-all cursor-pointer shadow-xs"
+                              title={`Add ${orderQtys[item.refill_id] && orderQtys[item.refill_id] > 0 ? orderQtys[item.refill_id] : (item.shortfall_packs > 0 ? item.shortfall_packs : 1)} unit(s) to Pharmarack Live Cart with automatic distributor stock check`}
+                            >
+                              <ShoppingCart size={12} />
+                              <span>+ Live Cart ({orderQtys[item.refill_id] && orderQtys[item.refill_id] > 0 ? orderQtys[item.refill_id] : (item.shortfall_packs > 0 ? item.shortfall_packs : 1)})</span>
+                            </button>
                           )}
                         </td>
                       </tr>

@@ -3210,11 +3210,21 @@ async function checkMedicineClarificationResponse(phone: string, body: string, c
           `UPDATE wa_pending_clarifications SET unrecognized_count = 1, created_at = CURRENT_TIMESTAMP WHERE phone = ?`,
           [pending.phone]
         );
-        const retryMsg = `Please choose what you would like to book:\nReply *1* for Refill only\nReply *2* for Special Order only\nReply *3* to Combine Both into 1 delivery.`;
+        let retryMsg = `Please choose what you would like to book:\nReply *1* for Refill only\nReply *2* for Special Order only\nReply *3* to Combine Both into 1 delivery.`;
+        if (stepLang === 'mr') {
+          retryMsg = `कृपया आपण काय बुक करू इच्छिता ते निवडा:\nफक्त रिफिलसाठी *1* पाठवा\nफक्त स्पेशल ऑर्डरसाठी *2* पाठवा\nदोन्ही एकाच डिलिव्हरीमध्ये मागवण्यासाठी *3* पाठवा.`;
+        } else if (stepLang === 'hi') {
+          retryMsg = `कृपया चुनें कि आप क्या बुक करना चाहते हैं:\nकेवल रिफिल के लिए *1* भेजें\nकेवल स्पेशल ऑर्डर के लिए *2* भेजें\nदोनों एक साथ मंगाने के लिए *3* भेजें।`;
+        }
         await whatsappQueueWorker.enqueue(phone, retryMsg, 'customer_medicine_clarification', pending.customer_name || 'Customer');
       } else {
         await db.run(`DELETE FROM wa_pending_clarifications WHERE phone = ?`, [pending.phone]);
-        const silenceMsg = `I've shared your request with our counter pharmacist. They'll assist you right here in a moment 🙏`;
+        let silenceMsg = `I've shared your request with our counter pharmacist. They'll assist you right here in a moment 🙏`;
+        if (stepLang === 'mr') {
+          silenceMsg = `मी आपली विनंती आमच्या फार्मासिस्टकडे पाठवली आहे. ते आपल्याला थोड्याच वेळात मदत करतील 🙏`;
+        } else if (stepLang === 'hi') {
+          silenceMsg = `मैंने आपकी जानकारी हमारे फार्मासिस्ट को भेज दी है। वे जल्द ही आपकी सहायता करेंगे 🙏`;
+        }
         await whatsappQueueWorker.enqueue(phone, silenceMsg, 'customer_medicine_clarification', pending.customer_name || 'Customer');
       }
       return true;

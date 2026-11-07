@@ -46,7 +46,7 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
 
   const [itemStatuses, setItemStatuses] = useState<Record<number, 'arrived' | 'delayed'>>({});
   const [delayNotes, setDelayNotes] = useState<Record<number, string>>({});
-  const [lang, setLang] = useState<'en' | 'hi'>('en');
+  const [lang, setLang] = useState<'en' | 'hi' | 'mr'>('mr');
   const [isEditingMessage, setIsEditingMessage] = useState(false);
   const [customMessage, setCustomMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -131,6 +131,25 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
     const arrived = orders.filter(o => itemStatuses[o.id] !== 'delayed');
     const delayed = orders.filter(o => itemStatuses[o.id] === 'delayed');
     const cleanName = customerName || 'Customer';
+
+    if (lang === 'mr') {
+      let msg = `नमस्कार ${cleanName}, 👋\n\n`;
+      if (arrived.length > 0 && delayed.length === 0) {
+        msg += `आनंदाची बातमी! 🎉 आपली मागवलेली औषधे दुकानात घेऊन जाण्यासाठी तयार आहेत:\n\n`;
+        msg += `📦 तयार औषधे:\n` + arrived.map(o => `• ${o.product} × ${o.qty || 1}`).join('\n');
+        msg += `\n\n📍 कृपया आपल्या सोयीनुसार आमच्या दुकानातून घेऊन जावे. धन्यवाद!`;
+      } else if (arrived.length > 0 && delayed.length > 0) {
+        msg += `आपल्या ऑर्डरचे अपडेट:\n\n`;
+        msg += `✅ तयार औषधे (दुकानात उपलब्ध):\n` + arrived.map(o => `• ${o.product} × ${o.qty || 1}`).join('\n');
+        msg += `\n\n⏳ येण्यास वेळ (उपलब्ध होताच कळवू):\n` + delayed.map(o => `• ${o.product} × ${o.qty || 1}${delayNotes[o.id] ? ` (${delayNotes[o.id]})` : ''}`).join('\n');
+        msg += `\n\n📍 तयार असलेली औषधे आपण कधीही घेऊन जाऊ शकता.`;
+      } else {
+        msg += `आपल्या ऑर्डरचे अपडेट:\n\n`;
+        msg += `⏳ खालील औषधांना थोडा वेळ लागत आहे:\n` + delayed.map(o => `• ${o.product} × ${o.qty || 1}${delayNotes[o.id] ? ` (${delayNotes[o.id]})` : ''}`).join('\n');
+        msg += `\n\nऔषधे उपलब्ध होताच आम्ही लगेच कळवू. आपल्या सहकार्याबद्दल धन्यवाद!`;
+      }
+      return msg;
+    }
 
     if (lang === 'hi') {
       let msg = `नमस्ते ${cleanName}, 👋\n\n`;
@@ -562,10 +581,10 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                 <div className="flex items-center rounded-xl bg-bg3 p-0.5 border border-border text-[10px] font-bold">
                   <button
                     type="button"
-                    onClick={() => { setLang('en'); setIsEditingMessage(false); }}
-                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${lang === 'en' ? 'bg-emerald-600 text-white shadow-xs' : 'text-muted hover:text-text'}`}
+                    onClick={() => { setLang('mr'); setIsEditingMessage(false); }}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${lang === 'mr' ? 'bg-emerald-600 text-white shadow-xs' : 'text-muted hover:text-text'}`}
                   >
-                    English
+                    मराठी
                   </button>
                   <button
                     type="button"
@@ -573,6 +592,13 @@ export const SpecialOrderArrivalModal: React.FC<SpecialOrderArrivalModalProps> =
                     className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${lang === 'hi' ? 'bg-emerald-600 text-white shadow-xs' : 'text-muted hover:text-text'}`}
                   >
                     हिन्दी
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setLang('en'); setIsEditingMessage(false); }}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${lang === 'en' ? 'bg-emerald-600 text-white shadow-xs' : 'text-muted hover:text-text'}`}
+                  >
+                    English
                   </button>
                 </div>
 
