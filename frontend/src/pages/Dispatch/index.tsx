@@ -1548,12 +1548,13 @@ const Dispatch = () => {
 
           {/* ── METRIC ROW ── */}
           {(() => {
+            const isDistSent = (r: LocalReminderRow) => r.latest_notif_status === 'sent' || r.latest_notif_status === 'delivered' || (r.status === 'Dispatched' && r.has_order_today === 1);
             const todayCount = distributorReminders.filter(r => r.has_order_today === 1).length;
             const sentTodayCount = distributorReminders.filter(r =>
-              r.has_order_today === 1 && (r.latest_notif_status === 'sent' || r.latest_notif_status === 'delivered')
+              r.has_order_today === 1 && isDistSent(r)
             ).length;
             const notSentTodayCount = distributorReminders.filter(r =>
-              r.has_order_today === 1 && r.latest_notif_status !== 'sent' && r.latest_notif_status !== 'delivered'
+              r.has_order_today === 1 && !isDistSent(r)
             ).length;
 
             const missingPhoneCount = distributorReminders.filter(r =>
@@ -1815,7 +1816,7 @@ const Dispatch = () => {
                                 >
                                   <XCircle size={10} /> Failed: {item.latest_notif_error ? item.latest_notif_error.substring(0, 24) + '...' : 'Delivery Error'}
                                 </span>
-                              ) : item.latest_notif_status === 'sent' || item.latest_notif_status === 'delivered' ? (
+                              ) : item.latest_notif_status === 'sent' || item.latest_notif_status === 'delivered' || item.status === 'Dispatched' ? (
                                 <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 shrink-0">
                                   <CheckCircle size={10} /> Message Sent
                                 </span>

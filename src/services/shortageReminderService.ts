@@ -36,7 +36,7 @@ export async function trackMedicineRequest(req: {
   // Prevent duplicate open requests for the same medicine & customer/distributor in the last 23 hours
   const existing = await db.get(
     `SELECT id FROM special_orders 
-     WHERE LOWER(product) = LOWER(?) AND (status = 'Pending' OR status = 'Inquiry')
+     WHERE LOWER(medicine_name) = LOWER(?) AND (status = 'Pending' OR status = 'Inquiry')
      AND datetime(date) >= datetime('now', '-23 hours')`,
     [name]
   );
@@ -60,7 +60,7 @@ export async function trackMedicineRequest(req: {
 
   const result = await db.run(
     `INSERT INTO special_orders 
-     (product, requester, phone, qty, priority, status, source, customer_order_source, notes)
+     (medicine_name, requester, phone, qty, priority, status, source, customer_order_source, notes)
      VALUES (?, ?, ?, ?, 'Normal', ?, ?, ?, ?)`,
     [name, requesterName, String(req.customer_phone || '').replace(/\D/g, ''), qty, targetStatus, source, customerOrderSource, notes]
   );

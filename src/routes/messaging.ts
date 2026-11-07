@@ -392,9 +392,10 @@ router.get('/chats', async (_req, res) => {
 
 router.get('/chats/:id/messages', async (req, res) => {
   try {
-    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 500;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+    const before = req.query.before ? parseInt(req.query.before as string, 10) : undefined;
     const { getChatMessages } = await import('../whatsappClient.js');
-    const messages = await getChatMessages(req.params.id, limit);
+    const messages = await getChatMessages(req.params.id, limit, before);
     const sanitizedMessages = messages.map(m => {
       if (m.id && typeof m.id === 'string') {
         // Flat format from local database

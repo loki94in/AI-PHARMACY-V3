@@ -1657,8 +1657,8 @@ router.post('/:id/cancel', async (req, res) => {
     await db.run(
       `DELETE FROM special_orders 
        WHERE source_refill_id = ? 
-          OR (source = 'refill' AND phone = ? AND (product = ? OR medicine_name = ?))`,
-      [numId, refill.patient_phone || '', refill.medicine_name || '', refill.medicine_name || '']
+          OR (source = 'refill' AND phone = ? AND medicine_name = ?)`,
+      [numId, refill.patient_phone || '', refill.medicine_name || '']
     ).catch(() => {});
 
     // 4. Remove live cart lines
@@ -1708,8 +1708,8 @@ router.delete('/:id', async (req, res) => {
     await db.run(
       `DELETE FROM special_orders 
        WHERE source_refill_id = ? 
-          OR (source = 'refill' AND phone = ? AND (product = ? OR medicine_name = ?))`,
-      [numId, refill.patient_phone || '', refill.medicine_name || '', refill.medicine_name || '']
+          OR (source = 'refill' AND phone = ? AND medicine_name = ?)`,
+      [numId, refill.patient_phone || '', refill.medicine_name || '']
     ).catch(() => {});
 
     await db.run('DELETE FROM patient_refills WHERE id = ?', [numId]);

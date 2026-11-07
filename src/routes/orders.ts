@@ -1547,7 +1547,7 @@ router.put('/:id', async (req, res) => {
 
     await db.run(
       `UPDATE special_orders
-       SET status = ?, priority = ?, qty = ?, product = ?, requester = ?, phone = ?,
+       SET status = ?, priority = ?, qty = ?, medicine_name = ?, requester = ?, phone = ?,
            pharmarack_distributor = ?, pharmarack_rate = ?, pharmarack_mrp = ?, pharmarack_mapped = ?,
            advance_payment = ?, cart_add_error = ?, notified = ?, notification_count = ?,
            pharmarack_product_id = ?, pharmarack_product_code = ?, pharmarack_store_id = ?, pharmarack_product_name = ?,

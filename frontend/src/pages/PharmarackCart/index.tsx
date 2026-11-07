@@ -2831,12 +2831,11 @@ export default function PharmarackCart() {
 
   const filteredDistributorList = React.useMemo(() => {
     let list: Distributor[] = [];
-    if (distributorFilterTab === 'unsent' || distributorFilterTab === 'active') list = unsentCartDistributors;
+    if (distributorFilterTab === 'unsent') list = unsentCartDistributors;
     else if (distributorFilterTab === 'sent' || distributorFilterTab === 'success') list = sentCartDistributors;
     else if (distributorFilterTab === 'failed') list = failedDistributors;
     else if (distributorFilterTab === 'unmapped') list = unmappedDistributors;
-    else if (distributorFilterTab === 'all') list = activeCartDistributors;
-    else list = unsentCartDistributors;
+    else list = activeCartDistributors; // 'active' & 'all' show all actual cart items truth-first, nothing hidden
 
     // Always guarantee distributors and their items are rendered in alphabetical order
     return [...list]
@@ -5654,7 +5653,8 @@ export default function PharmarackCart() {
           scheme: card.scheme || undefined,
           storeName: storeName,
           mapped: true,
-          medicineId: card.medicineId || undefined
+          medicineId: card.medicineId || undefined,
+          mode: 'set'
         }];
 
         const addRes = await api.addPharmarackCart(payload);

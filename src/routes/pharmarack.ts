@@ -1996,7 +1996,7 @@ export function isPharmarackCartSuccess(resJson: any): boolean {
  * Normalizes and coalesces add-to-cart items according to the same-medicine merge rule:
  * - Coalesces duplicate items in the batch into a single entry with summed quantity.
  * - Compares with items currently in the active live cart (via productCode, or storeId + sameProductName).
- * - When an item already exists in the live cart, computes targetCartQty = existingQty + requestedQty.
+ * - When adding to live cart, strictly preserves exact requestedQty (never auto-compounding onto old draft lines unless mode === 'add').
  * - Enforces single line per medicine (never duplicated rows).
  */
 export function normalizeCartAddRequest(items: any[], activeCart?: any): any[] {
@@ -2046,9 +2046,10 @@ export function normalizeCartAddRequest(items: any[], activeCart?: any): any[] {
         if (existingQty > 0) break;
       }
       item.existingQty = existingQty;
-      const isExplicitUpdate = Boolean(item.isUpdate || item.mode === 'set' || item.setQty);
+      const isExplicitAdd = Boolean(item.mode === 'add' || item.isAdditive);
       const requestedQty = Number(item.qty || 1);
-      item.targetCartQty = isExplicitUpdate ? requestedQty : (existingQty > 0 ? (existingQty + requestedQty) : requestedQty);
+      // Contract: Strictly set exact requested quantity. Never silently compound onto pre-existing draft quantities.
+      item.targetCartQty = isExplicitAdd && existingQty > 0 ? (existingQty + requestedQty) : requestedQty;
     }
   }
 
@@ -2243,7 +2244,7 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
           const wantStoreId = Number(item.storeId) || 0;
           if (wantStoreId > 0 || cleanStoreName) {
             const cands = await db.all(
-              `SELECT product, pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_distributor, pharmarack_product_name, pharmarack_mapped
+              `SELECT medicine_name AS product, medicine_name, pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_distributor, pharmarack_product_name, pharmarack_mapped
                FROM special_orders
                WHERE pharmarack_product_id > 0
                  AND ${wantStoreId > 0 ? 'pharmarack_store_id = ?' : 'LOWER(TRIM(pharmarack_distributor)) = LOWER(TRIM(?))'}
@@ -2476,8 +2477,10 @@ export async function addItemsToPharmarackCart(items: any[]): Promise<{
 
       const existingQty = item.existingQty || 0;
       const isExplicitUpdate = Boolean(item.isUpdate || item.mode === 'set' || item.setQty);
+      const isExplicitAdd = Boolean(item.mode === 'add' || item.isAdditive);
       const requestedQty = Number(item.qty || item.Quantity || 1);
-      const targetCartQty = item.targetCartQty || (isExplicitUpdate ? requestedQty : (existingQty > 0 ? (existingQty + requestedQty) : requestedQty));
+      // Contract: Strictly set exact requested quantity. Never silently compound onto pre-existing draft quantities.
+      const targetCartQty = item.targetCartQty || (isExplicitAdd && existingQty > 0 ? (existingQty + requestedQty) : requestedQty);
       const rateVal = Number(item.rate || item.ptr || item.PTR || 0);
       const payload = {
         StoreId: Number(item.storeId) || 0,
@@ -3646,6 +3649,13 @@ router.post('/cart/place-official-orders', async (req, res) => {
                 ord.storeName,
                 reminderScheduledAt
               );
+              const notifStatus = queueId ? 'pending' : 'failed';
+              const refId = queueId ? `queue_${queueId}` : `dist_dispatch_${today}_${Date.now()}`;
+              await db.run(
+                `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                ['distributor_dispatch_reminder', ord.storeName, cleanDistPhone, distMsg.trim(), notifStatus, refId]
+              ).catch(() => {});
               await whatsappQueueWorker.forceNext();
               console.log(`[PharmarackRoute] Step 4 (Node I): Enqueued official dispatch reminder for ${ord.storeName} (Order #${resolvedOrderNo}) (queue #${queueId})`);
             }
@@ -3843,7 +3853,7 @@ export async function reconcilePaidAndFulfilledCartItems(distributors: any[]): P
   try {
     const db = await dbManager.getConnection();
     const paidCompletedOrders = await db.all(`
-      SELECT id, product, medicine_name, qty, pharmarack_store_id, pharmarack_product_code,
+      SELECT id, medicine_name AS product, medicine_name, qty, pharmarack_store_id, pharmarack_product_code,
              pharmarack_product_id, pharmarack_distributor, status, payment_status
       FROM special_orders
       WHERE payment_status IN ('PAYMENT_CONFIRMED', 'VERIFIED', 'CONFIRMED')

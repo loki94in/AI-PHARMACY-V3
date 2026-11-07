@@ -1027,6 +1027,19 @@ async function ensureOrderTimingSchema(db: any) {
     }
     // Composite index: used by smart reply scheduler to check read state and ACK per chat
     await db.run('CREATE INDEX IF NOT EXISTS idx_wa_msgs_ack ON whatsapp_messages (chat_id, from_me, ack_status)');
+    // Clean up any historical duplicate provisional msg_out_ records where genuine WhatsApp copy exists
+    await db.run(`
+      DELETE FROM whatsapp_messages 
+      WHERE id LIKE 'msg_out_%' 
+        AND EXISTS (
+          SELECT 1 FROM whatsapp_messages real_m 
+          WHERE real_m.from_me = 1 
+            AND real_m.id NOT LIKE 'msg_out_%'
+            AND (real_m.chat_id = whatsapp_messages.chat_id OR (LENGTH(real_m.chat_id) >= 10 AND real_m.chat_id LIKE '%' || SUBSTR(whatsapp_messages.chat_id, 1, 10) || '%'))
+            AND real_m.body = whatsapp_messages.body
+            AND ABS(real_m.timestamp - whatsapp_messages.timestamp) <= 300
+        )
+    `).catch(() => {});
   } catch (_) { }
 }
 
@@ -1486,13 +1499,15 @@ export async function ensureSchema(dbPath: string) {
           delivery_mode: "TEXT DEFAULT 'pickup'"
         });
         try {
-          await db.run(`
-            UPDATE special_orders
-            SET product = medicine_name
-            WHERE (product IS NULL OR product = '' OR length(product) <= 6)
-              AND medicine_name IS NOT NULL
-              AND length(medicine_name) > length(COALESCE(product, ''))
-          `);
+          const soColsCheck: Array<{ name: string }> = await db.all('PRAGMA table_info(special_orders)').catch(() => []);
+          if (soColsCheck.some(c => c.name === 'product')) {
+            await db.run(`
+              UPDATE special_orders
+              SET medicine_name = product
+              WHERE (medicine_name IS NULL OR medicine_name = '')
+                AND product IS NOT NULL AND product != ''
+            `);
+          }
           await db.run(`
             UPDATE special_orders
             SET payment_screenshot_path = '/uploads/' || substr(replace(payment_screenshot_path, '\\', '/'), instr(replace(payment_screenshot_path, '\\', '/'), '/uploads/') + 9)
@@ -3171,7 +3186,6 @@ export async function ensureSchema(dbPath: string) {
       ['patient_refills', 'cart_status', "ALTER TABLE patient_refills ADD COLUMN cart_status TEXT DEFAULT 'pending'"],
       ['special_orders', 'customer_id', 'ALTER TABLE special_orders ADD COLUMN customer_id INTEGER DEFAULT NULL'],
       ['special_orders', 'date', 'ALTER TABLE special_orders ADD COLUMN date DATETIME DEFAULT CURRENT_TIMESTAMP'],
-      ['special_orders', 'product', 'ALTER TABLE special_orders ADD COLUMN product TEXT'],
       ['special_orders', 'medicine_name', 'ALTER TABLE special_orders ADD COLUMN medicine_name TEXT'],
       ['special_orders', 'qty', 'ALTER TABLE special_orders ADD COLUMN qty INTEGER DEFAULT 1'],
       ['special_orders', 'priority', 'ALTER TABLE special_orders ADD COLUMN priority TEXT DEFAULT \'Normal\''],
@@ -3482,9 +3496,11 @@ export async function ensureSchema(dbPath: string) {
         } catch (_) {}
       }
 
-      // Synchronize special_orders product and medicine_name columns to eliminate column name confusion
-      await db.run("UPDATE special_orders SET product = medicine_name WHERE (product IS NULL OR product = '') AND medicine_name IS NOT NULL AND medicine_name != ''");
-      await db.run("UPDATE special_orders SET medicine_name = product WHERE (medicine_name IS NULL OR medicine_name = '') AND product IS NOT NULL AND product != ''");
+      // Synchronize special_orders legacy product into medicine_name if column exists
+      const soColsForSync: Array<{ name: string }> = await db.all('PRAGMA table_info(special_orders)').catch(() => []);
+      if (soColsForSync.some(c => c.name === 'product')) {
+        await db.run("UPDATE special_orders SET medicine_name = product WHERE (medicine_name IS NULL OR medicine_name = '') AND product IS NOT NULL AND product != ''");
+      }
     } catch (err) {
       console.warn('Customer contact backfill warning:', err);
     }
@@ -4772,14 +4788,16 @@ export async function ensureSchema(dbPath: string) {
       WHERE discount IS NULL;
     `);
 
-      // Heal special_orders where product was corrupted with short packaging fragment
-      await db.run(`
-        UPDATE special_orders
-        SET product = medicine_name
-        WHERE (product IS NULL OR product = '' OR length(product) <= 6)
-          AND medicine_name IS NOT NULL
-          AND length(medicine_name) > length(COALESCE(product, ''))
-      `);
+      // Heal special_orders legacy product into medicine_name if column exists
+      const soColsHeal: Array<{ name: string }> = await db.all('PRAGMA table_info(special_orders)').catch(() => []);
+      if (soColsHeal.some(c => c.name === 'product')) {
+        await db.run(`
+          UPDATE special_orders
+          SET medicine_name = product
+          WHERE (medicine_name IS NULL OR medicine_name = '')
+            AND product IS NOT NULL AND product != ''
+        `);
+      }
 
       // Heal special_orders payment_screenshot_path to web-accessible /uploads/ path
       await db.run(`

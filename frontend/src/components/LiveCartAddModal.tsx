@@ -285,6 +285,7 @@ interface LocalLiveCartAddPayload {
   storeName?: string;
   packaging?: string;
   mapped?: boolean;
+  mode?: 'set' | 'add';
 }
 
 interface LocalPendingAdd {
@@ -1501,7 +1502,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       productName: productNameToUse,
       storeName: distributorToUse,
       packaging: packagingToUse,
-      mapped: mappedToUse === false ? false : true
+      mapped: mappedToUse === false ? false : true,
+      mode: 'set'
     };
 
     // Stage-style instant add: queue the item visually, reset the form right

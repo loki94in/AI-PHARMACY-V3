@@ -193,15 +193,15 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
       const s = n.status;
       const err = (s === 'failed' || s === 'error') ? n.error_message : null;
       if (n.recipient_name) notifMap.set(n.recipient_name.toLowerCase().trim(), { status: s, error: err });
-      if (n.recipient_phone) notifMap.set(n.recipient_phone.replace(/\\D/g, '').slice(-10), { status: s, error: err });
+      if (n.recipient_phone) notifMap.set(n.recipient_phone.replace(/\D/g, '').slice(-10), { status: s, error: err });
     }
 
-    // 2. Fetch placed orders, purchases, pending queue items, and synced orders for today
+    // 2. Fetch placed orders, purchases, queue items, and synced orders for today
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
     const startOfDayMs = startOfDay.getTime();
 
-    const [todayPlacedOrders, todayPurchases, pendingQueueRows, syncedOrderRows] = await Promise.all([
+    const [todayPlacedOrders, todayPurchases, allQueueRows, syncedOrderRows] = await Promise.all([
       db.all(
         `SELECT id, order_date, store_id, store_name, order_no, items_json, placed_at 
          FROM pharmarack_placed_orders 
@@ -216,10 +216,9 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
         [todayStr]
       ),
       db.all(
-        `SELECT id, target_name, number, scheduled_at, message, created_at
+        `SELECT id, target_name, number, status, scheduled_at, message, created_at, error_message
          FROM whatsapp_send_queue
          WHERE type = 'distributor_dispatch_reminder'
-           AND status = 'pending'
            AND created_at >= ?
          ORDER BY id DESC`,
         [startOfDayMs]
@@ -230,10 +229,18 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
       )
     ]);
 
-    const queueMap = new Map<string, any>();
-    for (const q of pendingQueueRows || []) {
-      if (q.target_name) queueMap.set(q.target_name.toLowerCase().trim(), q);
-      if (q.number) queueMap.set(String(q.number).replace(/\D/g, '').slice(-10), q);
+    const pendingQueueMap = new Map<string, any>();
+    const sentQueueMap = new Map<string, any>();
+    for (const q of allQueueRows || []) {
+      const targetKey = q.target_name ? q.target_name.toLowerCase().trim() : '';
+      const phoneKey = q.number ? String(q.number).replace(/\D/g, '').slice(-10) : '';
+      if (q.status === 'pending') {
+        if (targetKey && !pendingQueueMap.has(targetKey)) pendingQueueMap.set(targetKey, q);
+        if (phoneKey && !pendingQueueMap.has(phoneKey)) pendingQueueMap.set(phoneKey, q);
+      } else if (q.status === 'sent' || q.status === 'delivered') {
+        if (targetKey && !sentQueueMap.has(targetKey)) sentQueueMap.set(targetKey, q);
+        if (phoneKey && !sentQueueMap.has(phoneKey)) sentQueueMap.set(phoneKey, q);
+      }
     }
 
     const syncedOrdersMap = new Map<string, string[]>();
@@ -272,10 +279,11 @@ export async function getTodayDistributorRemindersFast(customDateStr?: string): 
         }
       }
       const notif = notifMap.get(normDistName) || (phoneDigits ? notifMap.get(phoneDigits) : undefined);
-      r.latest_notif_status = notif?.status || null;
-      r.latest_notif_error = notif?.error || null;
+      const queueSentItem = sentQueueMap.get(normDistName) || (phoneDigits ? sentQueueMap.get(phoneDigits) : undefined);
+      r.latest_notif_status = notif?.status || queueSentItem?.status || (r.status === 'Dispatched' && r.last_reminded_at ? 'sent' : null);
+      r.latest_notif_error = notif?.error || queueSentItem?.error_message || null;
 
-      const queueItem = queueMap.get(normDistName) || (phoneDigits ? queueMap.get(phoneDigits) : undefined);
+      const queueItem = pendingQueueMap.get(normDistName) || (phoneDigits ? pendingQueueMap.get(phoneDigits) : undefined);
       if (queueItem) {
         r.pending_queue_id = queueItem.id;
         r.queue_scheduled_at = queueItem.scheduled_at;
@@ -868,6 +876,23 @@ export async function syncTodayActiveDistributors(): Promise<any[]> {
               [boyContact.delivery_boy_id, r.id]
             );
           } catch (_) {}
+        }
+      }
+
+      if (!r.latest_notif_status) {
+        const phoneDigits = (r.distributor_phone || '').replace(/\D/g, '').slice(-10);
+        const queueSent = await db.get(
+          `SELECT status FROM whatsapp_send_queue 
+           WHERE type = 'distributor_dispatch_reminder'
+             AND (LOWER(TRIM(target_name)) = LOWER(TRIM(?)) OR (LENGTH(number) >= 10 AND number LIKE ?))
+             AND DATE(created_at / 1000, 'unixepoch', 'localtime') = ?
+             AND status IN ('sent', 'delivered') LIMIT 1`,
+          [r.distributor_name, `%${phoneDigits}%`, todayStr]
+        ).catch(() => null);
+        if (queueSent?.status) {
+          r.latest_notif_status = queueSent.status;
+        } else if (r.status === 'Dispatched' && r.last_reminded_at) {
+          r.latest_notif_status = 'sent';
         }
       }
     }

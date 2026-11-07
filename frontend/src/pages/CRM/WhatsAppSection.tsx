@@ -111,6 +111,8 @@ export const WhatsAppSection: React.FC = () => {
 
   const [messages, setMessages] = useState<WaMessageItem[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [composerText, setComposerText] = useState('');
   const [sending, setSending] = useState(false);
   const [attachedFile, setAttachedFile] = useState<{ filename: string; mimetype: string; data: string } | null>(null);
@@ -287,9 +289,10 @@ export const WhatsAppSection: React.FC = () => {
 
     const loadMessages = (isInitial = false) => {
       if (isInitial) setLoadingMessages(true);
-      apiClient.get<WaMessageItem[]>(`/messaging/chats/${encodeURIComponent(activeChat.id)}/messages?limit=500`)
+      apiClient.get<WaMessageItem[]>(`/messaging/chats/${encodeURIComponent(activeChat.id)}/messages?limit=50`)
         .then(res => {
           const msgs = Array.isArray(res.data) ? res.data : [];
+          setHasOlderMessages(msgs.length >= 50);
           setMessages(prev => {
             const optimisticMsgs = prev.filter(m => m.id.startsWith('optimistic_'));
             if (optimisticMsgs.length === 0) return msgs;
@@ -311,7 +314,7 @@ export const WhatsAppSection: React.FC = () => {
             }
           }
           setOcrResults(preloaded);
-          if (isInitial) setTimeout(() => threadEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+          if (isInitial) setTimeout(() => threadEndRef.current?.scrollIntoView({ behavior: 'auto' }), 50);
         })
         .catch(() => { if (isInitial) toastEvent.trigger('Failed to load message history', 'error', '/crm'); })
         .finally(() => { if (isInitial) setLoadingMessages(false); });
@@ -319,6 +322,34 @@ export const WhatsAppSection: React.FC = () => {
 
     loadMessages(true);
   }, [activeChat, messagePollActive]);
+
+const loadOlderMessages = async () => {
+    if (!activeChat || loadingOlder || messages.length === 0) return;
+    const oldestTimestamp = messages[0]?.timestamp;
+    if (!oldestTimestamp) return;
+    setLoadingOlder(true);
+    try {
+      const res = await apiClient.get<WaMessageItem[]>(
+        `/messaging/chats/${encodeURIComponent(activeChat.id)}/messages?limit=50&before=${oldestTimestamp}`
+      );
+      const olderMsgs = Array.isArray(res.data) ? res.data : [];
+      if (olderMsgs.length < 50) {
+        setHasOlderMessages(false);
+      }
+      if (olderMsgs.length > 0) {
+        setMessages(prev => {
+          const existingIds = new Set(prev.map(m => m.id));
+          const freshOlder = olderMsgs.filter(m => !existingIds.has(m.id));
+          return [...freshOlder, ...prev];
+        });
+      }
+    } catch {
+      toastEvent.trigger('Failed to load older messages', 'error', '/crm');
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
 
 function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string): boolean {
   if (!chat) return false;
@@ -903,6 +934,19 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
 
               {/* Thread Messages */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-bg/50">
+                {hasOlderMessages && (
+                  <div className="flex justify-center pb-2">
+                    <button
+                      type="button"
+                      onClick={loadOlderMessages}
+                      disabled={loadingOlder}
+                      className="px-3 py-1 text-[11px] font-semibold rounded-full bg-bg3 text-muted hover:text-text border border-border flex items-center gap-1.5 transition-all shadow-sm"
+                    >
+                      {loadingOlder ? <RefreshCw size={11} className="animate-spin text-emerald-400" /> : null}
+                      {loadingOlder ? 'Loading older messages...' : 'Load older messages'}
+                    </button>
+                  </div>
+                )}
                 {loadingMessages ? (
                   <div className="p-8 text-center text-xs text-muted">Loading message history...</div>
                 ) : messages.length === 0 ? (
@@ -1181,11 +1225,11 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
           onSuccess={() => {
             loadChats();
             if (activeChatRef.current) {
-              apiClient.get<WaMessageItem[]>(`/messaging/chats/${encodeURIComponent(activeChatRef.current.id)}/messages?limit=500`)
+              apiClient.get<WaMessageItem[]>(`/messaging/chats/${encodeURIComponent(activeChatRef.current.id)}/messages?limit=50`)
                 .then(res => {
                   if (Array.isArray(res.data) && res.data.length > 0) {
                     setMessages(res.data);
-                    setTimeout(() => threadEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+                    setTimeout(() => threadEndRef.current?.scrollIntoView({ behavior: 'auto' }), 50);
                   }
                 });
             }

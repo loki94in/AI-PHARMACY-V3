@@ -292,9 +292,9 @@ class StartupSyncCoordinator {
               `UPDATE special_orders 
                SET needs_live_cart_sync = 0, status = 'In Live Cart', delivery_status = 'in_live_cart'
                WHERE customer_order_source = 'website_refill' 
-                 AND (LOWER(product) = LOWER(?) OR LOWER(medicine_name) = LOWER(?))
+                 AND LOWER(medicine_name) = LOWER(?)
                  AND needs_live_cart_sync = 1`,
-              [item.medicine_name, item.medicine_name]
+              [item.medicine_name]
             ).catch(() => {});
           } else {
             failedCount++;

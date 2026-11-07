@@ -1887,12 +1887,11 @@ export class PharmacyToolRegistry {
     // Insert canonical special_orders row per AGENT_DATA_FLOW_TREE.md
     const result = await db.run(
       `INSERT INTO special_orders (
-        product, medicine_name, medicine_id, qty, requester, phone, notes,
+        medicine_name, medicine_id, qty, requester, phone, notes,
         status, customer_order_source, needs_live_cart_sync, pharmarack_mapped,
         pharmarack_distributor, pharmarack_rate, pharmarack_mrp, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', 'assistant', 1, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      ) VALUES (?, ?, ?, ?, ?, ?, 'Pending', 'assistant', 1, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
       [
-        resolvedName,
         resolvedName,
         medId,
         quantity,

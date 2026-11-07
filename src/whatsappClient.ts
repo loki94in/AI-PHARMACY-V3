@@ -1502,6 +1502,18 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
           ]
         );
 
+        if (msg.fromMe && msg.body) {
+          // Reconcile provisional send layer: remove duplicate provisional record
+          const minTs = (msg.timestamp || Math.floor(Date.now() / 1000)) - 300;
+          await db.run(
+            `DELETE FROM whatsapp_messages 
+             WHERE id LIKE 'msg_out_%' AND from_me = 1 
+               AND (chat_id = ? OR chat_id LIKE ?)
+               AND body = ? AND timestamp >= ?`,
+            [chatId, `%${chatId.split('@')[0]}%`, msg.body, minTs]
+          ).catch(() => {});
+        }
+
         let resolvedNumber = chatId.split('@')[0];
         let chatName = chatId.split('@')[0];
         try {
@@ -2702,7 +2714,7 @@ export async function getChats(): Promise<any[]> {
 }
 
 /** Get messages for a specific chat from local SQLite cache, matching across @lid and @c.us */
-export async function getChatMessages(chatId: string, limit: number = 500): Promise<any[]> {
+export async function getChatMessages(chatId: string, limit: number = 50, beforeTimestamp?: number): Promise<any[]> {
   const raw = String(chatId || '').trim();
   if (!raw) return [];
 
@@ -2734,22 +2746,44 @@ export async function getChatMessages(chatId: string, limit: number = 500): Prom
     const inPlaceholders = idList.map(() => '?').join(',');
     const params: any[] = [...idList];
 
-    let whereClause = `wm.chat_id IN (${inPlaceholders})`;
+    let whereClause = `(${inPlaceholders ? `wm.chat_id IN (${inPlaceholders})` : '1=0'}${phoneWithoutCc && phoneWithoutCc.length >= 7 ? ' OR wm.chat_id LIKE ?' : ''})`;
     if (phoneWithoutCc && phoneWithoutCc.length >= 7) {
-      whereClause += ` OR wm.chat_id LIKE ?`;
       params.push(likePattern);
     }
+
+    if (beforeTimestamp && beforeTimestamp > 0) {
+      whereClause += ` AND wm.timestamp < ?`;
+      params.push(beforeTimestamp);
+    }
+
+    // Filter out provisional msg_out_ duplicate layer when genuine WhatsApp message exists
+    whereClause += ` AND NOT (
+      wm.id LIKE 'msg_out_%' AND EXISTS (
+        SELECT 1 FROM whatsapp_messages real_wm
+        WHERE (real_wm.chat_id = wm.chat_id OR (LENGTH(real_wm.chat_id) >= 10 AND real_wm.chat_id LIKE '%' || SUBSTR(wm.chat_id, 1, 10) || '%'))
+          AND real_wm.body = wm.body
+          AND real_wm.from_me = 1
+          AND real_wm.id NOT LIKE 'msg_out_%'
+          AND ABS(real_wm.timestamp - wm.timestamp) <= 300
+      )
+    )`;
+
     params.push(limit);
 
     const rows = await db.all(
-      `SELECT wm.id, wm.body, wm.from_me as fromMe, wm.timestamp,
-              wm.type, wm.has_media as hasMedia,
-              sm.result_json as scannedResult
-       FROM whatsapp_messages wm
-       LEFT JOIN scanned_messages sm ON sm.msg_id = wm.id
-       WHERE ${whereClause}
-       ORDER BY wm.timestamp ASC
-       LIMIT ?`,
+      `SELECT sub.id, sub.body, sub.fromMe, sub.timestamp,
+              sub.type, sub.hasMedia, sub.scannedResult
+       FROM (
+         SELECT wm.id, wm.body, wm.from_me as fromMe, wm.timestamp,
+                wm.type, wm.has_media as hasMedia,
+                sm.result_json as scannedResult
+         FROM whatsapp_messages wm
+         LEFT JOIN scanned_messages sm ON sm.msg_id = wm.id
+         WHERE ${whereClause}
+         ORDER BY wm.timestamp DESC
+         LIMIT ?
+       ) sub
+       ORDER BY sub.timestamp ASC`,
       params
     );
     return rows;

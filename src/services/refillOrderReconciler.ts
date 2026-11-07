@@ -108,7 +108,7 @@ export class RefillOrderReconciler {
       const existingOrder = await db.get(
         `SELECT id, status, qty FROM special_orders 
          WHERE (phone LIKE ? OR phone LIKE ?) 
-           AND LOWER(TRIM(product)) = LOWER(?) 
+           AND LOWER(TRIM(medicine_name)) = LOWER(?) 
            AND (
              status IN ('Pending', 'Ordered', 'Confirmed', 'Ready')
              OR created_at > datetime('now', '-15 minutes')
@@ -141,7 +141,7 @@ export class RefillOrderReconciler {
       // 4. Insert New Order into special_orders
       const res = await db.run(
         `INSERT INTO special_orders (
-          store_id, product, requester, phone, customer_id, qty, priority, status, date, notified,
+          store_id, medicine_name, requester, phone, customer_id, qty, priority, status, date, notified,
           source, source_refill_id, customer_order_source,
           pharmarack_distributor, pharmarack_rate, pharmarack_mrp, pharmarack_mapped, advance_payment,
           notes, notification_count,

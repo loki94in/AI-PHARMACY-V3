@@ -1470,9 +1470,9 @@ router.put('/orders/:orderId/items', async (req, res) => {
       // 4. Update special_orders header
       await db.run(
         `UPDATE special_orders
-         SET product = ?, medicine_name = ?, qty = ?, total_amount = ?, advance_payment = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+         SET medicine_name = ?, qty = ?, total_amount = ?, advance_payment = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [summaryProduct, currentItems[0].product_name, totalQty, totalAmount, newAdvance, newNotes, orderId]
+        [currentItems[0].product_name, totalQty, totalAmount, newAdvance, newNotes, orderId]
       );
 
       // 5. Audit trail

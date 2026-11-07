@@ -170,12 +170,12 @@ export class StoreSyncService {
         if (action === 'insert' && !localOrder) {
           await db.run(
             `INSERT INTO special_orders (
-              id, store_id, product, requester, phone, qty, status, notes, created_at, updated_at
+              id, store_id, medicine_name, requester, phone, qty, status, notes, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               entity_id,
               storeId,
-              payload.product || payload.medicine_name,
+              payload.medicine_name || payload.product,
               payload.requester || '',
               payload.phone || '',
               payload.qty || 1,

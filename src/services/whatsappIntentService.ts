@@ -1544,10 +1544,10 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
     // 1. Check 15-minute idempotency to prevent duplicate Live Cart additions
     const recent = await db.get(
       `SELECT id FROM special_orders 
-       WHERE phone = ? AND (LOWER(product) = LOWER(?) OR LOWER(medicine_name) = LOWER(?)) 
+       WHERE phone = ? AND LOWER(medicine_name) = LOWER(?) 
        AND created_at > datetime('now', '-15 minutes')
        LIMIT 1`,
-      [cleanDigits, confirmedMedicine, confirmedMedicine]
+      [cleanDigits, confirmedMedicine]
     );
     if (recent) {
       console.log(`[Intent Service] Duplicate confirmed order detected for ${cleanDigits} - ${confirmedMedicine} within 15 min. Skipping duplicate procurement.`);
@@ -1737,18 +1737,17 @@ export async function executeConfirmedProcurementFlow(params: ConfirmedProcureme
     const todayStr = new Date().toISOString().split('T')[0];
     const orderRes = await db.run(
       `INSERT INTO special_orders (
-        store_id, requester, phone, medicine_name, product, qty, priority, status,
+        store_id, requester, phone, medicine_name, qty, priority, status,
         date, notified, customer_order_source,
         pharmarack_distributor, pharmarack_rate, pharmarack_mrp,
         scheduled_processing_at, estimated_delivery_start, estimated_delivery_end,
         cutoff_at, pharmacy_timezone, schedule_status, schedule_reason, schedule_version,
         schedule_calculated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         1,
         customer?.name || 'WhatsApp Customer',
         cleanDigits,
-        cartItem.productName,
         cartItem.productName,
         cartItem.qty,
         todayStr,
@@ -4234,15 +4233,14 @@ async function proceedWithConfirmedProcurement(
         // Parent order was already placed with distributor! Create linked add-on order
         const addOnRes = await db.run(
           `INSERT INTO special_orders (
-             store_id, requester, phone, medicine_name, product, qty, priority, status,
+             store_id, requester, phone, medicine_name, qty, priority, status,
              date, notified, customer_order_source, total_amount, advance_payment, payment_status,
              pharmarack_mrp, notes
-           ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp_addon', ?, 0, 'PAID', ?, ?)`,
+           ) VALUES (?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp_addon', ?, 0, 'PAID', ?, ?)`,
           [
             existingSo.store_id || 1,
             customerName,
             cleanDigits,
-            medName,
             medName,
             medQty,
             todayStr,
@@ -4348,16 +4346,15 @@ async function proceedWithConfirmedProcurement(
   if (selectedCandidate && targetDist) {
     const orderRes = await db.run(
       `INSERT INTO special_orders (
-         store_id, requester, phone, medicine_name, product, qty, priority, status,
+         store_id, requester, phone, medicine_name, qty, priority, status,
          date, notified, customer_order_source, total_amount, advance_payment, payment_status,
          pharmarack_mrp, pharmarack_rate, distributor_name, pharmarack_distributor,
          pharmarack_store_id, pharmarack_product_id, pharmarack_product_code, pharmarack_product_name, pharmarack_mapped
-       ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       ) VALUES (?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID', ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
       [
         1,
         customerName,
         cleanDigits,
-        medName,
         medName,
         medQty,
         todayStr,
@@ -4488,15 +4485,14 @@ async function proceedWithConfirmedProcurement(
   // Create Special Order
   const orderRes = await db.run(
     `INSERT INTO special_orders (
-       store_id, requester, phone, medicine_name, product, qty, priority, status,
+       store_id, requester, phone, medicine_name, qty, priority, status,
        date, notified, customer_order_source, total_amount, advance_payment, payment_status,
        pharmarack_mrp
-     ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID', ?)`,
+     ) VALUES (?, ?, ?, ?, ?, 'Normal', 'Pending', ?, 0, 'whatsapp', 50, 50, 'UNPAID', ?)`,
     [
       1,
       customerName,
       cleanDigits,
-      medName,
       medName,
       medQty,
       todayStr,
@@ -5208,16 +5204,15 @@ async function handleOwnerInteractiveReply(phone: string, body: string, db: any)
         const todayStr = new Date().toISOString().split('T')[0];
         const orderRes = await db.run(
           `INSERT INTO special_orders (
-            store_id, requester, phone, medicine_name, product, qty, priority, status,
+            store_id, requester, phone, medicine_name, qty, priority, status,
             date, notified, customer_order_source,
             pharmarack_distributor, pharmarack_rate, pharmarack_mrp,
             pharmarack_product_id, pharmarack_product_code, pharmarack_store_id, pharmarack_product_name
-          ) VALUES (?, ?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, 'Normal', 'Confirmed', ?, 0, 'whatsapp', ?, ?, ?, ?, ?, ?, ?)`,
           [
             1,
             targetRow.customer_name || 'WhatsApp Customer',
             targetRow.customer_phone,
-            cartItem.productName,
             cartItem.productName,
             cartItem.qty,
             todayStr,
