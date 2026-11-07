@@ -1775,6 +1775,23 @@
 
 ---
 
+### [Fixed] P2-83 — Refill Collection WhatsApp Reminder bundles non-selected and future medicines not shown in QA
+
+| Field | Content |
+|-------|---------|
+| **What the user saw** | When pharmacist marked a refill group ready or re-sent a collection reminder from Quick Assist for a patient with multiple medicines on record (e.g. Sunita Pawar with 3 due/actionable medicines in QA), the generated WhatsApp reminder listed all 5 prescriptions across the entire patient history (including medicines not due yet). |
+| **Root cause** | 1. `QuickAssistSidebar.tsx`: action buttons `Mark Ready` and `Re-Send Reminder` invoked `handleMarkRefillGroupReady(group)` without passing `selectedIds`.
+2. `src/routes/refills.ts`: in `POST /patient/:phone/mark-ready`, when `refill_ids` was undefined, the query lacked an ID filter and queried all active non-completed refills across the patient's entire history, ignoring next due date.
+3. Companion bundling in single-refill reminder routes (`/:id/send` and `/send-reminder-now`) bundled all active rows without checking if they were due in the current cycle. |
+| **How it was fixed** | 1. `QuickAssistSidebar.tsx`: `handleMarkRefillGroupReady` defaults target IDs to `group.medicines.map(m => m.id)`, and both `Mark Ready` and `Re-Send Reminder` buttons explicitly pass `group.medicines.map(m => m.id)`.
+2. `src/routes/refills.ts`: `POST /patient/:phone/mark-ready` and `/notify-booked` enforce that fallback queries only fetch actionable items (`next_refill_date <= date('now', '+7 days') OR is_ready = 1 OR cart_store_name IS NOT NULL`).
+3. Companion bundling in `POST /:id/send` and `/send-reminder-now` similarly restricts companion items to actionable/due within 7 days or in-cart items. |
+| **Priority** | P2 |
+| **What not to touch** | `patient_refills` schema; existing WhatsApp localization templates; multi-select in `RefillOrderModal`. |
+| **Verified by** | `npm run guardrails` (tsc clean, no violations), `node scripts/quick-update.mjs`. |
+
+---
+
 ## Open
 
 > P0-74 … P2-80 come from one owner-requested audit (2026-09-30): "the purchase bill is the only truth;

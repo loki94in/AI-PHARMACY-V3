@@ -2353,7 +2353,7 @@ router.post('/:id/send', async (req, res) => {
 
     const includeLangBanner = await isFirstContactOrUnconfirmed(db, cleanPhone);
 
-    // Auto-bundle ALL companion active refills for this patient so ONE message carries all medicines
+    // Auto-bundle companion active refills for this patient that are currently due/actionable
     const companionRefills = await db.all(
       `SELECT pr.*, COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name
        FROM patient_refills pr
@@ -2364,6 +2364,7 @@ router.post('/:id/send', async (req, res) => {
        )
        AND pr.is_active = 1
        AND pr.status IN ('pending', 'notified', 'staged')
+       AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days') OR pr.is_ready = 1 OR pr.cart_store_name IS NOT NULL OR pr.cart_product_code IS NOT NULL)
        ORDER BY pr.id ASC`,
       [cleanPhone, cleanDigits, patientName]
     );
@@ -2498,7 +2499,8 @@ router.post('/send-grouped', async (req, res) => {
         `SELECT pr.*, m.name as medicine_name 
          FROM patient_refills pr 
          LEFT JOIN medicines m ON pr.medicine_id = m.id 
-         WHERE pr.patient_phone = ? AND pr.is_active = 1`,
+         WHERE pr.patient_phone = ? AND pr.is_active = 1
+           AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days') OR pr.is_ready = 1 OR pr.cart_store_name IS NOT NULL OR pr.cart_product_code IS NOT NULL)`,
         [patient_phone]
       );
     }
@@ -2634,7 +2636,8 @@ router.post('/send-tomorrow-reminder', async (req, res) => {
     const rows = await db.all(
       `SELECT pr.*, COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name FROM patient_refills pr
        LEFT JOIN medicines m ON pr.medicine_id = m.id
-       WHERE pr.patient_phone = ? AND pr.is_active = 1 
+       WHERE pr.patient_phone = ? AND pr.is_active = 1
+         AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days') OR pr.is_ready = 1 OR pr.cart_store_name IS NOT NULL OR pr.cart_product_code IS NOT NULL) 
          AND (pr.is_ready = 1 OR pr.stock_verified_override = 1)`,
       [patient_phone]
     );
@@ -2753,6 +2756,7 @@ router.post('/send-reminder-now', async (req, res) => {
       `SELECT pr.*, COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name FROM patient_refills pr
        LEFT JOIN medicines m ON pr.medicine_id = m.id
        WHERE pr.patient_phone = ? AND pr.is_active = 1
+         AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days') OR pr.is_ready = 1 OR pr.cart_store_name IS NOT NULL OR pr.cart_product_code IS NOT NULL)
        ORDER BY pr.next_refill_date ASC`,
       [patient_phone]
     );
@@ -3230,6 +3234,9 @@ router.post('/patient/:phone/mark-ready', async (req, res) => {
     if (targetRefillIds && targetRefillIds.length > 0) {
       idFilterSql = ` AND pr.id IN (${targetRefillIds.map(() => '?').join(',')})`;
       queryParams.push(...targetRefillIds);
+    } else {
+      // Defensive fallback: only select actionable items (due within 7 days, in cart, or ready)
+      idFilterSql = ` AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days') OR pr.is_ready = 1 OR pr.cart_store_name IS NOT NULL OR pr.cart_product_code IS NOT NULL)`;
     }
 
     const refills = await db.all(`
@@ -3361,6 +3368,9 @@ router.post('/patient/:phone/notify-booked', async (req, res) => {
     if (targetRefillIds && targetRefillIds.length > 0) {
       idFilterSql = ` AND pr.id IN (${targetRefillIds.map(() => '?').join(',')})`;
       queryParams.push(...targetRefillIds);
+    } else {
+      // Defensive fallback: only select actionable items (due within 7 days, in cart, or ready)
+      idFilterSql = ` AND (pr.next_refill_date IS NULL OR pr.next_refill_date <= date('now', '+7 days') OR pr.is_ready = 1 OR pr.cart_store_name IS NOT NULL OR pr.cart_product_code IS NOT NULL)`;
     }
 
     const refills = await db.all(`

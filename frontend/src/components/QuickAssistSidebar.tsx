@@ -335,8 +335,11 @@ export const QuickAssistSidebar = memo(({
     }
     setMarkingReadyRefillPhones(prev => new Set(prev).add(phone));
     try {
+      const targetIds = selectedIds && selectedIds.length > 0
+        ? selectedIds
+        : (group.medicines && group.medicines.length > 0 ? group.medicines.map(m => m.id) : undefined);
       const res = await apiClient.post(`/refills/patient/${encodeURIComponent(phone)}/mark-ready`, {
-        refill_ids: selectedIds && selectedIds.length > 0 ? selectedIds : undefined
+        refill_ids: targetIds
       });
       if (res?.data?.success) {
         toastEvent.trigger(
@@ -2058,7 +2061,7 @@ export const QuickAssistSidebar = memo(({
                                   disabled={isMarkingReady}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleMarkRefillGroupReady(group);
+                                    handleMarkRefillGroupReady(group, group.medicines.map(m => m.id));
                                   }}
                                   className="flex-1 h-6.5 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
                                   title={`Mark refills ready and send collection reminder to ${group.patient_name}`}
@@ -2101,7 +2104,7 @@ export const QuickAssistSidebar = memo(({
                                 disabled={isMarkingReady}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleMarkRefillGroupReady(group);
+                                  handleMarkRefillGroupReady(group, group.medicines.map(m => m.id));
                                 }}
                                 className="flex-1 h-6.5 px-2 rounded-lg bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white text-[9.5px] font-bold uppercase transition-colors flex items-center justify-center gap-1 shadow-xs cursor-pointer truncate"
                                 title={`Re-send collection reminder WhatsApp to ${group.patient_name}`}
