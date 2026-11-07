@@ -1535,6 +1535,26 @@ function launchClientInstance(forceQr: boolean): Promise<WAClient> {
           } catch (e) {}
         }
 
+        // Canonical Auto-Linking: enrich contact display name from delivery staff, customers, or suppliers
+        const digits = resolvedNumber.replace(/\D/g, '');
+        const phone10 = digits.length >= 10 ? digits.slice(-10) : '';
+        if (phone10 && (!chatName || chatName === chatId.split('@')[0] || /^\d+$/.test(chatName) || chatName.includes('@lid'))) {
+          try {
+            const boy = await db.get('SELECT name FROM delivery_boys WHERE phone LIKE ? LIMIT 1', [`%${phone10}%`]);
+            if (boy?.name) {
+              chatName = boy.name;
+            } else {
+              const cust = await db.get('SELECT name FROM customers WHERE phone LIKE ? LIMIT 1', [`%${phone10}%`]);
+              if (cust?.name) {
+                chatName = cust.name;
+              } else {
+                const supp = await db.get('SELECT name FROM suppliers WHERE phone LIKE ? LIMIT 1', [`%${phone10}%`]);
+                if (supp?.name) chatName = supp.name;
+              }
+            }
+          } catch (_) {}
+        }
+
         const isFromMe = !!msg.fromMe;
         const nowMs = Date.now();
         const takeoverSettingRow = await db.get("SELECT value FROM app_settings WHERE key = 'wa_bot_takeover_resume_min'").catch(() => null);
@@ -2402,19 +2422,11 @@ export async function sendMessage(
           recentSendsCache.set(`${lidUser}:${msgHash}:${fullMsg.length}`, Date.now());
         }
 
-        // Provisional DB record — ensures chat + message appear immediately in UI.
+        // Pure WhatsApp Truth: Update chat preview immediately; genuine message is stored and broadcast by message_create
         try {
           const provisionalBody = file ? `[Document] ${file.filename || ''} ${caption || ''}`.trim()
             : (mediaPath ? `[Document] ${path.basename(mediaPath)} ${caption || ''}`.trim() : (caption || ''));
           const provTimestamp = Math.floor(Date.now() / 1000);
-          const provHasMedia = file || mediaPath ? 1 : 0;
-
-          await db.run(
-            `INSERT INTO whatsapp_messages (id, chat_id, body, from_me, timestamp, type, has_media)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO NOTHING`,
-            [messageId, chatId, provisionalBody, 1, provTimestamp, file || mediaPath ? 'document' : 'text', provHasMedia]
-          );
 
           const existingChatRow = await db.get('SELECT name, session_mode, manual_active_until, session_status FROM whatsapp_chats WHERE id = ?', [chatId]);
           const chatNameProv = existingChatRow?.name || cleanPhone;
@@ -2436,19 +2448,6 @@ export async function sendMessage(
             [chatId, chatNameProv, provTimestamp, provisionalBody, cleanPhone, targetSessionMode, targetManualUntil, nowProv, targetSessionStatus]
           );
 
-          eventService.broadcast('wa_new_message', {
-            chat_id: chatId,
-            resolved_number: cleanPhone,
-            message: {
-              id: messageId,
-              body: provisionalBody,
-              fromMe: true,
-              timestamp: provTimestamp,
-              type: file || mediaPath ? 'document' : 'text',
-              hasMedia: !!provHasMedia
-            }
-          });
-
           eventService.broadcast('wa_session_updated', {
             chat_id: chatId,
             resolved_number: cleanPhone,
@@ -2461,7 +2460,7 @@ export async function sendMessage(
             .then(m => m.whatsappDeliveryRegister.recordDelivery(cleanPhone, provisionalBody, file || mediaPath ? 'media' : 'text', undefined, undefined, messageId))
             .catch(() => {});
         } catch (provErr: any) {
-          console.warn('[WhatsApp] Provisional DB write failed (non-fatal):', provErr?.message);
+          console.warn('[WhatsApp] Chat preview update note:', provErr?.message || provErr);
         }
 
         aggregateResult = { sent: true, suppressed: false };
@@ -2756,17 +2755,8 @@ export async function getChatMessages(chatId: string, limit: number = 50, before
       params.push(beforeTimestamp);
     }
 
-    // Filter out provisional msg_out_ duplicate layer when genuine WhatsApp message exists
-    whereClause += ` AND NOT (
-      wm.id LIKE 'msg_out_%' AND EXISTS (
-        SELECT 1 FROM whatsapp_messages real_wm
-        WHERE (real_wm.chat_id = wm.chat_id OR (LENGTH(real_wm.chat_id) >= 10 AND real_wm.chat_id LIKE '%' || SUBSTR(wm.chat_id, 1, 10) || '%'))
-          AND real_wm.body = wm.body
-          AND real_wm.from_me = 1
-          AND real_wm.id NOT LIKE 'msg_out_%'
-          AND ABS(real_wm.timestamp - wm.timestamp) <= 300
-      )
-    )`;
+    // Pure WhatsApp Truth: Never display provisional msg_out_ records (genuine messages only)
+    whereClause += ` AND wm.id NOT LIKE 'msg_out_%'`;
 
     params.push(limit);
 

@@ -1027,19 +1027,8 @@ async function ensureOrderTimingSchema(db: any) {
     }
     // Composite index: used by smart reply scheduler to check read state and ACK per chat
     await db.run('CREATE INDEX IF NOT EXISTS idx_wa_msgs_ack ON whatsapp_messages (chat_id, from_me, ack_status)');
-    // Clean up any historical duplicate provisional msg_out_ records where genuine WhatsApp copy exists
-    await db.run(`
-      DELETE FROM whatsapp_messages 
-      WHERE id LIKE 'msg_out_%' 
-        AND EXISTS (
-          SELECT 1 FROM whatsapp_messages real_m 
-          WHERE real_m.from_me = 1 
-            AND real_m.id NOT LIKE 'msg_out_%'
-            AND (real_m.chat_id = whatsapp_messages.chat_id OR (LENGTH(real_m.chat_id) >= 10 AND real_m.chat_id LIKE '%' || SUBSTR(whatsapp_messages.chat_id, 1, 10) || '%'))
-            AND real_m.body = whatsapp_messages.body
-            AND ABS(real_m.timestamp - whatsapp_messages.timestamp) <= 300
-        )
-    `).catch(() => {});
+    // Pure WhatsApp Truth: Purge all historical provisional msg_out_ records
+    await db.run("DELETE FROM whatsapp_messages WHERE id LIKE 'msg_out_%'").catch(() => {});
   } catch (_) { }
 }
 

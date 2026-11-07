@@ -382,9 +382,10 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
         if (currentChat && isSameChat(currentChat, chatId, resolvedNumber)) {
           setMessages(prev => {
             if (prev.some(m => m.id === newMsg.id)) return prev;
-            return [...prev, newMsg];
+            // Seamlessly swap optimistic placeholder with confirmed genuine WhatsApp message
+            return [...prev.filter(m => !(m.id.startsWith('optimistic_') && m.body === newMsg.body)), newMsg];
           });
-          setTimeout(() => threadEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+          setTimeout(() => threadEndRef.current?.scrollIntoView({ behavior: 'auto' }), 50);
         }
         // Refresh chats list preview
         loadChats();
@@ -466,11 +467,11 @@ function isSameChat(chat: WaChatItem, targetChatId: string, resolvedNum?: string
       // Reconcile optimistic message with DB record after short delay
       setTimeout(() => {
         if (activeChatRef.current) {
-          apiClient.get<WaMessageItem[]>(`/messaging/chats/${encodeURIComponent(activeChatRef.current.id)}/messages?limit=500`)
+          apiClient.get<WaMessageItem[]>(`/messaging/chats/${encodeURIComponent(activeChatRef.current.id)}/messages?limit=50`)
             .then(res => {
               if (Array.isArray(res.data) && res.data.length > 0) {
                 setMessages(res.data);
-                setTimeout(() => threadEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+                setTimeout(() => threadEndRef.current?.scrollIntoView({ behavior: 'auto' }), 50);
               }
             })
             .catch(() => {});
