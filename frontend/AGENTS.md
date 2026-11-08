@@ -271,5 +271,7 @@ Fast, mouse-free keyboard billing and purchase entry is a core pharmacy speed re
 - **No Silent Price or Stock Changes**: Strip MRP, loose rate ($\frac{\text{MRP}}{\text{savedPackSize}}$), purchasing, inventory valuation, and stock decrement logic remain 100% unchanged.
 - **Loose Sale Safeguard & Unblocked Full-Pack Sales**: Whole-strip sales (`qty > 0`, `looseQty = 0`) proceed without interruption even if a mismatch warning is present. If `looseQty > 0` on an unverified mismatch item, the loose input is highlighted in amber and bill completion (`handleCompleteSale`) is gated with a confirmation modal before finalizing the sale.
 
-
-
+## Instant In-Memory State Updates (added 2026-11)
+- **Inventory (`pages/Inventory/index.tsx`)**: `handleToggleOnline` and `handleBulkOnline` update `items` instantly via `updateItem` (0ms response) before firing the background API call. Drawer edit `handleSave` applies updated fields to `items` and `selectedItem` in memory at 0ms. On API failure, previous states are automatically restored with an error toast.
+- **Purchase History (`pages/PurchaseHistory/index.tsx`)**: `handleDeletePurchase` evicts the row from `items` instantly via `removeItem` (0ms response) and closes the confirmation modal immediately; on server failure it calls `refetch()` to restore the row with an error toast.
+- **Dispatch (`pages/Dispatch/index.tsx`)**: `handleAssignDeliveryBoy` and `handleUnifiedStatusChange` update `orders`, `websiteOrders`, and module cache `setDispatchOrdersCache` at 0ms. On API failure, state rolls back to previous snapshots.

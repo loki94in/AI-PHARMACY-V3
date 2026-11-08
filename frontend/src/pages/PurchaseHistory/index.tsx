@@ -241,6 +241,7 @@ const PurchaseHistory: React.FC = () => {
     fetchNextPage,
     refetch,
     sentinelRef,
+    removeItem,
   } = useInfiniteScroll<PurchaseTransaction>({
     queryKey: 'purchase-history-list',
     cacheKey: 'purchase-history-cache',
@@ -473,13 +474,16 @@ const PurchaseHistory: React.FC = () => {
 
   const handleDeletePurchase = async (tx: PurchaseTransaction) => {
     setDeletingPurchaseId(tx.id);
+    setDeleteConfirmPurchase(null);
+    // 0ms instant in-memory eviction
+    removeItem(i => i.id === tx.id);
+    toastEvent.trigger('Purchase deleted and inventory stock reverted', 'success');
     try {
       await api.deletePurchase(tx.id);
-      toastEvent.trigger('Purchase deleted and inventory stock reverted', 'success');
-      refetch();
       invalidateAfterStockWrite(queryClient);
-      setDeleteConfirmPurchase(null);
     } catch (err: unknown) {
+      // Re-sync on failure
+      refetch();
       const errorMsg =
         (err as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error ||
         (err as Error)?.message ||

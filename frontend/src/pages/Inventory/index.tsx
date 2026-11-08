@@ -356,6 +356,8 @@ const Inventory = () => {
     fetchNextPage,
     refetch,
     sentinelRef,
+    updateItem,
+    removeItem,
   } = useInfiniteScroll<InventoryItem>({
     queryKey: 'inventory-list',
     cacheKey: 'inventory-items-cache',
@@ -423,31 +425,53 @@ const Inventory = () => {
   }, [refetch]);
 
   const handleToggleOnline = async (medId: number, currentOnline: boolean) => {
+    const nextOnline = !currentOnline;
+    // 0ms instant in-memory state update
+    updateItem(
+      i => (i.medicine_id || i.id) === medId,
+      i => ({ ...i, is_online: nextOnline ? 1 : 0, is_website_visible: nextOnline ? 1 : 0 })
+    );
+    toastEvent.trigger(
+      nextOnline ? '🌐 Medicine is now ONLINE on website & portal' : '📴 Medicine is now OFFLINE (hidden)',
+      'success'
+    );
     try {
-      await api.toggleOnlineStatus({ medicine_id: medId, is_online: !currentOnline });
-      toastEvent.trigger(
-        !currentOnline ? '🌐 Medicine is now ONLINE on website & portal' : '📴 Medicine is now OFFLINE (hidden)',
-        'success'
+      await api.toggleOnlineStatus({ medicine_id: medId, is_online: nextOnline });
+    } catch (err: unknown) {
+      // Rollback on failure
+      updateItem(
+        i => (i.medicine_id || i.id) === medId,
+        i => ({ ...i, is_online: currentOnline ? 1 : 0, is_website_visible: currentOnline ? 1 : 0 })
       );
-      refetch();
-    } catch (err: any) {
-      toastEvent.trigger(err.message || 'Failed to update online status', 'error');
+      const msg = (err as Error)?.message || 'Failed to update online status';
+      toastEvent.trigger(msg, 'error');
     }
   };
 
   const handleBulkOnline = async (isOnline: boolean) => {
     if (selectedMedIds.size === 0) return;
+    const targetIds = new Set(selectedMedIds);
     setIsBulkToggling(true);
+    // 0ms instant in-memory state update
+    updateItem(
+      i => targetIds.has(i.medicine_id || i.id),
+      i => ({ ...i, is_online: isOnline ? 1 : 0, is_website_visible: isOnline ? 1 : 0 })
+    );
+    setSelectedMedIds(new Set());
+    toastEvent.trigger(
+      `${targetIds.size} medicines set to ${isOnline ? 'ONLINE' : 'OFFLINE'}`,
+      'success'
+    );
     try {
-      await api.toggleOnlineStatus({ medicine_ids: Array.from(selectedMedIds), is_online: isOnline });
-      toastEvent.trigger(
-        `${selectedMedIds.size} medicines set to ${isOnline ? 'ONLINE' : 'OFFLINE'}`,
-        'success'
+      await api.toggleOnlineStatus({ medicine_ids: Array.from(targetIds), is_online: isOnline });
+    } catch (err: unknown) {
+      // Rollback on failure
+      updateItem(
+        i => targetIds.has(i.medicine_id || i.id),
+        i => ({ ...i, is_online: !isOnline ? 1 : 0, is_website_visible: !isOnline ? 1 : 0 })
       );
-      setSelectedMedIds(new Set());
-      refetch();
-    } catch (err: any) {
-      toastEvent.trigger(err.message || 'Failed to update online status', 'error');
+      const msg = (err as Error)?.message || 'Failed to update online status';
+      toastEvent.trigger(msg, 'error');
     } finally {
       setIsBulkToggling(false);
     }
@@ -507,18 +531,32 @@ const Inventory = () => {
     if (!selectedItem) return;
     setIsSaving(true);
     const medId = selectedItem.medicine_id || selectedItem.id;
+    const prevItem = { ...selectedItem };
+    const updatedFields = { ...editForm };
+
+    // 0ms instant in-memory update across table and detail panel
+    updateItem(
+      i => (i.medicine_id || i.id) === medId,
+      i => ({ ...i, ...updatedFields } as InventoryItem)
+    );
+    setSelectedItem({ ...selectedItem, ...updatedFields } as InventoryItem);
+    setIsEditing(false);
+
     api.quickEditMedicine(medId, editForm)
       .then(() => {
         setIsSaving(false);
-        setIsEditing(false);
-        setSelectedItem({ ...selectedItem, ...editForm } as InventoryItem);
-        loadInventory();
-        queryClient.invalidateQueries({ queryKey: ['inventory-list'] });
+        queryClient.invalidateQueries({ queryKey: ['inventory-list'], refetchType: 'none' });
         toastEvent.trigger('Inventory details updated successfully', 'success');
       })
       .catch(err => {
         console.error('Failed to update item:', err);
         setIsSaving(false);
+        // Rollback on failure
+        updateItem(
+          i => (i.medicine_id || i.id) === medId,
+          () => prevItem
+        );
+        setSelectedItem(prevItem);
         toastEvent.trigger('Failed to update inventory details', 'error');
       });
   };

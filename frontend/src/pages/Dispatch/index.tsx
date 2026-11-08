@@ -913,21 +913,52 @@ const Dispatch = () => {
   }, [orders, websiteOrders, allBoys]);
 
   const handleAssignDeliveryBoy = async (order: UnifiedDispatchItem, boyId: number | null) => {
+    const prevOrders = [...orders];
+    const prevWebOrders = [...websiteOrders];
+    const boyName = boyId ? allBoys.find(b => b.id === boyId)?.name : undefined;
+
+    // 0ms instant in-memory state update
+    if (order.sourceType === 'pharmacy') {
+      const next = orders.map(o => o.id === order.id ? { ...o, delivery_boy_id: boyId, delivery_boy_name: boyName } : o);
+      setOrders(next);
+      setDispatchOrdersCache(next);
+    } else {
+      setWebsiteOrders(prev => prev.map(w => w.id === order.id ? { ...w, delivery_boy_id: boyId } : w));
+    }
+    showNotif(`Assigned to ${boyName || 'Unassigned'}`);
+
     try {
       if (order.sourceType === 'pharmacy') {
         await api.updateDispatchOrder(order.id, { delivery_boy_id: boyId });
       } else {
         await apiClient.put(`/orders/${order.id}`, { delivery_boy_id: boyId });
       }
-      const boyName = boyId ? allBoys.find(b => b.id === boyId)?.name : 'Unassigned';
-      showNotif(`Assigned to ${boyName}`);
-      fetchAll();
     } catch {
+      // Rollback on failure
+      setOrders(prevOrders);
+      setDispatchOrdersCache(prevOrders);
+      setWebsiteOrders(prevWebOrders);
       showNotif('Failed to assign delivery staff', 'error');
     }
   };
 
   const handleUnifiedStatusChange = async (order: UnifiedDispatchItem, newStatus: string) => {
+    const prevOrders = [...orders];
+    const prevWebOrders = [...websiteOrders];
+
+    // 0ms instant in-memory state update
+    if (order.sourceType === 'pharmacy') {
+      const next = orders.map(o => o.id === order.id ? { ...o, status: newStatus as DispatchOrder['status'] } : o);
+      setOrders(next);
+      setDispatchOrdersCache(next);
+    } else {
+      setWebsiteOrders(prev => prev.map(w => w.id === order.id ? {
+        ...w,
+        status: newStatus === 'Delivered' ? 'Delivered' : (newStatus === 'In Transit' ? 'Ready' : 'Pending')
+      } : w));
+    }
+    showNotif(`Status updated to "${newStatus}"`);
+
     try {
       if (order.sourceType === 'pharmacy') {
         await api.updateDispatchOrder(order.id, { status: newStatus });
@@ -940,9 +971,11 @@ const Dispatch = () => {
           });
         }
       }
-      showNotif(`Status updated to "${newStatus}"`);
-      fetchAll();
     } catch {
+      // Rollback on failure
+      setOrders(prevOrders);
+      setDispatchOrdersCache(prevOrders);
+      setWebsiteOrders(prevWebOrders);
       showNotif('Failed to update status', 'error');
     }
   };
