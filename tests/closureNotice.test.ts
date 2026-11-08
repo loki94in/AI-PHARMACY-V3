@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import Database from 'better-sqlite3';
-import { getShopTimingNow, buildShopTimingNote, getRefillScheduleOpts } from '../src/utils/closureNotice.js';
+import { getShopTimingNow, buildShopTimingNote, getRefillScheduleOpts, getMarketArrivalNotice } from '../src/utils/closureNotice.js';
 
 function makeDb() {
   const raw = new Database(':memory:');
@@ -78,5 +78,25 @@ describe('closureNotice', () => {
     const info = { closedToday: true, reopenLabel: 'tomorrow (Mon, 12 Oct)', openTime12: '9:00 AM', closeTime12: '10:00 PM' };
     expect(buildShopTimingNote(info, 'hi', 'booking')).toContain('दुकान');
     expect(buildShopTimingNote(info, 'mr', 'pickup')).toContain('दुकान');
+  });
+
+  it('weekly off none keeps Sunday open and does not produce store closure notice', async () => {
+    db.set('pharmacy_weekly_off', 'none');
+    db.set('sunday_orders_enabled', 'false');
+    at('2026-10-11T06:30:00Z'); // Sunday 12:00 IST
+    const info = await getShopTimingNow(db);
+    expect(info).toBeNull();
+  });
+
+  it('getMarketArrivalNotice formats clean smart arrival notices', () => {
+    const d = new Date('2026-11-12T10:00:00+05:30');
+    const hi = getMarketArrivalNotice(d, 'Diwali', 'hi');
+    expect(hi).toContain('आगमन सूचना');
+    expect(hi).toContain('Diwali');
+    expect(hi).toContain('12 Nov');
+
+    const en = getMarketArrivalNotice(d, 'Market Holiday', 'en');
+    expect(en).toContain('Expected Arrival');
+    expect(en).toContain('12 Nov');
   });
 });

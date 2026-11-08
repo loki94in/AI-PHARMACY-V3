@@ -355,6 +355,17 @@ router.post('/save', async (req, res) => {
           }
         }
 
+        // Synchronize weekly off: if set to 'None', ensure Sunday operations are marked enabled
+        const weeklyOffVal = payload['pharmacy_weekly_off'] || payload['weekly_off'];
+        if (weeklyOffVal !== undefined) {
+          const off = String(weeklyOffVal).trim().toLowerCase();
+          if (off === 'none' || off === '') {
+            await upsertStmt.run(['sunday_orders_enabled', 'true']);
+            await upsertStmt.run(['operates_sunday', 'true']);
+            await upsertStmt.run(['sunday_delivery', 'true']);
+          }
+        }
+
         // Synchronize drug licence aliases if any drug licence key was provided
         const licenceVal = payload['drug_license'] || payload['shop_licence'] || payload['license_number'] || payload['dl_number'] || payload['drug_licence_no'];
         if (licenceVal !== undefined) {

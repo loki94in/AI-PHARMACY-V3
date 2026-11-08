@@ -112,8 +112,41 @@ export interface RefillScheduleOpts {
   closeTime?: string;
   weeklyOff?: string;
   isOffDayUpcoming?: boolean;
+  isMarketClosure?: boolean;
   /** Names the actual closed day ("Sun, 12 Oct", "Tue, 21 Oct (Diwali)") for the reminder. */
   closedLabel?: string;
+}
+
+/**
+ * Returns a smart medicine arrival notice for customer order booking when delivery is shifted
+ * due to wholesale market closure or after-cutoff processing.
+ */
+export function getMarketArrivalNotice(
+  deliveryDate: Date | string | null | undefined,
+  reason?: string | null,
+  lang: string = 'en'
+): string {
+  if (!deliveryDate) return '';
+  const d = typeof deliveryDate === 'string' ? new Date(deliveryDate) : deliveryDate;
+  if (isNaN(d.getTime())) return '';
+
+  const dateLabel = formatDayLabel(d);
+  const l = (lang || 'en').toLowerCase();
+  let cleanReason = (reason || '').trim().replace(/^Closed:\s*/i, '');
+  if (/Pharmarack distributor dispatch paused|Wholesale market closed|Post-cutoff|Sunday rollover/i.test(cleanReason)) {
+    cleanReason = '';
+  }
+
+  if (l === 'hi') {
+    const why = cleanReason ? `मार्केट अवकाश (${cleanReason}) के कारण, ` : 'मार्केट अवकाश के कारण, ';
+    return `\n\n📦 *दवाई आगमन सूचना:* ${why}आपकी दवाई *${dateLabel}* तक उपलब्ध होगी। दवाई आते ही हम आपको सूचित करेंगे।`;
+  }
+  if (l === 'mr') {
+    const why = cleanReason ? `मार्केट सुट्टीमुळे (${cleanReason}), ` : 'मार्केट सुट्टीमुळे, ';
+    return `\n\n📦 *औषध आगमन सूचना:* ${why}आपले औषध *${dateLabel}* पर्यंत उपलब्ध होईल. औषध आल्यावर आम्ही आपल्याला कळवू.`;
+  }
+  const why = cleanReason ? `Due to market holiday (${cleanReason}), ` : 'Due to wholesale market holiday, ';
+  return `\n\n📦 *Expected Arrival:* ${why}your medicine will arrive by *${dateLabel}*. We will notify you as soon as it arrives.`;
 }
 
 /**
@@ -141,9 +174,11 @@ export async function getRefillScheduleOpts(
       if (seen.has(key)) continue;
       seen.add(key);
       const chk = await isClosedDay(c, 1, db);
-      if (chk.isClosed) {
+      if (chk.isClosed || chk.isDispatchClosed) {
         opts.isOffDayUpcoming = true;
-        opts.closedLabel = `${formatDayLabel(c)}${chk.isWeeklyOff || !chk.reason ? '' : ` (${chk.reason})`}`;
+        opts.isMarketClosure = Boolean(!chk.isStoreClosed && (chk.isMarketClosed || chk.isPausedDispatch));
+        const effectiveReason = chk.isStoreClosed ? chk.reason : (chk.dispatchReason || chk.reason);
+        opts.closedLabel = `${formatDayLabel(c)}${chk.isWeeklyOff || !effectiveReason ? '' : ` (${effectiveReason})`}`;
         break;
       }
     }

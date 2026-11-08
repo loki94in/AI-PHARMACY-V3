@@ -337,7 +337,11 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
 
     timingInfo = `\n🕒 *Store Hours:* ${open12} to ${close12}`;
     if (closure.isOffDayUpcoming) {
-      timingInfo += `\n⚠️ *Notice:* Our pharmacy will remain closed on ${closure.closedLabel || sched.weeklyOff}. Please collect before closure!`;
+      if (closure.isMarketClosure) {
+        timingInfo += `\n⚠️ *Notice:* Wholesale market is closed on ${closure.closedLabel || sched.weeklyOff}. Please confirm early so we can prepare your stock in advance!`;
+      } else {
+        timingInfo += `\n⚠️ *Notice:* Our pharmacy will remain closed on ${closure.closedLabel || sched.weeklyOff}. Please collect before closure!`;
+      }
     }
   } catch (_) { }
 

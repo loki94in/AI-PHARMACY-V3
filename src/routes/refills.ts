@@ -119,7 +119,7 @@ export function buildRefillReminderMessage(
   pharmacyName: string,
   lang: string = 'en',
   dueDateStr?: string,
-  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean; closedLabel?: string },
+  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean; isMarketClosure?: boolean; closedLabel?: string },
   opts?: { includeLanguageBanner?: boolean; portalUrl?: string }
 ): string {
   const pName = formatCustomerName(patientName);
@@ -133,6 +133,7 @@ export function buildRefillReminderMessage(
   // closedLabel names the real closed day (weekly off, holiday, market closure); weeklyOff is the fallback.
   const weeklyOff = scheduleOpts?.closedLabel || scheduleOpts?.weeklyOff || 'Monday';
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
+  const isMarketClosure = Boolean(scheduleOpts?.isMarketClosure);
 
   let message = '';
   if (cleanLang === 'hi') {
@@ -142,7 +143,11 @@ export function buildRefillReminderMessage(
     const dueSuffix = dueDateStr ? `\n\nतारीख: ${dueDateStr}` : '';
     let timingSection = `\n🕒 दुकान का समय: ${openT} से ${closeT}`;
     if (isOffDayUpcoming) {
-      timingSection += `\n⚠️ सूचना: हमारी दुकान ${weeklyOff} को बंद रहेगी। कृपया समय से पहले दवाई ले लें!`;
+      if (isMarketClosure) {
+        timingSection += `\n⚠️ सूचना: ${weeklyOff} को थोक मार्केट बंद रहेगा। कृपया समय पर पुष्टि करें ताकि हम आपका स्टॉक पहले ही मंगा सकें!`;
+      } else {
+        timingSection += `\n⚠️ सूचना: हमारी दुकान ${weeklyOff} को बंद रहेगी। कृपया समय से पहले दवाई ले लें!`;
+      }
     }
     let cta = `\n\n❓ क्या आप दवाई तैयार करवाना चाहते हैं?\n👉 *पुष्टि के लिए "1" या "REFILL" लिखकर उत्तर दें।*`;
     if (opts?.portalUrl) {
@@ -156,7 +161,11 @@ export function buildRefillReminderMessage(
     const dueSuffix = dueDateStr ? `\n\nदिनांक: ${dueDateStr}` : '';
     let timingSection = `\n🕒 दुकानाची वेळ: ${openT} ते ${closeT}`;
     if (isOffDayUpcoming) {
-      timingSection += `\n⚠️ सूचना: आमचे दुकान ${weeklyOff} ला बंद राहील. कृपया आधीच औषध घेऊन जा!`;
+      if (isMarketClosure) {
+        timingSection += `\n⚠️ सूचना: ${weeklyOff} ला मार्केट बंद राहील. कृपया वेळेत निश्चित करा जेणेकरून आम्ही आपला औषध साठा मागवून ठेवू शकू!`;
+      } else {
+        timingSection += `\n⚠️ सूचना: आमचे दुकान ${weeklyOff} ला बंद राहील. कृपया आधीच औषध घेऊन जा!`;
+      }
     }
     let cta = `\n\n❓ तुम्हाला ही औषधे तयार हवी आहेत का?\n👉 *निश्चितीसाठी "1" किंवा "REFILL" लिहून उत्तर द्या।*`;
     if (opts?.portalUrl) {
@@ -170,7 +179,11 @@ export function buildRefillReminderMessage(
     const dueSuffix = dueDateStr ? `\n\nDue Date: ${dueDateStr}` : '';
     let timingSection = `\n🕒 Store Hours: ${openT} to ${closeT}`;
     if (isOffDayUpcoming) {
-      timingSection += `\n⚠️ Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
+      if (isMarketClosure) {
+        timingSection += `\n⚠️ Notice: Wholesale market is closed on ${weeklyOff}. Please confirm early so we can prepare your stock in advance!`;
+      } else {
+        timingSection += `\n⚠️ Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
+      }
     }
     let cta = `\n\n❓ Would you like us to prepare your regular medicines?\n👉 *Reply "1" or "REFILL" to confirm.*\n*(Store open ${openT} – ${closeT})*`;
     if (opts?.portalUrl) {
@@ -191,7 +204,7 @@ export function buildRefillCollectionMessage(
   items: Array<{ medicine_name?: string; quantity_needed?: number }>,
   pharmacyName: string,
   lang: string = 'en',
-  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean; closedLabel?: string },
+  scheduleOpts?: { openTime?: string; closeTime?: string; weeklyOff?: string; isOffDayUpcoming?: boolean; isMarketClosure?: boolean; closedLabel?: string },
   opts?: { includeLanguageBanner?: boolean }
 ): string {
   const pName = formatCustomerName(patientName);
@@ -205,6 +218,9 @@ export function buildRefillCollectionMessage(
   // closedLabel names the real closed day (weekly off, holiday, market closure); weeklyOff is the fallback.
   const weeklyOff = scheduleOpts?.closedLabel || scheduleOpts?.weeklyOff || 'Monday';
   const isOffDayUpcoming = Boolean(scheduleOpts?.isOffDayUpcoming);
+  const isMarketClosure = Boolean(scheduleOpts?.isMarketClosure);
+  // Collection is from physical store: only alert if the store itself is closed!
+  const isStoreOffDay = isOffDayUpcoming && !isMarketClosure;
 
   let message = '';
   if (cleanLang === 'hi') {
@@ -212,7 +228,7 @@ export function buildRefillCollectionMessage(
       .map(m => `• *${m.medicine_name || 'दवाई'}* (मात्रा: ${m.quantity_needed || 1})`)
       .join('\n');
     let timingSection = `\n🕒 दुकान का समय: ${openT} से ${closeT}`;
-    if (isOffDayUpcoming) {
+    if (isStoreOffDay) {
       timingSection += `\n⚠️ सूचना: हमारी दुकान ${weeklyOff} को बंद रहेगी। कृपया समय से पहले दवाई ले लें!`;
     }
     const cta = `\n\n👉 *कृपया अपनी सुविधानुसार दवाई ले जाएं।*`;
@@ -222,7 +238,7 @@ export function buildRefillCollectionMessage(
       .map(m => `• *${m.medicine_name || 'औषध'}* (प्रमाण: ${m.quantity_needed || 1})`)
       .join('\n');
     let timingSection = `\n🕒 दुकानाची वेळ: ${openT} ते ${closeT}`;
-    if (isOffDayUpcoming) {
+    if (isStoreOffDay) {
       timingSection += `\n⚠️ सूचना: आमचे दुकान ${weeklyOff} ला बंद राहील. कृपया आधीच औषध घेऊन जा!`;
     }
     const cta = `\n\n👉 *कृपया आपल्या सोयीनुसार औषध घेऊन जावे.*`;
@@ -232,7 +248,7 @@ export function buildRefillCollectionMessage(
       .map(m => `• *${m.medicine_name || 'Medicine'}* (Qty: ${m.quantity_needed || 1})`)
       .join('\n');
     let timingSection = `\n🕒 Store Hours: ${openT} to ${closeT}`;
-    if (isOffDayUpcoming) {
+    if (isStoreOffDay) {
       timingSection += `\n⚠️ Notice: Our pharmacy will remain closed on ${weeklyOff}. Please collect before closure!`;
     }
     const cta = `\n\n👉 *Please collect your medicine at your earliest convenience.*`;

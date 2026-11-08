@@ -5,7 +5,7 @@ import fs from 'fs';
 // import { fileURLToPath } from 'url';
 import { normalizeWhatsAppPhone, ensureWhatsAppReady } from '../whatsappClient.js';
 import { getStoreMedicalName, getStoreMedicalNameAndPhone, buildOrderReadyNotificationMessage, buildMultiOrderNotificationMessage, type MultiOrderItemArrival } from '../services/storeSettingsService.js';
-import { getShopTimingNote } from '../utils/closureNotice.js';
+import { getShopTimingNote, getMarketArrivalNotice } from '../utils/closureNotice.js';
 import { whatsappQueueWorker } from '../services/whatsappQueueWorker.js';
 import { pdfInvoiceService } from '../services/pdfInvoiceService.js';
 import { eventService } from '../services/eventService.js';
@@ -253,6 +253,9 @@ router.post('/batch', async (req, res) => {
       } else {
         msg = `Hi ${cleanReqName}, your order for ${itemsListStr}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
       }
+      if (calculatedSchedule && (calculatedSchedule.scheduleStatus === 'holiday_shift' || calculatedSchedule.scheduleStatus === 'sunday_shift' || calculatedSchedule.scheduleStatus === 'post_cutoff')) {
+        msg += getMarketArrivalNotice(calculatedSchedule.estimatedDeliveryStart, calculatedSchedule.scheduleReason, lang);
+      }
       msg += await getShopTimingNote(db, lang, 'booking');
       
       try {
@@ -413,6 +416,9 @@ router.post('/', async (req, res) => {
         msg = `नमस्कार ${cleanReqName}, ${medicalName} येथे आपली ${medName}${advMsg} ची ऑर्डर बुक करण्यात आली आहे. औषध आल्यावर आम्ही आपल्याला कळवू.`;
       } else {
         msg = `Hi ${cleanReqName}, your order for ${medName}${advMsg} has been booked at ${medicalName}. We will notify you when it arrives.`;
+      }
+      if (calculatedSchedule && (calculatedSchedule.scheduleStatus === 'holiday_shift' || calculatedSchedule.scheduleStatus === 'sunday_shift' || calculatedSchedule.scheduleStatus === 'post_cutoff')) {
+        msg += getMarketArrivalNotice(calculatedSchedule.estimatedDeliveryStart, calculatedSchedule.scheduleReason, lang);
       }
       msg += await getShopTimingNote(db, lang, 'booking');
       

@@ -72,10 +72,12 @@ export async function isClosedDay(
   const holidayDelivery = settingsMap.get('holiday_delivery') === 'true';
 
   let isWeeklyOff = false;
-  if (dayName === weeklyOff) {
-    isWeeklyOff = true;
-  } else if (isSunday && !sundayAllowed) {
-    isWeeklyOff = true;
+  if (weeklyOff !== 'none' && weeklyOff !== '') {
+    if (dayName === weeklyOff) {
+      isWeeklyOff = true;
+    } else if (isSunday && !sundayAllowed) {
+      isWeeklyOff = true;
+    }
   }
 
   // 1b. Check custom pharmacy closed dates (e.g. ['2026-10-01', ...])
@@ -132,11 +134,21 @@ export async function isClosedDay(
     );
   } catch (_) {}
 
+  const isMarketHolidayOnly = Boolean(
+    holidayRow &&
+    String(holidayRow.holiday_name || holidayRow.name || '').toUpperCase().includes('MARKET')
+  );
+
   const isHolidayClosed = Boolean(
     holidayRow &&
     (Number(holidayRow.is_closed) === 1 || holidayRow.is_closed === true) &&
-    !holidayDelivery
+    !holidayDelivery &&
+    !isMarketHolidayOnly
   );
+
+  if (isMarketHolidayOnly && (Number(holidayRow?.is_closed) === 1 || holidayRow?.is_closed === true)) {
+    isMarketClosed = true;
+  }
 
   const isStoreClosed = isWeeklyOff || isHolidayClosed || isCustomClosed || isStoreClosure;
   const isDispatchClosed = isStoreClosed || isPausedDispatch || isMarketClosed;
