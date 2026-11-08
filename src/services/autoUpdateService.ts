@@ -771,6 +771,11 @@ class AutoUpdateService {
       throw new Error(`Cannot install update: version v${this.lastResult.latestVersion} is not newer than currently running v${APP_VERSION}.`);
     }
 
+    const { migrationStatus } = await import('../worker/migrationWorker.js');
+    if (migrationStatus?.active) {
+      throw new Error('Cannot install update: a database migration is currently in progress. Please wait for migration to complete.');
+    }
+
     // Coucou parity: Persist session checkpoint before shutting down so app reopens where user left off
     try {
       const { saveSessionCheckpoint } = await import('./sessionCheckpointService.js');

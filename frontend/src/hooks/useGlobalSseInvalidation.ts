@@ -205,7 +205,7 @@ export function useGlobalSseInvalidation(enabled: boolean = true) {
         (SSE_CUSTOM_EVENTS[type] || []).forEach(evtName => {
           // detail carries the full parsed SSE frame (or unpacked payload for toasts) so page-level listeners
           // can consume payloads without opening their own EventSource
-          const detailData = ((evtName === 'app-show-toast' || evtName === 'app-order-delta') && parsed?.payload) ? parsed.payload : parsed;
+          const detailData = ((evtName === 'app-show-toast' || evtName === 'app-order-delta' || evtName === 'sse-migration-update') && parsed?.payload) ? parsed.payload : parsed;
           window.dispatchEvent(new CustomEvent(evtName, { detail: detailData }));
         });
       };

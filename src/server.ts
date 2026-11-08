@@ -400,6 +400,14 @@ app.post('/api/system/client-exit', (_req, res) => {
 app.post('/api/system/apply-update', async (req, res) => {
   console.log('[System] Received apply-update request. Installing update and restarting...');
   try {
+    const { migrationStatus } = await import('./worker/migrationWorker.js');
+    if (migrationStatus?.active) {
+      console.warn('[System] Blocked apply-update: database migration is actively running.');
+      return res.status(409).json({
+        success: false,
+        error: 'Cannot apply update while a database migration is in progress. Please wait for migration to complete.'
+      });
+    }
     const route = typeof req.body?.route === 'string' ? req.body.route : undefined;
     const { autoUpdateService } = await import('./services/autoUpdateService.js');
     const result = await autoUpdateService.applyUpdate({ route });

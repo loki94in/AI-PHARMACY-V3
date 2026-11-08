@@ -68,7 +68,7 @@ interface StagingAudit {
   created_at?: string;
 }
 
-type LocalApiError = { response?: { data?: { error?: string } }; message?: string };
+type LocalApiError = { response?: { status?: number; data?: { error?: string } }; message?: string };
 
 interface LocalValidationError {
   row: number;
@@ -282,6 +282,24 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       );
     } catch (err) {
       const e = err as LocalApiError;
+      const is409 = e.response?.status === 409 ||
+        e.message?.includes('already in progress') ||
+        e.response?.data?.error?.includes('already in progress');
+      if (is409) {
+        try {
+          const live = await api.getMigrationStatus();
+          if (live) {
+            const liveNormalized = (live as any)?.payload || live;
+            setStatus(liveNormalized);
+            if (liveNormalized.isStagingReady) {
+              await loadStagingData();
+              setPhase('staging');
+            }
+            return;
+          }
+        } catch (_) {}
+        return;
+      }
       setPhase('error');
       setErrorMessage(e.response?.data?.error || e.message || 'Failed to start import');
     }
@@ -396,7 +414,9 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       }
     };
 
-    const applyLiveStatus = async (liveStatus: LocalMigrationStatus | null | undefined) => {
+    const applyLiveStatus = async (inputStatus: LocalMigrationStatus | null | undefined) => {
+      if (!inputStatus) return;
+      const liveStatus: LocalMigrationStatus = (inputStatus as any)?.payload || inputStatus;
       if (!liveStatus) return;
       setStatus(liveStatus);
 
@@ -426,8 +446,9 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     // Throttle non-terminal frames so bulk-import passes don't thrash renders;
     // terminal transitions (staging ready / failed) always apply immediately.
     const onSseUpdate = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail) return;
+      const raw = (e as CustomEvent).detail;
+      if (!raw) return;
+      const detail: LocalMigrationStatus = (raw as any)?.payload || raw;
       const now = Date.now();
       const terminal = detail.isStagingReady ||
         (!detail.active && !detail.isStagingReady && typeof detail.message === 'string' && (detail.message.startsWith('Failed:') || detail.message.startsWith('Failed')));

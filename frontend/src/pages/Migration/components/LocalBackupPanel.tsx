@@ -18,7 +18,7 @@ interface LocalBackupPanelProps {
   onRunMigration: (backup: LocalBackup) => void;
 }
 
-type LocalApiError = { response?: { data?: { error?: string } }; message?: string };
+type LocalApiError = { response?: { status?: number; data?: { error?: string } }; message?: string };
 
 export const LocalBackupPanel: React.FC<LocalBackupPanelProps> = ({ onRunMigration }) => {
   const [startingPath, setStartingPath] = useState<string | null>(null);
@@ -36,7 +36,7 @@ export const LocalBackupPanel: React.FC<LocalBackupPanelProps> = ({ onRunMigrati
   );
   const backups = data || [];
   const loading = isFetching;
-  const error = queryError?.message || actionError;
+  const scanError = queryError?.message;
   const fetchBackups = () => refetch();
 
   const formatFileSize = (bytes: number) => {
@@ -70,7 +70,14 @@ export const LocalBackupPanel: React.FC<LocalBackupPanelProps> = ({ onRunMigrati
       onRunMigration(backup);
     } catch (err) {
       const e = err as LocalApiError;
-      setActionError(e.message || 'Failed to start local backup migration');
+      const is409 = e.response?.status === 409 ||
+        e.message?.includes('already in progress') ||
+        e.response?.data?.error?.includes('already in progress');
+      if (is409) {
+        onRunMigration(backup);
+      } else {
+        setActionError(e.response?.data?.error || e.message || 'Failed to start local backup migration');
+      }
     } finally {
       setStartingPath(null);
     }
@@ -105,6 +112,18 @@ export const LocalBackupPanel: React.FC<LocalBackupPanelProps> = ({ onRunMigrati
         </button>
       </div>
 
+      {actionError && (
+        <div className="mt-3 p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-sm flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+          <button onClick={() => setActionError(null)} className="text-rose-400 hover:text-rose-300 text-xs px-2 py-0.5 rounded border border-rose-500/30 cursor-pointer">
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Body List */}
       <div className="flex-1 overflow-y-auto mt-4 pr-1 space-y-3 min-h-[300px] max-h-[420px]">
         <AnimatePresence mode="wait">
@@ -119,7 +138,7 @@ export const LocalBackupPanel: React.FC<LocalBackupPanelProps> = ({ onRunMigrati
               <Loader2 className="w-8 h-8 text-sky animate-spin" />
               <p className="text-base text-muted">Scanning D:\redbook, DGH_Backup & local folders...</p>
             </motion.div>
-          ) : error ? (
+          ) : scanError ? (
             <motion.div
               key="error"
               initial={{ opacity: 0 }}
@@ -131,7 +150,7 @@ export const LocalBackupPanel: React.FC<LocalBackupPanelProps> = ({ onRunMigrati
                 <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 <div className="text-base text-left">
                   <p className="font-medium">Backup Scanner Error</p>
-                  <p className="opacity-90 mt-0.5 text-sm">{error}</p>
+                  <p className="opacity-90 mt-0.5 text-sm">{scanError}</p>
                 </div>
               </div>
               <button
