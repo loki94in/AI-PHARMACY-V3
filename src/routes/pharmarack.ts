@@ -6100,8 +6100,52 @@ router.post('/add-closure-buffer-to-cart', async (req, res) => {
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'items array is required' });
     }
-    const result = await marketClosureService.addBufferItemsToCart(items);
-    res.json({ success: true, ...result });
+
+    // 1. Fast upfront session validation (<10ms)
+    const settings = await getPharmarackSettings();
+    const token = settings['pharmarack_session_token'] || '';
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        offline: true,
+        error: 'Pharmarack session offline — please ensure active login in Settings / Reorder Hub'
+      });
+    }
+
+    // 2. Respond immediately to unblock the frontend (0ms UI wait)
+    res.json({
+      success: true,
+      queued: true,
+      count: items.length,
+      message: `Queued ${items.length} buffer medicine(s) for Live Cart. Adding in background...`
+    });
+
+    // 3. Process sequentially in background worker lane without blocking HTTP request
+    setImmediate(async () => {
+      try {
+        const result = await marketClosureService.addBufferItemsToCart(items);
+        const totalSuccess = (result?.addedCount || 0) + (result?.inCartCount || 0);
+        const parts: string[] = [];
+        if (totalSuccess > 0) parts.push(`Added ${totalSuccess} to Live Cart`);
+        if (result?.needsLinkCount > 0) parts.push(`${result.needsLinkCount} need distributor link`);
+        if (result?.failedCount > 0) parts.push(`${result.failedCount} out of stock`);
+
+        const summary = parts.length > 0
+          ? `Closure Buffer: ${parts.join(', ')}.`
+          : 'Closure Buffer cart addition completed.';
+
+        eventService.broadcast('toast_alert', {
+          text: summary,
+          type: result?.failedCount > 0 ? 'warning' : 'success'
+        });
+      } catch (bgErr: any) {
+        console.error('[MarketClosure] Background cart add failed:', bgErr);
+        eventService.broadcast('toast_alert', {
+          text: `Closure buffer cart addition failed: ${bgErr?.message || 'Cart error'}`,
+          type: 'error'
+        });
+      }
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

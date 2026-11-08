@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { X, CheckSquare, Square, ShoppingCart, MessageSquare, AlertCircle, Calendar, Package, RefreshCw, Minus, Plus } from 'lucide-react';
 import { api } from '../services/api';
 import { toastEvent, refillEvent } from '../services/events';
-import { startRefillCartJob } from '../services/refillCartJobs';
+import { startRefillCartJob, type RefillCartItemInput } from '../services/refillCartJobs';
 import { useModalEscape } from '../services/keyboardShortcuts';
 import { MedicineLinkModal } from './MedicineLinkModal';
 
@@ -45,7 +45,6 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [orderQtys, setOrderQtys] = useState<Record<number, number>>({});
   const [mode, setMode] = useState<'shortage' | 'full'>('shortage');
-  const [isAddingToCart, setIsAddingToCart] = useState(false);
   const [isStagingNotices, setIsStagingNotices] = useState(false);
   const [linkingMedicine, setLinkingMedicine] = useState<{ id: number; name: string } | null>(null);
 
@@ -171,54 +170,36 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
     return sum;
   }, [selectedIds, orderQtys]);
 
-  const handleAddToCart = async () => {
+  const selectedItems = useMemo(() => items.filter(it => selectedIds.has(it.refill_id)), [items, selectedIds]);
+  const unlinkedSelectedCount = useMemo(() => selectedItems.filter(it => (it.linked_distributors_count || 0) === 0).length, [selectedItems]);
+
+  const handleAddToCart = () => {
     if (selectedCount === 0) {
       toastEvent.trigger('Please select at least one medicine to add to cart', 'info');
       return;
     }
-    setIsAddingToCart(true);
-    try {
-      const payload = items
-        .filter(it => selectedIds.has(it.refill_id))
-        .map(it => ({
-          refill_id: it.refill_id,
-          medicine_id: it.medicine_id,
-          medicine_name: it.medicine_name,
-          qty: orderQtys[it.refill_id] && orderQtys[it.refill_id] > 0
-            ? orderQtys[it.refill_id]
-            : (it.shortfall_packs > 0 ? it.shortfall_packs : 1),
-          distributor_name: it.distributor_name,
-        }));
 
-      const res = await api.addClosureBufferToCart(payload);
-      const totalSuccessful = (res?.addedCount || 0) + (res?.inCartCount || 0);
+    const selectedRefillInputs: RefillCartItemInput[] = items
+      .filter(it => selectedIds.has(it.refill_id))
+      .map(it => ({
+        refillId: it.refill_id,
+        medicineId: it.medicine_id,
+        medicineName: it.medicine_name,
+        qty: orderQtys[it.refill_id] && orderQtys[it.refill_id] > 0
+          ? orderQtys[it.refill_id]
+          : (it.shortfall_packs > 0 ? it.shortfall_packs : 1)
+      }));
 
-      if (totalSuccessful > 0) {
-        toastEvent.trigger(
-          `Added ${totalSuccessful} buffer medicine(s) into Pharmarack Live Cart!`,
-          'info'
-        );
-      }
-      if (res?.needsLinkCount > 0) {
-        toastEvent.trigger(
-          `${res.needsLinkCount} medicine(s) need distributor linking in CRM. Staged in Special Orders.`,
-          'info'
-        );
-      }
-      if (totalSuccessful === 0 && (res?.needsLinkCount || 0) === 0 && (res?.failedCount || 0) > 0) {
-        toastEvent.trigger(
-          `Staged ${res.failedCount} item(s) in Special Orders (Distributor Out of Stock).`,
-          'info'
-        );
-      }
+    // Start background job visible on screen in top-right floating progress card
+    startRefillCartJob('Market Closure Buffer', selectedRefillInputs, { openModal: false });
 
-      onCartUpdated?.();
-      onClose();
-    } catch (err: any) {
-      toastEvent.trigger(err?.message || 'Failed to add buffer to cart', 'error');
-    } finally {
-      setIsAddingToCart(false);
-    }
+    toastEvent.trigger(
+      `Adding ${selectedRefillInputs.length} buffer medicine(s) to Live Cart in background...`,
+      'info'
+    );
+    onCartUpdated?.();
+    refillEvent.triggerRefresh();
+    onClose();
   };
 
   const handleStageWhatsAppNotices = async () => {
@@ -492,9 +473,13 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
                                 const qtyToOrder = orderQtys[item.refill_id] && orderQtys[item.refill_id] > 0
                                   ? orderQtys[item.refill_id]
                                   : (item.shortfall_packs > 0 ? item.shortfall_packs : 1);
-                                startRefillCartJob(item.patient_name || 'Patient Refill', [
-                                  { refillId: item.refill_id, medicineId: item.medicine_id, medicineName: item.medicine_name, qty: qtyToOrder }
-                                ]);
+                                startRefillCartJob(
+                                  item.patient_name || 'Patient Refill',
+                                  [
+                                    { refillId: item.refill_id, medicineId: item.medicine_id, medicineName: item.medicine_name, qty: qtyToOrder }
+                                  ],
+                                  { openModal: false }
+                                );
                               }}
                               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/40 text-primary text-[11px] font-bold transition-all cursor-pointer shadow-xs"
                               title={`Add ${orderQtys[item.refill_id] && orderQtys[item.refill_id] > 0 ? orderQtys[item.refill_id] : (item.shortfall_packs > 0 ? item.shortfall_packs : 1)} unit(s) to Pharmarack Live Cart with automatic distributor stock check`}
@@ -524,12 +509,25 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
 
         {/* Footer with Human-in-the-Loop Actions */}
         <div className="p-4 border-t border-border/40 bg-bg2 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2 text-xs text-muted">
+          <div className="flex items-center gap-2 text-xs text-muted flex-wrap">
             <AlertCircle size={14} className="text-amber-500 shrink-0" />
             <span>Human-in-the-loop: All orders and notifications are reviewed by you before dispatch.</span>
+            {unlinkedSelectedCount > 0 && (
+              <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-500 border border-rose-500/30 text-[11px] font-bold">
+                ⚠️ {unlinkedSelectedCount} unlinked (stages in Special Orders)
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold text-muted hover:text-text hover:bg-bg3 border border-border transition-all cursor-pointer"
+            >
+              Close
+            </button>
+
             <button
               type="button"
               onClick={handleStageWhatsAppNotices}
@@ -544,11 +542,11 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
             <button
               type="button"
               onClick={handleAddToCart}
-              disabled={isAddingToCart || selectedCount === 0}
+              disabled={selectedCount === 0}
               className="px-5 py-2 rounded-xl text-xs font-bold bg-amber-600 text-white hover:bg-amber-500 transition-all cursor-pointer shadow-xs flex items-center gap-1.5 disabled:opacity-50"
             >
               <ShoppingCart size={14} />
-              <span>{isAddingToCart ? 'Adding to Cart...' : `Add Selected (${selectedCount}) to Cart`}</span>
+              <span>Add Selected ({selectedCount}) to Cart</span>
             </button>
           </div>
         </div>

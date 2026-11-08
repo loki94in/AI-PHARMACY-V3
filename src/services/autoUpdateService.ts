@@ -120,6 +120,8 @@ function downloadFile(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const tempDest = dest + '.tmp';
+    let retryAttempt = 0;
+    const maxTransientRetries = 4;
 
     function makeRequest(currentUrl: string, redirectCount = 0) {
       if (redirectCount > 5) {
@@ -140,6 +142,16 @@ function downloadFile(
             res.resume(); // Free previous response socket back to agent pool
             const redirectUrl = new URL(res.headers.location, currentUrl).toString();
             return makeRequest(redirectUrl, redirectCount + 1);
+          }
+          if (res.statusCode && [502, 503, 504].includes(res.statusCode) && retryAttempt < maxTransientRetries) {
+            res.resume();
+            retryAttempt++;
+            const backoffMs = retryAttempt * 3000;
+            console.log(`[AutoUpdate] HTTP ${res.statusCode} from CDN/gateway. Retrying in ${backoffMs / 1000}s (attempt ${retryAttempt}/${maxTransientRetries})...`);
+            setTimeout(() => {
+              makeRequest(currentUrl, redirectCount);
+            }, backoffMs);
+            return;
           }
           if (res.statusCode !== 200) {
             return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));

@@ -37,6 +37,41 @@
 - **Priority:** P2
 - **Verified by:** `npm run guardrails` exit 0 (clean `tsc --noEmit`); frontend production build (`tsc -b && vite build`) built cleanly in 46.15s; End-to-End test suite (`tests/special-order-reorder.e2e.ts`) passed 100% via `e2e` runner verifying UI navigation, modal launch, pre-fill, re-assignability, 2-word token extraction, and clean dismissal; `node scripts/quick-update.mjs` synchronized.
 
+### [Fixed] P2-149 — Market Closure Buffer: Connect Bulk Add to On-Screen Floating Progress Card
+
+- **Symptom:** In the *Market Closure Stock Buffer Review* modal, clicking "Add Selected to Cart" closed the modal, but no background progress card appeared on the screen, leaving pharmacists unaware of live processing status.
+- **Root Cause:** In `ClosureStockBufferModal.tsx`, `handleAddToCart` called raw endpoint `api.addClosureBufferToCart` directly, bypassing the frontend `refillCartJobs` store. Because `RefillCartJobHost` was not registered with the job, no on-screen floating card was rendered.
+- **Fix:** Updated `handleAddToCart` in `ClosureStockBufferModal.tsx` to dispatch `startRefillCartJob('Market Closure Buffer', selectedRefillInputs, { openModal: false })`. This mounts the floating on-screen card at `fixed top-16 right-6`, showing live step-by-step progress (`Waiting...` ➔ `Checking stock...` ➔ `✓ Added`) as each item is processed.
+- **Priority:** P2
+- **Verified by:** `npm run guardrails` exit 0 (clean `tsc --noEmit`); frontend production build (`tsc -b && vite build`) built cleanly in 56.59s; `node scripts/quick-update.mjs` synchronized across 1502 nodes.
+
+### [Fixed] P2-148 — Market Closure Buffer: Instant Background Dispatch & Upfront Session Validation
+
+- **Symptom:** In the *Market Closure Stock Buffer Review* modal, clicking "Add Selected to Cart" for multiple medicines kept the HTTP connection open and locked the modal for 10–20 seconds while sequential Pharmarack queries ran. If the Pharmarack session was offline, it failed slowly after multiple network timeouts.
+- **Root Cause:**
+  1. `POST /api/pharmarack/add-closure-buffer-to-cart` executed `marketClosureService.addBufferItemsToCart` synchronously in the request handler, blocking the client until all items finished.
+  2. No upfront check was performed on `pharmarack_session_token` before kicking off sequential stock and cart requests.
+- **Fix:**
+  1. Updated `src/routes/pharmarack.ts` to perform an upfront `<10ms` session token validation, returning immediate HTTP 401 if offline.
+  2. Transitioned buffer cart addition into a non-blocking background lane (`setImmediate`), returning `{ success: true, queued: true, count: N }` in `< 20ms`. Broadcasts `toast_alert`, `cart_updated`, and `refills_updated` upon worker completion.
+  3. Updated `frontend/src/components/ClosureStockBufferModal.tsx` to handle `res.queued`, instantly notifying the user (`Adding N buffer medicines to Live Cart in background...`) and cleanly closing the modal with 0ms waiting time.
+- **Priority:** P2
+- **Verified by:** `npm run guardrails` exit 0 (clean `tsc --noEmit`); frontend production build (`tsc -b && vite build`) built cleanly in 1m 5s; `node scripts/quick-update.mjs` synchronized across 1501 nodes.
+
+### [Fixed] P2-147 — Market Closure Buffer: Multi-Medicine Selection, Nested Popup & Modal Retention
+
+- **Symptom:** In the *Market Closure Stock Buffer Review* modal on `/pharmarack-cart`, clicking `+ Live Cart` on a row opened an intrusive nested popup modal over the review sheet. When selecting multiple medicines and clicking "Add Selected to Cart", the modal vanished immediately on submit, leaving pharmacists confused when unlinked items failed to appear in Live Cart and were staged in Special Orders without advance notice.
+- **Root Cause:**
+  1. In `frontend/src/components/ClosureStockBufferModal.tsx:495`, `startRefillCartJob` was invoked without `{ openModal: false }`, defaulting to opening `RefillCartModal` as a floating popup on top of the already-open review modal.
+  2. In `handleAddToCart`, `onClose()` was unconditionally invoked on response, abruptly closing the modal even when items required distributor linking (`needsLinkCount > 0`) or failed due to distributor stock availability (`failedCount > 0`).
+  3. No pre-flight breakdown of linked vs unlinked medicines was displayed before submitting multiple selected items.
+- **Fix:**
+  1. Updated `startRefillCartJob` call in `ClosureStockBufferModal.tsx` to pass `{ openModal: false }` for silent, background cart processing with standard non-blocking notifications.
+  2. Added reactive `unlinkedSelectedCount` calculation and rendered an informative pre-flight warning badge in the modal footer (`⚠️ {unlinkedSelectedCount} unlinked (stages in Special Orders)`) so pharmacists know exact routing before submitting.
+  3. Replaced unconditional `onClose()` in `handleAddToCart`: if any items needed linking or were out of stock, the modal remains open and re-fetches latest buffer states (`fetchBuffer()`) so the pharmacist can immediately click `🔗 Link distributor` on the affected items. Added an explicit `Close` button in the footer for manual dismissal.
+- **Priority:** P2
+- **Verified by:** `npm run guardrails` exit 0 (clean `tsc --noEmit`); frontend production build (`tsc -b && vite build`) built cleanly in 46.77s; `node scripts/quick-update.mjs` synchronized across 1500 nodes.
+
 ### [Fixed] P2-146 — Market Closure Stock Buffer Review: Live Cart Addition Failure & Rigid Quantity Input
 
 - **Symptom:** In the *Market Closure Stock Buffer Review* modal, selecting an upcoming refill medicine and clicking "Add Selected to Cart" failed to actually add items to the Pharmarack Live Cart. Furthermore, the quantity field was rigid, snapping back to `1` on backspace and lacking stepper buttons (`-`/`+`), making editing cumbersome.
