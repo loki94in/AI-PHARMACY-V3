@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { toastEvent, refillEvent } from '../services/events';
 import { startRefillCartJob } from '../services/refillCartJobs';
 import { useModalEscape } from '../services/keyboardShortcuts';
+import { MedicineLinkModal } from './MedicineLinkModal';
 
 interface ClosureStockBufferModalProps {
   isOpen: boolean;
@@ -46,6 +47,7 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
   const [mode, setMode] = useState<'shortage' | 'full'>('shortage');
   const [isAddingToCart, setIsAddingToCart] = useState(false);
   const [isStagingNotices, setIsStagingNotices] = useState(false);
+  const [linkingMedicine, setLinkingMedicine] = useState<{ id: number; name: string } | null>(null);
 
   const fetchBuffer = () => {
     setLoading(true);
@@ -398,7 +400,35 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
                           </button>
                         </td>
                         <td className="py-2.5 px-3 font-sans">
-                          <div className="font-bold text-text text-sm">{item.medicine_name}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-text text-sm">{item.medicine_name}</span>
+                            {item.medicine_id ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setLinkingMedicine({ id: item.medicine_id, name: item.medicine_name });
+                                }}
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10.5px] font-semibold transition-all cursor-pointer border ${
+                                  (item.linked_distributors_count || 0) > 0
+                                    ? 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20'
+                                    : 'bg-rose-500/10 text-rose-500 border-rose-500/30 hover:bg-rose-500/20'
+                                }`}
+                                title={
+                                  (item.linked_distributors_count || 0) > 0
+                                    ? `Linked: ${item.distributor_name || 'Mapped'} (Click to view or edit priority/links)`
+                                    : 'Not linked to any Pharmarack distributor! Click to link so automatic orders succeed.'
+                                }
+                              >
+                                <span>{(item.linked_distributors_count || 0) > 0 ? '⭐' : '🔗'}</span>
+                                <span className="truncate max-w-[130px]">
+                                  {(item.linked_distributors_count || 0) > 0
+                                    ? (item.distributor_name || 'Linked')
+                                    : 'Link distributor'}
+                                </span>
+                              </button>
+                            ) : null}
+                          </div>
                           <div className="text-[11px] text-muted">{item.manufacturer || 'General'}</div>
                         </td>
                         <td className="py-2.5 px-3 font-sans">
@@ -523,6 +553,30 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
           </div>
         </div>
       </div>
+
+      {/* ── Link medicine ↔ Pharmarack distributor modal ── */}
+      {linkingMedicine && (
+        <MedicineLinkModal
+          medicineId={linkingMedicine.id}
+          medicineName={linkingMedicine.name}
+          onSaved={(newLinks) => {
+            const links = newLinks || [];
+            // Instant 0ms in-memory update across matching buffer items
+            setItems(prev => prev.map(it => {
+              if (it.medicine_id === linkingMedicine.id) {
+                return {
+                  ...it,
+                  linked_distributors_count: links.length,
+                  distributor_name: links.length > 0 ? links[0] : ''
+                };
+              }
+              return it;
+            }));
+            refillEvent.triggerRefresh();
+          }}
+          onClose={() => setLinkingMedicine(null)}
+        />
+      )}
     </div>
   );
 };
