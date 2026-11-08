@@ -137,9 +137,30 @@ const resolvedPort = parseInt(process.env.PORT || String(defaultPort), 10);
 export const config: AppConfig = {
   port: resolvedPort,
   get dbPath() {
-    if (process.env.DB_PATH) return process.env.DB_PATH;
+    if (process.env.DB_PATH && process.env.DB_PATH.trim()) {
+      return path.resolve(process.env.DB_PATH.trim());
+    }
     const isTest = process.env.NODE_ENV === 'test' || !!process.env.JEST_WORKER_ID;
     if (isTest) return path.join(appDataDir, 'data', 'app.test.db');
+
+    // Live database connection: if CONNECT_LIVE_DB=true or USE_LIVE_DB=true is enabled,
+    // connect dev to the live production database (G:\AI Pharmacy OS\data\app.db if available, else local data/app.db)
+    const connectLive = process.env.CONNECT_LIVE_DB === 'true' || process.env.USE_LIVE_DB === 'true';
+    if (connectLive) {
+      const candidates = [
+        process.env.PROD_DB_PATH,
+        'G:\\AI Pharmacy OS\\data\\app.db',
+        path.join(appDataDir, 'data', 'app.db'),
+      ].filter(Boolean) as string[];
+
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+      }
+      return path.join(appDataDir, 'data', 'app.db');
+    }
+
     const isDev = !isPackagedApp() && (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV);
     const dbName = isDev ? 'app.dev.db' : 'app.db';
     return path.join(appDataDir, 'data', dbName);

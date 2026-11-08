@@ -333,6 +333,8 @@ class DatabaseManager {
           this.setupWriteInterceptor(db);
           this.connection = db;
           this.currentDbPath = dbPath;
+          const isLive = !path.basename(dbPath).includes('.dev.') && !path.basename(dbPath).includes('.test.');
+          console.log(`[Database] Active Database: ${dbPath} [${isLive ? 'LIVE MODE (Read, Edit, Delete active)' : 'DEV SANDBOX'}]`);
           break;
         }
 

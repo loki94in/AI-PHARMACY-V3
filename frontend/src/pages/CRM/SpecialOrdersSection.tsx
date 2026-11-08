@@ -7,7 +7,7 @@ import {
   Repeat2, MessageCircle, Check, Copy,
   X, Plus, Trash2, ChevronDown,
   ChevronUp, ClipboardList, ShoppingCart, AlertTriangle,
-  Pencil, Edit3, RotateCcw, QrCode, Package
+  Pencil, Edit3, RotateCcw, QrCode, Package, MoreVertical
 } from 'lucide-react';
 import { apiClient, api } from '../../services/api';
 import { toastEvent, specialOrdersEvent, messageSendEvent, whatsappQueueEvent, liveCartAddEvent } from '../../services/events';
@@ -69,7 +69,8 @@ export const SpecialOrdersSection: React.FC = () => {
   const [loading, setLoading] = useState(cachedSpecialOrders.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
+  const [activeTab, setActiveTab] = useState<'running' | 'ready' | 'completed'>('running');
+  const [openMenuOrderId, setOpenMenuOrderId] = useState<number | null>(null);
   const [arrivalModalData, setArrivalModalData] = useState<{
     customerName: string;
     customerPhone: string;
@@ -333,6 +334,23 @@ export const SpecialOrdersSection: React.FC = () => {
       toastEvent.trigger('Failed to update order status', 'error', '/crm');
     } finally {
       setUpdatingId(null);
+    }
+  };
+
+  const handleBatchStatusUpdate = async (orderIds: number[], newStatus: string) => {
+    if (!orderIds || orderIds.length === 0) return;
+    const prevOrders = [...orders];
+    setOrders(prev => prev.map(o => orderIds.includes(o.id) ? { ...o, status: newStatus } : o));
+    cachedSpecialOrders = cachedSpecialOrders.map(o => orderIds.includes(o.id) ? { ...o, status: newStatus } : o);
+
+    try {
+      await api.updateOrdersBatchStatus(orderIds, newStatus);
+      toastEvent.trigger(`Updated ${orderIds.length} item(s) to ${newStatus}`, 'success', '/crm');
+      specialOrdersEvent.triggerUpdated();
+    } catch {
+      setOrders(prevOrders);
+      cachedSpecialOrders = prevOrders;
+      toastEvent.trigger('Failed to update orders', 'error', '/crm');
     }
   };
 
@@ -710,52 +728,64 @@ export const SpecialOrdersSection: React.FC = () => {
 
   const isSearching = searchQuery.trim().length >= 2;
 
-  const filteredOrders = orders.filter(o => {
-    const q = searchQuery.trim();
-    const matchesSearch = !q ||
-      matchUniversalTokens([o.product, o.requester, o.phone, o.pharmarack_distributor], q);
-    
-    if (!matchesSearch) return false;
-
-    // When actively searching, search across all statuses so matches are never hidden
-    if (!isSearching) {
-      let matchesStatus = true;
-      if (statusFilter === 'Inquiries') matchesStatus = o.status === 'Inquiry';
-      else if (statusFilter === 'Pending') matchesStatus = o.status === 'Pending';
-      else if (statusFilter === 'Ordered') matchesStatus = o.status === 'Ordered';
-      else if (statusFilter === 'Waiting') matchesStatus = o.status === 'Waiting';
-      else if (statusFilter === 'Arrived') matchesStatus = o.status === 'Ready' || o.status === 'Arrived';
-      else if (statusFilter === 'Not Arrived') matchesStatus = o.status !== 'Ready' && o.status !== 'Arrived' && o.status !== 'Fulfilled' && o.status !== 'Cancelled' && o.status !== 'Inquiry';
-      else if (statusFilter === 'Cancelled') matchesStatus = o.status === 'Cancelled';
-      if (!matchesStatus) return false;
-    }
-
-    let matchesDate = true;
-    // Smart range expansion: search term auto-expands across all database history unless manual date is pinned
-    if (!isSearching && (dateFrom || dateTo)) {
-      if (!o.date) {
-        matchesDate = false;
+  // Counts for the 3 primary sections
+  const tabCounts = useMemo(() => {
+    let running = 0;
+    let ready = 0;
+    let completed = 0;
+    orders.forEach(o => {
+      const st = o.status;
+      if (st === 'Ready' || st === 'Arrived') {
+        ready++;
+      } else if (st === 'Fulfilled' || st === 'Completed' || st === 'Cancelled') {
+        completed++;
       } else {
-        const itemDate = o.date.substring(0, 10);
-        const start = dateFrom || '0000-00-00';
-        const end = dateTo || '9999-99-99';
-        matchesDate = itemDate >= start && itemDate <= end;
+        running++;
       }
-    }
-    return matchesDate;
-  });
+    });
+    return { running, ready, completed };
+  }, [orders]);
+
+  // Filtered orders for active section (or search matches)
+  const filteredOrders = useMemo(() => {
+    const q = searchQuery.trim();
+    return orders.filter(o => {
+      const matchesSearch = !q ||
+        matchUniversalTokens([o.product, o.requester, o.phone, o.pharmarack_distributor], q);
+      
+      if (!matchesSearch) return false;
+
+      // When actively searching, show all matching orders across sections
+      if (!isSearching) {
+        const st = o.status;
+        if (activeTab === 'ready') {
+          if (st !== 'Ready' && st !== 'Arrived') return false;
+        } else if (activeTab === 'completed') {
+          if (st !== 'Fulfilled' && st !== 'Completed' && st !== 'Cancelled') return false;
+          if (dateFrom || dateTo) {
+            if (!o.date) return false;
+            const itemDate = o.date.substring(0, 10);
+            const start = dateFrom || '0000-00-00';
+            const end = dateTo || '9999-99-99';
+            if (itemDate < start || itemDate > end) return false;
+          }
+        } else {
+          // 'running' (Pending, Ordered, Waiting, Inquiry)
+          if (st === 'Ready' || st === 'Arrived' || st === 'Fulfilled' || st === 'Completed' || st === 'Cancelled') return false;
+        }
+      }
+
+      return true;
+    });
+  }, [orders, searchQuery, isSearching, activeTab, dateFrom, dateTo]);
 
   // Group filtered orders by customer phone / requester
-  const customerGroups = React.useMemo(() => {
+  const customerGroups = useMemo(() => {
     const groupsMap = new Map<string, {
       key: string;
       requester: string;
       phone: string;
       orders: SpecialOrderItem[];
-      activeOrders: SpecialOrderItem[];
-      pastOrders: SpecialOrderItem[];
-      activeCount: number;
-      arrivedCount: number;
       totalAdvance: number;
     }>();
 
@@ -770,10 +800,6 @@ export const SpecialOrdersSection: React.FC = () => {
           requester: cleanName,
           phone: cleanPhone,
           orders: [],
-          activeOrders: [],
-          pastOrders: [],
-          activeCount: 0,
-          arrivedCount: 0,
           totalAdvance: 0
         });
       }
@@ -783,49 +809,41 @@ export const SpecialOrdersSection: React.FC = () => {
       if (order.advance_payment && Number(order.advance_payment) > 0) {
         group.totalAdvance += Number(order.advance_payment);
       }
-
-      if (order.status === 'Fulfilled' || order.status === 'Cancelled') {
-        group.pastOrders.push(order);
-      } else {
-        group.activeOrders.push(order);
-        group.activeCount++;
-        if (order.status === 'Ready' || order.status === 'Arrived') {
-          group.arrivedCount++;
-        }
-      }
     });
 
     return Array.from(groupsMap.values());
   }, [filteredOrders]);
 
-  const renderOrderCard = (order: SpecialOrderItem) => {
+  // Render individual medicine item with context-aware clean action buttons
+  const renderOrderItem = (order: SpecialOrderItem) => {
     const isArrived = order.status === 'Ready' || order.status === 'Arrived';
     const isOrdered = order.status === 'Ordered';
     const isPast = order.status === 'Fulfilled' || order.status === 'Cancelled';
     const hasAdvance = order.advance_payment && Number(order.advance_payment) > 0;
+    const isMenuOpen = openMenuOrderId === order.id;
 
     return (
       <div
         key={order.id}
-        className={`p-3.5 rounded-xl border transition-all ${
-          order.status === 'Inquiry'
-            ? 'bg-amber-500/5 border-amber-500/30'
-            : isArrived
+        className={`p-3 rounded-xl border transition-all ${
+          isArrived
             ? 'bg-emerald-500/5 border-emerald-500/30'
-            : order.status === 'Waiting'
-            ? 'bg-amber-500/5 border-amber-500/30'
             : isOrdered
             ? 'bg-indigo-500/5 border-indigo-500/30'
+            : order.status === 'Waiting'
+            ? 'bg-amber-500/5 border-amber-500/30'
             : isPast
-            ? 'bg-bg/40 border-border/40 opacity-75'
-            : 'bg-bg2 border-border hover:border-primary/40'
+            ? 'bg-bg/40 border-border/40 opacity-80'
+            : 'bg-bg2 border-border'
         }`}
       >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          {/* Left Column: Product & Details */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Left Column: Product Details */}
           <div className="space-y-1 flex-1 min-w-[240px]">
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-bold text-sm text-text">{order.product}</h3>
+              <span className="text-sm font-bold text-text flex items-center gap-1.5">
+                💊 {order.product}
+              </span>
               <span className="px-2 py-0.5 rounded-md bg-bg3 border border-border text-[11px] font-bold text-primary">
                 Qty: {order.qty}
               </span>
@@ -835,15 +853,15 @@ export const SpecialOrdersSection: React.FC = () => {
                 </span>
               )}
               {order.payment_status === 'PAYMENT_CONFIRMED' ? (
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-extrabold flex items-center gap-1">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-extrabold">
                   ✅ Advance Paid
                 </span>
               ) : order.payment_status === 'AWAITING_PAYMENT' ? (
-                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-extrabold flex items-center gap-1">
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-extrabold">
                   ⏳ Awaiting ₹50
                 </span>
               ) : null}
-              {order.priority && (
+              {order.priority && order.priority !== 'Normal' && (
                 <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold ${
                   order.priority === 'High' ? 'bg-red-500/15 text-red-400 border border-red-500/30' : 'bg-bg3 text-muted border border-border'
                 }`}>
@@ -851,21 +869,18 @@ export const SpecialOrdersSection: React.FC = () => {
                 </span>
               )}
               <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
-                order.status === 'Inquiry'
-                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                  : isArrived
+                isArrived
                   ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                  : order.status === 'Waiting'
-                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
                   : isOrdered
                   ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/40'
+                  : order.status === 'Waiting'
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
                   : isPast
                   ? 'bg-zinc-500/20 text-muted border border-border'
                   : 'bg-blue-500/15 text-blue-400 border border-blue-500/30'
               }`}>
-                {order.status === 'Inquiry' ? 'Inquiry (Needs Approval)' : order.status}
+                {order.status}
               </span>
-
               {order.notified === 1 && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold flex items-center gap-1">
                   <CheckCircle2 size={11} /> {order.notification_count && order.notification_count > 1 ? `Sent ${order.notification_count}x` : 'WA Sent'}
@@ -879,322 +894,213 @@ export const SpecialOrdersSection: React.FC = () => {
                   Distributor: <strong className="text-text">{order.pharmarack_distributor}</strong>
                 </span>
               )}
+              {order.pharmarack_rate ? (
+                <span className="text-emerald-400 font-mono text-[11px] font-semibold">
+                  Rate: ₹{order.pharmarack_rate}
+                </span>
+              ) : null}
               <span className="text-[10px]">
                 Logged: {formatDate(order.date)}
               </span>
             </div>
           </div>
 
-          {/* Right Column: Status Action Bar */}
-          <div className="flex items-center gap-1.5 flex-wrap shrink-0">
-            {/* Approve Inquiry Button */}
-            {order.status === 'Inquiry' && (
-              <button
-                onClick={() => handleUpdateStatus(order.id, 'Pending')}
-                disabled={updatingId === order.id}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-sm shadow-amber-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer disabled:opacity-50"
-                title="Approve customer inquiry and convert to active special order"
-              >
-                <CheckCircle2 size={13} className={updatingId === order.id ? 'animate-spin' : ''} />
-                <span>Approve</span>
-              </button>
+          {/* Right Column: Context-Aware Streamlined Action Bar */}
+          <div className="flex items-center gap-2 relative">
+            {/* 1. RUNNING SECTION ACTIONS */}
+            {!isArrived && !isPast && (
+              <>
+                {order.status === 'Inquiry' && (
+                  <button
+                    onClick={() => handleUpdateStatus(order.id, 'Pending')}
+                    disabled={updatingId === order.id}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                    title="Approve customer inquiry"
+                  >
+                    <CheckCircle2 size={13} className={updatingId === order.id ? 'animate-spin' : ''} />
+                    <span>Approve</span>
+                  </button>
+                )}
+                {/* Primary Action: Mark Ready / Arrived */}
+                <button
+                  onClick={() => handleUpdateStatus(order.id, 'Ready')}
+                  disabled={updatingId === order.id}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs shadow-emerald-500/20 transition-all cursor-pointer"
+                  title="Mark arrived and ready for customer pickup"
+                >
+                  <CheckCircle2 size={13} className={updatingId === order.id ? 'animate-spin' : ''} />
+                  <span>✓ Mark Ready</span>
+                </button>
+                {/* Quick Add to Live Cart (if not ordered yet) */}
+                {!isOrdered && (
+                  <button
+                    onClick={() => handleAddToCart(order)}
+                    disabled={addingCartId === order.id}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-400 text-xs font-bold transition-all cursor-pointer"
+                    title="Add to Live Cart"
+                  >
+                    <ShoppingCart size={12} className={addingCartId === order.id ? 'animate-spin' : ''} />
+                    <span>+ Cart</span>
+                  </button>
+                )}
+              </>
             )}
 
-            {/* Sell Now Button */}
-            <button
-              onClick={() => handleSellSpecialOrder(order)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-sm shadow-emerald-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer"
-              title="Sell now: Transfers patient, medicine, quantity & advance credit directly to POS"
-            >
-              <ShoppingCart size={13} />
-              <span>⚡ Sell</span>
-            </button>
-
-            {/* View / Send ₹50 Payment QR */}
-            <button
-              onClick={() => handleOpenPaymentQr(order)}
-              disabled={loadingPaymentQrId === order.id}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-sm shadow-purple-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer disabled:opacity-50"
-              title="Generate, view, or dispatch ₹50 booking advance payment QR via WhatsApp"
-            >
-              <QrCode size={13} className={loadingPaymentQrId === order.id ? 'animate-spin' : ''} />
-              <span>{loadingPaymentQrId === order.id ? '...' : '💳 ₹50 QR'}</span>
-            </button>
-
-            {/* WA Notification Button */}
-            {order.notified === 1 ? (
-              <button
-                onClick={() => handleNotifyArrival(order)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold shadow-sm shadow-sky-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer disabled:opacity-50"
-                title="Re-send arrival reminder WhatsApp notification to customer"
-              >
-                <MessageCircle size={12} />
-                <span>Resend WA</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => handleNotifyArrival(order)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold shadow-sm shadow-sky-500/20 transition-all hover:scale-105 active:scale-95 cursor-pointer disabled:opacity-50"
-                title="Manually send WhatsApp arrival notification to customer"
-              >
-                <MessageCircle size={12} />
-                <span>📱 Ready</span>
-              </button>
+            {/* 2. READY SECTION ACTIONS */}
+            {isArrived && (
+              <>
+                <button
+                  onClick={() => handleSellSpecialOrder(order)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-500/20 transition-all cursor-pointer active:scale-95"
+                  title="Sell now in POS billing with advance credit"
+                >
+                  <ShoppingCart size={13} />
+                  <span>⚡ Sell in POS</span>
+                </button>
+                <button
+                  onClick={() => handleNotifyArrival(order)}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold shadow-xs transition-all cursor-pointer"
+                  title="Notify customer on WhatsApp"
+                >
+                  <MessageCircle size={12} />
+                  <span>{order.notified === 1 ? 'Resend WA' : '📱 Notify WA'}</span>
+                </button>
+              </>
             )}
 
-            {/* Pending Button */}
-            {order.status !== 'Pending' && (
-              <button
-                onClick={() => handleUpdateStatus(order.id, 'Pending')}
-                disabled={updatingId === order.id}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20 text-xs font-semibold transition-all"
-                title="Set status to Pending"
-              >
-                <Clock size={11} />
-                <span>Pending</span>
-              </button>
+            {/* 3. COMPLETED SECTION ACTIONS */}
+            {isPast && (
+              <>
+                {order.status === 'Cancelled' ? (
+                  <button
+                    onClick={() => handleRestoreOrder(order.id)}
+                    disabled={restoringId === order.id}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer"
+                    title="Restore cancelled request"
+                  >
+                    <RotateCcw size={12} className={restoringId === order.id ? 'animate-spin' : ''} />
+                    <span>Restore</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setReorderItem(order);
+                      setShowAddModal(true);
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/30 text-primary text-xs font-bold transition-all cursor-pointer"
+                    title="Create new request for this medicine"
+                  >
+                    <Repeat2 size={12} />
+                    <span>Re-order</span>
+                  </button>
+                )}
+              </>
             )}
 
-            {/* Waiting Button */}
-            {order.status !== 'Waiting' && (
-              <button
-                onClick={() => handleUpdateStatus(order.id, 'Waiting')}
-                disabled={updatingId === order.id}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 hover:bg-amber-500/20 text-xs font-semibold transition-all"
-                title="Set status to Waiting"
-              >
-                <Clock size={11} />
-                <span>Waiting</span>
-              </button>
-            )}
-
-            {/* Add to Pharmarack Cart */}
-            <button
-              onClick={() => handleAddToCart(order)}
-              disabled={addingCartId === order.id}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/40 text-primary text-xs font-bold transition-all disabled:opacity-50"
-              title="Push special request item directly to Pharmarack Cart"
-            >
-              <ShoppingCart size={12} className={addingCartId === order.id ? 'animate-spin' : ''} />
-              <span>Cart</span>
-            </button>
-
-            {/* Convert Refill */}
-            <button
-              onClick={() => handleConvertToRefill(order)}
-              disabled={convertingId === order.id}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-400 text-xs font-semibold transition-all disabled:opacity-50"
-              title="Convert special order into recurring patient refill schedule"
-            >
-              <Repeat2 size={11} />
-              <span>Refill</span>
-            </button>
-
-            {/* Restore Cancelled Request */}
-            {order.status === 'Cancelled' && (
-              <button
-                onClick={() => handleRestoreOrder(order.id)}
-                disabled={restoringId === order.id}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm shadow-emerald-500/20 transition-all cursor-pointer disabled:opacity-50"
-                title="Restore cancelled special request back to Pending status"
-              >
-                <RotateCcw size={11} className={restoringId === order.id ? 'animate-spin' : ''} />
-                <span>{restoringId === order.id ? 'Restoring…' : 'Restore'}</span>
-              </button>
-            )}
-
-            {/* Modify Items Button */}
-            <button
-              onClick={() => setModifyingOrder(order)}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-bg2 hover:bg-bg3 border border-border text-text text-xs font-bold transition-all cursor-pointer"
-              title="Modify medicines, add items, or adjust quantities"
-            >
-              <Edit3 size={11} className="text-primary" />
-              <span>Modify</span>
-            </button>
-
-            {/* Edit Button */}
-            <button
-              onClick={() => handleOpenEditModal(order)}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 text-xs font-bold transition-all cursor-pointer"
-              title="Edit Special Order Request details"
-            >
-              <Pencil size={11} />
-              <span>Edit</span>
-            </button>
-
-            {/* Cancel Button */}
-            {order.status !== 'Cancelled' && (
-              <button
-                onClick={() => handleDeleteOrder(order.id, order.product)}
-                disabled={deletingId === order.id}
-                className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 hover:text-red-300 text-xs font-bold transition-all disabled:opacity-50"
-                title="Cancel Special Order Request"
-              >
-                <Trash2 size={11} />
-                <span>{deletingId === order.id ? '...' : 'Cancel'}</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderMultiOrderMasterCard = (group: {
-    key: string;
-    requester: string;
-    phone: string;
-    orders: SpecialOrderItem[];
-    activeOrders: SpecialOrderItem[];
-    pastOrders: SpecialOrderItem[];
-    activeCount: number;
-    arrivedCount: number;
-    totalAdvance: number;
-  }) => {
-    const isMultiExpanded = expandedMultiOrders[group.key] ?? false;
-    const hasArrived = group.arrivedCount > 0;
-    const allOrdered = group.activeOrders.every(o => o.status === 'Ordered' || o.status === 'Ready' || o.status === 'Arrived');
-    const allReady = group.activeOrders.every(o => o.status === 'Ready' || o.status === 'Arrived');
-    const isAddingBatch = addingCartId !== null && group.activeOrders.some(o => o.id === addingCartId);
-
-    return (
-      <div className="bg-bg2/90 rounded-2xl border border-primary/25 shadow-sm overflow-hidden p-3.5 space-y-3 transition-all">
-        {/* Top Header Row: Summary Badges & Consolidated Actions */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-primary/10 border border-primary/25 text-primary font-bold text-xs">
-              <Package size={14} />
-              <span>{group.activeOrders.length} Medicines Booked</span>
-            </div>
-
-            {group.totalAdvance > 0 && (
-              <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-extrabold flex items-center gap-1">
-                ✨ Total Advance: ₹{group.totalAdvance.toFixed(2)}
-              </span>
-            )}
-
-            <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
-              allReady
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                : hasArrived
-                ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
-                : allOrdered
-                ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/40'
-                : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-            }`}>
-              {allReady ? 'All Items Ready' : hasArrived ? `${group.arrivedCount}/${group.activeOrders.length} Ready` : allOrdered ? 'All In Cart / Ordered' : 'Pending Request'}
-            </span>
-          </div>
-
-          {/* Consolidated Action Toolbar */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Sell All in POS */}
-            <button
-              type="button"
-              onClick={() => handleSellAllSpecialOrders(group.activeOrders)}
-              className="px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold shadow-md shadow-primary/20 transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
-              title="Transfer all requested medicines and advance payment to POS"
-            >
-              <ShoppingCart size={13} />
-              <span>Sell All in POS</span>
-            </button>
-
-            {/* Add All to Live Cart */}
-            <button
-              type="button"
-              onClick={() => handleAddAllSpecialOrdersToCart(group.activeOrders)}
-              disabled={isAddingBatch || allOrdered}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                allOrdered
-                  ? 'bg-bg3 border border-border text-muted cursor-default'
-                  : 'bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-400 active:scale-95'
-              }`}
-              title={allOrdered ? 'All items are already ordered' : 'Add all pending medicines to active Pharmarack cart'}
-            >
-              {isAddingBatch ? (
-                <RefreshCw size={13} className="animate-spin text-sky-400" />
-              ) : (
-                <Plus size={13} />
-              )}
-              <span>{allOrdered ? '✓ All In Cart' : 'Add All to Cart'}</span>
-            </button>
-
-            {/* Consolidated Notify Arrival */}
-            {group.activeOrders.length > 1 && (
+            {/* 4. CLEAN '···' ACTION MENU FOR SECONDARY OPTIONS */}
+            <div className="relative">
               <button
                 type="button"
-                onClick={() => {
-                  setArrivalModalData({
-                    customerName: group.requester,
-                    customerPhone: group.phone,
-                    orders: group.activeOrders.map(o => ({
-                      id: o.id,
-                      product: o.product,
-                      qty: o.qty,
-                      status: o.status
-                    }))
-                  });
-                }}
-                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25 text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
-                title="Send 1 consolidated WhatsApp message for all medicines"
+                onClick={() => setOpenMenuOrderId(isMenuOpen ? null : order.id)}
+                className="p-1.5 rounded-lg bg-bg3 hover:bg-bg border border-border text-muted hover:text-text transition-all cursor-pointer"
+                title="More options"
               >
-                <MessageCircle size={13} />
-                <span>Notify Arrival</span>
+                <MoreVertical size={14} />
               </button>
-            )}
 
-            {/* Expand / Collapse Details Toggle */}
-            <button
-              type="button"
-              onClick={() => toggleMultiOrder(group.key)}
-              className="px-2.5 py-1.5 rounded-xl bg-bg3 hover:bg-bg border border-border text-muted hover:text-text text-xs font-semibold transition-all cursor-pointer flex items-center gap-1"
-              title="Toggle individual medicine details"
-            >
-              <span>{isMultiExpanded ? 'Hide Details' : 'View Details'}</span>
-              {isMultiExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            </button>
+              {isMenuOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1.5 w-48 bg-bg2 border border-border rounded-xl shadow-xl z-20 py-1 text-xs animate-in fade-in"
+                  onMouseLeave={() => setOpenMenuOrderId(null)}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenMenuOrderId(null);
+                      handleOpenPaymentQr(order);
+                    }}
+                    className="w-full px-3 py-1.5 text-left text-text hover:bg-bg3 flex items-center gap-2 cursor-pointer"
+                  >
+                    <QrCode size={13} className="text-purple-400" />
+                    <span>₹50 Advance QR</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpenMenuOrderId(null);
+                      handleOpenEditModal(order);
+                    }}
+                    className="w-full px-3 py-1.5 text-left text-text hover:bg-bg3 flex items-center gap-2 cursor-pointer"
+                  >
+                    <Pencil size={13} className="text-blue-400" />
+                    <span>Edit Details</span>
+                  </button>
+
+                  {!isPast && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenMenuOrderId(null);
+                        setModifyingOrder(order);
+                      }}
+                      className="w-full px-3 py-1.5 text-left text-text hover:bg-bg3 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Edit3 size={13} className="text-primary" />
+                      <span>Modify Medicine</span>
+                    </button>
+                  )}
+
+                  {!isPast && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenMenuOrderId(null);
+                        handleConvertToRefill(order);
+                      }}
+                      className="w-full px-3 py-1.5 text-left text-text hover:bg-bg3 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Repeat2 size={13} className="text-purple-400" />
+                      <span>Convert to Refill</span>
+                    </button>
+                  )}
+
+                  {isArrived && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenMenuOrderId(null);
+                        handleUpdateStatus(order.id, 'Pending');
+                      }}
+                      className="w-full px-3 py-1.5 text-left text-text hover:bg-bg3 flex items-center gap-2 cursor-pointer"
+                    >
+                      <RotateCcw size={13} className="text-amber-400" />
+                      <span>Move to Running</span>
+                    </button>
+                  )}
+
+                  {!isPast && (
+                    <div className="h-px bg-border/60 my-1" />
+                  )}
+
+                  {!isPast && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenMenuOrderId(null);
+                        handleDeleteOrder(order.id, order.product);
+                      }}
+                      className="w-full px-3 py-1.5 text-left text-red-400 hover:bg-red-500/10 flex items-center gap-2 cursor-pointer"
+                    >
+                      <Trash2 size={13} />
+                      <span>Cancel Order</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-
-        {/* Medicine Scannable Pills Bar */}
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/40">
-          <span className="text-[10px] font-bold text-muted uppercase tracking-wider flex items-center gap-1 mr-1">
-            Booked Items:
-          </span>
-          {group.activeOrders.map(order => (
-            <div
-              key={order.id}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-bg border border-border text-xs text-text shadow-xs"
-            >
-              <span className="font-bold text-text">💊 {order.product}</span>
-              <span className="text-primary font-mono text-[11px] font-bold">Qty: {order.qty}</span>
-              {order.pharmarack_rate ? (
-                <span className="text-green-400 font-mono text-[10px]">₹{order.pharmarack_rate}</span>
-              ) : null}
-              <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase ${
-                order.status === 'Ready' || order.status === 'Arrived'
-                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                  : order.status === 'Ordered'
-                  ? 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30'
-                  : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
-              }`}>
-                {order.status}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {/* Expanded Individual Order Cards for Item-level edits/cancels */}
-        {isMultiExpanded && (
-          <div className="pt-2 border-t border-border/40 space-y-2 animate-fade-in">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted flex items-center gap-2">
-              <span>Item-Level Details & Actions</span>
-              <div className="flex-1 h-px bg-border/40" />
-            </div>
-            {group.activeOrders.map(order => renderOrderCard(order))}
-          </div>
-        )}
       </div>
     );
   };
@@ -1203,13 +1109,13 @@ export const SpecialOrdersSection: React.FC = () => {
     <div className="flex flex-col h-full gap-3 overflow-hidden">
       {/* Top Controls & Action Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-bg border border-border rounded-xl shrink-0">
-        {/* Left: Search & Status Filters */}
+        {/* Left: Search & 3 Section Segment Tabs */}
         <div className="flex items-center gap-2 flex-1 min-w-[280px]">
           <div className="relative flex-1">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
             <input
               type="text"
-              placeholder="Search medicine, customer, phone, distributor (auto-searches all history)..."
+              placeholder="Search medicine, customer, phone, distributor..."
               value={searchQuery}
               onChange={e => {
                 const val = e.target.value;
@@ -1228,24 +1134,68 @@ export const SpecialOrdersSection: React.FC = () => {
               </button>
             )}
           </div>
-          <div className="flex items-center gap-1 bg-bg3/60 p-1 rounded-xl border border-border">
-            {['All', 'Inquiries', 'Pending', 'Ordered', 'Waiting', 'Arrived', 'Not Arrived', 'Cancelled'].map(st => (
-              <button
-                key={st}
-                onClick={() => { setStatusFilter(st); if (searchQuery.trim()) setSearchQuery(''); }}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                  statusFilter === st ? 'bg-primary text-white shadow-sm' : 'text-muted hover:text-text'
-                }`}
-              >
-                {st}
-              </button>
-            ))}
+
+          {/* 3 Section Segment Tabs */}
+          <div className="flex items-center gap-1 bg-bg3/70 p-1 rounded-xl border border-border">
+            <button
+              type="button"
+              onClick={() => { setActiveTab('running'); if (searchQuery.trim()) setSearchQuery(''); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'running'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'text-muted hover:text-text hover:bg-bg'
+              }`}
+            >
+              <Clock size={13} />
+              <span>Running Orders</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                activeTab === 'running' ? 'bg-bg/30 text-inherit' : 'bg-bg text-muted border border-border'
+              }`}>
+                {tabCounts.running}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('ready'); if (searchQuery.trim()) setSearchQuery(''); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'ready'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-muted hover:text-text hover:bg-bg'
+              }`}
+            >
+              <CheckCircle2 size={13} />
+              <span>Ready for Pickup</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                activeTab === 'ready' ? 'bg-bg/30 text-inherit' : 'bg-bg text-muted border border-border'
+              }`}>
+                {tabCounts.ready}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setActiveTab('completed'); if (searchQuery.trim()) setSearchQuery(''); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'completed'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'text-muted hover:text-text hover:bg-bg'
+              }`}
+            >
+              <Package size={13} />
+              <span>Completed</span>
+              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold ${
+                activeTab === 'completed' ? 'bg-bg/30 text-inherit' : 'bg-bg text-muted border border-border'
+              }`}>
+                {tabCounts.completed}
+              </span>
+            </button>
           </div>
         </div>
 
         {/* Right: Date Range, Fold Toggle, Remind Uncollected, Refresh, New Request */}
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Date Picker Controls */}
+          {/* Date Picker Controls (prominent in completed tab, or manual) */}
           <div className="flex items-center gap-1.5 bg-bg border border-border px-2.5 py-1 rounded-xl text-xs">
             <Calendar size={13} className="text-muted" />
             <input
@@ -1270,19 +1220,19 @@ export const SpecialOrdersSection: React.FC = () => {
           <div className="flex items-center bg-bg3/60 p-0.5 rounded-lg border border-border">
             <button
               onClick={() => { setDateFrom(getNDaysAgoString(15)); setDateTo(getTodayString()); setManualToDate(false); }}
-              className="px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-text rounded"
+              className="px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-text rounded cursor-pointer"
             >
               15d
             </button>
             <button
               onClick={() => { setDateFrom(getNDaysAgoString(30)); setDateTo(getTodayString()); setManualToDate(false); }}
-              className="px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-text rounded"
+              className="px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-text rounded cursor-pointer"
             >
               30d
             </button>
             <button
               onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className="px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-text rounded"
+              className="px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-text rounded cursor-pointer"
             >
               All
             </button>
@@ -1317,7 +1267,7 @@ export const SpecialOrdersSection: React.FC = () => {
 
           <button
             onClick={loadOrders}
-            className="p-2 rounded-xl bg-bg3 hover:bg-bg border border-border text-muted hover:text-text transition-all"
+            className="p-2 rounded-xl bg-bg3 hover:bg-bg border border-border text-muted hover:text-text transition-all cursor-pointer"
             title="Refresh special orders"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -1334,8 +1284,11 @@ export const SpecialOrdersSection: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold shadow-md shadow-primary/20 transition-all"
+            onClick={() => {
+              setReorderItem(null);
+              setShowAddModal(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold shadow-md shadow-primary/20 transition-all cursor-pointer"
           >
             <Plus size={14} />
             <span>New Special Request</span>
@@ -1343,22 +1296,28 @@ export const SpecialOrdersSection: React.FC = () => {
         </div>
       </div>
 
-      {/* Orders List Container - Grouped by Customer with Collapsible Fold/Unfold */}
+      {/* Orders List Container */}
       <div className="flex-1 overflow-y-auto pr-1 space-y-3">
         {loading && orders.length === 0 ? (
           <div className="p-12 text-center text-xs text-muted">Loading special requests...</div>
         ) : customerGroups.length === 0 ? (
           <div className="p-12 text-center flex flex-col items-center gap-2 text-xs text-muted bg-bg2/40 rounded-2xl border border-border/50">
-            <span className="font-semibold text-text text-sm">No special requests found matching your filter.</span>
+            <span className="font-semibold text-text text-sm">
+              {activeTab === 'running'
+                ? 'No running special orders right now.'
+                : activeTab === 'ready'
+                ? 'No orders waiting for customer pickup.'
+                : 'No completed orders found in selected range.'}
+            </span>
             {searchQuery.trim().length >= 2 && (
               <div className="flex flex-col items-center gap-2 mt-1">
                 <span className="text-amber-400 font-medium text-[12px]">
-                  🔍 No exact match for "{searchQuery}". Please check spelling or try searching by product or patient name.
+                  🔍 No match found for "{searchQuery}".
                 </span>
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="px-3 py-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[12px] font-bold transition-all"
+                  className="px-3 py-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-[12px] font-bold transition-all cursor-pointer"
                 >
                   Clear Search Query
                 </button>
@@ -1374,14 +1333,14 @@ export const SpecialOrdersSection: React.FC = () => {
                 key={group.key}
                 className="bg-bg2/80 rounded-2xl border border-border shadow-sm overflow-hidden transition-all"
               >
-                {/* Customer Group Header (Fold/Unfold Bar) */}
+                {/* Customer Group Header */}
                 <div
                   onClick={() => toggleCustomer(group.key)}
                   className="p-3 bg-bg3/40 hover:bg-bg3/70 border-b border-border/60 flex items-center justify-between gap-3 cursor-pointer transition-colors select-none"
                 >
                   <div className="flex items-center gap-2.5 flex-wrap">
-                    <div className="w-7 h-7 rounded-lg bg-primary/15 text-primary flex items-center justify-center font-bold text-xs">
-                      <Users size={14} />
+                    <div className="w-8 h-8 rounded-xl bg-primary/15 text-primary flex items-center justify-center font-bold text-xs">
+                      <Users size={15} />
                     </div>
                     <span className="font-bold text-sm text-text">{group.requester}</span>
                     {group.phone && (
@@ -1390,81 +1349,97 @@ export const SpecialOrdersSection: React.FC = () => {
                         {group.phone}
                       </span>
                     )}
-                    {group.activeCount > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-400 text-[10px] font-bold">
-                        {group.activeCount} Active {group.activeCount === 1 ? 'Request' : 'Requests'}
-                      </span>
-                    )}
-                    {group.arrivedCount > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold flex items-center gap-1">
-                        <CheckCircle2 size={10} /> {group.arrivedCount} Ready
-                      </span>
-                    )}
-                    {group.pastOrders.length > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-bg border border-border text-muted text-[10px] font-medium">
-                        {group.pastOrders.length} Past
-                      </span>
-                    )}
+                    <span className="px-2 py-0.5 rounded-full bg-primary/10 border border-primary/25 text-primary text-[11px] font-bold">
+                      {group.orders.length} {group.orders.length === 1 ? 'Medicine' : 'Medicines'}
+                    </span>
                     {group.totalAdvance > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold">
                         ✨ Advance: ₹{group.totalAdvance.toFixed(2)}
                       </span>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 text-muted text-xs">
-                    {group.activeOrders.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setArrivalModalData({
-                            customerName: group.requester,
-                            customerPhone: group.phone,
-                            orders: group.activeOrders.map(o => ({
-                              id: o.id,
-                              product: o.product,
-                              qty: o.qty,
-                              status: o.status
-                            }))
-                          });
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30 text-xs font-bold transition-all cursor-pointer flex items-center gap-1 shrink-0"
-                        title="Send 1 consolidated WhatsApp arrival/delay message for all medicines"
-                      >
-                        <MessageCircle size={12} />
-                        <span>Notify Arrival ({group.activeOrders.length})</span>
-                      </button>
+                  {/* Section-specific Consolidated Header Actions */}
+                  <div className="flex items-center gap-2">
+                    {activeTab === 'running' && (
+                      <>
+                        {group.orders.some(o => o.status !== 'Ordered') && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAddAllSpecialOrdersToCart(group.orders);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-sky-500/15 hover:bg-sky-500/25 border border-sky-500/30 text-sky-400 text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                            title="Add un-ordered medicines to active cart"
+                          >
+                            <ShoppingCart size={12} />
+                            <span>+ Cart</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleBatchStatusUpdate(group.orders.map(o => o.id), 'Ready');
+                          }}
+                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shadow-xs"
+                          title="Mark all items as arrived & ready"
+                        >
+                          <CheckCircle2 size={13} />
+                          <span>✓ Mark All Ready</span>
+                        </button>
+                      </>
                     )}
-                    <span className="text-[11px] font-medium">
-                      {isExpanded ? 'Collapse' : `Expand (${group.orders.length})`}
+
+                    {activeTab === 'ready' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSellAllSpecialOrders(group.orders);
+                          }}
+                          className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all flex items-center gap-1 cursor-pointer shadow-xs active:scale-95"
+                          title="Transfer all ready medicines and advance credit to POS"
+                        >
+                          <ShoppingCart size={13} />
+                          <span>⚡ Sell All in POS</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setArrivalModalData({
+                              customerName: group.requester,
+                              customerPhone: group.phone,
+                              orders: group.orders.map(o => ({
+                                id: o.id,
+                                product: o.product,
+                                qty: o.qty,
+                                status: o.status
+                              }))
+                            });
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold transition-all flex items-center gap-1 cursor-pointer shadow-xs"
+                          title="Send arrival notification on WhatsApp"
+                        >
+                          <MessageCircle size={12} />
+                          <span>Notify Arrival</span>
+                        </button>
+                      </>
+                    )}
+
+                    <span className="p-1 rounded-lg text-muted hover:text-text">
+                      {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </span>
-                    {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </div>
                 </div>
 
-                {/* Customer Orders Body */}
+                {/* Medicines List Body */}
                 {isExpanded && (
                   <div className="p-3 space-y-2">
-                    {/* Active Orders: if >1 render unified Master Card, otherwise render single card */}
-                    {group.activeOrders.length > 1
-                      ? renderMultiOrderMasterCard(group)
-                      : group.activeOrders.map(order => renderOrderCard(order))}
-
-                    {/* Past Fulfilled / Cancelled Orders (Tucked Inside If Any) */}
-                    {group.pastOrders.length > 0 && (
-                      <div className="pt-1">
-                        {group.activeOrders.length > 0 && (
-                          <div className="text-[10px] font-bold uppercase tracking-wider text-muted py-1 flex items-center gap-2">
-                            <span>Past Order History ({group.pastOrders.length})</span>
-                            <div className="flex-1 h-px bg-border/40" />
-                          </div>
-                        )}
-                        <div className="space-y-1.5">
-                          {group.pastOrders.map(order => renderOrderCard(order))}
-                        </div>
-                      </div>
-                    )}
+                    {group.orders.map(order => renderOrderItem(order))}
                   </div>
                 )}
               </div>

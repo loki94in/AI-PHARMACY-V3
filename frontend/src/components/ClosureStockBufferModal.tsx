@@ -454,12 +454,7 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
                           </div>
                         </td>
                         <td className="py-2.5 px-3 font-sans text-xs text-center" onClick={e => e.stopPropagation()}>
-                          {item.is_in_cart ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold text-[11px] shadow-xs">
-                              <ShoppingCart size={11} />
-                              <span className="truncate max-w-[130px]">In Cart: {item.cart_store_name || item.distributor_name || 'Live Cart'}</span>
-                            </span>
-                          ) : (
+                          <div className="flex flex-col items-center justify-center gap-1">
                             <button
                               type="button"
                               onClick={(e) => {
@@ -477,7 +472,16 @@ export const ClosureStockBufferModal: React.FC<ClosureStockBufferModalProps> = (
                               <ShoppingCart size={12} />
                               <span>+ Live Cart ({orderQtys[item.refill_id] && orderQtys[item.refill_id] > 0 ? orderQtys[item.refill_id] : (item.shortfall_packs > 0 ? item.shortfall_packs : 1)})</span>
                             </button>
-                          )}
+                            {item.is_in_cart && item.cart_store_name && item.cart_store_name !== 'Manual / Phone Order' && (
+                              <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-sky-500/15 border border-sky-500/30 text-sky-400 font-bold text-[10px] shadow-xs"
+                                title={`Currently in live cart: ${item.cart_store_name}`}
+                              >
+                                <ShoppingCart size={10} />
+                                <span className="truncate max-w-[120px]">In Cart: {item.cart_store_name}</span>
+                              </span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

@@ -73,11 +73,22 @@ router.get('/', async (req, res) => {
         orders = await db.all('SELECT *, medicine_name AS product FROM special_orders WHERE store_id = ? ORDER BY id DESC LIMIT 1000', [storeId]);
       }
     }
-    const normalizedOrders = (orders || []).map((o: any) => ({
-      ...o,
-      product: o.medicine_name || o.product || '',
-      medicine_name: o.medicine_name || o.product || ''
-    }));
+    // Auto-purge rogue/symbol records (e.g. backtick, stray dots, pure punctuation)
+    try {
+      await db.run("DELETE FROM special_orders WHERE trim(medicine_name) IN ('`', '.', '-', '', '•') OR length(trim(medicine_name)) < 2");
+    } catch (_) {}
+
+    const normalizedOrders = (orders || [])
+      .map((o: any) => ({
+        ...o,
+        product: o.medicine_name || o.product || '',
+        medicine_name: o.medicine_name || o.product || ''
+      }))
+      .filter((o: any) => {
+        const name = (o.product || '').trim();
+        const alphaMatches = name.match(/[a-zA-Z0-9]/g);
+        return Boolean(alphaMatches && alphaMatches.length >= 2);
+      });
     res.json(normalizedOrders);
   } catch (err) {
     console.error('Orders fetch error:', err);
@@ -140,7 +151,8 @@ router.post('/batch', async (req, res) => {
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
         const medName = (item.product || item.medicine_name || item.name || '').trim();
-        if (!medName) continue;
+        const alphaMatches = medName.match(/[a-zA-Z0-9]/g);
+        if (!medName || !alphaMatches || alphaMatches.length < 2) continue;
         const itemQty = Number(item.qty) || 1;
         const itemAdv = i === 0 && advance_payment ? Number(advance_payment) : Number(item.advance_payment || 0);
 
@@ -296,9 +308,10 @@ router.post('/', async (req, res) => {
 
   const targetStoreId = store_id !== undefined ? (parseInt(String(store_id), 10) || 1) : resolveStoreId(req);
 
-  const reqProduct = product || medicine_name;
-  if (!requester || !reqProduct) {
-    return res.status(400).json({ error: 'Requester name and product name are required' });
+  const reqProduct = (product || medicine_name || '').trim();
+  const alphaMatches = reqProduct.match(/[a-zA-Z0-9]/g);
+  if (!requester || !reqProduct || !alphaMatches || alphaMatches.length < 2) {
+    return res.status(400).json({ error: 'Valid requester name and medicine name (at least 2 letters/digits) are required' });
   }
 
   try {

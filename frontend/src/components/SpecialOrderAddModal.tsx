@@ -64,6 +64,7 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
   const [selectedProductCode, setSelectedProductCode] = useState('');
   const [selectedCompany, setSelectedCompany] = useState('');
   const [selectedPackaging, setSelectedPackaging] = useState('');
+  const [isMedicineVerified, setIsMedicineVerified] = useState(false);
 
   // Search & Dropdown State
   const [prSearchResults, setPrSearchResults] = useState<PharmarackSearchResult[]>([]);
@@ -215,6 +216,7 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
   // Handle item selection with ZERO blur-misses
   const handleSelectPharmarackItem = useCallback((item: PharmarackSearchResult) => {
     isSelectingRef.current = true;
+    setIsMedicineVerified(true);
     setProduct(item.name);
     setSelectedDistributor(item.distributor || '');
     setSelectedRate(item.rate !== null && item.rate !== undefined ? item.rate : '');
@@ -341,6 +343,7 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
 
   const handleReorderPastItem = (past: SpecialOrderItem) => {
     isSelectingRef.current = true;
+    setIsMedicineVerified(true);
     setProduct(past.product);
     setQty(past.qty || 1);
     if (past.pharmarack_distributor) setSelectedDistributor(past.pharmarack_distributor);
@@ -359,8 +362,14 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
     const customerName = combineSalutationAndName(orderSalutation, orderCustomSalutation, requester);
     const cleanPh = sanitizePhoneInput(phone);
 
-    if (!product.trim()) {
-      toastEvent.trigger('Please enter a medicine name.', 'error', '/crm');
+    const trimmedProduct = product.trim();
+    const alphaMatches = trimmedProduct.match(/[a-zA-Z0-9]/g);
+    if (!trimmedProduct || !alphaMatches || alphaMatches.length < 2) {
+      toastEvent.trigger('Please enter a valid medicine name (at least 2 letters/digits).', 'error', '/crm');
+      return;
+    }
+    if (!isMedicineVerified && !initialOrder) {
+      toastEvent.trigger('Please select a medicine from the dropdown list.', 'error', '/crm');
       return;
     }
     if (!customerName) {
@@ -536,6 +545,7 @@ export const SpecialOrderAddModal: React.FC<SpecialOrderAddModalProps> = ({
                   value={product}
                   onChange={e => {
                     isSelectingRef.current = false;
+                    setIsMedicineVerified(false);
                     setProduct(e.target.value);
                   }}
                   onFocus={() => {

@@ -2,8 +2,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-// https://vitejs.dev/config/
-const backendPort = process.env.BACKEND_PORT || '5175';
+// In dev mode the backend runs on port 5174 (or process.env.PORT).
+// In electron/packaged mode process.env.BACKEND_PORT is set to 5175.
+const backendPort = process.env.BACKEND_PORT || process.env.PORT || '5174';
 
 export default defineConfig({
   preview: {

@@ -3723,7 +3723,11 @@ router.post('/cart/place-official-orders', async (req, res) => {
 
     try {
       eventService.broadcast('pharmarack_orders_changed', { today });
+      eventService.broadcast('pharmarack_cart_changed', { today });
+      eventService.broadcast('live_cart_updated', { today });
+      eventService.broadcast('dispatch_updated', { today, at: Date.now() });
       eventService.broadcast('whatsapp_queue_updated', {});
+      eventService.broadcast('wa_queue_update', { active: true, at: Date.now() });
     } catch (_) { }
 
     // Single fresh live cart read to evaluate remaining items for target stores
