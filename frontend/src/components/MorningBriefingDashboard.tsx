@@ -23,6 +23,8 @@ import {
   Sparkles
 } from 'lucide-react';
 import { morningBriefingApi } from '../services/morningBriefingApi';
+import { DelayNoticeModal } from './DelayNoticeModal';
+import { apiClient } from '../services/api';
 import type { MorningBriefingData, BriefingItem } from '../types/morningBriefing';
 import { toastEvent } from '../services/events';
 import { getLocalDateString, getTodayString } from '../utils/date';
@@ -44,6 +46,17 @@ export const MorningBriefingDashboard: React.FC<Props> = ({ className = '', onNa
     const d = new Date();
     d.setDate(d.getDate() + 1);
     return getLocalDateString(d);
+  });
+  const [isDelayModalOpen, setIsDelayModalOpen] = useState(false);
+
+  const { data: delayNoticeData, refetch: refetchDelayNotice } = useQuery({
+    queryKey: ['delay-notice-candidates-briefing'],
+    queryFn: async () => {
+      const res = await apiClient.get('/crm/delay-notice-candidates');
+      return res.data;
+    },
+    staleTime: 30000,
+    refetchOnWindowFocus: false,
   });
 
   const { data, isLoading, refetch, isFetching } = useQuery<MorningBriefingData>({
@@ -194,7 +207,15 @@ export const MorningBriefingDashboard: React.FC<Props> = ({ className = '', onNa
 
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <button
-            onClick={() => refetch()}
+            onClick={() => setIsDelayModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600/15 hover:bg-purple-600/25 border border-purple-500/30 text-xs font-bold text-purple-300 transition-all cursor-pointer"
+            title="Open Market Off & Shop Closure Notice Broadcaster"
+          >
+            <Clock size={13} />
+            <span>Closure Notices {delayNoticeData?.count ? `(${delayNoticeData.count})` : ''}</span>
+          </button>
+          <button
+            onClick={() => { refetch(); refetchDelayNotice(); }}
             disabled={isFetching}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-bg3 hover:bg-bg border border-border text-xs font-bold text-text transition-all cursor-pointer disabled:opacity-50"
           >
@@ -203,6 +224,34 @@ export const MorningBriefingDashboard: React.FC<Props> = ({ className = '', onNa
           </button>
         </div>
       </div>
+
+      {/* 1.5 Smart Calendar & Market/Shop Closure Banner */}
+      {delayNoticeData && (delayNoticeData.calendar_context?.is_today_market_closed || delayNoticeData.calendar_context?.is_tomorrow_shop_closed || (delayNoticeData.candidates && delayNoticeData.candidates.length > 0)) && (
+        <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5 text-purple-400 font-bold text-xs sm:text-sm">
+            <Clock size={18} className="flex-shrink-0" />
+            <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+              <span>
+                {delayNoticeData.calendar_context?.is_today_market_closed
+                  ? 'Wholesale Market Closed Today'
+                  : delayNoticeData.calendar_context?.is_tomorrow_shop_closed
+                  ? `Pharmacy Closed Tomorrow (${delayNoticeData.calendar_context.tomorrow_day_name})`
+                  : 'Market Orders & Pickup Notices Ready'}
+              </span>
+              <span className="text-muted font-normal text-xs">
+                • {delayNoticeData.count || 0} patient(s) eligible for smart informative notice (Next arrival: {delayNoticeData.calendar_context?.next_working_date || 'Next Working Day'})
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsDelayModalOpen(true)}
+            className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-500/20 transition-all self-start sm:self-auto cursor-pointer flex items-center gap-1.5 active:scale-95"
+          >
+            <Clock size={13} />
+            <span>Review &amp; Send Closure Notices ({delayNoticeData.count || 0})</span>
+          </button>
+        </div>
+      )}
 
       {/* 2. Contact Review Alert Banner (if any records lack usable phone) */}
       {contactReview && contactReview.total > 0 && (
@@ -622,6 +671,16 @@ export const MorningBriefingDashboard: React.FC<Props> = ({ className = '', onNa
           </div>
         </div>
       )}
+
+      {/* Delay & Market/Shop Closure Broadcaster Modal */}
+      <DelayNoticeModal
+        isOpen={isDelayModalOpen}
+        onClose={() => setIsDelayModalOpen(false)}
+        onDispatched={() => {
+          refetch();
+          refetchDelayNotice();
+        }}
+      />
 
       {/* 6. Call Outcome Notes & Reschedule Modal */}
       {callNotesModalItem && callOutcomeAction && (

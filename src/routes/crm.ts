@@ -14,7 +14,8 @@ import { resolveStoreId } from '../services/storeContextService.js';
 import { eventService } from '../services/eventService.js';
 import { getStoreMedicalName } from '../services/storeSettingsService.js';
 import { formatCustomerName } from '../utils/nameFormatter.js';
-import { advanceToNextOpenDay } from '../utils/pharmacyCalendar.js';
+import { advanceToNextOpenDay, isClosedDay } from '../utils/pharmacyCalendar.js';
+import { formatDayLabel, formatTime12h } from '../utils/closureNotice.js';
 import { isValidCustomerName } from '../utils/nameNormalizer.js';
 import { validate10DigitPhone } from '../utils/phoneValidation.js';
 import { ensureCustomerPortalAccount } from './customerPortal.js';
@@ -1069,7 +1070,7 @@ router.post('/ledger/pay', async (req, res) => {
 
 /**
  * GET /api/crm/delay-notice-candidates
- * Aggregates active/pending special orders and upcoming/due refills for market-off/delay broadcasting.
+ * Aggregates active/pending special orders, upcoming refills, and ready uncollected orders for calendar & market-off broadcasting.
  */
 router.get('/delay-notice-candidates', async (req, res) => {
   try {
@@ -1080,7 +1081,29 @@ router.get('/delay-notice-candidates', async (req, res) => {
     const storeFilterSpecial = allStores ? '' : 'AND (store_id = ? OR (store_id IS NULL AND ? = 1))';
     const storeParamsSpecial = allStores ? [] : [targetStoreId, targetStoreId];
 
-    // 1. Fetch pending/active special orders
+    // Calendar check for Today and Tomorrow
+    const todayCheck = await isClosedDay(new Date(), targetStoreId, db);
+    const tomorrowDate = new Date();
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowCheck = await isClosedDay(tomorrowDate, targetStoreId, db);
+
+    const nextOpenRes = await advanceToNextOpenDay(new Date(), {
+      storeId: targetStoreId,
+      dbInstance: db,
+      advanceAtLeastOneDay: true
+    });
+    const nextWorkingDateLabel = formatDayLabel(nextOpenRes.targetDate);
+
+    // Read store opening, closing hours and phone
+    const hoursRows = await db.all(
+      `SELECT key, value FROM app_settings WHERE key IN ('pharmacy_open_time', 'pharmacy_close_time', 'pharmacy_phone', 'store_phone')`
+    ).catch(() => []);
+    const hoursMap = new Map((hoursRows || []).map((r: any) => [String(r.key), String(r.value)]));
+    const openTime = formatTime12h(hoursMap.get('pharmacy_open_time') || '09:00');
+    const closeTime = formatTime12h(hoursMap.get('pharmacy_close_time') || '22:00');
+    const storePhone = hoursMap.get('pharmacy_phone') || hoursMap.get('store_phone') || '';
+
+    // 1. Fetch pending/active special orders (Procurement Delay candidates)
     const specialOrders = await db.all<any[]>(
       `SELECT 
         id,
@@ -1092,7 +1115,8 @@ router.get('/delay-notice-candidates', async (req, res) => {
         COALESCE(estimated_delivery_start, scheduled_processing_at, date) as scheduled_date,
         status,
         pharmarack_distributor as distributor_name,
-        store_id
+        store_id,
+        'procurement_delay' as category
       FROM special_orders
       WHERE status IN ('Pending', 'Ordered', 'Waiting')
         ${storeFilterSpecial}
@@ -1100,7 +1124,7 @@ router.get('/delay-notice-candidates', async (req, res) => {
       storeParamsSpecial
     );
 
-    // 2. Fetch active refills due within the next 2 days or already overdue
+    // 2. Fetch active refills due within the next 2 days or already overdue (Procurement Delay candidates)
     const storeFilterRefills = allStores ? '' : 'AND (pr.store_id = ? OR (pr.store_id IS NULL AND ? = 1))';
     const storeParamsRefills = allStores ? [] : [targetStoreId, targetStoreId];
 
@@ -1115,7 +1139,8 @@ router.get('/delay-notice-candidates', async (req, res) => {
         pr.next_refill_date as scheduled_date,
         pr.status,
         NULL as distributor_name,
-        pr.store_id
+        pr.store_id,
+        'procurement_delay' as category
       FROM patient_refills pr
       LEFT JOIN medicines m ON pr.medicine_id = m.id
       WHERE pr.is_active = 1 
@@ -1126,7 +1151,89 @@ router.get('/delay-notice-candidates', async (req, res) => {
       storeParamsRefills
     );
 
-    // Combine and normalize candidates
+    // 3. Fetch Ready Uncollected Special Orders & Online Orders (Ready for Pickup)
+    const readySpecialOrders = await db.all<any[]>(
+      `SELECT 
+        id,
+        requester as patient_name,
+        phone as patient_phone,
+        COALESCE(medicine_name, 'Medicine') as medicine_name,
+        COALESCE(qty, 1) as qty,
+        COALESCE(estimated_delivery_start, scheduled_processing_at, date) as scheduled_date,
+        status,
+        delivery_status,
+        customer_order_source,
+        prescription_url,
+        notes,
+        notified,
+        pharmarack_distributor as distributor_name,
+        store_id,
+        'ready_pickup' as category
+      FROM special_orders
+      WHERE (status = 'Ready' OR delivery_status = 'ready_for_pickup')
+        ${storeFilterSpecial}
+      ORDER BY id DESC LIMIT 150`,
+      storeParamsSpecial
+    );
+
+    // 4. Fetch Ready Uncollected Refills (staged / is_ready = 1)
+    const readyRefills = await db.all<any[]>(
+      `SELECT 
+        pr.id,
+        'refill' as type,
+        pr.patient_name,
+        pr.patient_phone,
+        COALESCE(m.name, 'Refill Medicine') as medicine_name,
+        COALESCE(pr.quantity_needed, 1) as qty,
+        pr.next_refill_date as scheduled_date,
+        pr.status,
+        NULL as distributor_name,
+        pr.store_id,
+        'ready_pickup' as category
+      FROM patient_refills pr
+      LEFT JOIN medicines m ON pr.medicine_id = m.id
+      WHERE pr.is_active = 1 
+        AND (pr.status = 'staged' OR pr.is_ready = 1 OR pr.status = 'ready')
+        AND pr.status NOT IN ('fulfilled', 'cancelled')
+        ${storeFilterRefills}
+      ORDER BY pr.id DESC LIMIT 100`,
+      storeParamsRefills
+    );
+
+    // Process ready items and segregate into special_order vs online_order
+    const processedReadySpecial: any[] = [];
+    const processedReadyOnline: any[] = [];
+
+    for (const r of readySpecialOrders) {
+      const srcRaw = String(r.customer_order_source || '').toLowerCase();
+      const isOnline =
+        ['website', 'whatsapp', 'manual_phone_order', 'pharmacy_assisted'].includes(srcRaw) ||
+        Boolean(r.prescription_url) ||
+        String(r.notes || '').startsWith('[Website Order]');
+
+      const item = {
+        id: r.id,
+        type: isOnline ? ('online_order' as const) : ('special_order' as const),
+        patient_name: r.patient_name ? r.patient_name.trim() : '',
+        patient_phone: (r.patient_phone || '').trim(),
+        medicine_name: r.medicine_name,
+        qty: Number(r.qty) || 1,
+        scheduled_date: r.scheduled_date || null,
+        status: r.status || 'Ready',
+        distributor_name: r.distributor_name || null,
+        store_id: r.store_id || 1,
+        category: 'ready_pickup' as const,
+        notified_earlier: Boolean(r.notified === 1),
+      };
+
+      if (isOnline) {
+        processedReadyOnline.push(item);
+      } else {
+        processedReadySpecial.push(item);
+      }
+    }
+
+    // Combine and normalize candidates across all sources
     const candidates = [
       ...specialOrders.map(o => ({
         id: o.id,
@@ -1139,6 +1246,8 @@ router.get('/delay-notice-candidates', async (req, res) => {
         status: o.status || 'Pending',
         distributor_name: o.distributor_name || null,
         store_id: o.store_id || 1,
+        category: 'procurement_delay' as const,
+        notified_earlier: false,
       })),
       ...refills.map(r => ({
         id: r.id,
@@ -1151,14 +1260,50 @@ router.get('/delay-notice-candidates', async (req, res) => {
         status: r.status || 'pending',
         distributor_name: null,
         store_id: r.store_id || 1,
+        category: 'procurement_delay' as const,
+        notified_earlier: false,
+      })),
+      ...processedReadySpecial,
+      ...processedReadyOnline,
+      ...readyRefills.map(r => ({
+        id: r.id,
+        type: 'refill' as const,
+        patient_name: r.patient_name ? r.patient_name.trim() : '',
+        patient_phone: (r.patient_phone || '').trim(),
+        medicine_name: r.medicine_name,
+        qty: Number(r.qty) || 1,
+        scheduled_date: r.scheduled_date || null,
+        status: r.status || 'Ready',
+        distributor_name: null,
+        store_id: r.store_id || 1,
+        category: 'ready_pickup' as const,
+        notified_earlier: Boolean(r.status === 'notified' || r.status === 'staged'),
       }))
     ];
+
+    const calendarContext = {
+      is_today_market_closed: Boolean(todayCheck.isMarketClosed || todayCheck.isDispatchClosed),
+      is_today_shop_closed: Boolean(todayCheck.isClosed),
+      is_tomorrow_shop_closed: Boolean(tomorrowCheck.isClosed),
+      today_reason: todayCheck.reason || null,
+      tomorrow_reason: tomorrowCheck.reason || (tomorrowCheck.isWeeklyOff ? 'Weekly Off' : null),
+      tomorrow_day_name: tomorrowDate.toLocaleDateString('en-IN', { weekday: 'long' }),
+      next_working_date: nextWorkingDateLabel,
+      next_working_ymd: nextOpenRes.ymd,
+      open_time: openTime,
+      close_time: closeTime,
+      store_phone: storePhone,
+      early_close_options: ['05:00 PM', '06:00 PM', '07:00 PM'],
+    };
 
     res.json({
       candidates,
       count: candidates.length,
-      special_order_count: specialOrders.length,
-      refill_count: refills.length
+      special_order_count: specialOrders.length + processedReadySpecial.length,
+      refill_count: refills.length + readyRefills.length,
+      online_order_count: processedReadyOnline.length,
+      ready_pickup_count: processedReadySpecial.length + processedReadyOnline.length + readyRefills.length,
+      calendar_context: calendarContext
     });
   } catch (err: any) {
     console.error('Failed to load delay notice candidates:', err);
@@ -1171,7 +1316,7 @@ router.get('/delay-notice-candidates', async (req, res) => {
  * Dispatches personalized delay notifications to selected patients via WhatsApp queue.
  */
 router.post('/broadcast-delay-notices', async (req, res) => {
-  const { recipients, message_template, postpone_days = 1 } = req.body || {};
+  const { recipients, message_template, postpone_days = 1, override_close_time } = req.body || {};
 
   if (!Array.isArray(recipients) || recipients.length === 0) {
     return res.status(400).json({ error: 'At least one recipient must be selected.' });
@@ -1204,7 +1349,30 @@ router.post('/broadcast-delay-notices', async (req, res) => {
         : 'Valued Customer';
       const medName = item.medicine_name || 'Medicine';
 
-      // Interpolate template placeholders
+            // Fetch next open date & schedule metadata for safe template interpolation
+      const baseCalcDate = new Date();
+      if (postponeNum > 0) baseCalcDate.setDate(baseCalcDate.getDate() + postponeNum);
+      const openDayRes = await advanceToNextOpenDay(baseCalcDate, {
+        storeId: item.store_id || targetStoreId,
+        dbInstance: db
+      });
+      const nextWorkingDateLabel = formatDayLabel(openDayRes.targetDate);
+      const tomorrowDate = new Date();
+      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+      const tomorrowCheck = await isClosedDay(tomorrowDate, item.store_id || targetStoreId, db);
+      const tomorrowDayName = tomorrowDate.toLocaleDateString('en-IN', { weekday: 'long' });
+      const closureReason = tomorrowCheck.reason || (tomorrowCheck.isWeeklyOff ? 'Weekly Off' : 'Holiday');
+
+      const hoursRows = await db.all(
+        `SELECT key, value FROM app_settings WHERE key IN ('pharmacy_open_time', 'pharmacy_close_time', 'pharmacy_phone', 'store_phone')`
+      ).catch(() => []);
+      const hoursMap = new Map((hoursRows || []).map((r: any) => [String(r.key), String(r.value)]));
+      const openTimeStr = formatTime12h(hoursMap.get('pharmacy_open_time') || '09:00');
+      const standardCloseTime = formatTime12h(hoursMap.get('pharmacy_close_time') || '22:00');
+      const closeTimeStr = override_close_time ? String(override_close_time).trim() : standardCloseTime;
+      const storePhoneStr = hoursMap.get('pharmacy_phone') || hoursMap.get('store_phone') || '';
+
+      // Interpolate template placeholders (with dynamic calendar tags)
       const personalizedMsg = message_template
         .replace(/\{patient_name\}/gi, cleanName)
         .replace(/\{customer_name\}/gi, cleanName)
@@ -1212,7 +1380,15 @@ router.post('/broadcast-delay-notices', async (req, res) => {
         .replace(/\{product_name\}/gi, medName)
         .replace(/\{pharmacy_name\}/gi, storeMedicalName)
         .replace(/\{store_name\}/gi, storeMedicalName)
-        .replace(/\{qty\}/gi, String(item.qty || 1));
+        .replace(/\{qty\}/gi, String(item.qty || 1))
+        .replace(/\{next_working_date\}/gi, nextWorkingDateLabel)
+        .replace(/\{next_open_date\}/gi, nextWorkingDateLabel)
+        .replace(/\{next_shop_open_date\}/gi, nextWorkingDateLabel)
+        .replace(/\{tomorrow_day\}/gi, tomorrowDayName)
+        .replace(/\{closure_reason\}/gi, closureReason)
+        .replace(/\{close_time\}/gi, closeTimeStr)
+        .replace(/\{open_time\}/gi, openTimeStr)
+        .replace(/\{pharmacy_phone\}/gi, storePhoneStr);
 
       try {
         await whatsappQueueWorker.enqueue(

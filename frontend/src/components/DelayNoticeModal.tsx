@@ -37,6 +37,42 @@ interface PresetItem {
 
 const TEMPLATE_PRESETS: PresetItem[] = [
   {
+    id: 'early_close_tomorrow_off',
+    label: '🕒 Early Close (5/6 PM) + Tomorrow Off',
+    text: {
+      mr: 'सस्नेह नमस्कार {patient_name}, आपल्या {medicine_name} या औषधाबाबत महत्त्वाची माहिती: आज आमचे दुकान लवकर सायंकाळी {close_time} वाजताच बंद होणार आहे, तसेच उद्या {tomorrow_day} दुकान पूर्णपणे बंद राहील. आपण हे औषध आज सायंकाळी {close_time} पूर्वी किंवा दुकान पुन्हा सुरू झाल्यावर {next_working_date} रोजी सकाळी {open_time} नंतर सवडीने घेऊ शकता. — {pharmacy_name}',
+      hi: 'नमस्ते {patient_name}, आपकी दवाई ({medicine_name}) के संदर्भ में सूचना: आज हमारी दुकान शाम {close_time} बजे ही बंद हो जाएगी, और कल {tomorrow_day} दुकान पूर्णतः बंद रहेगी। आप यह दवाई आज शाम {close_time} से पहले अथवा दुकान पुनः खुलने पर {next_working_date} को सुबह {open_time} के बाद सुविधानुसार ले सकते हैं। — {pharmacy_name}',
+      en: 'Dear {patient_name}, an important timing update regarding your ready medicine ({medicine_name}): Our pharmacy will close early today at {close_time}, and will remain closed tomorrow ({tomorrow_day}). You may collect your medicine today before {close_time}, or visit at your leisure on {next_working_date} after {open_time}. — {pharmacy_name}',
+    },
+  },
+  {
+    id: 'market_multi_day',
+    label: '📦 Wholesale Market Off (सुट्टी)',
+    text: {
+      mr: 'सस्नेह नमस्कार {patient_name}, आपल्या {medicine_name} या विशेष औषधाची नोंद आमच्याकडे झाली आहे. घाऊक औषध बाजार सुट्टीमुळे वितरकांकडून हे औषध {next_working_date} रोजी आमच्याकडे उपलब्ध होईल. औषध येताच आम्ही आपल्याला त्वरित कळवू! — {pharmacy_name}',
+      hi: 'नमस्ते {patient_name}, आपकी दवाई ({medicine_name}) का ऑर्डर सुरक्षित दर्ज है। थोक मार्केट अवकाश के कारण यह दवाई डिस्ट्रीब्यूटर से {next_working_date} को उपलब्ध होगी। दवाई आते ही हम आपको तुरंत सूचित करेंगे! — {pharmacy_name}',
+      en: 'Dear {patient_name}, your order for {medicine_name} is confirmed. Due to wholesale market closure, distributor delivery is expected on {next_working_date}. We will update you immediately once received! — {pharmacy_name}',
+    },
+  },
+  {
+    id: 'ready_shop_closed_tomorrow',
+    label: '🌸 Medicine Ready + Shop Closed Tomorrow',
+    text: {
+      mr: 'सस्नेह नमस्कार {patient_name}, आपले {medicine_name} हे औषध आमच्या दुकानात सुरक्षितपणे तयार ठेवले आहे. उद्या आमचे दुकान बंद राहणार असल्यामुळे, आपण हे औषध आज रात्री {close_time} पर्यंत किंवा दुकान पुन्हा सुरू झाल्यावर {next_working_date} रोजी सकाळी {open_time} नंतर सवडीने घेऊ शकता. — {pharmacy_name}',
+      hi: 'नमस्ते {patient_name}, आपकी दवाई ({medicine_name}) हमारे पास सुरक्षित तैयार रखी है। कल हमारी दुकान बंद रहने के कारण, आप यह दवाई आज रात {close_time} से पहले अथवा दुकान पुनः खुलने पर {next_working_date} को सुबह {open_time} के बाद सुविधानुसार ले सकते हैं। — {pharmacy_name}',
+      en: 'Dear {patient_name}, your medicine {medicine_name} is safely ready at our counter. Please note our pharmacy will be closed tomorrow. You may collect it today before {close_time}, or visit on {next_working_date} after {open_time}. — {pharmacy_name}',
+    },
+  },
+  {
+    id: 'shop_reopened',
+    label: '☀️ Shop Reopened Welcome',
+    text: {
+      mr: 'सस्नेह नमस्कार {patient_name}, आमचे दुकान आज पूर्ववत सुरू झाले आहे (सकाळी {open_time} ते रात्री {close_time}). आपले औषध {medicine_name} काऊंटरवर तयार आहे, आपण आज सवडीने येऊन घेऊन जाऊ शकता! — {pharmacy_name}',
+      hi: 'नमस्ते {patient_name}, हमारी दुकान आज खुल चुकी है (सुबह {open_time} से रात {close_time})। आपकी दवाई {medicine_name} काउंटर पर तैयार रखी है, आप आज सुविधानुसार आकर ले सकते हैं! — {pharmacy_name}',
+      en: 'Dear {patient_name}, our pharmacy is open today ({open_time} to {close_time}). Your medicine {medicine_name} is ready at the counter, please drop by to collect it whenever convenient for you today! — {pharmacy_name}',
+    },
+  },
+  {
     id: 'festival',
     label: '🪔 Festival / Holiday',
     text: {
@@ -322,7 +358,7 @@ export function DelayNoticeModal({ isOpen, onClose, onDispatched }: DelayNoticeM
               <div className="flex items-center justify-between flex-wrap gap-2 pt-0.5">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-[10px] text-muted">Insert Tag:</span>
-                  {['{patient_name}', '{medicine_name}', '{pharmacy_name}', '{qty}'].map(tag => (
+                  {['{patient_name}', '{medicine_name}', '{pharmacy_name}', '{qty}', '{next_working_date}', '{close_time}', '{open_time}', '{tomorrow_day}'].map(tag => (
                     <button
                       key={tag}
                       type="button"
