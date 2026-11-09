@@ -188,7 +188,7 @@ export const QuickAssistSidebar = memo(({
     try {
       const ids = (group.messages || []).map(m => m.id).filter(Boolean);
       if (ids.length === 0) {
-        toastEvent.trigger('No active reminder to snooze', 'warning');
+        toastEvent.trigger('No active reminder to snooze', 'info');
         return;
       }
       await api.snoozeNotificationGroup(ids, 1);
