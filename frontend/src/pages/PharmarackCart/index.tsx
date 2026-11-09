@@ -1342,6 +1342,7 @@ export default function PharmarackCart() {
 
   const [autoReconciledItems, setAutoReconciledItems] = useState<any[]>([]);
   const [hideAlreadyInCart, setHideAlreadyInCart] = useState<boolean>(true);
+  const [sessionAddedOrderIds, setSessionAddedOrderIds] = useState<Set<number>>(() => new Set());
   const showAddedItems = !hideAlreadyInCart;
   const [reorderBannerCollapsed, setReorderBannerCollapsed] = useState<boolean>(false);
 
@@ -2989,7 +2990,7 @@ export default function PharmarackCart() {
       if (Array.isArray(data)) {
         // Show pending, confirmed, or waiting requests (placed orders are hidden from pending list)
         const filtered = data.filter(o => 
-          ['Pending', 'Confirmed', 'Waiting'].includes(o.status) && 
+          ['Pending', 'Confirmed', 'Waiting', 'In Live Cart'].includes(o.status) && 
           !['Ordered', 'Fulfilled', 'Completed', 'Cancelled', 'Ready'].includes(o.status) &&
           !isSoldAtPOSToday(o.medicine_name || o.product)
         );
@@ -3090,9 +3091,10 @@ export default function PharmarackCart() {
       if (order.status === 'Ordered' || order.status === 'Fulfilled' || order.status === 'Completed' || order.status === 'Cancelled' || order.status === 'Ready') return false;
       if (isMedicineInSentPO(order.medicine_name || order.product)) return false;
       if (isSoldAtPOSToday(order.medicine_name || order.product)) return false;
+      if (sessionAddedOrderIds.has(order.id)) return true;
       return showAddedItems ? true : !getOrderItemInCart(order);
     });
-  }, [pendingOrders, showAddedItems, isMedicineInSentPO, isSoldAtPOSToday]);
+  }, [pendingOrders, showAddedItems, isMedicineInSentPO, isSoldAtPOSToday, sessionAddedOrderIds]);
 
   const visiblePendingRefills = React.useMemo(() => {
     return pendingRefills.filter(refill => {
@@ -5664,7 +5666,16 @@ export default function PharmarackCart() {
           window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'PharmarackCart' } }));
 
           if (card.sourceOrderId) {
-            api.updateOrder(card.sourceOrderId, { status: 'Ordered' }).catch(() => {});
+            setSessionAddedOrderIds(prev => new Set(prev).add(card.sourceOrderId!));
+            api.updateOrder(card.sourceOrderId, {
+              status: 'In Live Cart',
+              pharmarack_distributor: storeName,
+              pharmarack_store_id: targetStoreId || undefined,
+              pharmarack_product_id: Number(productId) || undefined,
+              pharmarack_product_code: productCode || undefined,
+              pharmarack_product_name: medName,
+              pharmarack_rate: rate || undefined
+            }).catch(() => {});
           }
         } else {
           // Upstream add failed! ROLLBACK / REMOVE the optimistic item from local cart!

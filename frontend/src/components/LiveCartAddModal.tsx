@@ -838,7 +838,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       const data = await api.getOrders();
       if (Array.isArray(data)) {
         const filtered = data.filter(o => 
-          ['Pending', 'Waiting'].includes(o.status) &&
+          ['Pending', 'Waiting', 'Confirmed', 'In Live Cart'].includes(o.status) &&
           !['Ordered', 'Fulfilled', 'Completed', 'Cancelled', 'Ready'].includes(o.status) &&
           !isSoldAtPOSToday(o.product) &&
           !isMedicineIgnored(o.product, cachedIgnoredWords)
@@ -1270,8 +1270,9 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
 
   useEffect(() => {
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-    const handleRefresh = () => {
+    const handleRefresh = (e?: Event) => {
       if (!isOpen) return;
+      if ((e as CustomEvent)?.detail?.source === 'LiveCartAddModal') return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         Promise.allSettled([
@@ -1285,8 +1286,9 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       }, 500);
     };
     // Order/refill status changes elsewhere (Mark Ready, fulfil) must drop rows from the open popup
-    const handleListsChanged = () => {
+    const handleListsChanged = (e?: Event) => {
       if (!isOpen) return;
+      if ((e as CustomEvent)?.detail?.source === 'LiveCartAddModal') return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         Promise.allSettled([fetchPendingOrders(), fetchPendingRefills(), fetchTodaySoldMedicines()]);
@@ -1368,16 +1370,89 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
       if (res && res.success && !res.offline) {
         setPendingAddStatus(record.id, 'added');
         // ponytail: chip already shows 'added' — no toast needed
-        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart'));
+        window.dispatchEvent(new CustomEvent('refresh-pharmarack-cart', { detail: { source: 'LiveCartAddModal' } }));
+
+        // Optimistically update local cartDistributors in memory so orderCartMatches and cart counters update instantly
+        setCartDistributors(prev => {
+          const storeIdNum = Number(record.payload.storeId);
+          const storeNameStr = record.payload.storeName || 'Distributor';
+          const pName = record.payload.productName || record.name;
+          const pCode = record.payload.productCode || '';
+          const existingDistIdx = prev.findIndex(d => d.storeId === storeIdNum);
+
+          const newLineItem: CartLineItem = {
+            productId: record.payload.productId ? Number(record.payload.productId) : null,
+            storeId: storeIdNum,
+            productCode: pCode,
+            productName: pName,
+            company: record.payload.company || '',
+            packaging: record.payload.packaging || '',
+            qty: record.payload.qty,
+            ptr: record.payload.rate || 0,
+            mrp: 0,
+            scheme: record.payload.scheme || '',
+            stock: null,
+            amount: (record.payload.rate || 0) * record.payload.qty,
+            cartSource: 'live',
+            isChecked: true,
+            createdDate: new Date().toISOString()
+          };
+
+          if (existingDistIdx >= 0) {
+            const existingDist = prev[existingDistIdx];
+            const items = [...(existingDist.items || [])];
+            const existingItemIdx = items.findIndex(i => (pCode && i.productCode === pCode) || i.productName.toLowerCase() === pName.toLowerCase());
+            if (existingItemIdx >= 0) {
+              items[existingItemIdx] = { ...items[existingItemIdx], qty: items[existingItemIdx].qty + record.payload.qty };
+            } else {
+              items.push(newLineItem);
+            }
+            const updated = [...prev];
+            updated[existingDistIdx] = { ...existingDist, items };
+            cachedCartDistributors = updated;
+            return updated;
+          } else {
+            const newDist: Distributor = {
+              storeId: storeIdNum,
+              storeName: storeNameStr,
+              lineTotal: newLineItem.amount,
+              deliveryPersons: [],
+              items: [newLineItem]
+            };
+            const updated = [...prev, newDist];
+            cachedCartDistributors = updated;
+            return updated;
+          }
+        });
 
         // Automatically update source order status if opened from pending requests or refills
         if (record.sourceOrderId) {
+          const sOrderId = record.sourceOrderId;
+          const storeNameStr = record.payload.storeName || undefined;
           try {
-            await api.updateOrder(record.sourceOrderId, { status: 'Ordered' });
+            await api.updateOrder(sOrderId, {
+              status: 'In Live Cart',
+              pharmarack_distributor: storeNameStr,
+              pharmarack_store_id: Number(record.payload.storeId) || undefined,
+              pharmarack_product_id: Number(record.payload.productId) || undefined,
+              pharmarack_product_code: record.payload.productCode || undefined,
+              pharmarack_product_name: record.payload.productName || undefined,
+              pharmarack_rate: record.payload.rate || undefined
+            });
           } catch (e) {
             console.warn('Failed to update source order status:', e);
           }
-          fetchPendingOrders().catch(() => {});
+          // Optimistically update pendingOrders in memory so it marks In Live Cart instantly with ZERO refetch
+          setPendingOrders(prev => {
+            const updated = prev.map(o => o.id === sOrderId ? {
+              ...o,
+              status: 'In Live Cart',
+              pharmarack_distributor: storeNameStr || o.pharmarack_distributor,
+              pharmarack_store_id: Number(record.payload.storeId) || o.pharmarack_store_id
+            } : o);
+            cachedPendingOrders = updated;
+            return updated;
+          });
         }
         if (record.hadSourceRefill) {
           fetchPendingRefills().catch(() => {});
@@ -1658,8 +1733,8 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
         const itemKey = `order-${order.id}`;
         const isSkipped = isItemSkipped(itemKey, order.medicine_name || order.product || '');
         const cartMatch = orderCartMatches.get(order.id);
-        const inCart = Boolean(cartMatch?.item);
-        const matchScore = cartMatch?.result?.score || 0;
+        const inCart = Boolean(cartMatch?.item) || order.status === 'In Live Cart';
+        const matchScore = cartMatch?.result?.score || 100;
         return {
           category: 'order' as const,
           order,
@@ -1817,24 +1892,63 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     );
   };
 
+  const handleRemoveOrderFromCart = async (order: SpecialOrder, matchedDist?: Distributor, matchedItem?: CartLineItem) => {
+    try {
+      if (matchedDist && matchedItem) {
+        await handleDeleteCartItem(matchedDist, matchedItem);
+      }
+      try {
+        await api.updateOrder(order.id, {
+          status: 'Pending',
+          pharmarack_distributor: null,
+          pharmarack_store_id: null,
+          pharmarack_product_id: null,
+          pharmarack_product_code: null,
+          pharmarack_product_name: null,
+          pharmarack_rate: null
+        });
+      } catch (e) {
+        console.warn('Failed to revert order status:', e);
+      }
+      setPendingOrders(prev => {
+        const updated = prev.map(o => o.id === order.id ? {
+          ...o,
+          status: 'Pending',
+          pharmarack_distributor: null,
+          pharmarack_store_id: null
+        } : o);
+        cachedPendingOrders = updated;
+        return updated;
+      });
+      toastEvent.trigger(`Restored special order for "${order.product}" to Pending`, 'success');
+    } catch (err) {
+      console.error('Failed to remove order from cart:', err);
+    }
+  };
+
   const renderSpecialOrderRow = (row: typeof specialOrderRows[0]) => {
     const { order, itemKey, isSkipped, inCart, matchScore } = row;
+    const cartMatch = orderCartMatches.get(order.id);
+    const matchedItem = cartMatch?.item;
+    const matchedDist = matchedItem ? cartDistributors.find(d => (d.items || []).some(i => (matchedItem.productCode && i.productCode === matchedItem.productCode) || i.productName?.toLowerCase() === matchedItem.productName?.toLowerCase())) : undefined;
+    const distDisplayName = matchedDist?.storeName || order.pharmarack_distributor || '';
+
     return (
       <tr
         key={itemKey}
         className={`transition-colors cursor-pointer ${
-          inCart ? 'bg-bg3/30' : 'hover:bg-bg3/40'
+          inCart ? 'bg-emerald-500/5 hover:bg-emerald-500/10' : 'hover:bg-bg3/40'
         }`}
         onClick={() => !inCart && !isSkipped && handleTransferToSearch(order.product, order.qty, order.id, undefined)}
       >
         <td className="py-2 px-1 align-top">
-          <span className="text-xs p-1 rounded bg-bg2 text-muted border border-border inline-flex items-center justify-center" title="Special Customer Order">
-            <ShoppingCart size={13} className="text-muted" />
+          <span className={`text-xs p-1 rounded border inline-flex items-center justify-center ${inCart ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-bg2 text-muted border-border'}`} title={inCart ? "In Live Cart" : "Special Customer Order"}>
+            {inCart ? <CheckCircle2 size={13} className="text-emerald-400" /> : <ShoppingCart size={13} className="text-muted" />}
           </span>
         </td>
         <td className="py-2 px-1 min-w-0 align-top">
           <div className="flex items-center justify-between gap-1">
-            <div className={`text-xs font-bold truncate max-w-[180px] ${inCart || isSkipped ? 'line-through opacity-50 text-muted' : 'text-text'}`} title={order.product}>
+            <div className={`text-xs font-bold truncate max-w-[180px] ${isSkipped ? 'line-through opacity-50 text-muted' : 'text-text'}`} title={order.product}>
               {order.product}
             </div>
             <span className="text-[10px] text-muted font-mono font-bold shrink-0">Qty: {order.qty}</span>
@@ -1854,9 +1968,23 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
               <RotateCcw size={9} /> Un-skip
             </button>
           ) : inCart ? (
-            <span className="mt-1.5 text-[9px] font-semibold text-muted inline-block" title={`Fuzzy match score: ${matchScore}%`}>
-              ✓ Added ({matchScore}%)
-            </span>
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1" title={distDisplayName ? `Added under distributor: ${distDisplayName}` : `In Live Cart (${matchScore}% match)`}>
+                <CheckCircle2 size={10} className="text-emerald-400" />
+                <span>In Live Cart{distDisplayName ? ` (${distDisplayName})` : ''}</span>
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRemoveOrderFromCart(order, matchedDist, matchedItem);
+                }}
+                className="text-[9px] font-semibold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20 cursor-pointer transition-colors"
+                title="Remove from Live Cart & return to Pending"
+              >
+                Remove
+              </button>
+            </div>
           ) : (
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               <button
@@ -1899,7 +2027,7 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
     );
   };
 
-  const renderRefillRow = (row: typeof refillRows[0]) => {
+    const renderRefillRow = (row: typeof refillRows[0]) => {
     const { refill, itemKey, isSkipped, inCart, refillQty } = row;
     const medName = refill.medicine_name || '';
     return (
