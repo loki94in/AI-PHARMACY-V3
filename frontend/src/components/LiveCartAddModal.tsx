@@ -1895,27 +1895,27 @@ export const LiveCartAddModal: React.FC<LiveCartAddModalProps> = ({
   const handleRemoveOrderFromCart = async (order: SpecialOrder, matchedDist?: Distributor, matchedItem?: CartLineItem) => {
     try {
       if (matchedDist && matchedItem) {
-        await handleDeleteCartItem(matchedDist, matchedItem);
+        await handleDeleteLiveCartItem(matchedDist, matchedItem);
       }
       try {
         await api.updateOrder(order.id, {
           status: 'Pending',
-          pharmarack_distributor: null,
-          pharmarack_store_id: null,
-          pharmarack_product_id: null,
-          pharmarack_product_code: null,
-          pharmarack_product_name: null,
-          pharmarack_rate: null
+          pharmarack_distributor: undefined,
+          pharmarack_store_id: undefined,
+          pharmarack_product_id: undefined,
+          pharmarack_product_code: undefined,
+          pharmarack_product_name: undefined,
+          pharmarack_rate: undefined
         });
       } catch (e) {
         console.warn('Failed to revert order status:', e);
       }
       setPendingOrders(prev => {
-        const updated = prev.map(o => o.id === order.id ? {
+        const updated: SpecialOrder[] = prev.map(o => o.id === order.id ? {
           ...o,
           status: 'Pending',
-          pharmarack_distributor: null,
-          pharmarack_store_id: null
+          pharmarack_distributor: undefined,
+          pharmarack_store_id: undefined
         } : o);
         cachedPendingOrders = updated;
         return updated;
