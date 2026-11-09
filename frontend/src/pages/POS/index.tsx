@@ -1508,6 +1508,16 @@ const POS = () => {
       } else if (fieldName === 'discount') {
         const mrpEl = document.getElementById(`row-mrp-input-${index}`) as HTMLInputElement | null;
         if (mrpEl) { e.preventDefault(); mrpEl.focus(); mrpEl.select?.(); }
+      } else if (fieldName === 'mrp') {
+        const nextMedInput = (
+          document.getElementById(`row-med-input-${index + 1}`) ||
+          document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+        ) as HTMLInputElement | null;
+        if (nextMedInput && !nextMedInput.disabled) {
+          e.preventDefault();
+          nextMedInput.focus();
+          nextMedInput.select?.();
+        }
       }
       return;
     }
@@ -6634,7 +6644,16 @@ const POS = () => {
                                               discIn.focus();
                                               discIn.select?.();
                                             } else {
-                                              focusCartMedicineInput();
+                                              const nextMedInput = (
+                                                document.getElementById(`row-med-input-${curIdx + 1}`) ||
+                                                document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+                                              ) as HTMLInputElement | null;
+                                              if (nextMedInput && !nextMedInput.disabled) {
+                                                nextMedInput.focus();
+                                                nextMedInput.select?.();
+                                              } else {
+                                                focusCartMedicineInput(true);
+                                              }
                                             }
                                           }
                                         }
@@ -6739,7 +6758,16 @@ const POS = () => {
                                           discIn.focus();
                                           discIn.select?.();
                                         } else {
-                                          focusCartMedicineInput();
+                                          const nextMedInput = (
+                                            document.getElementById(`row-med-input-${curIdx + 1}`) ||
+                                            document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+                                          ) as HTMLInputElement | null;
+                                          if (nextMedInput && !nextMedInput.disabled) {
+                                            nextMedInput.focus();
+                                            nextMedInput.select?.();
+                                          } else {
+                                            focusCartMedicineInput(true);
+                                          }
                                         }
                                       } else if (e.key === 'Tab' && e.shiftKey) {
                                         e.preventDefault();
@@ -6888,7 +6916,17 @@ const POS = () => {
                                     handlePosRowInputKeyDown(e, rowIdx, 'discount');
                                   } else if (e.key === 'Enter') {
                                     e.preventDefault();
-                                    focusCartMedicineInput();
+                                    const curIdx = rowIdx;
+                                    const nextMedInput = (
+                                      document.getElementById(`row-med-input-${curIdx + 1}`) ||
+                                      document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+                                    ) as HTMLInputElement | null;
+                                    if (nextMedInput && !nextMedInput.disabled) {
+                                      nextMedInput.focus();
+                                      nextMedInput.select?.();
+                                    } else {
+                                      focusCartMedicineInput(true);
+                                    }
                                   } else if (e.key === 'Tab') {
                                     const curIdx = rowIdx;
                                     if (e.shiftKey) {
@@ -6904,11 +6942,20 @@ const POS = () => {
                                     } else {
                                       e.preventDefault();
                                       const mrpIn = document.getElementById(`row-mrp-input-${curIdx}`) as HTMLInputElement | null;
-                                      if (mrpIn) {
+                                      if (mrpIn && !mrpIn.disabled) {
                                         mrpIn.focus();
                                         mrpIn.select?.();
                                       } else {
-                                        focusCartMedicineInput();
+                                        const nextMedInput = (
+                                          document.getElementById(`row-med-input-${curIdx + 1}`) ||
+                                          document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+                                        ) as HTMLInputElement | null;
+                                        if (nextMedInput && !nextMedInput.disabled) {
+                                          nextMedInput.focus();
+                                          nextMedInput.select?.();
+                                        } else {
+                                          focusCartMedicineInput(true);
+                                        }
                                       }
                                     }
                                   }
@@ -6940,7 +6987,17 @@ const POS = () => {
                                 handlePosRowInputKeyDown(e, rowIdx, 'mrp');
                               } else if (e.key === 'Enter') {
                                 e.preventDefault();
-                                focusCartMedicineInput();
+                                const curIdx = rowIdx;
+                                const nextMedInput = (
+                                  document.getElementById(`row-med-input-${curIdx + 1}`) ||
+                                  document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+                                ) as HTMLInputElement | null;
+                                if (nextMedInput && !nextMedInput.disabled) {
+                                  nextMedInput.focus();
+                                  nextMedInput.select?.();
+                                } else {
+                                  focusCartMedicineInput(true);
+                                }
                               } else if (e.key === 'Tab') {
                                 const curIdx = rowIdx;
                                 if (e.shiftKey) {
@@ -6952,7 +7009,16 @@ const POS = () => {
                                   }
                                 } else {
                                   e.preventDefault();
-                                  focusCartMedicineInput();
+                                  const nextMedInput = (
+                                    document.getElementById(`row-med-input-${curIdx + 1}`) ||
+                                    document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+                                  ) as HTMLInputElement | null;
+                                  if (nextMedInput && !nextMedInput.disabled) {
+                                    nextMedInput.focus();
+                                    nextMedInput.select?.();
+                                  } else {
+                                    focusCartMedicineInput(true);
+                                  }
                                 }
                               }
                             }}

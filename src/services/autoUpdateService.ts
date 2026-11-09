@@ -357,6 +357,13 @@ class AutoUpdateService {
     setTimeout(() => {
       void this.runCheck('boot');
     }, 10_000);
+
+    // P3 Gated periodic version beacon (runs every 30m when active, catching mid-day releases)
+    this.intervalHandle = setInterval(() => {
+      if (this.isDownloading || this.lastResult?.readyToInstall) return;
+      if (activityTracker.isIdle()) return;
+      void this.runCheck('auto');
+    }, 30 * 60 * 1000);
   }
 
   stop(): void {
@@ -397,9 +404,14 @@ class AutoUpdateService {
       const db = await dbManager.getConnection();
       const row = await db.get<any>('SELECT last_checked_at, check_interval_days FROM update_checks WHERE id = 1');
 
-      // Periodic interval checks: skip if within the configured daily interval (default 1 day)
+      // Periodic checks:
       // 'boot' and 'manual' checks ALWAYS run regardless of last_checked_at so new releases are caught immediately
-      if ((reason === 'interval' || reason === 'auto') && row?.last_checked_at) {
+      // 'auto' (30-min beacon) throttles to 25m to prevent rapid server polling
+      // 'interval' respects the configured check_interval_days (default 1 day)
+      if (reason === 'auto' && row?.last_checked_at) {
+        const lastMs = new Date(row.last_checked_at).getTime();
+        if (Date.now() - lastMs < 25 * 60 * 1000) return;
+      } else if (reason === 'interval' && row?.last_checked_at) {
         const lastMs      = new Date(row.last_checked_at).getTime();
         const intervalDays = row.check_interval_days ?? 1;
         const intervalMs  = intervalDays * 24 * 60 * 60 * 1000;

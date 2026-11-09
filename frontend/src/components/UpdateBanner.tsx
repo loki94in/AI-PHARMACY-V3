@@ -50,6 +50,11 @@ export default function UpdateBanner() {
   const targetVersion = updateStatus.version;
   const isSkipped = Boolean(targetVersion && sessionStorage.getItem(`update_later_${targetVersion}`) === 'true');
 
+  // Option B: Silent background update mode.
+  // Floating popups on counter/operational pages are suppressed to keep counter billing uninterrupted.
+  // Staged updates apply automatically on restart/exit, or via Settings > License & Updates.
+  const isSilentOptionB = true;
+
   const handleInstallNow = async () => {
     const res = await applyUpdateNow();
     if (!res.success) {
@@ -70,8 +75,8 @@ export default function UpdateBanner() {
       {/* Full-screen seamless transition screen when update install is executing */}
       <UpdateTransitionOverlay isInstalling={updateStatus.isInstalling} version={targetVersion} />
 
-      {/* Floating Ready Pill / Card (Non-intrusive bottom-right position) */}
-      {updateStatus.state === 'ready' && targetVersion && !dismissed && !isSkipped && !updateStatus.isInstalling && (
+      {/* Floating Ready Pill / Card (Suppressed under Option B to protect counter billing) */}
+      {!isSilentOptionB && updateStatus.state === 'ready' && targetVersion && !dismissed && !isSkipped && !updateStatus.isInstalling && (
         <aside
           role="region"
           aria-label="Software update ready"

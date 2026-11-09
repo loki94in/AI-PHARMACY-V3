@@ -1409,6 +1409,23 @@ async function gracefulShutdown(signal: string) {
     closeAppBrowser();
   } catch (_) {}
 
+  // 7.5 Option B: If an update was staged silently in background, auto-apply on clean exit/restart
+  if ((signal === 'CLIENT_EXIT' || signal === 'TAB_CLOSED') && process.platform === 'win32') {
+    try {
+      const { autoUpdateService } = await import('./services/autoUpdateService.js');
+      const status = autoUpdateService.getStatus();
+      if (status?.readyToInstall && status?.latestVersion) {
+        console.log(`[Shutdown] Option B: Auto-applying staged update v${status.latestVersion} on exit...`);
+        const applyRes = await autoUpdateService.applyUpdate();
+        if (applyRes?.success) {
+          signal = 'APPLY_UPDATE'; // Protect decoupled updater process tree from taskkill
+        }
+      }
+    } catch (upErr: any) {
+      console.warn('[Shutdown] Notice during staged update on exit:', upErr?.message || upErr);
+    }
+  }
+
   // 8. On Windows: ensure terminal window and child process tree are cleanly killed
   // When applying an update, the updater script (UpdateGUI.ps1 / Updater.bat) manages process
   // termination after acquiring update.lock. Do NOT execute a broad tree-kill here.
