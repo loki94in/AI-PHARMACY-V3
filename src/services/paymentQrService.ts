@@ -22,6 +22,9 @@ export interface PaymentCardOptions {
   upiId: string;
   storeName?: string;
   filename?: string;
+  cardTitle?: string;
+  subtitle?: string;
+  badgeLabel?: string;
 }
 
 export interface PaymentQrConfig {
@@ -253,23 +256,25 @@ class PaymentQrService {
     ctx.textAlign = 'center';
     ctx.fillText(storeName, width / 2, 45);
 
-    // Special Order Subtitle
+    // Card Subtitle / Type
     ctx.fillStyle = '#ccfbf1';
     ctx.font = 'bold 16px sans-serif';
-    ctx.fillText(`Special Order: ${options.orderNumber}`, width / 2, 78);
+    const mainTitle = options.cardTitle || `Special Order: ${options.orderNumber}`;
+    ctx.fillText(mainTitle, width / 2, 78);
 
-    // Medicine line if available
-    if (options.medicineName) {
+    // Subtitle / Customer / Medicine line if available
+    const secondLine = options.subtitle || (options.medicineName ? (options.medicineName.startsWith('💊') || options.medicineName.startsWith('👤') ? options.medicineName : `💊 ${options.medicineName}`) : '');
+    if (secondLine) {
       ctx.fillStyle = '#99f6e4';
       ctx.font = '14px sans-serif';
-      const medText = options.medicineName.length > 38
-        ? `${options.medicineName.substring(0, 36)}...`
-        : options.medicineName;
-      ctx.fillText(`💊 ${medText}`, width / 2, 103);
+      const truncated = secondLine.length > 40
+        ? `${secondLine.substring(0, 38)}...`
+        : secondLine;
+      ctx.fillText(truncated, width / 2, 103);
     }
 
     // 3. Amount Badge
-    const badgeW = 280;
+    const badgeW = 340;
     const badgeH = 48;
     const badgeX = (width - badgeW) / 2;
     const badgeY = 135;
@@ -282,7 +287,8 @@ class PaymentQrService {
 
     ctx.fillStyle = '#15803d';
     ctx.font = 'bold 20px sans-serif';
-    ctx.fillText(`BOOKING ADVANCE: ₹${Number(options.amount || 0).toFixed(2)}`, width / 2, badgeY + 31);
+    const badgeText = options.badgeLabel || `BOOKING ADVANCE: ₹${Number(options.amount || 0).toFixed(2)}`;
+    ctx.fillText(badgeText, width / 2, badgeY + 31);
 
     // 4. Center QR Code (High-contrast, Level-H)
     const qrSize = 360;

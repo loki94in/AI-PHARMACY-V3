@@ -2257,6 +2257,19 @@ export async function sendMessage(
                 try { fs.unlinkSync(tempSavedPath); } catch (_) {}
               }
             }
+
+            // If a secondary document/file (e.g. PDF statement) was also supplied in mediaPath, deliver it as well
+            if (sentMsg && mediaPath && fs.existsSync(mediaPath)) {
+              try {
+                const secondaryMedia = MessageMedia.fromFilePath(mediaPath);
+                const isSecPdf = mediaPath.toLowerCase().endsWith('.pdf');
+                await targetClient.sendMessage(targetChatId, secondaryMedia, {
+                  sendMediaAsDocument: isSecPdf
+                });
+              } catch (secErr) {
+                console.warn(`[WhatsApp] Secondary document dispatch note to ${targetChatId}:`, secErr);
+              }
+            }
           } else if (mediaPath) {
             try {
               const media = MessageMedia.fromFilePath(mediaPath);

@@ -375,7 +375,7 @@ export class PdfInvoiceService {
   /**
    * Generate an itemized Customer Credit Ledger / Statement PDF
    */
-  async generateCreditStatementPdf(customerId: number, outPath: string): Promise<void> {
+  async generateCreditStatementPdf(customerId: number, outPath: string, upiDetails?: { upiUri: string; upiId?: string }): Promise<void> {
     const db = await dbManager.getConnection();
     const settingsRows = await db.all('SELECT key, value FROM app_settings');
     const settings: Record<string, string> = {};
@@ -387,12 +387,29 @@ export class PdfInvoiceService {
     }
 
     const pendingInvoices = await db.all(
-      `SELECT si.invoice_no, si.date, si.total_amount, si.payment_status
+      `SELECT si.id, si.invoice_no, si.date, si.total_amount, si.payment_status
        FROM sales_invoices si
        WHERE si.customer_id = ? AND (si.payment_medium = 'CREDIT' OR si.payment_status = 'UNPAID' OR si.payment_status = 'PENDING') AND si.payment_status != 'PAID'
        ORDER BY si.date ASC, si.id ASC`,
       [customerId]
     );
+
+    for (const inv of pendingInvoices) {
+      try {
+        const items = await db.all(
+          `SELECT sli.quantity, 
+                  COALESCE(sli.medicine_name_snapshot, m.name, 'Medicine') as medicine_name
+           FROM sale_items sli
+           LEFT JOIN inventory_master im ON im.id = sli.inventory_id
+           LEFT JOIN medicines m ON m.id = im.medicine_id
+           WHERE sli.invoice_id = ?`,
+          [inv.id]
+        );
+        inv.items = items || [];
+      } catch {
+        inv.items = [];
+      }
+    }
 
     const shopName = settings.pharmacy_name || settings.shop_name || settings.store_name || 'PHARMACY CREDIT LEDGER';
     const shopAddress = settings.address || settings.shop_address || '';
@@ -469,6 +486,14 @@ export class PdfInvoiceService {
             doc.text(inv.payment_status || 'UNPAID', 320, itemY, { width: 110 });
             doc.text(`Rs. ${amt.toFixed(2)}`, 440, itemY, { width: 125, align: 'right' });
             doc.moveDown(0.9);
+
+            // Itemized medicine names & quantities under the invoice line
+            if (inv.items && inv.items.length > 0) {
+              const medsList = inv.items.map((it: any) => `${it.medicine_name} (${it.quantity})`).join(', ');
+              doc.fontSize(7.5).fillColor('#64748b').font('Helvetica-Oblique');
+              doc.text(`  ↳ Items: ${medsList}`, 35, doc.y, { width: 520 });
+              doc.moveDown(0.5);
+            }
           });
         } else {
           doc.fontSize(8.5).fillColor('#64748b').font('Helvetica').text('No pending credit bills recorded.', 30, doc.y, { align: 'center' });
@@ -479,9 +504,35 @@ export class PdfInvoiceService {
         doc.moveDown(0.8);
 
         const finalTotal = creditBal > 0 ? creditBal : totalCalculated;
+        const partialPaid = Math.max(0, totalCalculated - finalTotal);
+
+        if (partialPaid > 0) {
+          doc.fontSize(9).fillColor('#64748b').font('Helvetica');
+          doc.text('Total Invoices:', 250, doc.y, { width: 180, align: 'right' });
+          doc.text(`Rs. ${totalCalculated.toFixed(2)}`, 440, doc.y - 9, { width: 125, align: 'right' });
+          doc.moveDown(0.6);
+
+          doc.text('Less Partial Payments Received:', 250, doc.y, { width: 180, align: 'right' });
+          doc.fillColor('#16a34a').text(`- Rs. ${partialPaid.toFixed(2)}`, 440, doc.y - 9, { width: 125, align: 'right' });
+          doc.moveDown(0.6);
+        }
+
         doc.fontSize(11).fillColor('#0f172a').font('Helvetica-Bold');
         doc.text('Total Outstanding Payable:', 250, doc.y, { width: 180, align: 'right' });
         doc.fillColor('#e11d48').text(`Rs. ${finalTotal.toFixed(2)}`, 440, doc.y - 11, { width: 125, align: 'right' });
+
+        // Embedded payment QR Code on Statement if provided
+        if (upiDetails?.upiUri) {
+          try {
+            const qrBuffer = await QRCode.toBuffer(upiDetails.upiUri, { width: 120, margin: 1 });
+            const qrY = Math.min(Math.max(doc.y + 10, 640), 700);
+            doc.image(qrBuffer, 30, qrY, { width: 75, height: 75 });
+            doc.fontSize(8).fillColor('#0f172a').font('Helvetica-Bold')
+               .text('Scan to Pay via UPI', 115, qrY + 12);
+            doc.fontSize(7.5).fillColor('#64748b').font('Helvetica')
+               .text(`UPI ID: ${upiDetails.upiId || ''}\nPayee: ${shopName}\nAccepted on GPay, PhonePe, Paytm, BHIM`, 115, qrY + 26);
+          } catch (_) {}
+        }
 
         // Digital stamp placed on bottom right over total area
         const stampY = Math.min(Math.max(doc.y + 15, 650), 730);

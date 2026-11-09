@@ -118,17 +118,6 @@ export class CreditReminderService {
     const storeName = storeSetting?.value || 'AI Pharmacy';
     const lang = (customer.language === 'hi' || customer.language === 'mr') ? customer.language : 'en';
 
-    let message = options?.customMessage;
-    if (!message) {
-      message = getMessage(lang, 'whatsapp.creditReminder', {
-        name: customer.name || 'Customer',
-        billsBreakdown: billsBreakdownStr ? billsBreakdownStr : '',
-        dueDate: dueDateStr,
-        total: finalOutstanding.toFixed(2),
-        storeName: storeName
-      });
-    }
-
     // Allocate Rotating Payment QR Code for exact outstanding amount
     const activeQr = await paymentQrService.allocateNextQr();
     const upiUri = paymentQrService.buildUpiUri(
@@ -138,14 +127,44 @@ export class CreditReminderService {
       `CREDIT-${customerId}`
     );
 
-    let qrBuffer: Buffer | null = null;
-    try {
-      qrBuffer = await paymentQrService.generateQrBuffer(upiUri);
-    } catch (qrErr) {
-      console.warn('[CreditReminderService] QR buffer generation note:', qrErr);
+    let message = options?.customMessage;
+    if (!message) {
+      message = getMessage(lang, 'whatsapp.creditReminder', {
+        name: customer.name || 'Customer',
+        billsBreakdown: billsBreakdownStr,
+        dueDate: dueDateStr,
+        total: finalOutstanding.toFixed(2),
+        storeName: storeName,
+        upiUri: upiUri
+      });
     }
 
-    // Generate Statement PDF
+    // Generate Branded Visual Payment Card (same engine as ₹50 Booking Advance card)
+    let cardBuffer: Buffer | null = null;
+    try {
+      const cardPath = await paymentQrService.generatePaymentCard({
+        upiUri,
+        orderNumber: `CREDIT-${customerId}`,
+        amount: finalOutstanding,
+        payeeName: activeQr.payee_name || storeName,
+        upiId: activeQr.upi_id,
+        storeName: storeName,
+        cardTitle: 'Credit Account Settlement',
+        subtitle: `👤 ${customer.name || 'Customer'}`,
+        badgeLabel: `TOTAL DUE: ₹${finalOutstanding.toFixed(2)}`,
+        filename: `payment_card_credit_${customerId}_${Date.now()}.png`
+      });
+      if (cardPath && fs.existsSync(cardPath)) {
+        cardBuffer = fs.readFileSync(cardPath);
+      }
+    } catch (cardErr) {
+      console.warn('[CreditReminderService] Visual payment card generation fallback to raw QR:', cardErr);
+      try {
+        cardBuffer = await paymentQrService.generateQrBuffer(upiUri);
+      } catch (_) {}
+    }
+
+    // Generate Comprehensive Statement PDF with embedded UPI QR and complete purchase history
     let pdfPath: string | undefined = undefined;
     try {
       const uploadsDir = path.resolve(getAppDataDir(), 'uploads');
@@ -154,7 +173,10 @@ export class CreditReminderService {
       }
       const pdfFilename = `credit_statement_cust_${customerId}_${Date.now()}.pdf`;
       const fullPdfPath = path.join(uploadsDir, pdfFilename);
-      await pdfInvoiceService.generateCreditStatementPdf(Number(customerId), fullPdfPath);
+      await pdfInvoiceService.generateCreditStatementPdf(Number(customerId), fullPdfPath, {
+        upiUri,
+        upiId: activeQr.upi_id
+      });
       pdfPath = fullPdfPath;
     } catch (pdfErr) {
       console.warn(`[CreditReminderService] PDF generation note for customer ${customerId}:`, pdfErr);
@@ -162,7 +184,7 @@ export class CreditReminderService {
 
     const notificationType = options?.isManual ? 'manual_credit_reminder' : 'auto_credit_reminder';
 
-    // Enqueue message with attached QR Code image and PDF statement
+    // Enqueue message with attached Branded QR Card image and PDF statement
     const queueId = await whatsappQueueWorker.enqueue(
       cleanPhone,
       message,
@@ -170,10 +192,10 @@ export class CreditReminderService {
       customer.name || 'Customer',
       undefined,
       pdfPath,
-      qrBuffer ? {
+      cardBuffer ? {
         mimetype: 'image/png',
-        data: qrBuffer.toString('base64'),
-        filename: `payment_qr_credit_${customerId}.png`
+        data: cardBuffer.toString('base64'),
+        filename: `payment_card_credit_${customerId}.png`
       } : undefined
     );
 
