@@ -1976,7 +1976,7 @@ export function isPharmarackCartSuccess(resJson: any): boolean {
   if (!resJson || typeof resJson !== 'object') return false;
 
   const sc = resJson.StatusCode ?? resJson.statusCode ?? resJson.Code ?? resJson.code;
-  if (sc === 200 || sc === 1 || sc === 100 || String(sc) === '200' || String(sc) === '1') {
+  if (sc === 200 || sc === 1 || sc === 100 || sc === 0 || String(sc) === '200' || String(sc) === '1' || String(sc) === '0') {
     return true;
   }
 
@@ -1985,7 +1985,7 @@ export function isPharmarackCartSuccess(resJson: any): boolean {
   if (typeof st === 'string' && /^(success|ok|true)$/i.test(st.trim())) return true;
 
   const msg = String(resJson.Message || resJson.message || resJson.Msg || resJson.msg || '').toLowerCase();
-  if (/success|added|in\s*cart|item.*cart|product.*cart|updated.*cart|already.*cart/i.test(msg)) {
+  if (/success|added|in\s*cart|item.*cart|product.*cart|updated|already.*cart|record.*updated|quantity.*updated/i.test(msg)) {
     return true;
   }
 

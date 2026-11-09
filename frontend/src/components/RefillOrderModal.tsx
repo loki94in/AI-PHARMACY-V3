@@ -610,22 +610,25 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                       <span className="text-[10px] font-bold text-muted px-1">Order Qty:</span>
                       <button
                         type="button"
+                        disabled={isJobRunning}
                         onClick={() => updateQty(med.id, -1)}
-                        className="w-6 h-6 rounded-lg bg-bg3 hover:bg-bg border border-border flex items-center justify-center text-muted hover:text-text cursor-pointer transition-colors"
+                        className="w-6 h-6 rounded-lg bg-bg3 hover:bg-bg border border-border flex items-center justify-center text-muted hover:text-text cursor-pointer transition-colors disabled:opacity-40"
                       >
                         <Minus size={11} />
                       </button>
                       <input
                         type="number"
                         min="1"
+                        disabled={isJobRunning}
                         value={state.orderQty}
                         onChange={e => setExactQty(med.id, parseInt(e.target.value, 10))}
-                        className="w-10 text-center font-extrabold text-text bg-bg border border-border rounded-lg py-0.5 text-xs focus:outline-hidden focus:border-primary"
+                        className="w-10 text-center font-extrabold text-text bg-bg border border-border rounded-lg py-0.5 text-xs focus:outline-hidden focus:border-primary disabled:opacity-50"
                       />
                       <button
                         type="button"
+                        disabled={isJobRunning}
                         onClick={() => updateQty(med.id, 1)}
-                        className="w-6 h-6 rounded-lg bg-bg3 hover:bg-bg border border-border flex items-center justify-center text-muted hover:text-text cursor-pointer transition-colors"
+                        className="w-6 h-6 rounded-lg bg-bg3 hover:bg-bg border border-border flex items-center justify-center text-muted hover:text-text cursor-pointer transition-colors disabled:opacity-40"
                       >
                         <Plus size={11} />
                       </button>

@@ -23,6 +23,11 @@ jest.unstable_mockModule('../frontend/src/services/api.js', () => ({
   api: { addRefillToCart: mockAdd, sendRefillCartSummary: mockSummary }
 }));
 
+jest.unstable_mockModule('../frontend/src/lib/queryClient.js', () => ({
+  __esModule: true,
+  queryClient: { invalidateQueries: jest.fn() }
+}));
+
 const store = await import('../frontend/src/services/refillCartJobs.js');
 
 const waitIdle = async () => {

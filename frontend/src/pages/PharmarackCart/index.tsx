@@ -661,15 +661,15 @@ const CartItemQtyEditor: React.FC<CartItemQtyEditorProps> = React.memo(({ qty, o
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
       triggerCommit(valStr);
-    }, 1200); // 1.2s safe debounce as requested by user
+    }, 500); // 500ms trailing debounce for stepper clicks
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
-    // Allow empty string so user can clear & retype, or allow only digits
+    // Allow empty string so user can clear & retype, or allow only digits.
+    // Shift-focus rule: Zero network calls while focused; commits strictly on Blur or Enter.
     const cleaned = raw.replace(/\D/g, '');
     setLocalVal(cleaned);
-    scheduleDebouncedCommit(cleaned);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -690,12 +690,12 @@ const CartItemQtyEditor: React.FC<CartItemQtyEditorProps> = React.memo(({ qty, o
   };
 
   const handleStep = (delta: number) => {
-    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    if (isUpdating || disabled) return;
     const cur = parseInt(localVal.replace(/\D/g, ''), 10);
     const base = isNaN(cur) || cur < 1 ? qty : cur;
     const next = Math.max(1, base + delta);
     setLocalVal(String(next));
-    onCommit(next);
+    scheduleDebouncedCommit(String(next));
   };
 
   return (
@@ -703,7 +703,7 @@ const CartItemQtyEditor: React.FC<CartItemQtyEditorProps> = React.memo(({ qty, o
       <button
         type="button"
         onClick={() => handleStep(-1)}
-        disabled={disabled || (qty <= 1 && (!localVal || Number(localVal) <= 1))}
+        disabled={disabled || isUpdating || (qty <= 1 && (!localVal || Number(localVal) <= 1))}
         className="w-5 h-5 rounded bg-bg3 border border-glass-border hover:bg-bg2 hover:text-text text-muted flex items-center justify-center font-bold text-xs disabled:opacity-40 transition-all shrink-0 cursor-pointer"
         aria-label="Decrease quantity"
         title="Decrease quantity"
@@ -715,6 +715,7 @@ const CartItemQtyEditor: React.FC<CartItemQtyEditorProps> = React.memo(({ qty, o
           type="text"
           pattern="[0-9]*"
           value={localVal}
+          disabled={disabled || isUpdating}
           onFocus={(e) => {
             setIsFocused(true);
             e.target.select();
@@ -723,7 +724,7 @@ const CartItemQtyEditor: React.FC<CartItemQtyEditorProps> = React.memo(({ qty, o
           onKeyDown={handleKeyDown}
           onBlur={handleBlur}
           placeholder="1"
-          className={`w-10 text-center font-black text-text font-mono bg-bg border rounded py-0.5 text-xs focus:outline-none transition-colors shrink-0 ${
+          className={`w-10 text-center font-black text-text font-mono bg-bg border rounded py-0.5 text-xs focus:outline-none transition-colors shrink-0 disabled:opacity-60 ${
             isUpdating ? 'border-primary/60 ring-1 ring-primary/20' : 'border-glass-border focus:border-primary'
           }`}
           aria-label="Medicine quantity"
@@ -738,7 +739,7 @@ const CartItemQtyEditor: React.FC<CartItemQtyEditorProps> = React.memo(({ qty, o
       <button
         type="button"
         onClick={() => handleStep(1)}
-        disabled={disabled}
+        disabled={disabled || isUpdating}
         className="w-5 h-5 rounded bg-bg3 border border-glass-border hover:bg-bg2 hover:text-text text-muted flex items-center justify-center font-bold text-xs disabled:opacity-40 transition-all shrink-0 cursor-pointer"
         aria-label="Increase quantity"
         title="Increase quantity"

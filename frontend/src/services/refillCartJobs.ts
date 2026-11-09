@@ -172,17 +172,20 @@ export function startRefillCartJob(
     .filter(i => !busy.has(i.refillId) && !job!.rows.some(r => r.refillId === i.refillId))
     .map(i => ({ ...i, state: 'queued', message: 'Waiting…', linked: [], candidates: [] }));
 
+  const recheckQueue: RefillCartRow[] = [];
   const updatedExisting = job.rows.map(r => {
     const matchingInput = items.find(i => i.refillId === r.refillId);
     if (matchingInput && matchingInput.qty !== r.qty) {
-      return { ...r, qty: matchingInput.qty, state: 'queued' as const, message: 'Re-checking quantity…' };
+      const updated = { ...r, qty: matchingInput.qty, state: 'queued' as const, message: 'Re-checking quantity…' };
+      recheckQueue.push(updated);
+      return updated;
     }
     return r;
   });
 
   publish(jobs.map(j => (j.id === jobId ? { ...j, open: shouldOpen, rows: [...updatedExisting, ...fresh] } : { ...j, open: false })));
   fresh.forEach(r => runRow(jobId, r, 'add'));
-  updatedExisting.filter(r => r.state === 'queued').forEach(r => runRow(jobId, r, 'add'));
+  recheckQueue.forEach(r => runRow(jobId, r, 'add'));
   return jobId;
 }
 

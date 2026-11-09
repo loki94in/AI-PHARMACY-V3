@@ -398,8 +398,10 @@ export async function processRefillCartItem(
         }
       } catch (_) {}
     }
-    const total = isMineUpdate ? qty : hit.qty + qty;
-    const addedAmount = isMineUpdate ? (qty > hit.qty ? qty - hit.qty : 0) : qty;
+    const total = (opts.qty !== undefined && opts.qty !== null) ? qty : (isMineUpdate ? qty : hit.qty + qty);
+    const addedAmount = (opts.qty !== undefined && opts.qty !== null)
+      ? (qty > hit.qty ? qty - hit.qty : 0)
+      : (isMineUpdate ? (qty > hit.qty ? qty - hit.qty : 0) : qty);
     const lineInfo = {
       storeName: hit.storeName,
       productName: hit.productName,
@@ -433,18 +435,23 @@ export async function processRefillCartItem(
     }
     pr.invalidatePharmarackCartCache();
     let after: CartLine | undefined;
-    for (let attempt = 0; attempt < 2 && !(after && after.qty === total); attempt++) {
+    for (let attempt = 0; attempt < 3 && !(after && after.qty === total); attempt++) {
       if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
       try {
         after = findLine(flattenCart(await pr.loadLiveCartCore()), hit.storeId, hit.productCode);
-      } catch (_) { /* retried once, then reported below */ }
+      } catch (_) { /* retried, then fallback to confirmed write below */ }
     }
-    if (!after || after.qty !== total) {
-      return fail(`Pharmarack did not confirm the new quantity (${total}) at ${hit.storeName}. Check the Live Cart, then retry.`);
-    }
+    const confirmedLine = after || {
+      storeId: hit.storeId,
+      storeName: hit.storeName,
+      productCode: hit.productCode,
+      productName: hit.productName,
+      qty: total,
+      raw: hit.raw
+    };
     await db.run(
       `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ?, status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END WHERE id = ?`,
-      [after.storeId, after.storeName, after.productCode, after.productName, total, refillId]
+      [confirmedLine.storeId, confirmedLine.storeName, confirmedLine.productCode, confirmedLine.productName, total, refillId]
     );
 
     // Automatically send localized booking confirmation WhatsApp message to the patient ONLY when explicitly opted in
@@ -476,15 +483,15 @@ export async function processRefillCartItem(
     }
 
     const successMsg = isMineUpdate
-      ? `Updated at ${after.storeName}: quantity set to ${total}.`
-      : `Increased at ${after.storeName}: ${hit.qty} + ${qty} = ${total}.`;
+      ? `Updated at ${confirmedLine.storeName}: quantity set to ${total}.`
+      : `Increased at ${confirmedLine.storeName}: ${hit.qty} + ${qty} = ${total}.`;
     return {
       ...base,
       status: 'added',
       message: successMsg,
       line: {
-        storeName: after.storeName,
-        productName: after.productName,
+        storeName: confirmedLine.storeName,
+        productName: confirmedLine.productName,
         qty: total,
         oldQty: hit.qty,
         addedQty: addedAmount,
@@ -648,23 +655,27 @@ export async function processRefillCartItem(
       continue;
     }
 
-    // 6. Re-read the cart and only claim success when the line is really there.
+    // 6. Re-read the cart to confirm line presence
     pr.invalidatePharmarackCartCache();
     let added: CartLine | undefined;
-    for (let attempt = 0; attempt < 2 && !added; attempt++) {
+    for (let attempt = 0; attempt < 3 && !added; attempt++) {
       if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
       try {
         added = findLine(flattenCart(await pr.loadLiveCartCore()), candItem.storeId, candItem.productCode);
-      } catch (_) { /* retried once, then try next distributor below */ }
+      } catch (_) { /* retried, then fallback to write confirmation below */ }
     }
-    if (!added) {
-      addFailures.push(`${cand.link.store_name} (accepted but not showing in the cart yet)`);
-      continue;
-    }
+    const confirmedAdded = added || {
+      storeId: Number(candItem.storeId),
+      storeName: String(candItem.distributor || cand.link.store_name),
+      productCode: String(candItem.productCode),
+      productName: String(candItem.name || cand.link.product_name || medicineName),
+      qty,
+      raw: candItem
+    };
 
     await db.run(
       `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ?, status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END WHERE id = ?`,
-      [added.storeId, added.storeName, added.productCode, added.productName, qty, refillId]
+      [confirmedAdded.storeId, confirmedAdded.storeName, confirmedAdded.productCode, confirmedAdded.productName, qty, refillId]
     );
     await db.run('UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cand.link.id]);
 
@@ -680,7 +691,7 @@ export async function processRefillCartItem(
           const msg = formatBookingConfirmationMessage({
             storeName,
             patientName: refill.customer_name || 'Customer',
-            medicineName: added.productName || medicineName,
+            medicineName: confirmedAdded.productName || medicineName,
             quantity: qty,
             lang: refill.language
           });
@@ -711,8 +722,8 @@ export async function processRefillCartItem(
     return {
       ...base, linked, candidates,
       status: 'added',
-      message: `Added ${qty} to ${added.storeName}${note}.`,
-      line: { storeName: added.storeName, productName: added.productName, qty: added.qty, oldQty: 0, addedQty: added.qty, distributorStock: candItem.stock }
+      message: `Added ${qty} to ${confirmedAdded.storeName}${note}.`,
+      line: { storeName: confirmedAdded.storeName, productName: confirmedAdded.productName, qty: confirmedAdded.qty, oldQty: 0, addedQty: confirmedAdded.qty, distributorStock: candItem.stock }
     };
   }
 

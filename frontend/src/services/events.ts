@@ -73,10 +73,12 @@ export const liveCartAddEvent = {
 
 export const refillEvent = {
   triggerRefresh: () => {
+    if (typeof window === 'undefined') return;
     window.dispatchEvent(new CustomEvent('refresh-refills'));
     window.dispatchEvent(new CustomEvent('app-refills-updated'));
   },
   subscribeRefresh: (callback: () => void) => {
+    if (typeof window === 'undefined') return () => {};
     const handler = () => callback();
     window.addEventListener('refresh-refills', handler);
     window.addEventListener('app-refills-updated', handler);
