@@ -1,6 +1,6 @@
 {
   "name": "ai-pharmacy",
-  "version": "0.1.229",
+  "version": "0.1.230",
   "type": "module",
   "bin": "dist-pkg/server.cjs",
   "scripts": {
