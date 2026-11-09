@@ -106,27 +106,32 @@ export async function classifyContactChannel(
     return 'no_usable_phone';
   }
 
-  // Fast check: check if the customer has an active chat history in whatsapp_chats
+  // Fast indexed check: check if customer has chat history in whatsapp_chats
   try {
     const db = dbInstance || (await dbManager.getConnection());
     const existingChat = await db.get(
-      'SELECT id FROM whatsapp_chats WHERE id LIKE ? OR id LIKE ? LIMIT 1',
-      [`%${validation.cleanDigits10}%`, `91${validation.cleanDigits10}@c.us`]
+      'SELECT id FROM whatsapp_chats WHERE id = ? LIMIT 1',
+      [`91${validation.cleanDigits10}@c.us`]
     );
     if (existingChat) {
       return 'whatsapp_available';
     }
   } catch (_) {}
 
-  // Check live or cached WhatsApp registration
+  // Check in-memory cache without triggering blocking live Puppeteer probes in GET loop
   try {
-    const status = await checkPhoneWhatsAppRegistered(validation.cleanDigits10);
+    const status = await checkPhoneWhatsAppRegistered(validation.cleanDigits10, false);
     if (status === 'AVAILABLE') {
       return 'whatsapp_available';
     }
+    if (status === 'NOT_AVAILABLE') {
+      return 'whatsapp_unavailable';
+    }
   } catch (_) {}
 
-  return 'whatsapp_unavailable';
+  // Optimistic default: 10-digit Indian mobile numbers route to WhatsApp by default;
+  // unroutable messages safely queue or escalate to call tasks asynchronously.
+  return 'whatsapp_available';
 }
 
 /**

@@ -227,16 +227,18 @@
                 <tr>
                   <th class="py-3 px-4">Pharmacy / Store</th>
                   <th class="py-3 px-4">License ID</th>
+                  <th class="py-3 px-4">Version</th>
                   <th class="py-3 px-4">Machine Lock</th>
                   <th class="py-3 px-4">Expiry Date</th>
                   <th class="py-3 px-4">Remaining</th>
+                  <th class="py-3 px-4">Last Seen</th>
                   <th class="py-3 px-4">Testing Pilot</th>
                   <th class="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody id="licensesTableBody" class="divide-y divide-gray-800/60">
                 <tr>
-                  <td colspan="7" class="py-8 text-center text-gray-500">Loading licenses...</td>
+                  <td colspan="9" class="py-8 text-center text-gray-500">Loading licenses...</td>
                 </tr>
               </tbody>
             </table>
@@ -673,6 +675,20 @@
       document.getElementById('kpi-pilots').innerText = licenses.filter(l => l.isPilot).length;
     }
 
+    function formatTimeAgo(isoString) {
+      if (!isoString) return '<span class="text-gray-600">Never</span>';
+      const date = new Date(isoString);
+      if (isNaN(date.getTime())) return '<span class="text-gray-600">Never</span>';
+      const sec = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+      if (sec < 60) return '<span class="text-emerald-400 font-medium">Just now</span>';
+      const min = Math.floor(sec / 60);
+      if (min < 60) return `<span class="text-gray-300 font-medium">${min}m ago</span>`;
+      const hrs = Math.floor(min / 60);
+      if (hrs < 24) return `<span class="text-gray-400">${hrs}h ago</span>`;
+      const days = Math.floor(hrs / 24);
+      return `<span class="text-gray-500">${days}d ago</span>`;
+    }
+
     function getBadgeHtml(l) {
       if (l.status === 'active' && l.machineId) {
         if (l.daysUntilExpiry !== null && l.daysUntilExpiry <= 0) {
@@ -682,6 +698,8 @@
         } else {
           return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">${l.daysUntilExpiry !== null ? l.daysUntilExpiry + 'd left' : 'Active'}</span>`;
         }
+      } else if (l.status === 'suspended' || l.status === 'revoked') {
+        return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-rose-500/10 text-rose-400 border border-rose-500/20 font-bold uppercase">${l.status}</span>`;
       }
       return '<span class="px-2 py-0.5 rounded-full text-[10px] bg-gray-800 text-gray-400 border border-gray-700">Unbound</span>';
     }
@@ -692,7 +710,7 @@
 
       if (!list.length) {
         const emptyHtml = `<div class="py-8 text-center text-xs text-gray-500">No licenses found. Tap "Issue License" above to create one.</div>`;
-        tbody.innerHTML = `<tr><td colspan="7" class="py-8 text-center text-gray-500">No licenses found. Click "Issue License" above to create one.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="py-8 text-center text-gray-500">No licenses found. Click "Issue License" above to create one.</td></tr>`;
         mobileList.innerHTML = emptyHtml;
         return;
       }
@@ -705,6 +723,10 @@
           : `<button onclick="togglePilot('${l.licenseId}')" class="px-2.5 py-0.5 rounded text-[10px] text-gray-500 hover:text-gray-300 border border-gray-800 hover:border-gray-700 transition-colors">+ Set Pilot</button>`;
 
         const expiryStr = l.expiresAt ? l.expiresAt.split('T')[0] : '1 Year Default';
+        const versionBadge = l.appVersion
+          ? `<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">v${l.appVersion}</span>`
+          : '<span class="text-gray-600 text-[10px] font-mono">—</span>';
+        const lastSeen = formatTimeAgo(l.lastValidatedAt);
 
         return `
           <tr class="hover:bg-gray-900/40 transition-colors">
@@ -715,9 +737,11 @@
             <td class="py-3 px-4 font-mono font-bold text-emerald-400">
               <span class="cursor-pointer hover:underline" onclick="copyText('${l.licenseId}', 'License ID')">${l.licenseId}</span>
             </td>
+            <td class="py-3 px-4">${versionBadge}</td>
             <td class="py-3 px-4 font-mono text-gray-400 text-[11px]">${l.machineId || '<span class="text-gray-600">Unbound</span>'}</td>
             <td class="py-3 px-4 font-mono text-gray-300">${expiryStr}</td>
             <td class="py-3 px-4">${badge}</td>
+            <td class="py-3 px-4 text-[11px]">${lastSeen}</td>
             <td class="py-3 px-4">${pilotTag}</td>
             <td class="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
               <button onclick="openEditModal('${l.licenseId}')" class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white rounded text-[11px] font-semibold transition-all border border-gray-700" title="Edit details or key">

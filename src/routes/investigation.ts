@@ -293,22 +293,64 @@ router.get('/timeline', async (req, res) => {
       logsPromise
     ]);
 
-    // Master caches resolve adjustment medicine/inventory references. They are
-    // LAZY: 291k medicines + 37k inventory rows are only loaded when adjustment
-    // logs actually exist — never on the hot sale/purchase/return path.
-    let medicinesList: Array<{ id: number; name: string }> = [];
+    // Master caches resolve adjustment medicine/inventory references.
+    // Surgically loads ONLY the specific medicines/inventory rows referenced
+    // by the adjustment logs, eliminating the 291k-row memory allocation.
     const medMapByName = new Map<string, number>();
     const medMapById = new Map<number, string>();
     const invMapById = new Map<number, { medicine_id: number; batch_no: string; expiry_date: string; mrp: number }>();
+
     if (logs.length > 0) {
-      medicinesList = await db.all('SELECT id, name FROM medicines');
-      for (const m of medicinesList) {
-        medMapByName.set(String(m.name).toLowerCase().trim(), m.id);
-        medMapById.set(m.id, m.name);
+      const neededInvIds = new Set<number>();
+      const neededMedNames = new Set<string>();
+      const neededMedIds = new Set<number>();
+
+      for (const log of logs) {
+        let meta: any = null;
+        if (log.metadata) {
+          try { meta = JSON.parse(log.metadata); } catch (_e) { meta = null; }
+        }
+        if (meta?.medicineId) neededMedIds.add(meta.medicineId);
+        const name = meta?.medicineName || log.detail?.match(/Inventory correction for "([^"]+)"/i)?.[1];
+        if (name) neededMedNames.add(name.toLowerCase().trim());
+        const invId = meta?.inventoryId ?? (() => {
+          const m = log.detail?.match(/ID\s+(\d+)/i);
+          return m ? parseInt(m[1], 10) : null;
+        })();
+        if (invId) neededInvIds.add(invId);
       }
-      const inventoryList = await db.all('SELECT id, medicine_id, batch_no, expiry_date, mrp FROM inventory_master');
-      for (const im of inventoryList) {
-        invMapById.set(im.id, im);
+
+      if (neededInvIds.size > 0) {
+        const placeholders = Array.from(neededInvIds).map(() => '?').join(',');
+        const invRows = await db.all(
+          `SELECT id, medicine_id, batch_no, expiry_date, mrp FROM inventory_master WHERE id IN (${placeholders})`,
+          Array.from(neededInvIds)
+        );
+        for (const im of invRows) {
+          invMapById.set(im.id, im);
+          if (im.medicine_id) neededMedIds.add(im.medicine_id);
+        }
+      }
+
+      if (neededMedIds.size > 0 || neededMedNames.size > 0) {
+        const clauses: string[] = [];
+        const params: any[] = [];
+        if (neededMedIds.size > 0) {
+          clauses.push(`id IN (${Array.from(neededMedIds).map(() => '?').join(',')})`);
+          params.push(...Array.from(neededMedIds));
+        }
+        if (neededMedNames.size > 0) {
+          clauses.push(`LOWER(TRIM(name)) IN (${Array.from(neededMedNames).map(() => '?').join(',')})`);
+          params.push(...Array.from(neededMedNames));
+        }
+        const medRows = await db.all(
+          `SELECT id, name FROM medicines WHERE ${clauses.join(' OR ')}`,
+          params
+        );
+        for (const m of medRows) {
+          medMapByName.set(String(m.name).toLowerCase().trim(), m.id);
+          medMapById.set(m.id, m.name);
+        }
       }
     }
 

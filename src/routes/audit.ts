@@ -47,8 +47,8 @@ router.get('/latest', async (_req, res) => {
   }
 });
 
-// Lightweight history list for reopening a past audit.
-router.get('/history', async (_req, res) => {
+// Lightweight history list for reopening a past audit (also aliased to /logs).
+router.get(['/history', '/logs'], async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const rows = await db.all(

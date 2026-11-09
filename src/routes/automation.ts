@@ -345,8 +345,9 @@ router.post('/notifications/:id/snooze', async (req, res) => {
 // Snooze group of notifications
 router.post('/notifications/group/snooze', async (req, res) => {
   const { ids, days = 1 } = req.body;
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ error: 'ids array is required' });
+  const validIds = Array.isArray(ids) ? ids.map(Number).filter(n => !isNaN(n) && n > 0) : [];
+  if (validIds.length === 0) {
+    return res.json({ success: true, message: 'No active notification IDs to snooze' });
   }
   const snoozeDays = Math.max(1, parseInt(String(days), 10));
 
@@ -357,7 +358,8 @@ router.post('/notifications/group/snooze', async (req, res) => {
     const snoozeUntilDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + snoozeDays);
     const snoozedUntilStr = `${snoozeUntilDate.getFullYear()}-${pad(snoozeUntilDate.getMonth() + 1)}-${pad(snoozeUntilDate.getDate())}`;
 
-    for (const notifId of ids) {
+    let snoozedCount = 0;
+    for (const notifId of validIds) {
       const existing = await db.get('SELECT * FROM automation_notifications WHERE id = ?', [notifId]);
       if (!existing) continue;
 
@@ -370,6 +372,7 @@ router.post('/notifications/group/snooze', async (req, res) => {
          WHERE id = ?`,
         [snoozedUntilStr, `Snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}`, notifId]
       );
+      snoozedCount++;
 
       if (existing.reference_id && (existing.type === 'refill_collection' || existing.type === 'refill_reminder')) {
         const refIds = String(existing.reference_id).split(',').map((s: string) => Number(s.trim())).filter(Boolean);
@@ -386,10 +389,10 @@ router.post('/notifications/group/snooze', async (req, res) => {
     }
 
     const { eventService } = await import('../services/eventService.js');
-    eventService.broadcast('automation_hub_updated', { type: 'group_snoozed', count: ids.length });
-    eventService.broadcast('refill_updated', { type: 'group_snoozed', count: ids.length });
+    eventService.broadcast('automation_hub_updated', { type: 'group_snoozed', count: snoozedCount });
+    eventService.broadcast('refill_updated', { type: 'group_snoozed', count: snoozedCount });
 
-    res.json({ success: true, message: `Snoozed ${ids.length} notification(s) for ${snoozeDays} day(s) until ${snoozedUntilStr}` });
+    res.json({ success: true, message: `Snoozed ${snoozedCount} notification(s) for ${snoozeDays} day(s) until ${snoozedUntilStr}` });
   } catch (err: any) {
     console.error('Failed to batch snooze notifications:', err);
     res.status(500).json({ error: 'Failed to batch snooze: ' + err.message });
@@ -401,7 +404,12 @@ router.post('/notifications/snooze-patient', async (req, res) => {
   const { patient_phone, patient_name, days = 1 } = req.body;
   const snoozeDays = Math.max(1, parseInt(String(days), 10));
 
-  if (!patient_phone && !patient_name) {
+  const rawPhone = String(patient_phone || '').trim();
+  const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
+  const rawName = String(patient_name || '').trim();
+  const cleanName = rawName.replace(/^(mr|mrs|ms|dr|master|shri|smt)\.?\s+/i, '').trim();
+
+  if (!cleanPhone && !rawName) {
     return res.status(400).json({ error: 'patient_phone or patient_name is required' });
   }
 
@@ -412,11 +420,6 @@ router.post('/notifications/snooze-patient', async (req, res) => {
     const snoozeUntilDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + snoozeDays);
     const snoozedUntilStr = `${snoozeUntilDate.getFullYear()}-${pad(snoozeUntilDate.getMonth() + 1)}-${pad(snoozeUntilDate.getDate())}`;
 
-    const rawPhone = String(patient_phone || '').trim();
-    const cleanPhone = rawPhone.replace(/\D/g, '').slice(-10);
-    const rawName = String(patient_name || '').trim();
-    const cleanName = rawName.replace(/^(mr|mrs|ms|dr|master|shri|smt)\.?\s+/i, '').trim();
-
     // 1. Update existing notifications if any are already staged or snoozed
     const notifUpdateResult = await db.run(
       `UPDATE automation_notifications 
@@ -425,15 +428,19 @@ router.post('/notifications/snooze-patient', async (req, res) => {
            snoozed_until = ?,
            error_message = ? 
        WHERE (
-         (recipient_phone LIKE '%' || ? AND ? != '')
-         OR recipient_name = ?
-         OR (recipient_name LIKE '%' || ? AND ? != '')
+         (substr(recipient_phone, -10) = ? AND ? != '')
+         OR recipient_name = ? COLLATE NOCASE
+         OR (? != '' AND recipient_name = ? COLLATE NOCASE)
+         OR (recipient_name LIKE '%' || ? || '%' AND ? != '')
+         OR (? != '' AND recipient_name LIKE '%' || ? || '%')
        ) AND status IN ('staged', 'snoozed')`,
       [
         snoozedUntilStr,
         `Snoozed for ${snoozeDays} day(s) until ${snoozedUntilStr}`,
         cleanPhone, cleanPhone,
         rawName,
+        cleanName, cleanName,
+        rawName, rawName,
         cleanName, cleanName
       ]
     );
@@ -444,14 +451,18 @@ router.post('/notifications/snooze-patient', async (req, res) => {
        SET next_refill_date = DATE(MAX(COALESCE(DATE(next_refill_date), DATE('now', 'localtime')), DATE('now', 'localtime')), ?),
            reminder_status = 'SNOOZED'
        WHERE (
-         (patient_phone LIKE '%' || ? AND ? != '')
-         OR patient_name = ?
-         OR (patient_name LIKE '%' || ? AND ? != '')
+         (substr(patient_phone, -10) = ? AND ? != '')
+         OR patient_name = ? COLLATE NOCASE
+         OR (? != '' AND patient_name = ? COLLATE NOCASE)
+         OR (patient_name LIKE '%' || ? || '%' AND ? != '')
+         OR (? != '' AND patient_name LIKE '%' || ? || '%')
        ) AND is_active = 1`,
       [
         `+${snoozeDays} day`,
         cleanPhone, cleanPhone,
         rawName,
+        cleanName, cleanName,
+        rawName, rawName,
         cleanName, cleanName
       ]
     );
@@ -462,11 +473,19 @@ router.post('/notifications/snooze-patient', async (req, res) => {
       const matchingRefills = await db.all(
         `SELECT id FROM patient_refills 
          WHERE (
-           (patient_phone LIKE '%' || ? AND ? != '')
-           OR patient_name = ?
-           OR (patient_name LIKE '%' || ? AND ? != '')
+           (substr(patient_phone, -10) = ? AND ? != '')
+           OR patient_name = ? COLLATE NOCASE
+           OR (? != '' AND patient_name = ? COLLATE NOCASE)
+           OR (patient_name LIKE '%' || ? || '%' AND ? != '')
+           OR (? != '' AND patient_name LIKE '%' || ? || '%')
          ) AND is_active = 1`,
-        [cleanPhone, cleanPhone, rawName, cleanName, cleanName]
+        [
+          cleanPhone, cleanPhone,
+          rawName,
+          cleanName, cleanName,
+          rawName, rawName,
+          cleanName, cleanName
+        ]
       );
       if (matchingRefills.length > 0) {
         const refIdsStr = matchingRefills.map((r: any) => r.id).join(',');

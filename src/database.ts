@@ -5213,12 +5213,12 @@ export async function ensureSchema(dbPath: string) {
       activated_at TEXT,
       expires_at TEXT,
       last_validated_at TEXT,
-      status TEXT NOT NULL DEFAULT 'testing',
+      status TEXT NOT NULL DEFAULT 'unlicensed',
       offline_grace_days INTEGER NOT NULL DEFAULT 7,
-      testing_mode INTEGER NOT NULL DEFAULT 1
+      testing_mode INTEGER NOT NULL DEFAULT 0
     );
     INSERT OR IGNORE INTO app_license (id, status, testing_mode)
-    VALUES (1, 'testing', 1);
+    VALUES (1, 'unlicensed', 0);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id INTEGER PRIMARY KEY CHECK (id = 1),

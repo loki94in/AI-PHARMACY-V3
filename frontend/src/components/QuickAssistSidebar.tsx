@@ -186,7 +186,11 @@ export const QuickAssistSidebar = memo(({
     if (snoozingKeys.has(group.key)) return;
     setSnoozingKeys(prev => new Set(prev).add(group.key));
     try {
-      const ids = group.messages.map(m => m.id);
+      const ids = (group.messages || []).map(m => m.id).filter(Boolean);
+      if (ids.length === 0) {
+        toastEvent.trigger('No active reminder to snooze', 'warning');
+        return;
+      }
       await api.snoozeNotificationGroup(ids, 1);
       toastEvent.trigger(`Snoozed reminder for ${group.recipient_name} by 1 day`, 'info');
       refillEvent.triggerRefresh();
@@ -194,7 +198,8 @@ export const QuickAssistSidebar = memo(({
       onActionComplete();
     } catch (err: unknown) {
       console.error('Failed to snooze staged group:', err);
-      toastEvent.trigger('Failed to snooze reminder', 'error');
+      const errMsg = (err as any)?.response?.data?.error || (err as any)?.message || 'Failed to snooze reminder';
+      toastEvent.trigger(errMsg, 'error');
     } finally {
       setSnoozingKeys(prev => {
         const next = new Set(prev);

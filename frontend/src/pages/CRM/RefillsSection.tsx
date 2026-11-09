@@ -871,8 +871,9 @@ export const RefillsSection: React.FC = () => {
       ));
       refillEvent.triggerRefresh();
       automationHubEvent.triggerUpdated();
-    } catch {
-      toastEvent.trigger('Failed to snooze reminder', 'error', '/crm');
+    } catch (err) {
+      const errMsg = (err as any)?.response?.data?.error || (err as any)?.message || 'Failed to snooze reminder';
+      toastEvent.trigger(errMsg, 'error', '/crm');
     } finally {
       setSnoozing(false);
       setShowMoreMenu(false);

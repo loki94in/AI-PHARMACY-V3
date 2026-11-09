@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import fs from 'fs';
-import { checkLicense, activateLicense, getMachineId, APP_VERSION } from '../services/licenseService.js';
+import { checkLicense, activateLicense, renewLicenseSelf, getMachineId, APP_VERSION } from '../services/licenseService.js';
 import { autoUpdateService, compareVersions, getLogPath } from '../services/autoUpdateService.js';
 import { getUpdateHistory } from '../services/updateHistoryService.js';
 
@@ -41,6 +41,38 @@ router.post('/activate', async (req, res) => {
       res.json({ success: true, pharmacyName: result.pharmacyName });
     } else {
       res.status(400).json({ success: false, error: result.error });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /api/license/sync — manually verify license online and update local cache */
+router.post('/sync', async (_req, res) => {
+  try {
+    const status = await checkLicense();
+    res.json({
+      ...status,
+      appVersion: APP_VERSION,
+      currentVersion: APP_VERSION,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message, appVersion: APP_VERSION });
+  }
+});
+
+/** POST /api/license/renew — self-service renewal with a renewal key */
+router.post('/renew', async (req, res) => {
+  const { renewalKey } = req.body || {};
+  if (!renewalKey?.trim()) {
+    return res.status(400).json({ error: 'Renewal key is required' });
+  }
+  try {
+    const result = await renewLicenseSelf(renewalKey.trim());
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
     }
   } catch (err: any) {
     res.status(500).json({ error: err.message });

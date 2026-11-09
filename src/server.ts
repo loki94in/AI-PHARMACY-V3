@@ -819,6 +819,13 @@ server.on('error', (err: any) => {
           .catch(err => console.warn('[Boot:Phase2] Pharmarack session heartbeat start failed:', err));
       }, 600);
 
+      // License status heartbeat starts at T+1000ms — runs hourly to detect remote status changes
+      setTimeout(() => {
+        import('./services/licenseService.js')
+          .then(m => m.initLicenseHeartbeat())
+          .catch(err => console.warn('[Boot:Phase2] License heartbeat init failed:', err));
+      }, 1000);
+
       // WhatsApp client: Boot session check (deferred to protect UI paint and initial hydration)
       // Option B (P2-119): Deferred 45 seconds so boot UI is 100% smooth without CPU/RAM contention
       const waBootDelay = 45_000;

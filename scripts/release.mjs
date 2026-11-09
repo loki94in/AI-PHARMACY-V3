@@ -257,6 +257,19 @@ console.log(`✓ Update ZIP: ${expectedZipName}`);
 console.log(`✓ SHA-256: ${sha256}`);
 console.log(`⏱️  Step 3 finished in ${formatElapsed(step3Start)}`);
 
+// ── Step 3b: Build lightweight Web Stub Installer (~2.5 MB) ────────────────
+const webSetupName = `AI-Pharmacy-OS-WebSetup-${tagName}.exe`;
+const webSetupExe  = path.join(installerDir, webSetupName);
+try {
+  console.log('\n📦 Step 3b: Building Web Stub Installer...');
+  execSync('npm run build:stub', { stdio: 'inherit', cwd: rootDir });
+  if (fs.existsSync(webSetupExe)) {
+    console.log(`✓ Web Stub Installer ready: ${webSetupName}`);
+  }
+} catch (stubErr) {
+  console.warn('⚠️  Notice: Web Stub Installer build warning:', stubErr.message);
+}
+
 // ── Housekeeping: Retention pruning in dist/installer ──────────────────────
 console.log('\n🧹 Housekeeping: Pruning old installer and update artifacts...');
 try {
@@ -355,10 +368,14 @@ if (skipGithub) {
       console.log(`   Release ${tagName} already exists. Updating assets (--clobber)...`);
       execSync(`gh release upload ${tagName} "${installerExe}" --clobber`, { stdio: 'inherit', cwd: rootDir });
       execSync(`gh release upload ${tagName} "${updateZipPath}" --clobber`, { stdio: 'inherit', cwd: rootDir });
+      if (fs.existsSync(webSetupExe)) {
+        execSync(`gh release upload ${tagName} "${webSetupExe}" --clobber`, { stdio: 'inherit', cwd: rootDir });
+      }
     } else {
       console.log(`   Creating new GitHub release ${tagName} via gh CLI...`);
+      const extraAssets = fs.existsSync(webSetupExe) ? ` "${webSetupExe}"` : '';
       execSync(
-        `gh release create ${tagName} "${installerExe}" "${updateZipPath}" --title "AI Pharmacy OS ${tagName}" --notes "${releaseNotes}"`,
+        `gh release create ${tagName} "${installerExe}" "${updateZipPath}"${extraAssets} --title "AI Pharmacy OS ${tagName}" --notes "${releaseNotes}"`,
         { stdio: 'inherit', cwd: rootDir }
       );
     }
@@ -432,6 +449,10 @@ if (!skipGithub && !uploadedViaGh) {
       { filePath: installerExe, fileName: expectedInstallerName },
       { filePath: updateZipPath, fileName: expectedZipName },
     ];
+    if (fs.existsSync(webSetupExe)) {
+      assetsToUpload.push({ filePath: webSetupExe, fileName: webSetupName });
+      console.log(`   Found Web Stub installer: ${webSetupName}`);
+    }
     if (fs.existsSync(apkFile)) {
       assetsToUpload.push({ filePath: apkFile, fileName: apkName });
       console.log(`   Found mobile companion APK: ${apkName}`);

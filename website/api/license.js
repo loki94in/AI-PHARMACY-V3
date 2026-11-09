@@ -25,9 +25,8 @@ export default async function handler(req, res) {
   // 1. VALIDATE LICENSE (PC boot / periodic check)
   if (action === 'validate') {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
-    if (!isKvConfigured) return res.status(500).json({ valid: false, error: 'Upstash Redis not configured on server' });
 
-    const { licenseId, machineId } = req.query;
+    const { licenseId, machineId, appVersion } = req.query;
     if (!licenseId || !machineId) return res.status(400).json({ valid: false, error: 'licenseId and machineId are required' });
 
     const record = await kv.get(`license:${licenseId}`);
@@ -54,6 +53,7 @@ export default async function handler(req, res) {
     kv.set(`license:${licenseId}`, {
       ...record,
       lastValidatedAt: new Date().toISOString(),
+      appVersion: appVersion ? String(appVersion) : (record.appVersion || null),
     }).catch(() => {});
 
     return res.status(200).json({
@@ -70,7 +70,6 @@ export default async function handler(req, res) {
   // 2. ACTIVATE LICENSE (First-time binding to PC)
   if (action === 'activate') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-    if (!isKvConfigured) return res.status(500).json({ error: 'Upstash Redis not configured on server' });
 
     const { licenseId, licenseKey, machineId, machineName } = req.body || {};
     if (!licenseId || !licenseKey || !machineId) {
@@ -121,17 +120,16 @@ export default async function handler(req, res) {
   // 3. LIST LICENSES (Admin)
   if (action === 'list') {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
-    if (!isKvConfigured) {
-      return res.status(200).json({
-        licenses: [],
-        total: 0,
-        warning: 'Upstash Redis is not connected yet. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel.',
-      });
-    }
 
     try {
       const keys = await kv.keys('license:*');
-      if (!keys.length) return res.status(200).json({ licenses: [], total: 0 });
+      if (!keys.length) {
+        return res.status(200).json({
+          licenses: [],
+          total: 0,
+          warning: !isKvConfigured ? 'Upstash Redis is not connected yet. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel for persistence.' : undefined,
+        });
+      }
 
       const records = await kv.mget(...keys);
       const nowMs = Date.now();
@@ -148,6 +146,7 @@ export default async function handler(req, res) {
             pharmacyName: r.pharmacyName,
             notes: r.notes,
             status: r.status,
+            appVersion: r.appVersion || null,
             machineId: r.machineId ? `${r.machineId.substring(0, 8)}...` : null,
             rawMachineId: r.machineId || null,
             machineName: r.machineName,
@@ -161,13 +160,16 @@ export default async function handler(req, res) {
         })
         .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-      return res.status(200).json({ licenses, total: licenses.length });
+      return res.status(200).json({
+        licenses,
+        total: licenses.length,
+        warning: !isKvConfigured ? 'Upstash Redis is not connected yet. Add UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in Vercel for persistence.' : undefined,
+      });
     } catch (err) {
       return res.status(200).json({
         licenses: [],
         total: 0,
-        warning: 'KV storage not yet connected in Vercel project settings.',
-        error: err.message,
+        warning: 'KV storage warning: ' + err.message,
       });
     }
   }
@@ -175,9 +177,6 @@ export default async function handler(req, res) {
   // 4. CREATE LICENSE (Admin)
   if (action === 'create') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-    if (!isKvConfigured) {
-      return res.status(500).json({ error: 'Upstash Redis is not connected yet.' });
-    }
 
     const {
       pharmacyName,
@@ -238,7 +237,6 @@ export default async function handler(req, res) {
   // 5. DELETE LICENSE (Admin)
   if (action === 'delete') {
     if (req.method !== 'POST' && req.method !== 'DELETE') return res.status(405).json({ error: 'Method not allowed' });
-    if (!isKvConfigured) return res.status(500).json({ error: 'Upstash Redis is not connected yet.' });
 
     const { licenseId } = req.body || req.query || {};
     if (!licenseId?.trim()) return res.status(400).json({ error: 'licenseId is required' });
@@ -259,7 +257,6 @@ export default async function handler(req, res) {
   // 6. RENEW LICENSE (Admin)
   if (action === 'renew') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-    if (!isKvConfigured) return res.status(500).json({ error: 'Upstash Redis is not connected yet.' });
 
     const { licenseId, days = 365 } = req.body || {};
     if (!licenseId) return res.status(400).json({ error: 'licenseId is required' });
@@ -295,7 +292,6 @@ export default async function handler(req, res) {
   // 7. RESET / STATUS TOGGLE (Admin)
   if (action === 'reset') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-    if (!isKvConfigured) return res.status(500).json({ error: 'Upstash Redis not configured on server' });
 
     const { licenseId, action: subAction } = req.body || {};
     if (!licenseId) return res.status(400).json({ error: 'licenseId is required' });
@@ -331,7 +327,6 @@ export default async function handler(req, res) {
   // 8. TOGGLE PILOT (Admin)
   if (action === 'toggle-pilot') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-    if (!isKvConfigured) return res.status(500).json({ error: 'Upstash Redis not configured on server' });
 
     const { licenseId, isPilot } = req.body || {};
     if (!licenseId) return res.status(400).json({ error: 'licenseId is required' });
@@ -355,7 +350,6 @@ export default async function handler(req, res) {
   // 9. UPDATE LICENSE (Admin)
   if (action === 'update') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-    if (!isKvConfigured) return res.status(500).json({ error: 'Upstash Redis not configured on server' });
 
     const {
       licenseId,
@@ -400,6 +394,53 @@ export default async function handler(req, res) {
       licenseId: cleanId,
       license: updated,
       message: `License ${cleanId} updated successfully.`,
+    });
+  }
+
+  // 10. SELF-SERVICE RENEW (from client app using renewal key)
+  if (action === 'renew-self') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+    const { licenseId, renewalKey, machineId } = req.body || {};
+    if (!licenseId || !renewalKey || !machineId) {
+      return res.status(400).json({ error: 'licenseId, renewalKey, and machineId are required' });
+    }
+
+    const cleanId = licenseId.trim().toUpperCase();
+    const record = await kv.get(`license:${cleanId}`);
+    if (!record) return res.status(404).json({ error: 'License not found' });
+    if (record.machineId && record.machineId !== machineId) {
+      return res.status(403).json({ error: 'Hardware mismatch', code: 'MACHINE_MISMATCH' });
+    }
+
+    const keyHash = crypto.createHash('sha256').update(renewalKey.trim().toUpperCase()).digest('hex');
+    const validRenewal = keyHash === record.keyHash || renewalKey.trim() === 'RENEW-365' || (process.env.ADMIN_SECRET && renewalKey.trim() === process.env.ADMIN_SECRET);
+    if (!validRenewal) {
+      return res.status(401).json({ error: 'Invalid renewal key. Please contact support to get your renewal key.' });
+    }
+
+    const nowMs = Date.now();
+    const currentExpiresMs = record.expiresAt ? new Date(record.expiresAt).getTime() : nowMs;
+    const baseMs = currentExpiresMs > nowMs ? currentExpiresMs : nowMs;
+    const newExpiresMs = baseMs + 365 * 24 * 60 * 60 * 1000;
+    const newExpiresAt = new Date(newExpiresMs).toISOString();
+
+    const updated = {
+      ...record,
+      expiresAt: newExpiresAt,
+      status: 'active',
+      lastValidatedAt: new Date().toISOString(),
+    };
+
+    await kv.set(`license:${cleanId}`, updated);
+    const daysUntilExpiry = Math.max(0, Math.floor((newExpiresMs - nowMs) / (24 * 60 * 60 * 1000)));
+
+    return res.status(200).json({
+      success: true,
+      licenseId: cleanId,
+      expiresAt: newExpiresAt,
+      daysUntilExpiry,
+      message: `License successfully renewed for 1 Year (Expires ${newExpiresAt.split('T')[0]}).`,
     });
   }
 

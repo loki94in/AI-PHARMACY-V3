@@ -25,6 +25,14 @@ function LicenseManagementCard() {
   const [activateError, setActivateError] = React.useState<string | null>(null);
   const [activateSuccess, setActivateSuccess] = React.useState<string | null>(null);
 
+  // Renewal & Sync state
+  const [showRenewalForm, setShowRenewalForm] = React.useState(false);
+  const [renewalKey, setRenewalKey] = React.useState('');
+  const [renewing, setRenewing] = React.useState(false);
+  const [renewError, setRenewError] = React.useState<string | null>(null);
+  const [renewSuccess, setRenewSuccess] = React.useState<string | null>(null);
+  const [syncing, setSyncing] = React.useState(false);
+
   const loadStatus = React.useCallback(async () => {
     try {
       const [statusRes, machineRes] = await Promise.allSettled([
@@ -41,6 +49,48 @@ function LicenseManagementCard() {
   React.useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
+
+  const handleSyncLicense = async () => {
+    setSyncing(true);
+    try {
+      const res = await apiClient.post('/license/sync');
+      if (res.data) {
+        setStatus(res.data);
+        toastEvent.trigger('License status verified with cloud server', 'success');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.response?.data?.error || 'Could not reach license server', 'error');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleRenew = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renewalKey.trim()) {
+      setRenewError('Please enter your 1-Year renewal key');
+      return;
+    }
+    setRenewing(true);
+    setRenewError(null);
+    setRenewSuccess(null);
+    try {
+      const res = await apiClient.post('/license/renew', {
+        renewalKey: renewalKey.trim().toUpperCase(),
+      });
+      if (res.data?.success) {
+        setRenewSuccess(res.data.message || 'License renewed successfully for 1 Year!');
+        setRenewalKey('');
+        void loadStatus();
+      } else {
+        setRenewError(res.data?.error || 'Renewal failed');
+      }
+    } catch (err: any) {
+      setRenewError(err?.response?.data?.error || err?.message || 'Could not validate renewal key');
+    } finally {
+      setRenewing(false);
+    }
+  };
 
   const handleCopyMachineId = () => {
     if (!machineId) return;
@@ -128,7 +178,19 @@ function LicenseManagementCard() {
             </p>
           </div>
         </div>
-        {getStatusBadge()}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleSyncLicense}
+            disabled={syncing}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-bg hover:bg-bg3 border border-border text-text transition-colors cursor-pointer disabled:opacity-50"
+            title="Verify license status with cloud server"
+          >
+            <RefreshCw size={11} className={syncing ? 'animate-spin text-primary' : 'text-muted'} />
+            <span>{syncing ? 'Verifying...' : 'Sync License'}</span>
+          </button>
+          {getStatusBadge()}
+        </div>
       </div>
 
       {/* Details summary */}
@@ -240,6 +302,74 @@ function LicenseManagementCard() {
           </div>
         </form>
       )}
+
+      {/* Renewal Success banner */}
+      {renewSuccess && (
+        <div className="p-3 rounded-xl border border-green-500/20 bg-green-500/10 text-xs text-green-600 font-medium flex items-center gap-2">
+          <CheckCircle2 size={14} className="shrink-0" />
+          {renewSuccess}
+        </div>
+      )}
+
+      {/* Renewal Section */}
+      <div className="p-4 rounded-xl bg-bg border border-border space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h4 className="text-xs font-bold text-text">Annual Subscription Renewal</h4>
+            <p className="text-[11px] text-muted">
+              {status?.daysUntilExpiry !== null
+                ? `Current license has ${status?.daysUntilExpiry} days remaining.`
+                : 'Keep your software continuously updated and operational.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setShowRenewalForm(v => !v);
+              setRenewError(null);
+            }}
+            className="px-3 py-1.5 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 text-xs font-bold transition-colors cursor-pointer"
+          >
+            {showRenewalForm ? 'Hide Renewal' : 'Renew for 1 Year (+365 Days)'}
+          </button>
+        </div>
+
+        {showRenewalForm && (
+          <form onSubmit={handleRenew} className="pt-2 border-t border-border space-y-3">
+            <div>
+              <label className="block text-[11px] font-bold text-muted mb-1 uppercase tracking-wider">
+                1-Year Renewal Voucher / Key
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="Enter renewal key provided by administrator..."
+                value={renewalKey}
+                onChange={e => setRenewalKey(e.target.value.toUpperCase())}
+                className="w-full px-3 py-2 rounded-xl bg-bg2 border border-border text-xs text-text font-mono uppercase focus:outline-none focus:border-primary"
+              />
+            </div>
+
+            {renewError && (
+              <div className="p-2.5 rounded-lg border border-red-500/20 bg-red-500/10 text-xs text-red-500 flex items-center gap-2">
+                <AlertTriangle size={13} className="shrink-0" />
+                {renewError}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="submit"
+                disabled={renewing}
+                className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white text-xs font-bold rounded-xl shadow-sm hover:bg-primary/90 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw size={13} className={renewing ? 'animate-spin' : ''} />
+                <span>{renewing ? 'Applying Renewal...' : 'Apply 1-Year Renewal'}</span>
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   );
 }

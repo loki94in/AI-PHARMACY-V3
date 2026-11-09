@@ -378,28 +378,58 @@ export async function syncStagedRefillNotificationForPatient(db: any, patientNam
   const notifType = anyReady ? 'refill_collection' : 'refill_reminder';
 
   // Check if a staged or active snoozed notification already exists for this patient
+  const cleanPhone = String(patientPhone || '').replace(/\D/g, '').slice(-10);
+  const cleanName = String(patientName || '').replace(/^(mr|mrs|ms|dr|master|shri|smt)\.?\s+/i, '').trim();
+  const rawName = String(patientName || '').trim();
+
   let existing: any = null;
+  const matchParams = [
+    cleanPhone, cleanPhone,
+    rawName,
+    cleanName, cleanName,
+    rawName, rawName,
+    cleanName, cleanName
+  ];
+
   try {
     existing = await db.get(
       `SELECT id, status, type, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
-       WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+       WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (
+         (substr(recipient_phone, -10) = ? AND ? != '')
+         OR recipient_name = ? COLLATE NOCASE
+         OR (? != '' AND recipient_name = ? COLLATE NOCASE)
+         OR (recipient_name LIKE '%' || ? || '%' AND ? != '')
+         OR (? != '' AND recipient_name LIKE '%' || ? || '%')
+       )
        ORDER BY id DESC LIMIT 1`,
-      [patientPhone, patientName]
+      matchParams
     );
   } catch (queryErr: any) {
     if (queryErr?.message?.includes('snoozed_until')) {
       await db.run('ALTER TABLE automation_notifications ADD COLUMN snoozed_until TEXT DEFAULT NULL').catch(() => { });
       existing = await db.get(
         `SELECT id, status, type, COALESCE(snoozed_until, '') as snoozed_until FROM automation_notifications 
-         WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+         WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (
+           (substr(recipient_phone, -10) = ? AND ? != '')
+           OR recipient_name = ? COLLATE NOCASE
+           OR (? != '' AND recipient_name = ? COLLATE NOCASE)
+           OR (recipient_name LIKE '%' || ? || '%' AND ? != '')
+           OR (? != '' AND recipient_name LIKE '%' || ? || '%')
+         )
          ORDER BY id DESC LIMIT 1`,
-        [patientPhone, patientName]
+        matchParams
       ).catch(async () => {
         return await db.get(
           `SELECT id, status, type FROM automation_notifications 
-           WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (recipient_phone = ? OR recipient_name = ?)
+           WHERE type IN ('refill_collection', 'refill_reminder') AND status IN ('staged', 'snoozed') AND (
+             (substr(recipient_phone, -10) = ? AND ? != '')
+             OR recipient_name = ? COLLATE NOCASE
+             OR (? != '' AND recipient_name = ? COLLATE NOCASE)
+             OR (recipient_name LIKE '%' || ? || '%' AND ? != '')
+             OR (? != '' AND recipient_name LIKE '%' || ? || '%')
+           )
            ORDER BY id DESC LIMIT 1`,
-          [patientPhone, patientName]
+          matchParams
         );
       });
     } else {

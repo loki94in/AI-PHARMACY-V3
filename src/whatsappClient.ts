@@ -3174,7 +3174,7 @@ const waRegistrationCache = new Map<string, { status: 'AVAILABLE' | 'NOT_AVAILAB
  * Checks WhatsApp capability for a phone number.
  * Conforms to MULTI-PHARMACY.md §16 (debounced, non-blocking, non-waking probe).
  */
-export async function checkPhoneWhatsAppRegistered(cleanDigits10: string): Promise<'AVAILABLE' | 'NOT_AVAILABLE' | 'UNABLE_TO_VERIFY'> {
+export async function checkPhoneWhatsAppRegistered(cleanDigits10: string, allowLiveProbe = true): Promise<'AVAILABLE' | 'NOT_AVAILABLE' | 'UNABLE_TO_VERIFY'> {
   if (!cleanDigits10 || cleanDigits10.length !== 10) return 'NOT_AVAILABLE';
 
   // Check cache first for instant resolution
@@ -3183,7 +3183,7 @@ export async function checkPhoneWhatsAppRegistered(cleanDigits10: string): Promi
     return cached.status;
   }
 
-  if (!isReady || !clientInstance) {
+  if (!allowLiveProbe || !isReady || !clientInstance) {
     return 'UNABLE_TO_VERIFY';
   }
   try {

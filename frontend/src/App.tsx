@@ -10,6 +10,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { StoreProvider } from './context/StoreContext';
 import { TerminalProvider } from './context/TerminalContext';
 import UpdateBanner from './components/UpdateBanner';
+import { LicenseGate } from './components/LicenseGate';
 import { useAppearanceSync } from './hooks/useAppearanceSync';
 import { useNavigationRestore } from './hooks/useNavigationRestore';
 
@@ -347,47 +348,49 @@ function App() {
       <UpdateBanner />
       <StoreProvider>
         <TerminalProvider>
-          <BrowserRouter>
-            <NavigationRestoreObserver />
-            <Suspense fallback={<PageLoader />}>
-              <Layout>
-                <Routes>
-                  <Route path="/" element={<RootRedirect isLocalOrigin={isLocalOrigin} isOwnerAuthenticated={isOwnerAuthenticated} />} />
-                  <Route path="/owner" element={<Navigate to="/owner/login" replace />} />
-                  <Route path="/expiry" element={<Navigate to="/returns?tab=expiry" replace />} />
-                  <Route path="/automation-center" element={<Navigate to="/crm?tab=messages" replace />} />
-                  <Route path="/refills" element={<Navigate to="/crm?tab=refills" replace />} />
-                  <Route path="/message-listener" element={<Navigate to="/dashboard" replace />} />
-                  <Route path="/non-mapped-distributors" element={<Navigate to="/learning?tab=distributor_layouts" replace />} />
-                  <Route path="/doctors" element={<Navigate to="/learning?tab=doctors" replace />} />
-                  <Route path="/catalog" element={<Navigate to="/database?tab=catalog" replace />} />
-                  <Route path="/customer-returns" element={<Navigate to="/returns?tab=customer" replace />} />
-                  <Route path="/customer-returns-history" element={<Navigate to="/returns?tab=customer-history" replace />} />
-                  <Route path="/compliance" element={<HubRedirect tab="compliance" />} />
-                  <Route path="/schedule-drugs" element={<HubRedirect tab="schedules" />} />
-                  <Route path="/composition-queue" element={<HubRedirect tab="composition" />} />
-                  <Route path="*" element={
-                    <KeepAliveOutlet
-                      routes={pageRoutes}
-                      fallback={<PageLoader />}
-                      notFoundElement={
-                        <div className="flex flex-col items-center justify-center h-full text-text p-6 text-center space-y-4">
-                          <h1 className="text-3xl font-extrabold">404 — Page Not Found</h1>
-                          <p className="text-muted text-sm max-w-md">The requested route does not exist or has been relocated to another workspace tab.</p>
-                          <a
-                            href="/dashboard"
-                            className="px-5 py-2.5 bg-primary text-white font-bold text-xs rounded-xl shadow-lg hover:bg-primary/90 transition-all inline-flex items-center gap-2"
-                          >
-                            Return to Dashboard
-                          </a>
-                        </div>
-                      }
-                    />
-                  } />
-                </Routes>
-              </Layout>
-            </Suspense>
-          </BrowserRouter>
+          <LicenseGate>
+            <BrowserRouter>
+              <NavigationRestoreObserver />
+              <Suspense fallback={<PageLoader />}>
+                <Layout>
+                  <Routes>
+                    <Route path="/" element={<RootRedirect isLocalOrigin={isLocalOrigin} isOwnerAuthenticated={isOwnerAuthenticated} />} />
+                    <Route path="/owner" element={<Navigate to="/owner/login" replace />} />
+                    <Route path="/expiry" element={<Navigate to="/returns?tab=expiry" replace />} />
+                    <Route path="/automation-center" element={<Navigate to="/crm?tab=messages" replace />} />
+                    <Route path="/refills" element={<Navigate to="/crm?tab=refills" replace />} />
+                    <Route path="/message-listener" element={<Navigate to="/dashboard" replace />} />
+                    <Route path="/non-mapped-distributors" element={<Navigate to="/learning?tab=distributor_layouts" replace />} />
+                    <Route path="/doctors" element={<Navigate to="/learning?tab=doctors" replace />} />
+                    <Route path="/catalog" element={<Navigate to="/database?tab=catalog" replace />} />
+                    <Route path="/customer-returns" element={<Navigate to="/returns?tab=customer" replace />} />
+                    <Route path="/customer-returns-history" element={<Navigate to="/returns?tab=customer-history" replace />} />
+                    <Route path="/compliance" element={<HubRedirect tab="compliance" />} />
+                    <Route path="/schedule-drugs" element={<HubRedirect tab="schedules" />} />
+                    <Route path="/composition-queue" element={<HubRedirect tab="composition" />} />
+                    <Route path="*" element={
+                      <KeepAliveOutlet
+                        routes={pageRoutes}
+                        fallback={<PageLoader />}
+                        notFoundElement={
+                          <div className="flex flex-col items-center justify-center h-full text-text p-6 text-center space-y-4">
+                            <h1 className="text-3xl font-extrabold">404 — Page Not Found</h1>
+                            <p className="text-muted text-sm max-w-md">The requested route does not exist or has been relocated to another workspace tab.</p>
+                            <a
+                              href="/dashboard"
+                              className="px-5 py-2.5 bg-primary text-white font-bold text-xs rounded-xl shadow-lg hover:bg-primary/90 transition-all inline-flex items-center gap-2"
+                            >
+                              Return to Dashboard
+                            </a>
+                          </div>
+                        }
+                      />
+                    } />
+                  </Routes>
+                </Layout>
+              </Suspense>
+            </BrowserRouter>
+          </LicenseGate>
         </TerminalProvider>
       </StoreProvider>
     </ErrorBoundary>

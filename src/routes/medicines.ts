@@ -91,7 +91,17 @@ router.get('/medicines', async (req, res) => {
 
     if (mrpFilter) {
       const norm = normalizeNumericSearch(mrpFilter);
-      if (norm) {
+      const num = parseFloat(norm);
+      if (!isNaN(num) && num >= 0) {
+        // Sargable indexed range search for instant sub-millisecond response
+        if (norm.includes('.')) {
+          whereClauses.push('(medicines.mrp >= ? AND medicines.mrp <= ?)');
+          params.push(Math.max(0, num - 0.05), num + 0.05);
+        } else {
+          whereClauses.push('(medicines.mrp >= ? AND medicines.mrp < ?)');
+          params.push(num, num + 1);
+        }
+      } else if (norm) {
         whereClauses.push('CAST(COALESCE(medicines.mrp, 0) AS TEXT) LIKE ?');
         params.push(`%${norm}%`);
       }
