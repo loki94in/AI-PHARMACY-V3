@@ -505,6 +505,30 @@ if (!skipGithub && !uploadedViaGh) {
 }
 }
 
+// ── Step 4b: Pre-warm GitHub Release CDN edge before announcing update ──────
+if (!skipGithub) {
+  console.log('\n🔥 Step 4b: Pre-warming GitHub Release CDN edge for update ZIP...');
+  const warmStart = performance.now();
+  try {
+    const warmRes = await axios.get(updatePackageUrl, {
+      responseType: 'stream',
+      timeout: 90_000,
+      maxRedirects: 5,
+      headers: { 'User-Agent': 'AI-Pharmacy-Release-Prewarm/1.0' },
+    });
+    let warmBytes = 0;
+    await new Promise((resolve, reject) => {
+      warmRes.data.on('data', (chunk) => { warmBytes += chunk.length; });
+      warmRes.data.on('end', resolve);
+      warmRes.data.on('error', reject);
+    });
+    const warmSec = Math.max(0.01, (performance.now() - warmStart) / 1000);
+    console.log(`✓ CDN edge warm: ${(warmBytes / (1024 * 1024)).toFixed(2)} MB in ${warmSec.toFixed(1)}s (${(warmBytes / 1024 / warmSec).toFixed(0)} KB/s).`);
+  } catch (warmErr) {
+    console.warn(`⚠️  Notice: CDN pre-warm skipped (${warmErr.message}) — release still proceeds.`);
+  }
+}
+
 // ── Step 5: Publish metadata to Vercel/Redis ─────────────────────────────────
 console.log('\n🌐 Step 5: Publishing version metadata to update server...');
 console.log(`   Server       : ${vercelServer}`);

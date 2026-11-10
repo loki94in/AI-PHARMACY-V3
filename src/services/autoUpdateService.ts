@@ -112,7 +112,67 @@ export function getLogPath(): string {
 }
 
 // ── Download helper ──────────────────────────────────────────────────────────
-function downloadFile(
+const DOWNLOAD_STALL_TIMEOUT_MS = 120_000;
+const DOWNLOAD_MAX_REDIRECTS = 5;
+const DOWNLOAD_MAX_TRANSIENT_RETRIES = 4;
+const PARALLEL_MIN_BYTES = 2 * 1024 * 1024; // Only parallelize >= 2 MB packages
+const PARALLEL_CHUNKS = 6;
+const DOWNLOAD_HEADERS = {
+  'User-Agent': 'AI-Pharmacy-OS-AutoUpdater/1.0',
+  Accept: '*/*',
+};
+
+function getHttpClient(targetUrl: string) {
+  return targetUrl.startsWith('https') ? https : http;
+}
+
+function isTransientStatus(statusCode?: number): boolean {
+  return Boolean(statusCode && [502, 503, 504].includes(statusCode));
+}
+
+function isTransientSocketError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return Boolean(code && ['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'EAI_AGAIN', 'ECONNREFUSED'].includes(code));
+}
+
+interface DownloadProbeResult {
+  resolvedUrl: string;
+  acceptRanges: boolean;
+  totalBytes: number;
+}
+
+/**
+ * Resolves redirects via HEAD and checks whether the target supports byte-range requests.
+ * Returns null if HEAD is unsupported so callers can fall back to single-stream GET.
+ */
+function probeDownload(url: string, redirectCount = 0): Promise<DownloadProbeResult | null> {
+  return new Promise((resolve) => {
+    if (redirectCount > DOWNLOAD_MAX_REDIRECTS) return resolve(null);
+    const client = getHttpClient(url);
+    const req = client.request(
+      url,
+      { method: 'HEAD', headers: DOWNLOAD_HEADERS },
+      (res) => {
+        res.resume();
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const nextUrl = new URL(res.headers.location, url).toString();
+          return resolve(probeDownload(nextUrl, redirectCount + 1));
+        }
+        if (res.statusCode !== 200) {
+          return resolve(null);
+        }
+        const totalBytes = parseInt(res.headers['content-length'] || '0', 10) || 0;
+        const acceptRanges = String(res.headers['accept-ranges'] || '').toLowerCase() === 'bytes';
+        resolve({ resolvedUrl: url, acceptRanges, totalBytes });
+      }
+    );
+    req.setTimeout(15_000, () => req.destroy());
+    req.on('error', () => resolve(null));
+    req.end();
+  });
+}
+
+function downloadSingleStream(
   url: string,
   dest: string,
   expectedTotalBytes?: number,
@@ -121,39 +181,34 @@ function downloadFile(
   return new Promise((resolve, reject) => {
     const tempDest = dest + '.tmp';
     let retryAttempt = 0;
-    const maxTransientRetries = 4;
 
     function makeRequest(currentUrl: string, redirectCount = 0) {
-      if (redirectCount > 5) {
+      if (redirectCount > DOWNLOAD_MAX_REDIRECTS) {
         return reject(new Error('DOWNLOAD_FAILED: Too many redirects while downloading update'));
       }
-      const client = currentUrl.startsWith('https') ? https : http;
+      const client = getHttpClient(currentUrl);
 
       const req = client.get(
         currentUrl,
-        {
-          headers: {
-            'User-Agent': 'AI-Pharmacy-OS-AutoUpdater/1.0',
-            Accept: '*/*',
-          },
-        },
+        { headers: DOWNLOAD_HEADERS },
         (res) => {
           if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             res.resume(); // Free previous response socket back to agent pool
             const redirectUrl = new URL(res.headers.location, currentUrl).toString();
             return makeRequest(redirectUrl, redirectCount + 1);
           }
-          if (res.statusCode && [502, 503, 504].includes(res.statusCode) && retryAttempt < maxTransientRetries) {
+          if (isTransientStatus(res.statusCode) && retryAttempt < DOWNLOAD_MAX_TRANSIENT_RETRIES) {
             res.resume();
             retryAttempt++;
             const backoffMs = retryAttempt * 3000;
-            console.log(`[AutoUpdate] HTTP ${res.statusCode} from CDN/gateway. Retrying in ${backoffMs / 1000}s (attempt ${retryAttempt}/${maxTransientRetries})...`);
+            console.log(`[AutoUpdate] HTTP ${res.statusCode} from CDN/gateway. Retrying in ${backoffMs / 1000}s (attempt ${retryAttempt}/${DOWNLOAD_MAX_TRANSIENT_RETRIES})...`);
             setTimeout(() => {
               makeRequest(currentUrl, redirectCount);
             }, backoffMs);
             return;
           }
           if (res.statusCode !== 200) {
+            res.resume();
             return reject(new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`));
           }
           const headerBytes = parseInt(res.headers['content-length'] || '0', 10);
@@ -165,9 +220,8 @@ function downloadFile(
             onProgress(0, totalBytes);
           }
 
-          const fileStream = fs.createWriteStream(tempDest);
+          const fileStream = fs.createWriteStream(tempDest, { highWaterMark: 256 * 1024 });
           res.on('data', (chunk: Buffer) => {
-            req.setTimeout(120_000);
             downloadedBytes += chunk.length;
             const now = Date.now();
             if (onProgress && (now - lastReport > 300 || (totalBytes > 0 && downloadedBytes === totalBytes))) {
@@ -198,7 +252,7 @@ function downloadFile(
           });
         }
       );
-      req.setTimeout(120_000, () => {
+      req.setTimeout(DOWNLOAD_STALL_TIMEOUT_MS, () => {
         req.destroy(new Error('DOWNLOAD_TIMEOUT: Connection stalled for 120s with no data'));
       });
       req.on('error', (err) => {
@@ -209,6 +263,194 @@ function downloadFile(
 
     makeRequest(url);
   });
+}
+
+class RangeUnsupportedError extends Error {}
+
+function fetchRangeSlice(
+  url: string,
+  start: number,
+  end: number,
+  activeRequests: Set<http.ClientRequest>,
+  redirectCount = 0
+): Promise<http.IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > DOWNLOAD_MAX_REDIRECTS) {
+      return reject(new Error('DOWNLOAD_FAILED: Too many redirects while fetching range slice'));
+    }
+    const client = getHttpClient(url);
+    const req = client.get(
+      url,
+      {
+        headers: {
+          ...DOWNLOAD_HEADERS,
+          Range: `bytes=${start}-${end}`,
+        },
+      },
+      (res) => {
+        activeRequests.delete(req);
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.resume();
+          const nextUrl = new URL(res.headers.location, url).toString();
+          return fetchRangeSlice(nextUrl, start, end, activeRequests, redirectCount + 1).then(resolve, reject);
+        }
+        if (res.statusCode === 200) {
+          res.resume();
+          return reject(new RangeUnsupportedError('Server ignored Range header and returned 200'));
+        }
+        if (res.statusCode !== 206) {
+          res.resume();
+          const err = new Error(`DOWNLOAD_FAILED: HTTP ${res.statusCode}`) as Error & { statusCode?: number };
+          err.statusCode = res.statusCode;
+          return reject(err);
+        }
+        resolve(res);
+      }
+    );
+    activeRequests.add(req);
+    req.setTimeout(DOWNLOAD_STALL_TIMEOUT_MS, () => {
+      activeRequests.delete(req);
+      req.destroy(new Error('DOWNLOAD_TIMEOUT: Connection stalled for 120s with no data'));
+    });
+    req.on('error', (err) => {
+      activeRequests.delete(req);
+      reject(err);
+    });
+  });
+}
+
+async function downloadParallelRanges(
+  resolvedUrl: string,
+  dest: string,
+  totalBytes: number,
+  onProgress?: (downloaded: number, total: number) => void
+): Promise<void> {
+  const tempDest = dest + '.tmp';
+  const chunkCount = Math.min(PARALLEL_CHUNKS, Math.max(2, Math.floor(totalBytes / (1024 * 1024))));
+  const sliceSize = Math.ceil(totalBytes / chunkCount);
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let i = 0; i < chunkCount; i++) {
+    const start = i * sliceSize;
+    if (start >= totalBytes) break;
+    const end = Math.min(totalBytes - 1, start + sliceSize - 1);
+    ranges.push({ start, end });
+  }
+
+  let totalDownloaded = 0;
+  let lastReport = 0;
+  let aborted = false;
+  const activeRequests = new Set<http.ClientRequest>();
+  const activeStreams = new Set<http.IncomingMessage>();
+  const fh = await fs.promises.open(tempDest, 'w');
+
+  const reportProgress = (force = false) => {
+    if (!onProgress) return;
+    const now = Date.now();
+    if (force || now - lastReport > 250 || totalDownloaded === totalBytes) {
+      lastReport = now;
+      onProgress(totalDownloaded, totalBytes);
+    }
+  };
+
+  try {
+    await fh.truncate(totalBytes);
+    reportProgress(true);
+
+    const runSlice = async (start: number, end: number) => {
+      const expectedSliceLen = end - start + 1;
+      let sliceWritten = 0;
+      let retries = 0;
+
+      while (sliceWritten < expectedSliceLen) {
+        if (aborted) throw new Error('DOWNLOAD_ABORTED');
+        const currentStart = start + sliceWritten;
+        let res: http.IncomingMessage | null = null;
+        try {
+          res = await fetchRangeSlice(resolvedUrl, currentStart, end, activeRequests);
+          activeStreams.add(res);
+          for await (const chunk of res) {
+            if (aborted) {
+              res.destroy();
+              throw new Error('DOWNLOAD_ABORTED');
+            }
+            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            const remaining = expectedSliceLen - sliceWritten;
+            const toWrite = buf.length > remaining ? buf.subarray(0, remaining) : buf;
+            if (toWrite.length > 0) {
+              await fh.write(toWrite, 0, toWrite.length, start + sliceWritten);
+              sliceWritten += toWrite.length;
+              totalDownloaded += toWrite.length;
+              reportProgress();
+            }
+            if (sliceWritten >= expectedSliceLen) {
+              res.destroy();
+              break;
+            }
+          }
+          activeStreams.delete(res);
+          if (sliceWritten < expectedSliceLen) {
+            throw new Error(`DOWNLOAD_INCOMPLETE: Slice stopped at ${sliceWritten}/${expectedSliceLen} bytes`);
+          }
+        } catch (err: any) {
+          if (res) {
+            activeStreams.delete(res);
+            if (!res.destroyed) res.destroy();
+          }
+          if (err instanceof RangeUnsupportedError) throw err;
+          if (aborted) throw err;
+          const status = err?.statusCode as number | undefined;
+          const retryable = isTransientStatus(status) || isTransientSocketError(err) || String(err?.message || '').startsWith('DOWNLOAD_INCOMPLETE');
+          if (!retryable || retries >= DOWNLOAD_MAX_TRANSIENT_RETRIES) {
+            throw err;
+          }
+          retries++;
+          await new Promise((r) => setTimeout(r, retries * 1500));
+        }
+      }
+    };
+
+    await Promise.all(ranges.map((r) => runSlice(r.start, r.end)));
+
+    if (totalDownloaded !== totalBytes) {
+      throw new Error(`DOWNLOAD_INCOMPLETE: Received ${totalDownloaded} of ${totalBytes} bytes`);
+    }
+    reportProgress(true);
+    await fh.close();
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+    fs.renameSync(tempDest, dest);
+  } catch (err) {
+    aborted = true;
+    for (const req of activeRequests) {
+      try { req.destroy(); } catch (_) {}
+    }
+    for (const stream of activeStreams) {
+      try { stream.destroy(); } catch (_) {}
+    }
+    try { await fh.close(); } catch (_) {}
+    try { if (fs.existsSync(tempDest)) fs.unlinkSync(tempDest); } catch (_) {}
+    throw err;
+  }
+}
+
+export async function downloadFile(
+  url: string,
+  dest: string,
+  expectedTotalBytes?: number,
+  onProgress?: (downloaded: number, total: number) => void
+): Promise<void> {
+  const probe = await probeDownload(url);
+  if (probe && probe.acceptRanges && probe.totalBytes >= PARALLEL_MIN_BYTES) {
+    try {
+      await downloadParallelRanges(probe.resolvedUrl, dest, probe.totalBytes, onProgress);
+      return;
+    } catch (err) {
+      if (!(err instanceof RangeUnsupportedError)) {
+        throw err;
+      }
+      // Fall through cleanly if the target ignored Range headers
+    }
+  }
+  await downloadSingleStream(probe?.resolvedUrl || url, dest, probe?.totalBytes || expectedTotalBytes, onProgress);
 }
 
 // ── SHA-256 verification ──────────────────────────────────────────────────────
