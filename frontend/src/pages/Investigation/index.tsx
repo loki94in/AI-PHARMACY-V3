@@ -327,6 +327,20 @@ const InvestigationCenter = () => {
 
   // No client-side filtering needed — all filters are now handled server-side
 
+  // When searching by medicine/batch/invoice/party with the untouched default 15-day window,
+  // bypass the default date bounds so the timeline returns full history (first purchase to latest sale).
+  const hasTextSearch = Boolean(
+    debouncedMedicine.trim() ||
+    debouncedBatch.trim() ||
+    debouncedInvoice.trim() ||
+    debouncedParty.trim()
+  );
+  const isDefaultDateRange =
+    dateRangeHelper.dateRange.from === dateRangeHelper.defaultFrom &&
+    dateRangeHelper.dateRange.to === dateRangeHelper.defaultTo;
+  const effectiveDateFrom = (hasTextSearch && isDefaultDateRange) ? '' : dateRangeHelper.dateRange.from;
+  const effectiveDateTo = (hasTextSearch && isDefaultDateRange) ? '' : dateRangeHelper.dateRange.to;
+
   // Infinite Scroll setup
   const {
     items,
@@ -341,8 +355,8 @@ const InvestigationCenter = () => {
     queryKey: 'investigation-list',
     cacheKey: 'investigation-cache',
     serverFilters: {
-      dateFrom: dateRangeHelper.dateRange.from,
-      dateTo: dateRangeHelper.dateRange.to,
+      dateFrom: effectiveDateFrom,
+      dateTo: effectiveDateTo,
       type: colFilterType,
       // Text filters: debounced so server only refetches 400ms after typing stops
       medicineName: debouncedMedicine,

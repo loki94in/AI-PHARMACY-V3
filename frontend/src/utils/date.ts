@@ -230,49 +230,68 @@ function cleanEndYear(c: string): boolean {
 }
 
 /**
+ * Parses an expiry date string (MM/YY, MM/YYYY, DD/MM/YYYY, DD-MM-YYYY, YYYY-MM[-DD])
+ * into { year, month } (1-based month 1..12), or null if unreadable.
+ */
+export const parseExpiryYearMonth = (expiry_date?: string | null): { year: number; month: number } | null => {
+  const trimmed = String(expiry_date ?? '').trim();
+  if (!trimmed) return null;
+
+  let m: number;
+  let y: number;
+  let p: RegExpMatchArray | null;
+
+  if ((p = trimmed.match(/^(\d{1,2})\/(\d{2}|\d{4})$/))) {
+    m = parseInt(p[1], 10);
+    y = p[2].length === 2 ? 2000 + parseInt(p[2], 10) : parseInt(p[2], 10);
+  } else if ((p = trimmed.match(/^\d{1,2}[\/-](\d{1,2})[\/-](\d{4})$/))) {
+    m = parseInt(p[1], 10);
+    y = parseInt(p[2], 10);
+  } else if ((p = trimmed.match(/^(\d{4})[\/-](\d{1,2})/))) {
+    y = parseInt(p[1], 10);
+    m = parseInt(p[2], 10);
+  } else {
+    return null;
+  }
+
+  if (isNaN(y) || isNaN(m) || m < 1 || m > 12) return null;
+  return { year: y, month: m };
+};
+
+/**
+ * Returns a canonical sortable YYYY-MM key for an expiry string (e.g. "01/29" -> "2029-01").
+ * Missing or unreadable dates sort last as "9999-12".
+ */
+export const getExpiryMonthKey = (expiry_date?: string | null): string => {
+  const parsed = parseExpiryYearMonth(expiry_date);
+  if (!parsed) return '9999-12';
+  return `${String(parsed.year).padStart(4, '0')}-${String(parsed.month).padStart(2, '0')}`;
+};
+
+/**
+ * Returns the month-end local timestamp (ms) for an expiry date for FEFO sorting.
+ * Missing or unreadable dates sort last (9999999999999).
+ */
+export const getExpirySortTimestamp = (expiry_date?: string | null): number => {
+  const parsed = parseExpiryYearMonth(expiry_date);
+  if (!parsed) return 9999999999999;
+  return new Date(parsed.year, parsed.month, 0, 23, 59, 59, 999).getTime();
+};
+
+/**
  * Checks whether an expiry date string is expired relative to current month/year.
  * Returns true if the expiry date is in the past.
  */
 export const isExpiredDate = (expiry_date?: string | null): boolean => {
-  if (!expiry_date) return false;
-  const trimmed = String(expiry_date).trim();
-  if (!trimmed) return false;
+  const parsed = parseExpiryYearMonth(expiry_date);
+  if (!parsed) return false;
 
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1; // 1-12
 
-  let expYear;
-  let expMonth;
-
-  if (/^\d{1,2}\/\d{2}$/.test(trimmed)) {
-    const parts = trimmed.split('/');
-    expMonth = parseInt(parts[0], 10);
-    expYear = 2000 + parseInt(parts[1], 10);
-  } else if (/^\d{1,2}\/\d{4}$/.test(trimmed)) {
-    const parts = trimmed.split('/');
-    expMonth = parseInt(parts[0], 10);
-    expYear = parseInt(parts[1], 10);
-  } else if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(trimmed)) {
-    const parts = trimmed.split('-');
-    expMonth = parseInt(parts[1], 10);
-    expYear = parseInt(parts[2], 10);
-  } else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
-    const parts = trimmed.split('/');
-    expMonth = parseInt(parts[1], 10);
-    expYear = parseInt(parts[2], 10);
-  } else if (/^\d{4}-\d{2}/.test(trimmed)) {
-    const parts = trimmed.split('-');
-    expYear = parseInt(parts[0], 10);
-    expMonth = parseInt(parts[1], 10);
-  } else {
-    return false;
-  }
-
-  if (isNaN(expYear) || isNaN(expMonth)) return false;
-
-  if (expYear < currentYear) return true;
-  if (expYear === currentYear && expMonth < currentMonth) return true;
+  if (parsed.year < currentYear) return true;
+  if (parsed.year === currentYear && parsed.month < currentMonth) return true;
   return false;
 };
 
@@ -282,26 +301,10 @@ export const isExpiredDate = (expiry_date?: string | null): boolean => {
  * Month-level, same reading as isExpiredDate.
  */
 export const expiryWarning = (expiry_date?: string | null): 'expired' | 'this-month' | 'next-month' | null => {
-  const trimmed = String(expiry_date ?? '').trim();
-  if (!trimmed) return null;
-  let m: number;
-  let y: number;
-  let p: RegExpMatchArray | null;
-  if ((p = trimmed.match(/^(\d{1,2})\/(\d{2}|\d{4})$/))) {
-    m = parseInt(p[1], 10);
-    y = p[2].length === 2 ? 2000 + parseInt(p[2], 10) : parseInt(p[2], 10);
-  } else if ((p = trimmed.match(/^\d{1,2}[\/-](\d{1,2})[\/-](\d{4})$/))) {
-    m = parseInt(p[1], 10);
-    y = parseInt(p[2], 10);
-  } else if ((p = trimmed.match(/^(\d{4})-(\d{2})/))) {
-    y = parseInt(p[1], 10);
-    m = parseInt(p[2], 10);
-  } else {
-    return null;
-  }
-  if (!(m >= 1 && m <= 12)) return null;
+  const parsed = parseExpiryYearMonth(expiry_date);
+  if (!parsed) return null;
   const now = new Date();
-  const ahead = (y - now.getFullYear()) * 12 + (m - (now.getMonth() + 1));
+  const ahead = (parsed.year - now.getFullYear()) * 12 + (parsed.month - (now.getMonth() + 1));
   if (ahead < 0) return 'expired';
   if (ahead === 0) return 'this-month';
   if (ahead === 1) return 'next-month';

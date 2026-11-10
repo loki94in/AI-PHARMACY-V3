@@ -7,6 +7,21 @@
 
 ## Fixed
 
+### [Fixed] P1-149 — POS FEFO Near-Expiry Priority & Cross-Batch Quantity Split
+
+- **Symptom:** When a medicine had multiple active batches in inventory (e.g., `CP60085` with 4 units at an earlier expiry and `STC26334` with 15 units at a later expiry), entering a quantity greater than the near-expiry batch (e.g., 8 units) pulled all 8 units from the newer full-stock batch (`STC26334`) instead of allocating 4 from the near-expiry batch and splitting the remaining 4 into a second row for `STC26334`.
+- **Root Cause:**
+  1. `rebalanceCartMedicine`, `addToCart`, and `changeRowMedicine` in `frontend/src/pages/POS/index.tsx` unconditionally passed `priorityBatchNo`/`priorityInventoryId` into `allocateMedicineBatches`, forcing whichever batch happened to sit on the row ahead of FEFO expiry order.
+  2. `fefoRank` compared raw `expiry_date` strings lexicographically (breaking mixed `MM/YY` vs `YYYY-MM-DD` formats) and placed `stripQty > 0` *before* expiry, causing near-expiry loose-only batches (0 strips, 4 loose) to lose to later-expiry full-strip batches. `allocateMedicineBatches` also applied `aHasStrips`/`aHasLoose` before expiry timestamp sorting.
+  3. `allocateMedicineBatches` filtered `activeBatches` down to a single MRP (`matchedSameMrp`), blocking cross-batch splitting whenever a newer batch carried a revised MRP.
+  4. `src/services/inventoryCache.ts` sorted `ORDER BY m.name ASC, im.expiry_date ASC` lexicographically on mixed expiry formats.
+- **Fix:**
+  1. Added `parseExpiryYearMonth`, `getExpiryMonthKey`, and `getExpirySortTimestamp` in `frontend/src/utils/date.ts` to normalize `MM/YY`, `MM/YYYY`, `DD/MM/YYYY`, `DD-MM-YYYY`, and `YYYY-MM[-DD]` expiry formats.
+  2. Extracted `fefoRank` and `allocateMedicineBatches` to `frontend/src/utils/posBatchAllocator.ts` (re-exported by `frontend/src/pages/POS/index.tsx`): enforces strict earliest-expiry-first (FEFO) sorting across all unexpired batches (strip/loose availability only breaks same-expiry ties), removes the hard MRP exclusion filter so multi-batch rows preserve each batch's own MRP/pricing, and honors `priorityBatchNo` only when `respectPriorityBatch` is true (invoice edit, manual Switch Batch, or batch barcode scan).
+  3. Updated `frontend/src/pages/POS/index.tsx` (`CartRow.manualBatchSelected`, FEFO-sorted `Switch Batch` dropdown, `rebalanceCartMedicine`, `addToCart`, `changeRowMedicine`, `handleScanResult`) and normalized expiry `ORDER BY` in `src/services/inventoryCache.ts`.
+- **Priority:** P1
+- **Verified by:** `npm test -- tests/posBatchAllocator.test.ts tests/packSizeDetector.test.ts` (15/15 passed), `npm run guardrails` (exit 0), `npm run build --prefix frontend`, and `node scripts/quick-update.mjs`.
+
 ### [Fixed] P2-148 — POS Medicine Selection Focus Shift Failure on Solid Medicines & Fast Billing Flow Restored
 
 - **Symptom:** When selecting a medicine in POS (tablets/capsules/strips), focus did not shift properly or got lost, while selecting syrup bottles worked smoothly by jumping to the next line.

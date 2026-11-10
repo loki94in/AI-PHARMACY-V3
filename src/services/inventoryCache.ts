@@ -101,7 +101,16 @@ class InventoryCache {
            FROM inventory_master im
            JOIN medicines m ON im.medicine_id = m.id
            WHERE ${INVENTORY_ACTIVE_WHERE}
-           ORDER BY m.name ASC, im.expiry_date ASC`
+           ORDER BY m.name ASC,
+             CASE
+               WHEN length(im.expiry_date) = 5 AND im.expiry_date LIKE '%/%' THEN ('20' || substr(im.expiry_date, 4, 2) || '-' || substr(im.expiry_date, 1, 2))
+               WHEN length(im.expiry_date) = 7 AND im.expiry_date LIKE '%/%' THEN (substr(im.expiry_date, 4, 4) || '-' || substr(im.expiry_date, 1, 2))
+               WHEN length(im.expiry_date) = 10 AND im.expiry_date LIKE '__/__/____' THEN (substr(im.expiry_date, 7, 4) || '-' || substr(im.expiry_date, 4, 2))
+               WHEN length(im.expiry_date) = 10 AND im.expiry_date LIKE '__-__-____' THEN (substr(im.expiry_date, 7, 4) || '-' || substr(im.expiry_date, 4, 2))
+               WHEN im.expiry_date LIKE '____-__%' THEN substr(im.expiry_date, 1, 7)
+               ELSE COALESCE(NULLIF(im.expiry_date, ''), '9999-12')
+             END ASC,
+             im.id ASC`
         );
 
         this.cache = items;

@@ -17,7 +17,18 @@ import { StagedQueueFloatingWidget } from '../../components/StagedQueueFloatingW
 import { stagedQueueService, type StagedItem } from '../../services/stagedQueueService';
 import { sanitizePhoneInput, isValid10DigitPhone } from '../../utils/phone';
 import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
-import { isExpiredDate, toDateInputValue, expiryWarning, EXPIRY_WARNING_CLASS, EXPIRY_WARNING_LABEL } from '../../utils/date';
+import { isExpiredDate, toDateInputValue, expiryWarning, EXPIRY_WARNING_CLASS, EXPIRY_WARNING_LABEL, getExpirySortTimestamp } from '../../utils/date';
+import {
+  allocateMedicineBatches as allocateMedicineBatchesCore,
+  fefoRank,
+  isLiquidOrSingleUnitForm,
+  normMedKey as normKey,
+  parsePackSizeFromPackaging,
+  resolveAllowLooseSale,
+  type AllocateMedicineBatchesParams,
+} from '../../utils/posBatchAllocator';
+import { filterLocalInventory as filterPosLocalInventory, type PosBatchItem } from '../../utils/posSearchFilter';
+export { isLiquidOrSingleUnitForm, resolveAllowLooseSale };
 import { printCurrentBill } from '../../utils/printBill';
 import { useDraftStore } from '../../lib/cache/useDraftStore';
 import { rankAndSortMedicines } from '../../utils/searchRanker';
@@ -37,11 +48,6 @@ const getLocalDateString = (d: Date = new Date()) => {
   const dd = String(d.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 };
-
-const fefoRank = (stripQty: number, exp?: string) =>
-  `${Number(stripQty) > 0 ? 0 : 1}|${exp || '9999-12'}`;
-
-const normKey = (n: unknown) => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
 /** Compact WA ON/OFF toggle for POS toolbar — indicates status without clobbering user preference */
 function POSWaToggleButton({
@@ -120,61 +126,6 @@ function POSRefillToggleButton({
 }
 
 
-const parsePackSizeFromPackaging = (packaging: string | null | undefined): number | null => {
-  if (!packaging) return null;
-  const trimmed = packaging.trim();
-  // Volumes/weights (e.g. 100 ML, 60 ML, 15 ML, 5 GM) represent single unit containers, not loose multi-pack counts
-  if (/\b(?:ml|gm|gms|mg|kg|ltr|litre)\b/i.test(trimmed)) {
-    return 1;
-  }
-  const stripOfMatch = trimmed.match(/^\s*(?:STRIP|PACK|BOX|BLISTER)\s+OF\s+(\d+)/i);
-  if (stripOfMatch) {
-    const size = parseInt(stripOfMatch[1], 10);
-    if (size > 0) return size;
-  }
-  const bottleOfMatch = trimmed.match(/^\s*BOTTLE\s+OF\s+(\d+)/i);
-  if (bottleOfMatch) {
-    const size = parseInt(bottleOfMatch[1], 10);
-    if (size > 0) return size;
-  }
-  if (/\b\d+\s*x\s*\d+\b/i.test(trimmed)) {
-    const parts = trimmed.split(/x/i);
-    return (parseInt(parts[0], 10) || 1) * (parseInt(parts[1], 10) || 1);
-  }
-  const match = trimmed.match(/^(\d+)/);
-  if (!match) return null;
-  const size = parseInt(match[1], 10);
-  return size > 0 ? size : null;
-};
-
-export const isLiquidOrSingleUnitForm = (name?: string, packaging?: string | null): boolean => {
-  const combined = `${packaging || ''} ${name || ''}`.toLowerCase();
-  return /bottle|syrup|syp|suspension|susp|drop|inj|liquid|lotion|spray|ointment|oint|gel|cream|\bml\b|respule|sachet|vial|amp/i.test(combined);
-};
-
-export const resolveAllowLooseSale = (item?: { allow_loose_sale?: number | boolean | null; name?: string; medicine_name?: string; packaging?: string | null; packSize?: number | null; pack_size?: number | null } | null): number => {
-  if (!item) return 1;
-  // Syrups, liquids, drops, and single unit items are NEVER loose-sellable
-  if (isLiquidOrSingleUnitForm(item.name || item.medicine_name, item.packaging)) return 0;
-  // A pack holding 1 unit (or unspecified default 1 unit) has nothing to sell loose, so cursor skips Loose.
-  const rawPack = item.packSize ?? item.pack_size;
-  let pSize = 0;
-  if (rawPack !== undefined && rawPack !== null && Number(rawPack) > 0) {
-    pSize = Number(rawPack);
-  } else if (item.packaging) {
-    pSize = parsePackSizeFromPackaging(item.packaging) || 0;
-  }
-  if (pSize <= 0) {
-    const det = detectPackSize(item.name || item.medicine_name, item.packaging);
-    pSize = det.detectedPackSize || 1;
-  }
-  if (pSize <= 1) return 0;
-  if (item.allow_loose_sale !== undefined && item.allow_loose_sale !== null) {
-    return item.allow_loose_sale ? 1 : 0;
-  }
-  return 1;
-};
-
 const UniversalMedicineEditModal = lazy(() => import('../../components/UniversalMedicineEditModal').then(m => ({ default: m.UniversalMedicineEditModal })));
 
 const ModalSkeleton = () => (
@@ -233,6 +184,7 @@ interface CartRow {
   salts?: string;
   isEmptyRow?: boolean;
   allow_loose_sale?: number | boolean;
+  manualBatchSelected?: boolean;
   alternative_batches?: unknown[];
   alternatives?: PosBatchItem[];
   scanImage?: string;
@@ -249,45 +201,6 @@ interface CartRow {
   short_code?: string;
   therapeutic?: string;
   sub_therapeutic?: string;
-  [key: string]: unknown;
-}
-
-interface PosBatchItem {
-  id?: number | string;
-  medicine_id?: number | string;
-  inventory_id?: number | string;
-  name?: string;
-  medicine_name?: string;
-  item_code?: string;
-  short_code?: string;
-  therapeutic?: string;
-  sub_therapeutic?: string;
-  batch_no?: string;
-  expiry_date?: string;
-  expiry?: string;
-  quantity?: number;
-  stock_qty?: number;
-  loose_quantity?: number;
-  mrp?: number;
-  cost_price?: number | null;
-  unit_price?: number;
-  sell_price?: number | string | null;
-  pack_size?: number | null;
-  pack_unit?: string | null;
-  packUnit?: string | null;
-  packMismatchDismissed?: boolean;
-  packaging?: string | null;
-  manufacturer?: string;
-  salts?: string;
-  hsn_code?: string;
-  api_reference?: string;
-  alternatives?: PosBatchItem[];
-  is_out_of_stock?: boolean;
-  discount?: number;
-  batch_quantity?: number;
-  __fefoRank?: string;
-  scanImage?: string;
-  rawOcrText?: string;
   [key: string]: unknown;
 }
 
@@ -640,7 +553,7 @@ const groupBatchesInternal = (
         quantity: stripQty, // running total across batches (display only)
         batch_quantity: stripQty, // stock of the chosen batch — what the sale can actually use
         loose_quantity: item.loose_quantity || 0,
-        __fefoRank: fefoRank(stripQty, item.expiry_date)
+        __fefoRank: fefoRank(stripQty, item.expiry_date, item.loose_quantity || 0)
       };
       if (item.alternatives && Array.isArray(item.alternatives)) {
         copy.alternatives = groupAlternatives(medId, item.alternatives);
@@ -655,7 +568,7 @@ const groupBatchesInternal = (
 
       // FEFO (First Expiry, First Out): adopt this batch if it ranks better,
       // keeping its OWN stock figures so the cart never mixes one batch's id with another's quantity.
-      const rank = fefoRank(stripQty, item.expiry_date);
+      const rank = fefoRank(stripQty, item.expiry_date, item.loose_quantity || 0);
       if (rank < existing.__fefoRank!) {
         existing.__fefoRank = rank;
         existing.inventory_id = item.inventory_id;
@@ -730,142 +643,8 @@ export const getRemainingSellableUnits = (
   return Math.max(0, totalUnits - cartUnits);
 };
 
-const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatchItem[] => {
-  if (!query || query.trim().length < 2) return [];
-  const rawTerm = query.trim().toLowerCase();
-  const term = rawTerm.replace(/\s+/g, ' ');
-  const tokens = term.split(/\s+/).filter(Boolean);
-  const compactTerm = term.replace(/[^a-z0-9]/g, '');
-  const index = getCompactInventoryIndex();
-  const useIndex = index.length === inventory.length;
-  // Never run the unindexed per-row scan over a large list; the indexed pass repaints once the index matches.
-  if (!useIndex && inventory.length > 2000) return [];
-
-  const tier1Map = new Map<string, PosBatchItem>(); // Exact prefix
-  const tier2Map = new Map<string, PosBatchItem>(); // Acronym / Shorthand (e.g. CD 12 -> Crocin DS 12)
-  const tier3Map = new Map<string, PosBatchItem>(); // Multi-token (e.g. "cro 12", "clav 625", "dolo 30")
-  const tier4Map = new Map<string, PosBatchItem>(); // Infix / Contains
-  const tier5Map = new Map<string, PosBatchItem>(); // Batch / MRP numeric
-
-  const len = inventory.length;
-  for (let i = 0; i < len; i++) {
-    const item = inventory[i];
-    const isValid = useIndex ? index[i].isValidForPos : (
-      !!item.inventory_id && (Number(item.stock_qty || item.quantity || 0) > 0 || Number(item.loose_quantity || 0) > 0) && !isExpiredDate(item.expiry_date || item.expiry)
-    );
-    if (!isValid) continue;
-
-    const name = useIndex ? index[i].nameLower : (item.medicine_name || item.name || '').toLowerCase();
-    const normName = name.replace(/\s+/g, ' ');
-    const compactName = name.replace(/[^a-z0-9]/g, '');
-    const code = useIndex ? index[i].itemCodeLower : (item.item_code || '').toLowerCase();
-    const batch = useIndex ? index[i].batchNoLower : (item.batch_no || '').toLowerCase();
-    const mrpNum = Number(item.mrp || 0);
-    const mrpStr = useIndex ? index[i].mrpStr : (mrpNum > 0 ? String(mrpNum) : '');
-    const mrpIntStr = useIndex ? index[i].mrpIntStr : (mrpNum > 0 ? String(Math.round(mrpNum)) : '');
-    const initials = useIndex ? index[i].initials : '';
-    const initialsNoNum = useIndex ? index[i].initialsNoNum : '';
-    const words = useIndex ? index[i].words : name.split(/[^a-z0-9]+/).filter(Boolean);
-
-    let tier = 0;
-
-    // 1. Direct Prefix on Name, Item Code, or Space-compact Name
-    // (Pure batch matches are handled in Tier 5 so medicine name/strength strictly outranks batch numbers)
-    if (name.startsWith(term) || normName.startsWith(term) || (compactTerm.length >= 2 && compactName.startsWith(compactTerm)) || code.startsWith(term)) {
-      tier = 1;
-    }
-    // 2. Acronym / Shorthand (e.g. "cd 12" or "cd12" matching "crocin ds 12")
-    else if (compactTerm.length >= 2 && (
-      (initials && initials.startsWith(compactTerm)) ||
-      (initialsNoNum && initialsNoNum.startsWith(compactTerm)) ||
-      (initials && compactTerm.length <= initials.length && initials.includes(compactTerm))
-    )) {
-      tier = 2;
-    }
-    // 3. Multi-token match where every token matches word prefix, name, batch, or MRP
-    else if (tokens.length > 1) {
-      let allMatch = true;
-      for (const t of tokens) {
-        const wordMatch = words.some(w => w.startsWith(t) || w === t);
-        const nameMatch = name.includes(t) || normName.includes(t);
-        const batchMatch = batch.includes(t);
-        const mrpMatch = (mrpStr && mrpStr.startsWith(t)) || (mrpIntStr && mrpIntStr === t);
-        if (!wordMatch && !nameMatch && !batchMatch && !mrpMatch) {
-          allMatch = false;
-          break;
-        }
-      }
-      if (allMatch) {
-        tier = 3;
-      }
-    }
-    // 4. Infix / Contains on Name, Code, or Space-compact Name
-    if (!tier && (name.includes(term) || normName.includes(term) || (compactTerm.length >= 3 && compactName.includes(compactTerm)) || code.includes(term))) {
-      tier = 4;
-    }
-    // 5. Batch or MRP search (e.g. typing "625", "AX99", or "30")
-    if (!tier && (
-      batch.includes(term) ||
-      (mrpStr && (mrpStr === term || mrpStr.startsWith(term))) ||
-      (mrpIntStr && mrpIntStr === term)
-    )) {
-      tier = 5;
-    }
-
-    if (!tier) continue;
-
-    const targetMap = tier === 1 ? tier1Map : (tier === 2 ? tier2Map : (tier === 3 ? tier3Map : (tier === 4 ? tier4Map : tier5Map)));
-    const mrpKey = Math.round(Number(item.mrp || 0) * 100);
-    const key = `${normKey(item.medicine_name || item.name) || String(item.medicine_id || item.inventory_id || i)}_mrp_${mrpKey}`;
-    const stripQty = Number(item.stock_qty || item.quantity || 0);
-    const looseQty = Number(item.loose_quantity || item.loose_qty || 0);
-
-    const existing = targetMap.get(key);
-    if (!existing) {
-      targetMap.set(key, {
-        ...item,
-        medicine_name: item.medicine_name || item.name,
-        name: item.name || item.medicine_name,
-        quantity: stripQty,
-        stock_qty: stripQty,
-        batch_quantity: stripQty,
-        loose_quantity: looseQty,
-        __fefoRank: fefoRank(stripQty, item.expiry_date || item.expiry),
-      });
-    } else {
-      existing.quantity = (existing.quantity || 0) + stripQty;
-      existing.stock_qty = (existing.stock_qty || 0) + stripQty;
-      existing.loose_quantity = (existing.loose_quantity || 0) + looseQty;
-
-      const rank = fefoRank(stripQty, item.expiry_date || item.expiry);
-      if (rank < (existing.__fefoRank || '9|9999-12')) {
-        existing.__fefoRank = rank;
-        existing.inventory_id = item.inventory_id;
-        existing.batch_no = item.batch_no;
-        existing.expiry_date = item.expiry_date;
-        existing.mrp = item.mrp;
-        existing.cost_price = item.cost_price;
-        existing.unit_price = item.unit_price;
-        existing.batch_quantity = stripQty;
-      }
-    }
-  }
-
-  const sortAlpha = (a: PosBatchItem, b: PosBatchItem) => {
-    const nameA = String(a.medicine_name || a.name || '').toLowerCase();
-    const nameB = String(b.medicine_name || b.name || '').toLowerCase();
-    return nameA < nameB ? -1 : (nameA > nameB ? 1 : 0);
-  };
-
-  const t1 = Array.from(tier1Map.values()).sort(sortAlpha);
-  const t2 = Array.from(tier2Map.values()).sort(sortAlpha);
-  const t3 = Array.from(tier3Map.values()).sort(sortAlpha);
-  const t4 = Array.from(tier4Map.values()).sort(sortAlpha);
-  const t5 = Array.from(tier5Map.values()).sort(sortAlpha);
-
-  const combined = [...t1, ...t2, ...t3, ...t4, ...t5];
-  return combined.slice(0, 30);
-};
+const filterLocalInventory = (query: string, inventory: PosBatchItem[]): PosBatchItem[] =>
+  filterPosLocalInventory(query, inventory, getCompactInventoryIndex());
 
 const mapEditSaleItemsToCart = (itemsList: EditSaleLine[]): CartRow[] => {
   if (!Array.isArray(itemsList) || itemsList.length === 0) return [];
@@ -936,275 +715,12 @@ export function allocateMedicineBatches(params: {
   editingInvoiceId?: number | null;
   priorityBatchNo?: string;
   priorityInventoryId?: number | string;
+  respectPriorityBatch?: boolean;
 }): CartRow[] {
-  const { medicineId, medicineName, compactInventory, editingInvoiceId, requestedQty, requestedLooseQty } = params;
-  const pSize = Math.max(1, params.packSize || params.fallbackItem?.packSize || params.fallbackItem?.pack_size || 1);
-  const totalRequestedTablets = (requestedQty * pSize) + (requestedLooseQty || 0);
-
-  const targetNormName = normKey(medicineName);
-
-  // 1. Find all active unexpired batches for this medicine
-  let activeBatches = (compactInventory || [])
-    .filter(item => {
-      const itemNorm = normKey(item.medicine_name || item.name);
-      const idMatch = medicineId > 0 && (
-        Number(item.medicine_id) === Number(medicineId) ||
-        Number(item.id) === Number(medicineId) ||
-        Number(item.inventory_id) === Number(medicineId)
-      );
-      const nameMatch = Boolean(targetNormName && itemNorm && itemNorm === targetNormName);
-      const isEditingThisBatch = Boolean(
-        editingInvoiceId && (
-          (params.priorityInventoryId && String(item.inventory_id || item.id) === String(params.priorityInventoryId)) ||
-          (params.priorityBatchNo && item.batch_no === params.priorityBatchNo)
-        )
-      );
-      const hasStock = ((item.stock_qty !== undefined ? item.stock_qty : item.quantity) || 0) > 0 || (item.loose_quantity || 0) > 0 || isEditingThisBatch;
-      return (idMatch || nameMatch) && hasStock;
-    })
-    .map(item => {
-      const expiryStr = item.expiry_date || '';
-      let isExpired = false;
-      if (expiryStr) {
-        let expDate: Date;
-        if (expiryStr.includes('/')) {
-          const parts = expiryStr.split('/');
-          let year = parseInt(parts[1], 10);
-          const month = parseInt(parts[0], 10) - 1;
-          if (year < 100) year += 2000;
-          expDate = new Date(year, month + 1, 0);
-        } else {
-          expDate = new Date(expiryStr);
-        }
-        if (expDate < new Date()) isExpired = true;
-      }
-      const isEditingThisBatch = Boolean(
-        editingInvoiceId && (
-          (params.priorityInventoryId && String(item.inventory_id || item.id) === String(params.priorityInventoryId)) ||
-          (params.priorityBatchNo && item.batch_no === params.priorityBatchNo)
-        )
-      );
-      const heldStock = isEditingThisBatch ? Number(params.fallbackItem?.originalQty || params.fallbackItem?.quantity || params.fallbackItem?.qty || 0) : 0;
-      const heldLoose = isEditingThisBatch ? Number(params.fallbackItem?.originalLooseQty || params.fallbackItem?.loose_qty || params.fallbackItem?.looseQty || 0) : 0;
-      return { 
-        ...item, 
-        stock_qty: (item.stock_qty !== undefined ? item.stock_qty : (item.quantity || 0)) + heldStock,
-        loose_quantity: (item.loose_quantity || 0) + heldLoose,
-        isExpired 
-      };
-    })
-    .filter(item => !item.isExpired);
-
-  // 2. If no active batches in inventory cache, fall back to fallback item or single row
-  if (activeBatches.length === 0) {
-    if (editingInvoiceId || params.fallbackItem) {
-      const refItem = params.fallbackItem || {};
-      return [{
-        ...refItem,
-        id: refItem.inventory_id || refItem.id || `item_${medicineId}_${Date.now()}`,
-        inventory_id: refItem.inventory_id || (typeof refItem.id === 'number' && refItem.id < 1000000000 ? refItem.id : undefined),
-        medicine_id: medicineId || refItem.medicine_id,
-        name: medicineName || refItem.name,
-        medicine_name: medicineName || refItem.name,
-        batch: refItem.batch || refItem.batch_no || '',
-        batch_no: refItem.batch_no || refItem.batch || '',
-        expiry: refItem.expiry || refItem.expiry_date || '',
-        expiry_date: refItem.expiry_date || refItem.expiry || '',
-        qty: requestedQty,
-        quantity: requestedQty,
-        looseQty: requestedLooseQty,
-        mrp: Number(refItem.mrp || 0),
-        sell_price: refItem.sell_price || null,
-        unitPrice: Number(refItem.unitPrice || refItem.unit_price || refItem.sell_price || refItem.mrp || 0),
-        discount: Number(refItem.discount || 0),
-        packSize: pSize,
-        pack_size: pSize,
-        pack_unit: (refItem as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
-        packaging: (refItem as any).packaging || params.fallbackItem?.packaging || null,
-        allow_loose_sale: resolveAllowLooseSale({
-          allow_loose_sale: (refItem as any).allow_loose_sale,
-          name: medicineName || refItem.name,
-          packaging: (refItem as any).packaging || params.fallbackItem?.packaging,
-          packSize: pSize,
-          pack_size: pSize
-        }),
-        availableStock: Number(refItem.availableStock || refItem.stock_qty || 0),
-        availableLooseStock: Number(refItem.availableLooseStock || refItem.loose_quantity || 0),
-        alternative_batches: [],
-        isEmptyRow: false
-      }];
-    }
-    return [];
-  }
-
-  // 2b. Enforce uniform MRP matching: match batches with identical MRP first so different MRPs are not mixed
-  const targetMrp = Number(params.fallbackItem?.mrp || 0);
-  if (targetMrp > 0) {
-    const matchedSameMrp = activeBatches.filter(b => Math.abs(Number(b.mrp || 0) - targetMrp) < 0.05);
-    if (matchedSameMrp.length > 0) {
-      activeBatches = matchedSameMrp;
-    }
-  }
-
-  // 3. Sort active batches:
-  // - Priority batch (e.g. actively edited row batch) strictly comes first!
-  // - For loose-only requests, opened loose stock is prioritized before sealed strips.
-  // - FEFO: Earliest expiry first.
-  activeBatches.sort((a, b) => {
-    if (params.priorityBatchNo || params.priorityInventoryId) {
-      const aMatch = (params.priorityBatchNo && (a.batch_no === params.priorityBatchNo || (a as any).batch === params.priorityBatchNo)) ||
-                     (params.priorityInventoryId !== undefined && (String(a.inventory_id || a.id) === String(params.priorityInventoryId)));
-      const bMatch = (params.priorityBatchNo && (b.batch_no === params.priorityBatchNo || (b as any).batch === params.priorityBatchNo)) ||
-                     (params.priorityInventoryId !== undefined && (String(b.inventory_id || b.id) === String(params.priorityInventoryId)));
-      if (aMatch && !bMatch) return -1;
-      if (!aMatch && bMatch) return 1;
-    }
-
-    if (requestedLooseQty > 0 && requestedQty === 0) {
-      const aHasLoose = (a.loose_quantity || 0) > 0 ? 0 : 1;
-      const bHasLoose = (b.loose_quantity || 0) > 0 ? 0 : 1;
-      if (aHasLoose !== bHasLoose) return aHasLoose - bHasLoose;
-    } else {
-      const aHasStrips = (a.stock_qty || 0) > 0 ? 0 : 1;
-      const bHasStrips = (b.stock_qty || 0) > 0 ? 0 : 1;
-      if (aHasStrips !== bHasStrips) return aHasStrips - bHasStrips;
-    }
-    
-    const parseExpToTimestamp = (str: string) => {
-      if (!str) return 9999999999999;
-      if (str.includes('/')) {
-        const parts = str.split('/');
-        let year = parseInt(parts[1], 10);
-        const month = parseInt(parts[0], 10) - 1;
-        if (year < 100) year += 2000;
-        return new Date(year, month + 1, 0).getTime();
-      }
-      return new Date(str).getTime() || 9999999999999;
-    };
-    const aTime = parseExpToTimestamp(a.expiry_date || '');
-    const bTime = parseExpToTimestamp(b.expiry_date || '');
-    if (aTime !== bTime) return aTime - bTime;
-    return (a.inventory_id || a.id || 0) - (b.inventory_id || b.id || 0);
-  });
-
-  // 4. Distribute the requested quantity across batches
-  let remainingTablets = totalRequestedTablets;
-  const allocations: CartRow[] = [];
-  let totalAvailableTablets = 0;
-
-  for (const batch of activeBatches) {
-    const batchStockTablets = (batch.stock_qty || 0) * pSize + (batch.loose_quantity || 0);
-    totalAvailableTablets += batchStockTablets;
-    
-    if (remainingTablets > 0 && batchStockTablets > 0) {
-      const takenTablets = Math.min(remainingTablets, batchStockTablets);
-      const qty = Math.floor(takenTablets / pSize);
-      const looseQty = takenTablets % pSize;
-
-      if (qty > 0 || looseQty > 0) {
-        const sellPrice = batch.sell_price !== undefined && batch.sell_price !== null
-          ? batch.sell_price
-          : (params.fallbackItem?.sell_price || null);
-        const mrp = Number(batch.mrp || params.fallbackItem?.mrp || 0);
-        let discount = params.fallbackItem?.discount;
-        if ((discount === undefined || discount === 0) && sellPrice && Number(sellPrice) > 0 && mrp > 0 && Number(sellPrice) < mrp) {
-          discount = parseFloat((((mrp - Number(sellPrice)) / mrp) * 100).toFixed(2));
-        }
-        const unitPrice = Number(params.fallbackItem?.unitPrice || batch.unit_price || sellPrice || mrp || 0);
-        const invId = Number(batch.inventory_id || batch.id);
-
-        allocations.push({
-          ...(params.fallbackItem || {}),
-          id: invId,
-          inventory_id: invId,
-          medicine_id: Number(batch.medicine_id || medicineId),
-          name: batch.name || batch.medicine_name || medicineName,
-          medicine_name: batch.name || batch.medicine_name || medicineName,
-          batch: batch.batch_no,
-          batch_no: batch.batch_no,
-          expiry: batch.expiry_date || '',
-          expiry_date: batch.expiry_date || '',
-          mrp: mrp,
-          sell_price: sellPrice,
-          qty: qty,
-          quantity: qty,
-          looseQty: looseQty,
-          unitPrice: unitPrice,
-          discount: discount || 0,
-          packSize: pSize,
-          pack_size: pSize,
-          pack_unit: (batch as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
-          packaging: batch.packaging || params.fallbackItem?.packaging || null,
-          allow_loose_sale: resolveAllowLooseSale({
-            allow_loose_sale: batch.allow_loose_sale !== undefined ? (batch.allow_loose_sale ? 1 : 0) : (params.fallbackItem?.allow_loose_sale !== undefined ? (params.fallbackItem.allow_loose_sale ? 1 : 0) : undefined),
-            name: batch.medicine_name || params.medicineName,
-            packaging: batch.packaging || params.fallbackItem?.packaging,
-            packSize: pSize,
-            pack_size: pSize
-          }),
-          costPrice: batch.cost_price != null ? batch.cost_price : (params.fallbackItem?.costPrice || null),
-          availableStock: batch.stock_qty,
-          availableLooseStock: batch.loose_quantity,
-          alternative_batches: activeBatches.filter(b => (b.inventory_id || b.id) !== (batch.inventory_id || batch.id)),
-          isEmptyRow: false
-        });
-        remainingTablets -= takenTablets;
-      }
-    }
-  }
-
-  // If requested exceeds available stock, cap to maximum and inform user
-  if (!editingInvoiceId && totalRequestedTablets > totalAvailableTablets && totalAvailableTablets > 0) {
-    const availStrips = Math.floor(totalAvailableTablets / pSize);
-    const availLoose = totalAvailableTablets % pSize;
-    toastEvent.trigger(
-      `Only ${availStrips} strips${availLoose > 0 ? ` & ${availLoose} loose` : ''} available for "${medicineName}". Allocated across ${allocations.length} batch(es).`,
-      "info"
-    );
-  }
-
-  // If nothing allocated (e.g. 0 requested or 0 stock), return the first batch with 0 qty
-  if (allocations.length === 0 && activeBatches.length > 0) {
-    const firstB = activeBatches[0];
-    const sellPrice = firstB.sell_price !== undefined && firstB.sell_price !== null ? firstB.sell_price : (params.fallbackItem?.sell_price || null);
-    const mrp = Number(firstB.mrp || params.fallbackItem?.mrp || 0);
-    const invId = Number(firstB.inventory_id || firstB.id);
-    allocations.push({
-      ...(params.fallbackItem || {}),
-      id: invId,
-      inventory_id: invId,
-      medicine_id: Number(firstB.medicine_id || medicineId),
-      name: firstB.name || firstB.medicine_name || medicineName,
-      medicine_name: firstB.name || firstB.medicine_name || medicineName,
-      batch: firstB.batch_no,
-      batch_no: firstB.batch_no,
-      expiry: firstB.expiry_date || '',
-      expiry_date: firstB.expiry_date || '',
-      mrp: mrp,
-      sell_price: sellPrice,
-      qty: params.requestedQty || 0,
-      quantity: params.requestedQty || 0,
-      looseQty: params.requestedLooseQty || 0,
-      unitPrice: Number(firstB.unit_price || mrp),
-      discount: 0,
-      packSize: pSize,
-      pack_size: pSize,
-      pack_unit: (firstB as any).pack_unit || (params.fallbackItem as any)?.pack_unit || null,
-      packaging: firstB.packaging || params.fallbackItem?.packaging || null,
-      allow_loose_sale: resolveAllowLooseSale({
-        allow_loose_sale: firstB.allow_loose_sale !== undefined ? (firstB.allow_loose_sale ? 1 : 0) : (params.fallbackItem?.allow_loose_sale !== undefined ? (params.fallbackItem.allow_loose_sale ? 1 : 0) : undefined),
-        name: firstB.name || firstB.medicine_name || params.medicineName,
-        packaging: firstB.packaging || params.fallbackItem?.packaging
-      }),
-      costPrice: firstB.cost_price != null ? firstB.cost_price : (params.fallbackItem?.costPrice || null),
-      availableStock: firstB.stock_qty,
-      availableLooseStock: firstB.loose_quantity,
-      alternative_batches: activeBatches.filter(b => (b.inventory_id || b.id) !== (firstB.inventory_id || firstB.id)),
-      isEmptyRow: false
-    });
-  }
-
-  return allocations;
+  return allocateMedicineBatchesCore({
+    ...(params as AllocateMedicineBatchesParams),
+    onNotify: (message, type) => toastEvent.trigger(message, type)
+  }) as CartRow[];
 }
 
 const POS = () => {
@@ -3074,17 +2590,22 @@ const POS = () => {
     const requestedLooseQty = totalRequestedTablets % packSize;
 
     const compactInventory = getCompactInventoryCache();
+    // Only pin a batch during invoice edit or when the user explicitly picked a batch via Switch Batch / scan.
+    // Otherwise FEFO (nearest expiry first) always stays top priority across row edits.
+    const manualPinnedRow = medicineItems.find(i => i.manualBatchSelected);
+    const pinnedRow = editingInvoiceId ? (targetItem || medicineItems[0]) : manualPinnedRow;
     const newMedRows = allocateMedicineBatches({
       medicineId: Number(targetMedId || 0),
       medicineName: medicineItems[0].name || medicineItems[0].medicine_name || '',
       requestedQty,
       requestedLooseQty,
       packSize,
-      fallbackItem: targetItem || medicineItems[0],
+      fallbackItem: pinnedRow || targetItem || medicineItems[0],
       compactInventory,
       editingInvoiceId,
-      priorityBatchNo: targetItem?.batch || targetItem?.batch_no,
-      priorityInventoryId: targetItem?.inventory_id || (typeof targetItem?.id === 'number' && targetItem.id < 1000000000 ? targetItem.id : undefined)
+      priorityBatchNo: pinnedRow?.batch || pinnedRow?.batch_no,
+      priorityInventoryId: pinnedRow?.inventory_id || (typeof pinnedRow?.id === 'number' && pinnedRow.id < 1000000000 ? pinnedRow.id : undefined),
+      respectPriorityBatch: Boolean(editingInvoiceId || manualPinnedRow)
     });
 
     if (newMedRows.length > medicineItems.length) {
@@ -3237,6 +2758,7 @@ const POS = () => {
       };
       
       const compactInventory = getCompactInventoryCache();
+      const isManualPin = Boolean((med as Partial<CartRow>).manualBatchSelected);
       const allocated = allocateMedicineBatches({
         medicineId: Number(med.medicine_id || (typeof med.id === 'number' && med.id < 1000000000 ? med.id : 0)),
         medicineName: med.name || med.medicine_name || '',
@@ -3247,7 +2769,8 @@ const POS = () => {
         compactInventory,
         editingInvoiceId,
         priorityBatchNo: med.batch || (med as any).batch_no,
-        priorityInventoryId: med.inventory_id || (typeof med.id === 'number' && med.id < 1000000000 ? med.id : undefined)
+        priorityInventoryId: med.inventory_id || (typeof med.id === 'number' && med.id < 1000000000 ? med.id : undefined),
+        respectPriorityBatch: isManualPin
       });
 
       if (allocated.length > 0) {
@@ -3596,7 +3119,8 @@ const POS = () => {
       compactInventory,
       editingInvoiceId,
       priorityBatchNo: med.batch_no || (med as any).batch,
-      priorityInventoryId: med.inventory_id || (typeof med.id === 'number' && med.id < 1000000000 ? med.id : undefined)
+      priorityInventoryId: med.inventory_id || (typeof med.id === 'number' && med.id < 1000000000 ? med.id : undefined),
+      respectPriorityBatch: Boolean((med as Partial<CartRow>).manualBatchSelected)
     });
 
     updateCart(prev => {
@@ -3895,7 +3419,7 @@ const POS = () => {
         const batchMatches = mapped.filter(m => m.batch_no && m.batch_no.toLowerCase().includes(batchTerm));
         if (batchMatches.length > 0) {
           const exact = batchMatches.find(m => m.batch_no.toLowerCase() === batchTerm);
-          return { item: exact || batchMatches[0] };
+          return { item: { ...(exact || batchMatches[0]), manualBatchSelected: true } };
         }
       }
 
@@ -6406,10 +5930,13 @@ const POS = () => {
                                 const compact = getCompactInventoryCache();
                                 const rowMedId = Number(item.medicine_id || (typeof item.id === 'number' && item.id < 1000000000 ? item.id : 0));
                                 if (compact && compact.length > 0) {
-                                  const localMatches = compact.filter(med => 
-                                    (rowMedId > 0 && (Number(med.medicine_id) === rowMedId || Number(med.id) === rowMedId)) ||
-                                    (!rowMedId && (med.name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim())
-                                  );
+                                  const localMatches = compact
+                                    .filter(med =>
+                                      ((rowMedId > 0 && (Number(med.medicine_id) === rowMedId || Number(med.id) === rowMedId)) ||
+                                      (!rowMedId && (med.name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim())) &&
+                                      (!isExpiredDate(med.expiry_date) || med.batch_no === item.batch)
+                                    )
+                                    .sort((a, b) => getExpirySortTimestamp(a.expiry_date) - getExpirySortTimestamp(b.expiry_date));
                                   if (localMatches.length > 0) {
                                     setRowBatchesList(localMatches.map(m => ({
                                       inventory_id: m.inventory_id,
@@ -6429,10 +5956,13 @@ const POS = () => {
                                 api.searchMedicine(item.name || '')
                                   .then(data => {
                                     if (Array.isArray(data) && data.length > 0) {
-                                      const matches = data.filter(med => 
-                                        (rowMedId > 0 && (Number(med.medicine_id) === rowMedId || Number(med.id) === rowMedId)) ||
-                                        (!rowMedId && (med.medicine_name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim())
-                                      );
+                                      const matches = data
+                                        .filter(med =>
+                                          ((rowMedId > 0 && (Number(med.medicine_id) === rowMedId || Number(med.id) === rowMedId)) ||
+                                          (!rowMedId && (med.medicine_name || '').toLowerCase().trim() === (item.name || '').toLowerCase().trim())) &&
+                                          (!isExpiredDate(med.expiry_date) || med.batch_no === item.batch)
+                                        )
+                                        .sort((a, b) => getExpirySortTimestamp(a.expiry_date) - getExpirySortTimestamp(b.expiry_date));
                                       if (matches.length > 0) {
                                         setRowBatchesList(matches);
                                       }
@@ -6505,7 +6035,8 @@ const POS = () => {
                                             costPrice: b.cost_price,
                                             packSize: b.pack_size || cItem.packSize,
                                             availableStock: batchQty,
-                                            availableLooseStock: batchLoose
+                                            availableLooseStock: batchLoose,
+                                            manualBatchSelected: true
                                           };
                                         }));
                                         setActiveBatchRowId(null);
