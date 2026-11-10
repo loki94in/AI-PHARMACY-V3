@@ -764,6 +764,159 @@ router.post('/check', async (_req, res) => {
   }
 });
 
+// Stage explicitly selected CRM refill medicines into QA queue (does NOT write to Pharmarack live cart)
+router.post('/qa-stage', async (req, res) => {
+  const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+  const cleanItems = rawItems
+    .map((it: any) => ({
+      refill_id: Number(it?.refill_id ?? it?.refillId ?? it?.id),
+      qty: Math.max(1, Math.round(Number(it?.qty ?? it?.quantity ?? 1)))
+    }))
+    .filter((it: { refill_id: number; qty: number }) => Number.isInteger(it.refill_id) && it.refill_id > 0 && Number.isFinite(it.qty));
+
+  if (cleanItems.length === 0) {
+    return res.status(400).json({ error: 'Select at least one refill medicine with quantity >= 1' });
+  }
+
+  let db: any;
+  let inTx = false;
+  try {
+    db = await dbManager.getConnection();
+    const nowSql = toLocalSqlDateTime();
+    const todayYmd = nowSql.slice(0, 10);
+    await db.run('BEGIN');
+    inTx = true;
+    const stagedIds: number[] = [];
+    const stagedItems: Array<{ refill_id: number; qty: number; selection_type: 'early_crm_addition' | 'due_addition'; scheduled_due_date: string | null }> = [];
+    const skippedDuplicates: Array<{ refill_id: number; reason: string; existing_status: string }> = [];
+
+    for (const item of cleanItems) {
+      const existing = await db.get(
+        `SELECT id, status, is_active, qa_cart_qty, qa_staged_at, cart_store_name, cart_product_code,
+                cart_cycle_due_date, next_refill_date, refill_interval_days
+         FROM patient_refills
+         WHERE id = ?`,
+        [item.refill_id]
+      );
+      if (!existing || existing.is_active !== 1) {
+        skippedDuplicates.push({ refill_id: item.refill_id, reason: 'inactive_or_missing', existing_status: existing?.status || 'missing' });
+        continue;
+      }
+
+      const stLower = String(existing.status || 'pending').toLowerCase();
+      const dueYmd = existing.next_refill_date ? String(existing.next_refill_date).slice(0, 10) : '';
+      const cycleCartYmd = existing.cart_cycle_due_date ? String(existing.cart_cycle_due_date).slice(0, 10) : '';
+      const sameCycleCart = (Boolean(existing.cart_store_name) || Boolean(existing.cart_product_code)) &&
+        (!cycleCartYmd || !dueYmd || cycleCartYmd === dueYmd);
+
+      // Duplicate prevention: do not re-stage items already ordered/in live cart/completed for this cycle.
+      // (Updating quantity on an already QA-staged item before live-cart approval IS allowed.)
+      if (['completed', 'fulfilled', 'canceled', 'cancelled', 'ordered', 'ready', 'notified'].includes(stLower) || sameCycleCart) {
+        skippedDuplicates.push({
+          refill_id: item.refill_id,
+          reason: sameCycleCart ? 'already_in_live_cart' : `already_${stLower}`,
+          existing_status: sameCycleCart ? 'in_live_cart' : stLower
+        });
+        continue;
+      }
+
+      const intervalDays = Math.max(1, Number(existing.refill_interval_days || 30));
+      const leadDays = Math.min(7, Math.max(1, Math.floor(intervalDays / 3)));
+      let isEarlyAddition = false;
+      if (dueYmd) {
+        const todayDt = new Date(`${todayYmd}T00:00:00`);
+        const dueDt = new Date(`${dueYmd}T00:00:00`);
+        const diffDays = Math.round((dueDt.getTime() - todayDt.getTime()) / 86400000);
+        isEarlyAddition = diffDays > leadDays;
+      }
+
+      // Preserve initial qa_staged_at when editing qty so early-CRM provenance stays accurate,
+      // and NEVER advance next_refill_date / last_refill_date here (staging != fulfillment).
+      const effectiveStagedAt = existing.qa_staged_at || nowSql;
+      const upd = await db.run(
+        `UPDATE patient_refills
+         SET qa_cart_qty = ?,
+             qa_staged_at = ?,
+             cart_cycle_due_date = COALESCE(?, cart_cycle_due_date),
+             cart_status = 'qa_queued',
+             updated_at = ?
+         WHERE id = ? AND is_active = 1`,
+        [item.qty, effectiveStagedAt, dueYmd || null, nowSql, item.refill_id]
+      );
+      if (upd?.changes > 0) {
+        stagedIds.push(item.refill_id);
+        stagedItems.push({
+          refill_id: item.refill_id,
+          qty: item.qty,
+          selection_type: isEarlyAddition ? 'early_crm_addition' : 'due_addition',
+          scheduled_due_date: dueYmd || null
+        });
+      }
+    }
+    await db.run('COMMIT');
+    inTx = false;
+
+    if (stagedIds.length > 0) {
+      const ph = stagedIds.map(() => '?').join(',');
+      const stagedRows: any[] = await db.all(
+        `SELECT pr.id, pr.patient_phone, COALESCE(m.name, pr.medicine_name, '') as medicine_name
+         FROM patient_refills pr LEFT JOIN medicines m ON m.id = pr.medicine_id
+         WHERE pr.id IN (${ph})`,
+        stagedIds
+      );
+      const phones = new Set(stagedRows.map(r => r.patient_phone).filter(Boolean));
+      for (const phone of phones) {
+        await purgePendingCustomerReminders(db, {
+          phone,
+          refillIds: stagedIds,
+          medicineNames: stagedRows.filter(r => r.patient_phone === phone).map(r => r.medicine_name).filter(Boolean)
+        }).catch(() => {});
+      }
+    }
+
+    res.json({
+      success: true,
+      staged_count: stagedIds.length,
+      staged_ids: stagedIds,
+      staged_items: stagedItems,
+      skipped_duplicates: skippedDuplicates
+    });
+  } catch (err: any) {
+    if (inTx && db) await db.run('ROLLBACK').catch(() => {});
+    console.error('Failed to stage refills for QA:', err);
+    res.status(500).json({ error: err?.message || 'Failed to stage refills for QA' });
+  }
+});
+
+// Unstage selected refill medicines from the QA queue without mutating live cart
+router.post('/qa-unstage', async (req, res) => {
+  const rawIds = Array.isArray(req.body?.refill_ids) ? req.body.refill_ids : [];
+  const ids: number[] = Array.from(new Set(rawIds.map((v: any) => Number(v)).filter((n: number) => Number.isInteger(n) && n > 0)));
+  if (ids.length === 0) {
+    return res.status(400).json({ error: 'refill_ids array required' });
+  }
+
+  let db: any;
+  try {
+    db = await dbManager.getConnection();
+    const nowSql = toLocalSqlDateTime();
+    const ph = ids.map(() => '?').join(',');
+    const upd = await db.run(
+      `UPDATE patient_refills
+       SET qa_cart_qty = NULL,
+           qa_staged_at = NULL,
+           cart_status = CASE WHEN cart_store_name IS NOT NULL OR cart_product_code IS NOT NULL THEN 'added' ELSE 'pending' END,
+           updated_at = ?
+       WHERE id IN (${ph})`,
+      [nowSql, ...ids]
+    );
+    res.json({ success: true, unstaged_count: upd?.changes || 0, unstaged_ids: ids });
+  } catch (err: any) {
+    console.error('Failed to unstage refills from QA:', err);
+    res.status(500).json({ error: err?.message || 'Failed to unstage refills from QA' });
+  }
+});
+
 // Update a refill schedule manually
 router.put('/:id', async (req, res, next) => {
   const { id } = req.params;
@@ -909,21 +1062,27 @@ router.get('/panel', async (req, res) => {
         LEFT JOIN customers cp ON pr.customer_id IS NULL AND cp.phone = pr.patient_phone AND cp.phone IS NOT NULL AND cp.phone != ''`;
     const params: any[] = [];
     if (upcomingDays && !isNaN(upcomingDays) && upcomingDays > 0) {
+      // Interval-aware lead window (floor(interval/3), min 1, capped at upcomingDays) + cycle cooldown
+      // prevents short-cycle patients (e.g. 8-day Mr. NIDGE) from resurrecting immediately after fulfillment,
+      // and avoids cross-patient/cross-medicine phone bleed by never dragging un-due sibling rows via phone IN (...).
       query += ` WHERE pr.is_active = 1
-                   AND (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
                    AND (
-                     DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days')
+                     COALESCE(pr.qa_cart_qty, 0) > 0
                      OR pr.cart_store_name IS NOT NULL
                      OR pr.cart_product_code IS NOT NULL
                      OR pr.status = 'ordered'
                      OR pr.is_ready = 1
-                     OR pr.patient_phone IN (
-                       SELECT pr2.patient_phone FROM patient_refills pr2
-                       WHERE pr2.is_active = 1
-                         AND (pr2.cart_store_name IS NOT NULL OR pr2.cart_product_code IS NOT NULL OR pr2.status = 'ordered' OR pr2.is_ready = 1)
+                     OR (
+                       (pr.last_refill_date IS NULL OR DATE(pr.next_refill_date) > DATE(pr.last_refill_date))
+                       AND DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || MIN(?, MAX(1, (CAST(COALESCE(pr.refill_interval_days, 30) AS INTEGER) / 3))) || ' days')
+                       AND (
+                         pr.last_refill_date IS NULL
+                         OR DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+                         OR CAST(julianday(DATE('now', 'localtime')) - julianday(DATE(pr.last_refill_date)) AS INTEGER) >= MAX(1, COALESCE(pr.refill_interval_days, 30) - MIN(?, MAX(1, (CAST(COALESCE(pr.refill_interval_days, 30) AS INTEGER) / 3))))
+                       )
                      )
                    ) ${storeCond ? 'AND ' + storeCond : ''}`;
-      params.push(upcomingDays);
+      params.push(upcomingDays, upcomingDays);
       if (!allStores) params.push(targetStoreId, targetStoreId);
     } else if (storeCond) {
       query += ` WHERE ${storeCond}`;
@@ -1003,9 +1162,13 @@ router.get('/panel', async (req, res) => {
 
     const patientGroups: Record<string, any> = {};
     for (const row of rows) {
-      const phone = row.patient_phone;
-      if (!patientGroups[phone]) {
-        patientGroups[phone] = {
+      const cleanDigits = String(row.patient_phone || '').replace(/\D/g, '').slice(-10);
+      const groupKey = row.customer_id
+        ? `c:${row.customer_id}`
+        : `p:${cleanDigits || String(row.patient_phone || '').trim()}|${String(row.patient_name || '').trim().toLowerCase()}`;
+      if (!patientGroups[groupKey]) {
+        patientGroups[groupKey] = {
+          patient_key: groupKey,
           customer_id: row.customer_id,
           patient_name: row.patient_name,
           patient_phone: row.patient_phone,
@@ -1024,13 +1187,13 @@ router.get('/panel', async (req, res) => {
         };
       }
       // If a row has an earlier due date, use that as the group's next refill date
-      if (new Date(row.next_refill_date) < new Date(patientGroups[phone].next_refill_date)) {
-        patientGroups[phone].next_refill_date = row.next_refill_date;
+      if (new Date(row.next_refill_date) < new Date(patientGroups[groupKey].next_refill_date)) {
+        patientGroups[groupKey].next_refill_date = row.next_refill_date;
       }
       const medReminderStatus = row.reminder_status || (row.status === 'notified' ? 'SENT' : 'NOT_SENT');
       
       // Deduplicate medicine rows within group to prevent duplicate cards
-      if (!patientGroups[phone].medicines.some((m: any) => m.id === row.id)) {
+      if (!patientGroups[groupKey].medicines.some((m: any) => m.id === row.id)) {
         const stock = stockByMedicine.get(Number(row.medicine_id));
         
         // Resolve active live cart line strictly for THIS patient's recorded order (prevents cross-patient bleed & shelf stock hijack)
@@ -1044,11 +1207,25 @@ router.get('/panel', async (req, res) => {
           }
         }
         const finalCartStoreName = liveCartHit ? liveCartHit.storeName : (row.cart_store_name || null);
-        const finalCartQty = liveCartHit ? liveCartHit.qty : (row.cart_qty || null);
+        // Preserve this refill's allocated qty (cart_qty) so shared distributor lines never overwrite another patient's count
+        const finalCartQty = (row.cart_qty !== null && row.cart_qty !== undefined && Number(row.cart_qty) > 0)
+          ? Number(row.cart_qty)
+          : (liveCartHit ? liveCartHit.qty : null);
         const inLiveCart = !!liveCartHit || Boolean(row.cart_store_name);
 
-        patientGroups[phone].medicines.push({
+        const dueYmd = row.next_refill_date ? String(row.next_refill_date).slice(0, 10) : '';
+        const stagedYmd = row.qa_staged_at ? String(row.qa_staged_at).slice(0, 10) : '';
+        const intervalDays = Math.max(1, Number(row.refill_interval_days || 30));
+        const leadDays = Math.min(7, Math.max(1, Math.floor(intervalDays / 3)));
+        const isEarlyCrmAddition = Boolean(
+          dueYmd && stagedYmd &&
+          Math.round((new Date(`${dueYmd}T00:00:00`).getTime() - new Date(`${stagedYmd}T00:00:00`).getTime()) / 86400000) > leadDays
+        );
+
+        patientGroups[groupKey].medicines.push({
           id: row.id,
+          patient_key: groupKey,
+          customer_id: row.customer_id || null,
           medicine_id: row.medicine_id,
           medicine_name: row.medicine_name,
           next_refill_date: row.next_refill_date,
@@ -1083,6 +1260,12 @@ router.get('/panel', async (req, res) => {
           // Live-cart line this refill cycle added (refill cart popup); null when none
           cart_store_name: finalCartStoreName,
           cart_qty: finalCartQty,
+          live_cart_total_qty: liveCartHit ? liveCartHit.qty : null,
+          qa_cart_qty: row.qa_cart_qty ?? null,
+          qa_staged_at: row.qa_staged_at || null,
+          is_early_crm_addition: isEarlyCrmAddition,
+          cart_cycle_due_date: row.cart_cycle_due_date || null,
+          cart_status: row.cart_status || (inLiveCart ? 'added' : 'pending'),
           in_live_cart: inLiveCart,
           linked_distributors: linksByMedicine.get(Number(row.medicine_id)) || [],
           batch_id: row.batch_id || null,
@@ -1889,7 +2072,16 @@ export async function executeCloseRefillCycles(
            ordering_triggered = 0,
            cart_product_code = NULL,
            cart_store_name = NULL,
+           cart_store_id = NULL,
+           cart_product_name = NULL,
            cart_qty = NULL,
+           cart_cycle_due_date = NULL,
+           qa_cart_qty = NULL,
+           qa_staged_at = NULL,
+           cart_status = 'pending',
+           batch_id = NULL,
+           approval_status = 'none',
+           approval_reason = NULL,
            patient_confirmed = 0,
            confirmed_at = NULL,
            is_ready = 0,
@@ -1903,9 +2095,10 @@ export async function executeCloseRefillCycles(
            reminder_occurrence_date = NULL,
            auto_remind = 0,
            last_collection_reminder_at = NULL,
-           collection_reminder_count = 0
+           collection_reminder_count = 0,
+           updated_at = ?
        WHERE id = ?`,
-      [localNow, nextDateStr, refill.id]
+      [localNow, nextDateStr, localNow, refill.id]
     );
 
     fulfilledIds.push(refill.id);
@@ -1932,7 +2125,7 @@ export async function executeCloseRefillCycles(
       const mName = (refill.medicine_name || '').trim().toLowerCase();
       if (cleanPhoneDigits.length >= 7 && mName) {
         conditions.push(`(phone LIKE ? AND (source = 'refill' OR LOWER(TRIM(COALESCE(medicine_name, ''))) = ? OR ? LIKE '%' || LOWER(TRIM(COALESCE(medicine_name, ''))) || '%' OR LOWER(TRIM(COALESCE(medicine_name, ''))) LIKE '%' || ? || '%'))`);
-        params.push(`%${cleanPhoneDigits}%`, mName, mName, mName, mName);
+        params.push(`%${cleanPhoneDigits}%`, mName, mName, mName);
       } else if (cleanPhoneDigits.length >= 7) {
         conditions.push(`(phone LIKE ? AND source = 'refill')`);
         params.push(`%${cleanPhoneDigits}%`);

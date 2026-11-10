@@ -17,7 +17,7 @@ import {
 
 // Bump this number whenever you add new CREATE TABLE, ALTER TABLE, or INSERT OR IGNORE statements below.
 // On normal boots where this version matches the stored version, all DDL is skipped entirely (~3-5s saved).
-const CURRENT_SCHEMA_VERSION = 85;
+const CURRENT_SCHEMA_VERSION = 86;
 
 // FTS5 creates exactly these four shadow tables for an external-content index.
 // While the `medicines_fts` declaration exists in sqlite_master these names are
@@ -724,8 +724,13 @@ async function ensureRefillCartLinkSchema(db: any) {
     batch_id: "TEXT DEFAULT NULL",
     source_id: "TEXT DEFAULT NULL",
     approval_status: "TEXT DEFAULT 'none'",
-    approval_reason: "TEXT DEFAULT NULL"
+    approval_reason: "TEXT DEFAULT NULL",
+    qa_cart_qty: 'INTEGER DEFAULT NULL',
+    qa_staged_at: 'TEXT DEFAULT NULL',
+    cart_cycle_due_date: 'TEXT DEFAULT NULL',
+    updated_at: 'DATETIME DEFAULT NULL'
   });
+  await db.run('CREATE INDEX IF NOT EXISTS idx_patient_refills_qa_staged ON patient_refills (is_active, qa_cart_qty)');
   await db.run(`
     CREATE TABLE IF NOT EXISTS refill_batches (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2592,6 +2597,10 @@ export async function ensureSchema(dbPath: string) {
       confirmed_at DATETIME DEFAULT NULL,
       source TEXT DEFAULT 'counter',
       cart_status TEXT DEFAULT 'pending',
+      qa_cart_qty INTEGER DEFAULT NULL,
+      qa_staged_at TEXT DEFAULT NULL,
+      cart_cycle_due_date TEXT DEFAULT NULL,
+      updated_at DATETIME DEFAULT NULL,
       FOREIGN KEY(medicine_id) REFERENCES medicines(id),
       FOREIGN KEY(customer_id) REFERENCES customers(id)
     );

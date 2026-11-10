@@ -36,6 +36,7 @@ export interface RefillCartRow extends RefillCartItemInput {
 
 export interface RefillCartJob {
   id: number;
+  patientKey: string;
   patientName: string;
   rows: RefillCartRow[];
   open: boolean;
@@ -157,15 +158,16 @@ export function queueRefillRow(jobId: number, refillId: number, mode: 'add' | 'p
 export function startRefillCartJob(
   patientName: string,
   items: RefillCartItemInput[],
-  options: { openModal?: boolean } = {}
+  options: { openModal?: boolean; patientKey?: string } = {}
 ): number {
   const shouldOpen = options.openModal !== false;
+  const targetKey = options.patientKey || patientName;
   const busy = new Set(jobs.flatMap(j => j.rows.filter(r => r.state === 'queued' || r.state === 'working').map(r => r.refillId)));
-  let job = jobs.find(j => j.patientName === patientName && isRefillJobRunning(j));
+  let job = jobs.find(j => (j.patientKey || j.patientName) === targetKey && isRefillJobRunning(j));
   if (!job) {
-    job = { id: jobSeq++, patientName, rows: [], open: shouldOpen, summaryPending: false };
+    job = { id: jobSeq++, patientKey: targetKey, patientName, rows: [], open: shouldOpen, summaryPending: false };
     // A finished run for the same patient is replaced by the new one.
-    publish([...jobs.filter(j => j.patientName !== patientName || isRefillJobRunning(j)), job]);
+    publish([...jobs.filter(j => (j.patientKey || j.patientName) !== targetKey || isRefillJobRunning(j)), job]);
   }
   const jobId = job.id;
   const fresh: RefillCartRow[] = items

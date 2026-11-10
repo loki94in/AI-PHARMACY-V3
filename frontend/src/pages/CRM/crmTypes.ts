@@ -1,4 +1,5 @@
 export interface RefillPatient {
+  patient_key?: string;
   customer_id?: number;
   patient_name: string;
   patient_phone: string;
@@ -10,6 +11,8 @@ export interface RefillPatient {
   reminder_sent_at?: string | null;
   medicines: {
     id: number;
+    patient_key?: string;
+    customer_id?: number | null;
     medicine_id?: number;
     medicine_name: string;
     next_refill_date?: string;
@@ -41,6 +44,12 @@ export interface RefillPatient {
     confirmed_at?: string | null;
     cart_store_name?: string | null;
     cart_qty?: number | null;
+    live_cart_total_qty?: number | null;
+    qa_cart_qty?: number | null;
+    qa_staged_at?: string | null;
+    is_early_crm_addition?: boolean;
+    cart_cycle_due_date?: string | null;
+    cart_status?: string | null;
     in_live_cart?: boolean;
     linked_distributors?: string[];
   }[];

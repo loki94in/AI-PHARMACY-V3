@@ -2006,6 +2006,16 @@ export const api = {
     apiClient.post<{ success: boolean; message: string; cart_store_name?: string }>(`/refills/${id}/status`, { status: 'ordered', ...options }).then(res => res.data),
   getRefillsPanel: (params?: { upcoming_days?: number; all_stores?: boolean }) =>
     apiClient.get('/refills/panel', { params }).then(res => res.data),
+  stageRefillsForQa: (items: Array<{ refill_id: number; qty: number }>) =>
+    apiClient.post<{
+      success: boolean;
+      staged_count: number;
+      staged_ids: number[];
+      staged_items?: Array<{ refill_id: number; qty: number; selection_type: 'early_crm_addition' | 'due_addition'; scheduled_due_date: string | null }>;
+      skipped_duplicates?: Array<{ refill_id: number; reason: string; existing_status: string }>;
+    }>('/refills/qa-stage', { items }).then(res => res.data),
+  unstageRefillsFromQa: (refill_ids: number[]) =>
+    apiClient.post<{ success: boolean; unstaged_count: number; unstaged_ids: number[] }>('/refills/qa-unstage', { refill_ids }).then(res => res.data),
   toggleRefillOverride: (id: number) => apiClient.post(`/refills/${id}/toggle-override`).then(res => res.data),
   fulfillAllRefills: (phone: string, data?: { refill_ids?: number[]; customer_id?: number | null; fulfilled_via?: string; patient_phone?: string }) => {
     const cleanPhone = (phone || data?.patient_phone || '').trim();

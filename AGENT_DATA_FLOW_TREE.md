@@ -131,9 +131,13 @@ Quick Assist (`QuickAssistSidebar` in `frontend/src/components/Layout.tsx`) is a
 
 `pending_shortage_requests` is not a patient store. Do not point new code at it.
 
-### Refill → Live Cart (added 2026-09-30)
+### CRM → QA Selective Refill → Live Cart (updated 2026-11-10)
 
-CRM **Order to Cart** (patient) and **+ Live Cart** (one medicine) start a run in the frontend store `services/refillCartJobs.ts`. The popup (`RefillCartModal`, mounted once in Layout as `RefillCartJobHost`) shows it. The run sends one `POST /api/refills/:id/add-to-cart` at a time, and `services/refillCartService.ts` handles each:
+1. **CRM Selection (`RefillOrderModal` in `crm_select` mode)**: Opening **Add to Live Cart** or **+ Live Cart** in CRM (`/crm?tab=refills`) displays all medicines in that patient's refill with live statuses (`Early selection` / `Early CRM addition`, `In QA`, `In Live Cart`, `Ordered`, `Needs Link`, `Out of Stock`, `Fulfilled`) and editable quantities. Future due dates (e.g. 27 Nov selected on 10 Nov) are allowed for early pharmacist selection, while medicines already processed in the current cycle are locked against duplicate staging (`skipped_duplicates`). Clicking **Continue to QA** stages **only** selected medicine IDs + quantities via `POST /api/refills/qa-stage` (`qa_cart_qty`, `qa_staged_at`, `cart_cycle_due_date`, `cart_status = 'qa_queued'`) with **zero** Pharmarack Live Cart writes and **without** advancing `next_refill_date` or `last_refill_date`.
+2. **QA Final Approval (`QuickAssistSidebar`)**: QA renders a **CRM → QA Selection** card showing Patient identity, Refill `#id`, Medicine name, Selected quantity, Scheduled due date, and Status (`Early CRM addition` or `Due addition`). Leaving/closing without approving keeps items staged with no cart write; clicking **Add to Cart (N)** inside QA is the **only** human-in-the-loop gate that triggers `services/refillCartJobs.ts` (`POST /api/refills/:id/add-to-cart`), isolated by `patientKey` (`c:<customer_id>` or normalized phone + lower name). Clicking **Clear** calls `POST /api/refills/qa-unstage`. QA cart approval and actual fulfillment (`executeCloseRefillCycles`) remain separate states.
+3. **Reopen & Cycle Cooldown**: The user can reopen CRM at any time to select remaining eligible pending medicines; previously processed rows retain their statuses. `GET /api/refills/panel?upcoming_days=7` and `effectiveRefillLeadDays` enforce interval-aware lead days (`MIN(7, MAX(1, floor(interval / 3)))`) + cooldown so short-cycle refills (e.g. 8-day cycles) stay dormant after fulfillment, and partial **Complete** / **POS** handoffs honor `selectedIds` strictly.
+
+`services/refillCartService.ts` processes each approved medicine inside `runWithCartLock`:
 
 ```text
 live cart has it (saved product, this refill's line, or exact name)  → in_cart, never re-added

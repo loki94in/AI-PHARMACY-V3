@@ -102,11 +102,33 @@ export async function checkAllRefills(db: Database): Promise<void> {
     const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
     const dateYmd = refill.next_refill_date ? refill.next_refill_date.slice(0, 10) : '';
-    const effNotice = await effectiveNoticeDays(noticeDays, dateYmd, refill.store_id || 1, db);
+    const baseNotice = await effectiveNoticeDays(noticeDays, dateYmd, refill.store_id || 1, db);
+    const intervalDays = Math.max(1, Number(refill.refill_interval_days || 30));
+    const effNotice = Math.min(baseNotice, Math.max(1, Math.floor(intervalDays / 3)));
 
-    // Check if within the notice lead time
-    const highlightTrigger = diffDays <= effNotice;
-    const orderTrigger = diffDays <= effNotice;
+    let inCooldown = false;
+    if (refill.last_refill_date && diffDays > 0) {
+      const lastDate = new Date(refill.last_refill_date);
+      lastDate.setHours(0, 0, 0, 0);
+      const daysSinceLast = Math.round((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (daysSinceLast < Math.max(1, intervalDays - effNotice)) {
+        inCooldown = true;
+      }
+    }
+
+    // If this refill was already staged early in QA or already added to live cart for this cycle, do not trigger duplicate orders/alerts when the scheduled due date arrives
+    if (
+      Number(refill.qa_cart_qty || 0) > 0 ||
+      Boolean(refill.cart_store_name) ||
+      Boolean(refill.cart_product_code) ||
+      (dateYmd && refill.cart_cycle_due_date && String(refill.cart_cycle_due_date).slice(0, 10) === dateYmd)
+    ) {
+      continue;
+    }
+
+    // Check if within the interval-aware notice lead time and outside post-fulfill cooldown
+    const highlightTrigger = !inCooldown && diffDays <= effNotice;
+    const orderTrigger = !inCooldown && diffDays <= effNotice;
 
     if (!orderTrigger && !highlightTrigger) {
       continue;
@@ -201,8 +223,21 @@ export async function checkAllRefills(db: Database): Promise<void> {
          AND pr.status NOT IN ('completed', 'canceled', 'notified', 'ordered')
          AND COALESCE(pr.reminder_status, 'NOT_SENT') != 'SNOOZED'
          AND COALESCE(pr.patient_confirmed, 0) = 0
+         AND COALESCE(pr.qa_cart_qty, 0) <= 0
          AND pr.cart_store_name IS NULL
-         AND (pr.next_refill_date IS NULL OR DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || ? || ' days'))
+         AND pr.cart_product_code IS NULL
+         AND (pr.cart_cycle_due_date IS NULL OR DATE(pr.cart_cycle_due_date) != DATE(pr.next_refill_date))
+         AND (
+           pr.next_refill_date IS NULL
+           OR (
+             DATE(pr.next_refill_date) <= DATE('now', 'localtime', '+' || MIN(?, MAX(1, (CAST(COALESCE(pr.refill_interval_days, 30) AS INTEGER) / 3))) || ' days')
+             AND (
+               pr.last_refill_date IS NULL
+               OR DATE(pr.next_refill_date) <= DATE('now', 'localtime')
+               OR CAST(julianday(DATE('now', 'localtime')) - julianday(DATE(pr.last_refill_date)) AS INTEGER) >= MAX(1, COALESCE(pr.refill_interval_days, 30) - MIN(?, MAX(1, (CAST(COALESCE(pr.refill_interval_days, 30) AS INTEGER) / 3))))
+             )
+           )
+         )
          AND (pr.last_refill_date IS NULL OR DATE(pr.last_refill_date) < DATE('now', 'localtime'))
          AND NOT EXISTS (
            SELECT 1 FROM refill_fulfillments rf
@@ -214,7 +249,7 @@ export async function checkAllRefills(db: Database): Promise<void> {
                OR (DATE(rf.next_due_date) > DATE('now', 'localtime'))
              )
          )`,
-      [noticeDays]
+      [noticeDays, noticeDays]
     ).catch(() => []);
 
     for (const p of duePatientRows) {

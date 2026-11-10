@@ -1,4 +1,4 @@
-import { getRefillStage, isOrderGroupSettled, isRefillFulfilledToday, isRefillSettled, isRefillOrdered, checkRefillCycleBooking, checkPatientRefillCycleBooking } from '../utils/refillSettled';
+import { getRefillStage, isOrderGroupSettled, isRefillFulfilledToday, isRefillSettled, isRefillOrdered, checkRefillCycleBooking, checkPatientRefillCycleBooking, effectiveRefillLeadDays, isRefillQaStaged, isEarlyCrmAddition } from '../utils/refillSettled';
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -283,9 +283,82 @@ export const QuickAssistSidebar = memo(({
 
   const handleOrderRefillGroupToCart = (group: any) => {
     setRefillOrderModalGroup(group);
+    // Background-enrich with all CRM medicines for this patient so returning to select remaining
+    // medicines also shows any pending medicines beyond the 7-day QA due window (Rule 3)
+    api.getRefillsPanel({})
+      .then((allGroups: any[]) => {
+        if (!Array.isArray(allGroups)) return;
+        const cleanDigits = String(group.patient_phone || '').replace(/\D/g, '').slice(-10);
+        const match = allGroups.find(p =>
+          (group.key && p.patient_key && p.patient_key === group.key) ||
+          (group.customer_id && p.customer_id && Number(group.customer_id) === Number(p.customer_id)) ||
+          (cleanDigits && String(p.patient_phone || '').replace(/\D/g, '').slice(-10) === cleanDigits &&
+            String(p.patient_name || '').trim().toLowerCase() === String(group.patient_name || '').trim().toLowerCase())
+        );
+        if (match && Array.isArray(match.medicines) && match.medicines.length > 0) {
+          setRefillOrderModalGroup((prev: any) =>
+            prev && prev.key === group.key ? { ...prev, medicines: match.medicines } : prev
+          );
+        }
+      })
+      .catch(() => {});
   };
 
   const [confirmingRefillKeys, setConfirmingRefillKeys] = useState<Set<string>>(new Set());
+
+  const handleApproveQaCartForGroup = (group: {
+    key: string;
+    patient_name: string;
+    medicines: Array<{
+      id: number;
+      medicine_id?: number;
+      medicine_name: string;
+      qa_cart_qty?: number | null;
+      quantity_needed?: number;
+      in_stock_qty?: number;
+      cart_store_name?: string | null;
+      cart_qty?: number | null;
+      in_live_cart?: boolean;
+      cart_status?: string | null;
+    }>;
+  }) => {
+    const qaMeds = group.medicines.filter(isRefillQaStaged);
+    if (qaMeds.length === 0) return;
+    startRefillCartJob(
+      group.patient_name,
+      qaMeds.map(m => ({
+        refillId: m.id,
+        medicineId: m.medicine_id,
+        medicineName: m.medicine_name,
+        qty: Math.max(1, Number(m.qa_cart_qty || m.quantity_needed || 3)),
+        neededQty: m.quantity_needed,
+        stockQty: m.in_stock_qty,
+        cartStoreName: m.cart_store_name,
+        cartQty: m.cart_qty,
+        inLiveCart: m.in_live_cart
+      })),
+      { openModal: false, patientKey: group.key }
+    );
+    toastEvent.trigger(`Approved ${qaMeds.length} medicine(s) in QA — adding to Pharmarack Live Cart…`, 'info', '/pharmarack-cart');
+  };
+
+  const handleCancelQaCartForGroup = async (group: {
+    key: string;
+    patient_name: string;
+    medicines: Array<{ id: number; qa_cart_qty?: number | null; cart_status?: string | null }>;
+  }) => {
+    const qaIds = group.medicines.filter(isRefillQaStaged).map(m => m.id);
+    if (qaIds.length === 0) return;
+    try {
+      await api.unstageRefillsFromQa(qaIds);
+      toastEvent.trigger(`Cleared QA cart selection for "${group.patient_name}" — no live-cart changes made.`, 'info');
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+      refillEvent.triggerRefresh();
+      onActionComplete();
+    } catch (err: any) {
+      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to clear QA selection', 'error');
+    }
+  };
 
   const handleConfirmRefillGroup = async (group: {
     key: string;
@@ -303,10 +376,10 @@ export const QuickAssistSidebar = memo(({
         patientPhone: group.patient_phone,
         patientName: group.patient_name,
         refillIds: activeIds,
-        addToLiveCart: true
+        addToLiveCart: false
       });
       if (res?.success) {
-        toastEvent.trigger(`Refill confirmed & added to Pharmarack live cart for "${group.patient_name}"!`, 'success');
+        toastEvent.trigger(`Refill confirmed for "${group.patient_name}"!`, 'success');
         refillEvent.triggerRefresh();
         onRefreshDailyLog();
       }
@@ -540,15 +613,22 @@ export const QuickAssistSidebar = memo(({
     }
 
     const cleanDigits = (group.patient_phone || '').replace(/\D/g, '').slice(-10);
+    const targetMeds = selectedIds && selectedIds.length > 0
+      ? group.medicines.filter(m => selectedIds.includes(m.id))
+      : group.medicines;
+    const targetIds = targetMeds.map(m => m.id);
+    const bookingAll = targetMeds.length >= group.medicines.length;
 
-    // Optimistically hide from Quick Assist immediately across key, phone, name, and medicine IDs
+    // Optimistically hide only the booked medicines (and full card only if all medicines were booked)
     setOptimisticHiddenRefillKeys(prev => {
       const next = new Set(prev);
-      next.add(group.key);
-      if (group.patient_phone) next.add(group.patient_phone);
-      if (cleanDigits) next.add(cleanDigits);
-      if (group.patient_name) next.add(group.patient_name.trim());
-      for (const m of group.medicines) {
+      if (bookingAll) {
+        next.add(group.key);
+        if (group.patient_phone) next.add(group.patient_phone);
+        if (cleanDigits) next.add(cleanDigits);
+        if (group.patient_name) next.add(group.patient_name.trim());
+      }
+      for (const m of targetMeds) {
         next.add(String(m.id));
       }
       return next;
@@ -559,9 +639,9 @@ export const QuickAssistSidebar = memo(({
       .filter(so => {
         const soPhoneDigits = (so.phone || '').replace(/\D/g, '').slice(-10);
         const phoneMatch = cleanDigits && soPhoneDigits && (cleanDigits === soPhoneDigits || soPhoneDigits.includes(cleanDigits) || cleanDigits.includes(soPhoneDigits));
-        const medNames = new Set(group.medicines.map(m => (m.medicine_name || '').toLowerCase().trim()));
+        const medNames = new Set(targetMeds.map(m => (m.medicine_name || '').toLowerCase().trim()));
         const medMatch = (so.medicine_name || so.product) && medNames.has((so.medicine_name || so.product || '').toLowerCase().trim());
-        const sourceRefillMatch = group.medicines.some(m => so.source_refill_id === m.id);
+        const sourceRefillMatch = targetMeds.some(m => so.source_refill_id === m.id);
         return sourceRefillMatch || (phoneMatch && (so.source === 'refill' || medMatch));
       })
       .map(so => so.id);
@@ -574,14 +654,14 @@ export const QuickAssistSidebar = memo(({
       });
     }
 
-    // Persist refill fulfillment to database immediately so the cycle advances by interval (+30d)
+    // Persist refill fulfillment to database immediately so the cycle advances by interval
     // and pending call tasks close, ensuring the patient is removed from Quick Assist until the next cycle
     // even if the bill is not ultimately saved in POS.
     api.fulfillAllRefills(group.patient_phone, {
-      refill_ids: selectedIds && selectedIds.length > 0 ? selectedIds : group.medicines.map(m => m.id),
+      refill_ids: targetIds,
       fulfilled_via: 'quick_assist_pos',
       patient_phone: group.patient_phone,
-      customer_id: group.customer_id || group.medicines[0]?.customer_id || undefined
+      customer_id: group.customer_id || targetMeds[0]?.customer_id || undefined
     }).then(() => {
       queryClient.invalidateQueries({ queryKey: ['refills'] });
       queryClient.invalidateQueries({ queryKey: ['orders'] });
@@ -600,15 +680,15 @@ export const QuickAssistSidebar = memo(({
         prefill: {
           patientName: group.patient_name,
           patientPhone: group.patient_phone,
-          customerId: group.customer_id || group.medicines[0]?.customer_id || undefined,
+          customerId: group.customer_id || targetMeds[0]?.customer_id || undefined,
           refillPatient: true,
           isRefillBooking: true,
           isEarlyRefill: cycleStatus.isEarly,
           daysEarly: cycleStatus.daysEarly,
           refillDueDate: (group as any).next_refill_date || cycleStatus.nextDueDate,
-          refillDays: group.medicines[0]?.refill_interval_days || 30,
-          refillIds: group.medicines.map(m => m.id),
-          medicines: group.medicines.map(m => ({
+          refillDays: targetMeds[0]?.refill_interval_days || 30,
+          refillIds: targetIds,
+          medicines: targetMeds.map(m => ({
             id: m.id,
             medicine_id: m.medicine_id,
             medicineId: m.medicine_id,
@@ -667,16 +747,23 @@ export const QuickAssistSidebar = memo(({
     setFulfillingRefillKeys(prev => new Set(prev).add(group.key));
 
     const cleanDigits = (group.patient_phone || '').replace(/\D/g, '').slice(-10);
-    const medNames = new Set(group.medicines.map(m => (m.medicine_name || '').toLowerCase().trim()));
+    const targetMeds = selectedIds && selectedIds.length > 0
+      ? group.medicines.filter(m => selectedIds.includes(m.id))
+      : group.medicines;
+    const targetIds = targetMeds.map(m => m.id);
+    const completingAll = targetMeds.length >= group.medicines.length;
+    const medNames = new Set(targetMeds.map(m => (m.medicine_name || '').toLowerCase().trim()));
 
-    // Optimistically hide from Quick Assist immediately across key, phone, name, and medicine IDs
+    // Optimistically hide only the completed medicines (and full group key only if all medicines completed)
     setOptimisticHiddenRefillKeys(prev => {
       const next = new Set(prev);
-      next.add(group.key);
-      if (group.patient_phone) next.add(group.patient_phone);
-      if (cleanDigits) next.add(cleanDigits);
-      if (group.patient_name) next.add(group.patient_name.trim());
-      for (const m of group.medicines) {
+      if (completingAll) {
+        next.add(group.key);
+        if (group.patient_phone) next.add(group.patient_phone);
+        if (cleanDigits) next.add(cleanDigits);
+        if (group.patient_name) next.add(group.patient_name.trim());
+      }
+      for (const m of targetMeds) {
         next.add(String(m.id));
       }
       return next;
@@ -688,7 +775,7 @@ export const QuickAssistSidebar = memo(({
         const soPhoneDigits = (so.phone || '').replace(/\D/g, '').slice(-10);
         const phoneMatch = cleanDigits && soPhoneDigits && (cleanDigits === soPhoneDigits || soPhoneDigits.includes(cleanDigits) || cleanDigits.includes(soPhoneDigits));
         const medMatch = (so.medicine_name || so.product) && medNames.has((so.medicine_name || so.product || '').toLowerCase().trim());
-        const sourceRefillMatch = group.medicines.some(m => so.source_refill_id === m.id);
+        const sourceRefillMatch = targetMeds.some(m => so.source_refill_id === m.id);
         return sourceRefillMatch || (phoneMatch && (so.source === 'refill' || medMatch));
       })
       .map(so => so.id);
@@ -703,10 +790,10 @@ export const QuickAssistSidebar = memo(({
 
     try {
       const res = await api.fulfillAllRefills(group.patient_phone, {
-        refill_ids: group.medicines.map(m => m.id),
+        refill_ids: targetIds,
         fulfilled_via: 'quick_assist_complete',
         patient_phone: group.patient_phone,
-        customer_id: group.customer_id || group.medicines[0]?.customer_id || undefined
+        customer_id: group.customer_id || targetMeds[0]?.customer_id || undefined
       });
       toastEvent.trigger(res?.message || `Refill task completed & removed for "${group.patient_name}"`, 'success');
       queryClient.invalidateQueries({ queryKey: ['refills'] });
@@ -1038,7 +1125,11 @@ export const QuickAssistSidebar = memo(({
       if (r.approval_status === 'required') {
         return true;
       }
+      const isQaStaged = isRefillQaStaged(r as any);
       const isOrderedOrInCart = isRefillOrdered(r) || !!r.cart_store_name || !!r.cart_product_code || (r as any).in_live_cart;
+      if (isQaStaged) {
+        return true;
+      }
       if (
         !r.next_refill_date ||
         isRefillSettled(r) ||
@@ -1051,7 +1142,8 @@ export const QuickAssistSidebar = memo(({
       if (isNaN(d.getTime())) return false;
       const dueStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const diffDays = Math.round((dueStart - todayStart) / 86400000);
-      return diffDays <= 7 || isOrderedOrInCart;
+      const leadDays = effectiveRefillLeadDays(r.refill_interval_days, 7);
+      return diffDays <= leadDays || isOrderedOrInCart;
     });
   }, [flatRefills]);
 
@@ -1101,6 +1193,11 @@ export const QuickAssistSidebar = memo(({
         cart_store_name?: string | null;
         cart_qty?: number | null;
         cart_product_code?: string | null;
+        qa_cart_qty?: number | null;
+        qa_staged_at?: string | null;
+        is_early_crm_addition?: boolean;
+        cart_cycle_due_date?: string | null;
+        cart_status?: string | null;
         status?: string;
         in_stock_qty?: number;
         packaging?: string;
@@ -1128,7 +1225,10 @@ export const QuickAssistSidebar = memo(({
     const map = new Map<string, (typeof list)[0]>();
 
     for (const r of actionableRefills) {
-      const key = (r.patient_phone || r.patient_name || String(r.id)).trim();
+      const cleanDigits = String(r.patient_phone || '').replace(/\D/g, '').slice(-10);
+      const key = (r as any).patient_key || (r.customer_id
+        ? `c:${r.customer_id}`
+        : `p:${cleanDigits || (r.patient_phone || '').trim()}|${(r.patient_name || '').trim().toLowerCase()}`) || String(r.id);
       const d = new Date(r.next_refill_date);
       const dueStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const diffDays = Math.round((dueStart - todayStart) / 86400000);
@@ -1197,6 +1297,11 @@ export const QuickAssistSidebar = memo(({
         cart_store_name: r.cart_store_name || null,
         cart_qty: r.cart_qty || null,
         cart_product_code: r.cart_product_code || null,
+        qa_cart_qty: (r as any).qa_cart_qty ?? null,
+        qa_staged_at: (r as any).qa_staged_at || null,
+        is_early_crm_addition: Boolean((r as any).is_early_crm_addition),
+        cart_cycle_due_date: (r as any).cart_cycle_due_date || null,
+        cart_status: (r as any).cart_status || null,
         status: r.status,
         in_stock_qty: Number(r.in_stock_qty || 0),
         packaging: (r as any).packaging || '',
@@ -1255,14 +1360,16 @@ export const QuickAssistSidebar = memo(({
     // Hold approval required items strictly visible for pharmacist reconfirmation
     return list.filter(g => {
       if (g.approval_status === 'required') return true;
-      if (checkPatientRefillCycleBooking(g.medicines).alreadyDispensed) return false;
-      if (g.medicines.every(m => isRefillSettled(m) || checkRefillCycleBooking(m).alreadyDispensed)) return false;
       if (optimisticHiddenRefillKeys.has(g.key)) return false;
       if (g.patient_phone && optimisticHiddenRefillKeys.has(g.patient_phone)) return false;
       const gDigits = (g.patient_phone || '').replace(/\D/g, '').slice(-10);
       if (gDigits && optimisticHiddenRefillKeys.has(gDigits)) return false;
       if (g.patient_name && optimisticHiddenRefillKeys.has(g.patient_name.trim())) return false;
       if (g.medicines.some(m => optimisticHiddenRefillKeys.has(String(m.id)))) return false;
+      // Early CRM additions explicitly staged for QA always stay visible until approved or unstaged
+      if (g.medicines.some(isRefillQaStaged)) return true;
+      if (checkPatientRefillCycleBooking(g.medicines).alreadyDispensed) return false;
+      if (g.medicines.every(m => isRefillSettled(m) || checkRefillCycleBooking(m).alreadyDispensed)) return false;
       if (g.reminder_status === 'SNOOZED') return false;
       return true;
     });
@@ -1852,13 +1959,25 @@ export const QuickAssistSidebar = memo(({
                               <div className="flex items-center justify-between gap-1.5 min-w-0">
                                 <div className="flex items-center gap-1 min-w-0 flex-1">
                                   <Package size={10} className="text-purple-400 shrink-0" />
+                                  <span className="font-mono text-[8.5px] text-muted shrink-0" title={`Refill ID #${med.id}`}>#{med.id}</span>
                                   <span className="font-medium text-text text-[11px] truncate" title={med.medicine_name}>{med.medicine_name}</span>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
                                   {medTimingBadge}
                                   <span className="px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/20 text-[9px] font-mono font-bold" title={`Quantity needed: ${med.quantity_needed}`}>
-                                    x{med.quantity_needed}
+                                    x{med.qa_cart_qty || med.quantity_needed}
                                   </span>
+                                  {isEarlyCrmAddition(med) && (
+                                    <span className="h-5 px-1.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0" title="Early CRM addition for future scheduled refill due date">
+                                      Early CRM
+                                    </span>
+                                  )}
+                                  {isRefillQaStaged(med) && !isMedInCart && (
+                                    <span className="h-5 px-1.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0" title="Selected in CRM — awaiting QA Add to Cart approval">
+                                      <ClockIcon size={9} className="shrink-0" />
+                                      <span>In QA ×{med.qa_cart_qty || med.quantity_needed}</span>
+                                    </span>
+                                  )}
                                   {isMedInCart && (
                                     <button
                                       type="button"
@@ -1867,7 +1986,7 @@ export const QuickAssistSidebar = memo(({
                                         handleOrderRefillGroupToCart(group);
                                       }}
                                       className="h-5 px-1.5 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 text-[8px] font-bold flex items-center gap-0.5 shrink-0 cursor-pointer transition-colors"
-                                      title={`In Live Cart / Ordered (${med.cart_store_name || 'In Live Cart'}) — click to view, adjust quantity, or re-order`}
+                                      title={`In Live Cart / Ordered (${med.cart_store_name || 'In Live Cart'}) — click to view, adjust quantity, or select another medicine`}
                                     >
                                       <Check size={9} className="shrink-0" />
                                       <span>In Cart</span>
@@ -1915,11 +2034,96 @@ export const QuickAssistSidebar = memo(({
                           Due {group.next_refill_date ? new Date(group.next_refill_date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'N/A'}
                         </span>
                       </div>
+                      {(() => {
+                        const qaQueuedMeds = group.medicines.filter(isRefillQaStaged);
+                        const isPatientJobRunning = cartJobs.some(
+                          j => ((j.patientKey && j.patientKey === group.key) || j.patientName === group.patient_name) && isRefillJobRunning(j)
+                        );
+                        if (qaQueuedMeds.length === 0 || isPatientJobRunning || group.approval_status === 'required') return null;
+                        return (
+                          <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 min-w-0">
+                            <div className="flex items-center justify-between gap-1 text-[8.5px] text-muted font-semibold uppercase tracking-wider">
+                              <span>CRM → QA Selection ({qaQueuedMeds.length})</span>
+                              <span className="truncate">{group.patient_name}{group.patient_phone ? ` · ${group.patient_phone}` : ''}</span>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              {qaQueuedMeds.map(m => {
+                                const isEarly = isEarlyCrmAddition(m);
+                                const dueLabel = m.next_refill_date
+                                  ? new Date(m.next_refill_date).toLocaleDateString([], { day: 'numeric', month: 'short' })
+                                  : 'N/A';
+                                return (
+                                  <div
+                                    key={m.id}
+                                    className="flex items-center justify-between gap-1.5 px-1.5 py-1 rounded bg-bg2/90 border border-border/80 text-[9.5px] min-w-0"
+                                  >
+                                    <div className="flex items-center gap-1 min-w-0 flex-1">
+                                      <span className="font-mono text-[8.5px] text-muted shrink-0" title={`Refill ID #${m.id}`}>#{m.id}</span>
+                                      <span className="font-semibold text-text truncate" title={m.medicine_name}>{m.medicine_name}</span>
+                                      <span className="font-mono font-bold text-primary shrink-0">×{m.qa_cart_qty || m.quantity_needed}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <span className="text-[8.5px] text-muted" title={`Scheduled due date: ${dueLabel}`}>Due {dueLabel}</span>
+                                      <span
+                                        className={`px-1 py-0.5 rounded text-[8px] font-bold border ${
+                                          isEarly
+                                            ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
+                                            : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                        }`}
+                                      >
+                                        {isEarly ? 'Early CRM addition' : 'Due addition'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleApproveQaCartForGroup(group);
+                                }}
+                                className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs truncate"
+                                title="Final approval: add ONLY these selected QA medicines to Pharmarack Live Cart (does not complete/advance cycle)"
+                              >
+                                <ShoppingCart size={11} className="shrink-0" />
+                                <span className="truncate">Add to Cart ({qaQueuedMeds.length})</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOrderRefillGroupToCart(group);
+                                }}
+                                className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-bg2 text-text border border-border text-[9px] font-bold transition-colors cursor-pointer shrink-0"
+                                title="Reopen CRM selection to add more pending medicines or change quantities"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleCancelQaCartForGroup(group);
+                                }}
+                                className="h-6.5 px-1.5 rounded-lg bg-bg3 hover:bg-red-600/20 text-muted hover:text-red-400 border border-border text-[9px] font-bold transition-colors cursor-pointer shrink-0"
+                                title="Remove from QA queue (leaving untouched keeps it staged)"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
                       <div className="flex items-center gap-1.5 min-w-0">
                         {(() => {
                           const stage = getRefillStage(group.medicines);
-                          const isPatientJobRunning = cartJobs.some(j => j.patientName === group.patient_name && isRefillJobRunning(j));
-                          const unaddedMeds = group.medicines.filter(m => !m.cart_store_name && !m.in_live_cart && m.status !== 'ordered');
+                          const isPatientJobRunning = cartJobs.some(
+                            j => ((j.patientKey && j.patientKey === group.key) || j.patientName === group.patient_name) && isRefillJobRunning(j)
+                          );
+                          const qaQueuedMeds = group.medicines.filter(isRefillQaStaged);
                           const isMarkingGroup = group.medicines.some(m => markingOrderedRefillIds.has(m.id));
                           const isMarkingReady = markingReadyRefillPhones.has(group.patient_phone);
                           const isFulfillingGroup = fulfillingRefillKeys.has(group.key);
@@ -1944,7 +2148,7 @@ export const QuickAssistSidebar = memo(({
 
                           if (isPatientJobRunning) {
                             return (
-                              <div className="flex-1 h-6.5 px-2 rounded-lg bg-sky-500/15 border border-sky-500/30 text-sky-400 text-[9.5px] font-bold flex items-center justify-center gap-1 animate-pulse truncate" title="Adding un-added medicines to Pharmarack Live Cart...">
+                              <div className="flex-1 h-6.5 px-2 rounded-lg bg-sky-500/15 border border-sky-500/30 text-sky-400 text-[9.5px] font-bold flex items-center justify-center gap-1 animate-pulse truncate" title="Adding QA-approved medicines to Pharmarack Live Cart...">
                                 <Loader2 size={11} className="animate-spin shrink-0 text-sky-400" />
                                 <span className="truncate">Adding...</span>
                               </div>
@@ -1962,18 +2166,20 @@ export const QuickAssistSidebar = memo(({
                           if (stage === 'upcoming') {
                             return (
                               <>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOrderRefillGroupToCart(group);
-                                  }}
-                                  className="flex-1 h-6.5 px-2 rounded-lg bg-primary/20 hover:bg-primary text-primary hover:text-white border border-primary/30 text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs truncate"
-                                  title="Open Add to Cart popup to select medicines and quantities for live cart"
-                                >
-                                  <ShoppingCart size={11} className="shrink-0" />
-                                  <span className="truncate">Add to Cart{unaddedMeds.length > 0 ? ` (${unaddedMeds.length})` : ''}</span>
-                                </button>
+                                {qaQueuedMeds.length === 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleOrderRefillGroupToCart(group);
+                                    }}
+                                    className="flex-1 h-6.5 px-2 rounded-lg bg-primary/20 hover:bg-primary text-primary hover:text-white border border-primary/30 text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs truncate"
+                                    title="Select medicines and quantities to send to QA (Rule 1 & 2)"
+                                  >
+                                    <ShoppingCart size={11} className="shrink-0" />
+                                    <span className="truncate">Select in CRM</span>
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   disabled={isMarkingGroup}
@@ -2085,6 +2291,17 @@ export const QuickAssistSidebar = memo(({
                                 >
                                   <ShoppingCart size={10} className="shrink-0" />
                                   <span>POS</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOrderRefillGroupToCart(group);
+                                  }}
+                                  className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-primary hover:text-white text-muted border border-border text-[9px] font-bold transition-colors cursor-pointer shrink-0"
+                                  title="Reopen selection to add another pending medicine to QA"
+                                >
+                                  + More
                                 </button>
                               </>
                             );
@@ -3127,6 +3344,8 @@ export const QuickAssistSidebar = memo(({
         <RefillOrderModal
           patientName={refillOrderModalGroup.patient_name}
           patientPhone={refillOrderModalGroup.patient_phone}
+          patientKey={refillOrderModalGroup.key}
+          workflowMode="crm_select"
           medicines={refillOrderModalGroup.medicines.map((m: any) => ({
             id: m.id,
             medicine_id: m.medicine_id,
@@ -3136,8 +3355,16 @@ export const QuickAssistSidebar = memo(({
             packaging: m.packaging,
             status: m.status || 'pending',
             is_active: m.is_active ?? 1,
+            last_refill_date: m.last_refill_date,
+            next_refill_date: m.next_refill_date,
+            refill_interval_days: m.refill_interval_days,
             cart_store_name: m.cart_store_name,
             cart_qty: m.cart_qty,
+            qa_cart_qty: m.qa_cart_qty,
+            qa_staged_at: m.qa_staged_at,
+            is_early_crm_addition: m.is_early_crm_addition,
+            cart_cycle_due_date: m.cart_cycle_due_date,
+            cart_status: m.cart_status,
             in_live_cart: Boolean(m.in_live_cart || m.cart_store_name),
             linked_distributors: m.linked_distributors
           }))}

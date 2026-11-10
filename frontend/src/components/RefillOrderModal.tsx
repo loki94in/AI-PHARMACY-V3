@@ -10,6 +10,7 @@ import { api, apiClient } from '../services/api';
 import { toastEvent, refillEvent, whatsappQueueEvent } from '../services/events';
 import { queryClient } from '../lib/queryClient';
 import { subscribeRefillCartJobs, getRefillCartJobs, startRefillCartJob, isRefillJobRunning, type RefillCartItemInput } from '../services/refillCartJobs';
+import { isRefillQaStaged, isRefillOrdered, isRefillActuallyFulfilled, isEarlyCrmAddition, effectiveRefillLeadDays } from '../utils/refillSettled';
 
 export interface RefillMedicineItem {
   id: number;
@@ -20,8 +21,16 @@ export interface RefillMedicineItem {
   packaging?: string;
   status: string;
   is_active?: number;
+  last_refill_date?: string | null;
+  next_refill_date?: string | null;
+  refill_interval_days?: number | null;
   cart_store_name?: string | null;
   cart_qty?: number | null;
+  qa_cart_qty?: number | null;
+  qa_staged_at?: string | null;
+  is_early_crm_addition?: boolean;
+  cart_cycle_due_date?: string | null;
+  cart_status?: string | null;
   in_live_cart?: boolean;
   linked_distributors?: string[];
 }
@@ -29,6 +38,9 @@ export interface RefillMedicineItem {
 export interface RefillOrderModalProps {
   patientName: string;
   patientPhone?: string;
+  patientKey?: string;
+  workflowMode?: 'crm_select' | 'qa_approve';
+  initialSelectedIds?: number[];
   medicines: RefillMedicineItem[];
   onConfirm?: (items: RefillCartItemInput[]) => void | Promise<void>;
   onClose: () => void;
@@ -45,6 +57,9 @@ interface ItemState {
 export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   patientName,
   patientPhone,
+  patientKey,
+  workflowMode = 'crm_select',
+  initialSelectedIds,
   medicines,
   onConfirm,
   onClose,
@@ -52,8 +67,27 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   onMarkReady,
   onPostAndComplete
 }) => {
-  // Local state of medicines reflecting live in-cart status
+  // Local state of medicines reflecting live in-cart / QA status
   const [localMeds, setLocalMeds] = useState<RefillMedicineItem[]>(medicines);
+  useEffect(() => {
+    setLocalMeds(medicines);
+    setItemStates(prev => {
+      let changed = false;
+      const next = { ...prev };
+      medicines.forEach(m => {
+        if (!next[m.id]) {
+          changed = true;
+          const shortage = Math.max(0, Number(m.quantity_needed || 3) - Number(m.in_stock_qty || 0));
+          const defaultQty = Number(m.qa_cart_qty || m.cart_qty || m.quantity_needed || 3);
+          next[m.id] = {
+            selected: false,
+            orderQty: defaultQty > 0 ? defaultQty : Math.max(1, shortage)
+          };
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [medicines]);
 
   // Only active medicines are candidates for ordering
   const activeMeds = localMeds.filter(m => m.is_active !== 0 && m.status !== 'canceled' && m.status !== 'paused');
@@ -68,13 +102,14 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [cartError, setCartError] = useState<string | null>(null);
   const [isCartUpdated, setIsCartUpdated] = useState(false);
+  const [isStagingQa, setIsStagingQa] = useState(false);
   const [isMarkingReady, setIsMarkingReady] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [isNotifyingBooking, setIsNotifyingBooking] = useState(false);
 
-  // Background Live Cart Job coordination
+  // Background Live Cart Job coordination (scoped strictly by patientKey when supplied)
   const jobs = useSyncExternalStore(subscribeRefillCartJobs, getRefillCartJobs);
-  const activeJob = jobs.find(j => j.patientName === patientName);
+  const activeJob = jobs.find(j => (patientKey ? (j.patientKey || j.patientName) === patientKey : j.patientName === patientName));
   const isJobRunning = activeJob ? isRefillJobRunning(activeJob) : false;
 
   useEffect(() => {
@@ -97,17 +132,36 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     }
   }, [activeJob]);
 
-  // Initialize selection and quantities
+  // Prevent duplicate CRM selection ONLY when already processed in the current cycle (in cart / ordered / fulfilled).
+  // Future due dates (e.g. due 27 Nov selected on 10 Nov) are NEVER blocked for pharmacist CRM actions.
+  const isCycleDuplicateLocked = (m: RefillMedicineItem): boolean => {
+    const isAlreadyInCart = !!m.in_live_cart || !!m.cart_store_name || m.cart_status === 'added';
+    return workflowMode === 'crm_select' && (isAlreadyInCart || isRefillOrdered(m) || isRefillActuallyFulfilled(m));
+  };
+
+  // Initialize selection and quantities without auto-selecting processed/unrelated items
   const [itemStates, setItemStates] = useState<Record<number, ItemState>>(() => {
     const initial: Record<number, ItemState> = {};
-    const allAlreadyInCart = activeMeds.length > 0 && activeMeds.every(m => m.in_live_cart || m.cart_store_name);
+    const initialSet = initialSelectedIds && initialSelectedIds.length > 0 ? new Set(initialSelectedIds) : null;
     activeMeds.forEach(m => {
-      const isAlreadyInCart = !!m.in_live_cart || !!m.cart_store_name;
+      const isQaQueued = isRefillQaStaged(m);
+      const isProcessed = isCycleDuplicateLocked(m);
       const shortage = Math.max(0, Number(m.quantity_needed || 3) - Number(m.in_stock_qty || 0));
-      const defaultQty = Number(m.cart_qty || m.quantity_needed || 3);
+      const defaultQty = Number(m.qa_cart_qty || m.cart_qty || m.quantity_needed || 3);
+
+      let selected = false;
+      if (workflowMode === 'qa_approve') {
+        selected = initialSet ? initialSet.has(m.id) : isQaQueued;
+      } else if (isProcessed) {
+        selected = false;
+      } else if (initialSet) {
+        selected = initialSet.has(m.id);
+      } else {
+        selected = !isQaQueued;
+      }
+
       initial[m.id] = {
-        // Pre-select items needing order; if already in cart, default to selected so user can edit qty or re-order
-        selected: allAlreadyInCart ? true : (!isAlreadyInCart || true),
+        selected,
         orderQty: defaultQty > 0 ? defaultQty : Math.max(1, shortage)
       };
     });
@@ -125,10 +179,11 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
         const fullQty = Math.max(1, Number(m.quantity_needed || 3));
         const shortage = Math.max(0, fullQty - Number(m.in_stock_qty || 0));
         const targetQty = newMode === 'full' ? fullQty : (shortage > 0 ? shortage : 1);
+        const locked = isCycleDuplicateLocked(m);
         next[m.id] = {
           ...next[m.id],
-          orderQty: targetQty,
-          selected: newMode === 'full' ? true : (shortage > 0)
+          orderQty: locked ? (next[m.id]?.orderQty || targetQty) : targetQty,
+          selected: locked ? false : (newMode === 'full' ? true : (shortage > 0))
         };
       });
       return next;
@@ -136,6 +191,8 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   };
 
   const toggleSelect = (id: number) => {
+    const med = activeMeds.find(m => m.id === id);
+    if (med && isCycleDuplicateLocked(med)) return;
     setValidationError(null);
     setItemStates(prev => ({
       ...prev,
@@ -148,11 +205,12 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
 
   const toggleSelectAll = () => {
     setValidationError(null);
-    const allSelected = activeMeds.every(m => itemStates[m.id]?.selected);
+    const selectable = activeMeds.filter(m => !isCycleDuplicateLocked(m));
+    const allSelected = selectable.length > 0 && selectable.every(m => itemStates[m.id]?.selected);
     setItemStates(prev => {
       const next = { ...prev };
       activeMeds.forEach(m => {
-        next[m.id] = { ...next[m.id], selected: !allSelected };
+        next[m.id] = { ...next[m.id], selected: isCycleDuplicateLocked(m) ? false : !allSelected };
       });
       return next;
     });
@@ -215,9 +273,35 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     }));
 
     try {
-      // Trigger background addition without forcing legacy modal so this modal handles live updates
-      startRefillCartJob(patientName, payload, { openModal: false });
-      toastEvent.trigger(`Adding ${payload.length} refill medicine(s) to live cart in the background…`, 'info', '/pharmarack-cart');
+      if (workflowMode === 'crm_select') {
+        // CRM only stages selected items + quantities into QA queue — never writes Pharmarack Live Cart directly
+        setIsStagingQa(true);
+        const res = await api.stageRefillsForQa(payload.map(p => ({ refill_id: p.refillId, qty: p.qty })));
+        refillEvent.triggerRefresh();
+        queryClient.invalidateQueries({ queryKey: ['refills'] });
+        const stagedCount = res?.staged_count ?? payload.length;
+        const earlyCount = (res?.staged_items || []).filter(s => s.selection_type === 'early_crm_addition').length;
+        const skippedCount = res?.skipped_duplicates?.length || 0;
+        const earlySuffix = earlyCount > 0 ? ` (${earlyCount} early CRM addition)` : '';
+        const skipSuffix = skippedCount > 0 ? ` · ${skippedCount} already processed skipped` : '';
+        toastEvent.trigger(
+          stagedCount > 0
+            ? `Sent ${stagedCount} medicine(s)${earlySuffix} to QA for "${patientName}".${skipSuffix}`
+            : `All selected medicine(s) are already processed for this cycle.`,
+          stagedCount > 0 ? 'success' : 'info'
+        );
+        if (onConfirm) {
+          try {
+            await onConfirm(payload);
+          } catch (_) {}
+        }
+        onClose();
+        return;
+      }
+
+      // QA final approval: triggers actual Pharmarack Live Cart addition strictly for selected rows
+      startRefillCartJob(patientName, payload, { openModal: false, patientKey });
+      toastEvent.trigger(`Adding ${payload.length} approved medicine(s) to live cart in the background…`, 'info', '/pharmarack-cart');
 
       if (onConfirm) {
         try {
@@ -225,9 +309,11 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
         } catch (_) {}
       }
     } catch (err: unknown) {
-      console.error('Failed to start background cart job:', err);
+      console.error('Failed to process refill selection:', err);
       const apiErr = err as { response?: { data?: { error?: string } }; message?: string };
-      setCartError(apiErr.response?.data?.error || apiErr.message || 'Failed to start background cart addition.');
+      setCartError(apiErr.response?.data?.error || apiErr.message || 'Failed to process refill selection.');
+    } finally {
+      setIsStagingQa(false);
     }
   };
 
@@ -331,8 +417,16 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
               <ShoppingCart size={16} />
             </div>
             <div>
-              <h3 className="font-extrabold text-text text-sm">Refill to Live Cart — {patientName}</h3>
-              <p className="text-[11px] text-muted">Select medicines, adjust quantities, update cart, and execute downstream actions.</p>
+              <h3 className="font-extrabold text-text text-sm">
+                {workflowMode === 'qa_approve'
+                  ? `Approve Live Cart Order (QA) — ${patientName}`
+                  : `Select Refill Medicines for QA — ${patientName}`}
+              </h3>
+              <p className="text-[11px] text-muted">
+                {workflowMode === 'qa_approve'
+                  ? 'Final approval: Only these selected medicines will be added to Pharmarack Live Cart.'
+                  : 'Select pending medicines and edit quantities. Click Continue to QA to send only selected items for approval.'}
+              </p>
             </div>
           </div>
           <button
@@ -479,9 +573,25 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
             <div className="p-8 text-center text-muted">No active prescribed medicines found for this patient.</div>
           ) : (
             activeMeds.map(med => {
-              const state = itemStates[med.id] || { selected: true, orderQty: med.quantity_needed || 3 };
+              const state = itemStates[med.id] || { selected: false, orderQty: med.qa_cart_qty || med.quantity_needed || 3 };
               const isSelected = state.selected;
-              const isAlreadyInCart = !!med.in_live_cart || !!med.cart_store_name;
+              const isAlreadyInCart = !!med.in_live_cart || !!med.cart_store_name || med.cart_status === 'added';
+              const isQaQueued = isRefillQaStaged(med);
+              const isFulfilled = isRefillActuallyFulfilled(med);
+              const isDuplicateLocked = isCycleDuplicateLocked(med);
+              const earlyProvenance = isEarlyCrmAddition(med);
+              const scheduledDueStr = med.next_refill_date
+                ? new Date(med.next_refill_date).toLocaleDateString([], { day: 'numeric', month: 'short' })
+                : null;
+              const isFutureEarlyEligible = (() => {
+                if (!med.next_refill_date || isDuplicateLocked) return false;
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const due = new Date(`${String(med.next_refill_date).slice(0, 10)}T00:00:00`);
+                if (isNaN(due.getTime())) return false;
+                const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
+                return diff > effectiveRefillLeadDays(med.refill_interval_days, 7);
+              })();
               const shortage = Math.max(0, Number(med.quantity_needed || 3) - Number(med.in_stock_qty || 0));
               const hasDistributor = med.linked_distributors && med.linked_distributors.length > 0;
               const jobRow = activeJob?.rows.find(r => r.refillId === med.id);
@@ -489,11 +599,13 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
               return (
                 <div
                   key={med.id}
-                  onClick={() => toggleSelect(med.id)}
-                  className={`rounded-xl border p-3 transition-all cursor-pointer ${
-                    isSelected
-                      ? 'border-primary/50 bg-primary/5 shadow-xs'
-                      : 'border-border bg-bg opacity-75 hover:opacity-100'
+                  onClick={() => !isDuplicateLocked && toggleSelect(med.id)}
+                  className={`rounded-xl border p-3 transition-all ${
+                    isDuplicateLocked
+                      ? 'border-border/70 bg-bg3/40 opacity-80 cursor-not-allowed'
+                      : isSelected
+                        ? 'border-primary/50 bg-primary/5 shadow-xs cursor-pointer'
+                        : 'border-border bg-bg opacity-85 hover:opacity-100 cursor-pointer'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -502,9 +614,11 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                       <input
                         type="checkbox"
                         checked={isSelected}
+                        disabled={isDuplicateLocked}
                         onChange={() => toggleSelect(med.id)}
                         onClick={e => e.stopPropagation()}
-                        className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/40 cursor-pointer"
+                        title={isDuplicateLocked ? 'Already processed in this refill cycle — duplicate selection prevented' : 'Select medicine for QA'}
+                        className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/40 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       />
                       <div className="min-w-0 space-y-1">
                         <div className="font-extrabold text-text text-sm flex items-center gap-2 flex-wrap">
@@ -538,12 +652,63 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                             </span>
                           )}
 
+                          {scheduledDueStr && (
+                            <span className="px-2 py-0.5 rounded-md bg-bg3 border border-border text-muted font-semibold">
+                              Due: {scheduledDueStr}
+                            </span>
+                          )}
+
+                          {(earlyProvenance || isFutureEarlyEligible) && (
+                            <span
+                              className="px-2 py-0.5 rounded-md bg-indigo-500/15 border border-indigo-500/30 text-indigo-400 font-bold"
+                              title="Scheduled for a future due date — allowed for early pharmacist CRM selection without auto-completing the cycle"
+                            >
+                              {earlyProvenance ? 'Early CRM addition' : 'Early selection'}
+                            </span>
+                          )}
+
+                          {isQaQueued && (
+                            <span
+                              className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 font-bold flex items-center gap-1"
+                              title="Selected and waiting for final Add to Cart approval inside Quick Assist (QA)"
+                            >
+                              <Clock size={10} /> In QA ×{med.qa_cart_qty || state.orderQty}
+                            </span>
+                          )}
+
                           {isAlreadyInCart && (
                             <span
                               className="px-2 py-0.5 rounded-md bg-sky-500/15 border border-sky-500/30 text-sky-400 font-bold flex items-center gap-1"
-                              title="Already in active Pharmarack live cart"
+                              title="Already in active Pharmarack live cart for this cycle (duplicate prevented)"
                             >
                               <ShoppingCart size={10} /> In Live Cart: {med.cart_store_name || 'Cart'} ×{med.cart_qty || 1}
+                            </span>
+                          )}
+
+                          {!isAlreadyInCart && med.status === 'ordered' && (
+                            <span className="px-2 py-0.5 rounded-md bg-purple-500/15 border border-purple-500/30 text-purple-400 font-bold">
+                              Ordered
+                            </span>
+                          )}
+
+                          {med.cart_status === 'linked_oos' && (
+                            <span className="px-2 py-0.5 rounded-md bg-orange-500/15 border border-orange-500/30 text-orange-400 font-bold">
+                              Out of Stock (Distributor)
+                            </span>
+                          )}
+
+                          {med.cart_status === 'needs_link' && (
+                            <span className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 font-bold">
+                              Needs Link
+                            </span>
+                          )}
+
+                          {isFulfilled && (
+                            <span
+                              className="px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold"
+                              title="Fulfilled for current cycle"
+                            >
+                              Fulfilled
                             </span>
                           )}
                         </div>
@@ -661,19 +826,22 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
             </button>
             {(() => {
               const allSelectedAlreadyInCart = selectedList.length > 0 && selectedList.every(m => m.in_live_cart || m.cart_store_name);
-              const actionVerb = allSelectedAlreadyInCart ? 'Update Cart' : 'Add to Cart';
+              const actionVerb = workflowMode === 'crm_select'
+                ? 'Continue to QA'
+                : (allSelectedAlreadyInCart ? 'Update Cart' : 'Add to Cart');
+              const busy = isJobRunning || isStagingQa;
 
               return (
                 <button
                   type="button"
-                  disabled={selectedList.length === 0 || isJobRunning}
+                  disabled={selectedList.length === 0 || busy}
                   onClick={handleUpdateCart}
                   className="px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-extrabold shadow-md shadow-primary/25 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
                 >
-                  {isJobRunning ? (
+                  {busy ? (
                     <>
                       <Loader2 size={14} className="animate-spin" />
-                      <span>Adding in Background…</span>
+                      <span>{isStagingQa ? 'Sending to QA…' : 'Adding in Background…'}</span>
                     </>
                   ) : (
                     <>

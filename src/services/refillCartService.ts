@@ -20,6 +20,14 @@
  */
 import { dbManager } from '../database/connection.js';
 import { eventService } from './eventService.js';
+import { toLocalSqlDateTime } from '../utils/localTime.js';
+
+let cartWriteChain: Promise<unknown> = Promise.resolve();
+function runWithCartLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = cartWriteChain.then(fn, fn);
+  cartWriteChain = next.catch(() => {});
+  return next;
+}
 
 export type RefillCartStatus = 'added' | 'ready' | 'in_cart' | 'needs_link' | 'linked_oos' | 'not_found' | 'failed';
 
@@ -132,13 +140,6 @@ export async function saveMedicineLinks(medicineId: number, picks: RefillCartPic
          p.rate != null ? Number(p.rate) : null, p.mrp != null ? Number(p.mrp) : null]
       );
     }
-    // Clear stale cart snapshots on patient_refills for this medicine so CRM truth reflects updated links
-    await db.run(
-      `UPDATE patient_refills 
-       SET cart_store_id = NULL, cart_store_name = NULL, cart_product_code = NULL, cart_qty = NULL, cart_item_id = NULL 
-       WHERE medicine_id = ?`,
-      [medicineId]
-    ).catch(() => {});
     await db.run('COMMIT');
   } catch (err) {
     await db.run('ROLLBACK').catch(() => {});
@@ -265,11 +266,21 @@ export async function processRefillCartItem(
   refillId: number,
   opts: { qty?: number; pick?: RefillCartPick[]; dryRun?: boolean; notifyPatient?: boolean } = {}
 ): Promise<RefillCartResult> {
+  if (opts.dryRun) {
+    return processRefillCartItemInner(refillId, opts);
+  }
+  return runWithCartLock(() => processRefillCartItemInner(refillId, opts));
+}
+
+async function processRefillCartItemInner(
+  refillId: number,
+  opts: { qty?: number; pick?: RefillCartPick[]; dryRun?: boolean; notifyPatient?: boolean } = {}
+): Promise<RefillCartResult> {
   const db = await dbManager.getConnection();
   const refill = await db.get(
     `SELECT pr.id, pr.medicine_id, pr.medicine_name AS pr_medicine_name,
-            pr.quantity_needed, pr.is_active, pr.status,
-            pr.cart_store_id, pr.cart_product_code, m.name AS medicine_name,
+            pr.quantity_needed, pr.qa_cart_qty, pr.next_refill_date, pr.is_active, pr.status,
+            pr.cart_store_id, pr.cart_product_code, pr.cart_qty, pr.cart_status, m.name AS medicine_name,
             c.name AS customer_name, c.phone AS customer_phone, c.language
      FROM patient_refills pr 
      LEFT JOIN medicines m ON m.id = pr.medicine_id
@@ -295,19 +306,29 @@ export async function processRefillCartItem(
       }
     } catch (_) {}
   }
-  const qty = Math.max(1, Math.floor(Number(opts.qty) || Number(refill.quantity_needed) || 1));
+  const qty = Math.max(1, Math.floor(Number(opts.qty) || Number(refill.qa_cart_qty) || Number(refill.quantity_needed) || 1));
+  const cycleDueDate = refill.next_refill_date
+    ? String(refill.next_refill_date).slice(0, 10)
+    : toLocalSqlDateTime().slice(0, 10);
   const base = { refillId, medicineId: refill.medicine_id || undefined, medicineName, qty, linked: [] as RefillCartResult['linked'], candidates: [] as RefillCartCandidate[] };
-  const fail = (message: string, extra: Partial<RefillCartResult> = {}): RefillCartResult =>
-    ({ ...base, ...extra, status: 'failed', message });
+  const recordNonAddedStatus = async (status: RefillCartStatus) => {
+    if (!opts.dryRun) {
+      await db.run('UPDATE patient_refills SET cart_status = ? WHERE id = ?', [status, refillId]).catch(() => {});
+    }
+  };
+  const fail = async (message: string, extra: Partial<RefillCartResult> = {}): Promise<RefillCartResult> => {
+    await recordNonAddedStatus('failed');
+    return { ...base, ...extra, status: 'failed', message };
+  };
 
   if (refill.is_active === 0 || ['completed', 'canceled', 'cancelled', 'paused'].includes(String(refill.status || '').toLowerCase())) {
-    return fail('Refill is already completed or inactive.');
+    return { ...base, status: 'failed', message: 'Refill is already completed or inactive.' };
   }
 
   // 1. Save the pharmacist's ticked distributors as this medicine's links.
   if (Array.isArray(opts.pick) && opts.pick.length > 0) {
     const picks = opts.pick.filter(isValidPick);
-    if (picks.length === 0) return fail('Tick a distributor product from the list.');
+    if (picks.length === 0) return await fail('Tick a distributor product from the list.');
     if (!refill.medicine_id && medicineName) {
       try {
         const ins = await db.run('INSERT INTO medicines (name) VALUES (?)', [medicineName]);
@@ -329,7 +350,7 @@ export async function processRefillCartItem(
   try {
     lines = flattenCart(await pr.loadLiveCartCore());
   } catch (err) {
-    return fail(cartErrorMessage(err));
+    return await fail(cartErrorMessage(err));
   }
 
   // Saved links: preserves explicit per-medicine pick_order (#1, #2, ...), falling back to global priority on ties.
@@ -346,11 +367,12 @@ export async function processRefillCartItem(
     return rA - rB;
   });
 
-  // 3. Already in the cart. If THIS refill already put its qty there -> nothing to do. If the
-  //    medicine is in the cart from anything else (the pharmacist, another refill) -> INCREASE that
-  //    line by this refill's qty (cart qty + refill qty); nothing is reduced or replaced.
+  // 3. Already in the cart. If THIS refill already put its qty there -> nothing to do (or adjust only by delta).
+  //    If the medicine is in the cart from another patient or manual/normal order -> INCREASE that
+  //    line by this refill's qty (cart qty + refill qty) and store ONLY this refill's own cart_qty delta.
   const mine = refill.cart_product_code ? findLine(lines, refill.cart_store_id, refill.cart_product_code) : undefined;
-  if (mine && (!opts.qty || Number(opts.qty) === mine.qty)) {
+  const prevMineQty = mine ? (Number(refill.cart_qty) > 0 ? Number(refill.cart_qty) : mine.qty) : 0;
+  if (mine && (!opts.qty || Number(opts.qty) === prevMineQty)) {
     let stockVal = (mine.raw as any)?.stock;
     if (stockVal == null || String(stockVal).trim() === '') {
       try {
@@ -361,14 +383,20 @@ export async function processRefillCartItem(
         }
       } catch (_) {}
     }
+    if (!opts.dryRun && (refill.qa_cart_qty != null || refill.cart_status === 'qa_queued')) {
+      await db.run(
+        `UPDATE patient_refills SET qa_cart_qty = NULL, qa_staged_at = NULL, cart_status = 'added', cart_cycle_due_date = COALESCE(cart_cycle_due_date, ?) WHERE id = ?`,
+        [cycleDueDate, refillId]
+      ).catch(() => {});
+    }
     return {
       ...base,
       status: 'in_cart',
-      message: `Already in the cart at ${mine.storeName} (qty ${mine.qty}).`,
+      message: `Already in the cart at ${mine.storeName} (qty ${prevMineQty}).`,
       line: {
         storeName: mine.storeName,
         productName: mine.productName,
-        qty: mine.qty,
+        qty: prevMineQty,
         oldQty: mine.qty,
         addedQty: 0,
         distributorStock: stockVal
@@ -377,7 +405,7 @@ export async function processRefillCartItem(
   }
   let hit: CartLine | undefined;
   let isMineUpdate = false;
-  if (mine && opts.qty && Number(opts.qty) !== mine.qty) {
+  if (mine && opts.qty && Number(opts.qty) !== prevMineQty) {
     hit = mine;
     isMineUpdate = true;
   } else {
@@ -398,10 +426,11 @@ export async function processRefillCartItem(
         }
       } catch (_) {}
     }
-    const total = (opts.qty !== undefined && opts.qty !== null) ? qty : (isMineUpdate ? qty : hit.qty + qty);
-    const addedAmount = (opts.qty !== undefined && opts.qty !== null)
-      ? (qty > hit.qty ? qty - hit.qty : 0)
-      : (isMineUpdate ? (qty > hit.qty ? qty - hit.qty : 0) : qty);
+    // Preserve other patients'/orders' quantities in the shared Pharmarack cart line:
+    // - When updating THIS refill's existing share (isMineUpdate), shift total by (qty - prevMineQty).
+    // - When another patient/order already has hit.qty in cart, add this refill's qty on top (hit.qty + qty).
+    const total = isMineUpdate ? Math.max(1, hit.qty + (qty - prevMineQty)) : (hit.qty + qty);
+    const addedAmount = isMineUpdate ? Math.max(0, qty - prevMineQty) : qty;
     const lineInfo = {
       storeName: hit.storeName,
       productName: hit.productName,
@@ -431,7 +460,7 @@ export async function processRefillCartItem(
       mode: 'set'
     }]);
     if (!inc.success || inc.offline) {
-      return fail(`Pharmarack did not accept the quantity change: ${inc.details || inc.error || inc.message || 'offline'}`);
+      return await fail(`Pharmarack did not accept the quantity change: ${inc.details || inc.error || inc.message || 'offline'}`);
     }
     pr.invalidatePharmarackCartCache();
     let after: CartLine | undefined;
@@ -450,8 +479,13 @@ export async function processRefillCartItem(
       raw: hit.raw
     };
     await db.run(
-      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ?, status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END WHERE id = ?`,
-      [confirmedLine.storeId, confirmedLine.storeName, confirmedLine.productCode, confirmedLine.productName, total, refillId]
+      `UPDATE patient_refills
+       SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?,
+           cart_qty = ?, cart_cycle_due_date = ?, qa_cart_qty = NULL,
+           cart_status = 'added',
+           status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END
+       WHERE id = ?`,
+      [confirmedLine.storeId, confirmedLine.storeName, confirmedLine.productCode, confirmedLine.productName, qty, cycleDueDate, refillId]
     );
 
     // Automatically send localized booking confirmation WhatsApp message to the patient ONLY when explicitly opted in
@@ -504,8 +538,8 @@ export async function processRefillCartItem(
   //    candidates: they carry no real Pharmarack product code or stock.
   const isLive = (i: any) => !i.isOffline && !i.isLocalPharmacy && Number(i.storeId) > 0 && String(i.productCode || '').trim() !== '';
   const outcome = await pr.performPharmarackSearch(medicineName, null, false);
-  if (outcome.status === 'need_login') return fail(cartErrorMessage({ code: 'NEED_LOGIN' }));
-  if (outcome.status === 'connection_error') return fail('Pharmarack search did not answer (network). Retry.');
+  if (outcome.status === 'need_login') return await fail(cartErrorMessage({ code: 'NEED_LOGIN' }));
+  if (outcome.status === 'connection_error') return await fail('Pharmarack search did not answer (network). Retry.');
   const items: any[] = outcome.items.filter(isLive);
   const findItem = (l: any) => items.find(i => Number(i.storeId) === Number(l.store_id) && String(i.productCode) === String(l.product_code));
 
@@ -544,9 +578,12 @@ export async function processRefillCartItem(
   }
 
   if (links.length === 0) {
-    return candidates.length > 0
-      ? { ...base, candidates, status: 'needs_link', message: 'No distributor linked to this medicine yet. Link one to add it.' }
-      : { ...base, status: 'not_found', message: 'No mapped Pharmarack distributor found for this name. Link it by searching another spelling.' };
+    if (candidates.length > 0) {
+      await recordNonAddedStatus('needs_link');
+      return { ...base, candidates, status: 'needs_link', message: 'No distributor linked to this medicine yet. Link one to add it.' };
+    }
+    await recordNonAddedStatus('not_found');
+    return { ...base, status: 'not_found', message: 'No mapped Pharmarack distributor found for this name. Link it by searching another spelling.' };
   }
 
   const thresholdRow = await db.get("SELECT value FROM app_settings WHERE key = 'min_distributor_stock_threshold'").catch(() => null);
@@ -603,6 +640,7 @@ export async function processRefillCartItem(
   }));
   const available = linkedState.filter(s => s.inStock);
   if (available.length === 0) {
+    await recordNonAddedStatus('linked_oos');
     return {
       ...base, linked, candidates,
       status: 'linked_oos',
@@ -674,8 +712,13 @@ export async function processRefillCartItem(
     };
 
     await db.run(
-      `UPDATE patient_refills SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?, cart_qty = ?, status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END WHERE id = ?`,
-      [confirmedAdded.storeId, confirmedAdded.storeName, confirmedAdded.productCode, confirmedAdded.productName, qty, refillId]
+      `UPDATE patient_refills
+       SET cart_store_id = ?, cart_store_name = ?, cart_product_code = ?, cart_product_name = ?,
+           cart_qty = ?, cart_cycle_due_date = ?, qa_cart_qty = NULL,
+           cart_status = 'added',
+           status = CASE WHEN status = 'pending' THEN 'ordered' ELSE status END
+       WHERE id = ?`,
+      [confirmedAdded.storeId, confirmedAdded.storeName, confirmedAdded.productCode, confirmedAdded.productName, qty, cycleDueDate, refillId]
     );
     await db.run('UPDATE medicine_distributor_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [cand.link.id]);
 
@@ -727,7 +770,7 @@ export async function processRefillCartItem(
     };
   }
 
-  return fail(`Pharmarack did not accept the item at ${available.map(s => String(s.link.store_name)).join(', ')}: ${addFailures.join('; ') || 'no confirmation'}`, { linked, candidates });
+  return await fail(`Pharmarack did not accept the item at ${available.map(s => String(s.link.store_name)).join(', ')}: ${addFailures.join('; ') || 'no confirmation'}`, { linked, candidates });
 }
 
 /**

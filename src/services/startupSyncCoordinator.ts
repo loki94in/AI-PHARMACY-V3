@@ -263,7 +263,11 @@ class StartupSyncCoordinator {
          WHERE LOWER(pr.source) IN ('website', 'whatsapp')
            AND pr.is_active = 1
            AND LOWER(pr.status) = 'pending'
-           AND (pr.cart_status IS NULL OR pr.cart_status NOT IN ('added', 'ready', 'in_cart'))
+           AND COALESCE(pr.qa_cart_qty, 0) <= 0
+           AND pr.cart_store_name IS NULL
+           AND pr.cart_product_code IS NULL
+           AND (pr.cart_cycle_due_date IS NULL OR DATE(pr.cart_cycle_due_date) != DATE(pr.next_refill_date))
+           AND (pr.cart_status IS NULL OR pr.cart_status NOT IN ('added', 'ready', 'in_cart', 'qa_queued'))
          ORDER BY pr.id ASC
          LIMIT 10`
       );
