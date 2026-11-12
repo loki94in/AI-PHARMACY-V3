@@ -1534,6 +1534,15 @@ export default function PharmarackCart() {
     }
   }, [sentDateSearchQuery, olderMonthGroups]);
 
+  // Auto-expand the latest older month group by default when available
+  useEffect(() => {
+    if (olderMonthGroups.length > 0 && userExpandedMonthsRef.current.size === 0 && !sentDateSearchQuery.trim()) {
+      const firstMonthKey = olderMonthGroups[0].monthKey;
+      setExpandedMonths(new Set([firstMonthKey]));
+      userExpandedMonthsRef.current.add(firstMonthKey);
+    }
+  }, [olderMonthGroups, sentDateSearchQuery]);
+
   const toggleMonth = (monthKey: string) => {
     setExpandedMonths(prev => {
       const next = new Set(prev);
@@ -2053,6 +2062,33 @@ export default function PharmarackCart() {
       setSentOrders(cachedSentOrdersMap[dateStr]);
     }
     loadSentOrdersForDate(dateStr);
+  };
+
+  const [isSyncingHistory, setIsSyncingHistory] = useState<boolean>(false);
+
+  const handleSyncHistoricalOrders = async () => {
+    if (isSyncingHistory) return;
+    setIsSyncingHistory(true);
+    toastEvent.trigger('Syncing last week’s orders from Pharmarack...', 'info');
+    try {
+      const res = await apiClient.post('/pharmarack/sync-historical-orders', { days: 7 });
+      if (res?.data?.ok || res?.data?.success) {
+        const count = res.data.imported ?? res.data.fetched ?? 0;
+        toastEvent.trigger(`Historical orders synced (${count} orders processed)`, 'success');
+        cachedSentDates = [];
+        await loadSentDates();
+        if (selectedSentDate) {
+          evictCachedSentOrders(selectedSentDate);
+          await loadSentOrdersForDate(selectedSentDate);
+        }
+      } else {
+        toastEvent.trigger(res?.data?.error || 'Failed to sync historical orders', 'error');
+      }
+    } catch (err: any) {
+      toastEvent.trigger(err?.message || 'Historical sync failed', 'error');
+    } finally {
+      setIsSyncingHistory(false);
+    }
   };
 
   useEffect(() => {
@@ -5849,9 +5885,20 @@ export default function PharmarackCart() {
                 <Calendar size={16} className="text-primary" />
                 <h4 className="text-xs font-bold uppercase tracking-wider text-text">History Dates</h4>
               </div>
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-mono">
-                {sentDates.length} Days
-              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleSyncHistoricalOrders}
+                  disabled={isSyncingHistory}
+                  title="Sync past orders from Pharmarack"
+                  className="p-1 rounded-lg hover:bg-bg3 border border-glass-border/40 text-muted hover:text-primary transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <RotateCw size={13} className={isSyncingHistory ? 'animate-spin text-primary' : ''} />
+                </button>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-mono">
+                  {sentDates.length} Days
+                </span>
+              </div>
             </div>
 
             {/* Quick Filter Search Bar */}
@@ -5912,11 +5959,27 @@ export default function PharmarackCart() {
                   {/* Older History (Monthly Collapsible Accordions) */}
                   {olderMonthGroups.length > 0 && (
                     <div className="space-y-2 pt-1 border-t border-glass-border/30">
-                      <div className="px-1 pb-0.5">
+                      <div className="px-1 pb-0.5 flex items-center justify-between">
                         <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted flex items-center gap-1.5">
                           <Folder size={11} className="text-amber-500" />
                           Older History
                         </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (expandedMonths.size === olderMonthGroups.length) {
+                              setExpandedMonths(new Set());
+                              userExpandedMonthsRef.current.clear();
+                            } else {
+                              const all = new Set(olderMonthGroups.map(g => g.monthKey));
+                              setExpandedMonths(all);
+                              userExpandedMonthsRef.current = new Set(all);
+                            }
+                          }}
+                          className="text-[10px] font-bold text-primary hover:underline cursor-pointer"
+                        >
+                          {expandedMonths.size === olderMonthGroups.length ? 'Collapse All' : 'Expand All'}
+                        </button>
                       </div>
 
                       {olderMonthGroups.map(group => {

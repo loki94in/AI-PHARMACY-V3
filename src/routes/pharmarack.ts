@@ -4425,13 +4425,14 @@ router.get('/sent-orders/dates', async (_req, res) => {
   try {
     const db = await dbManager.getConnection();
     const rows = await db.all(`
-      SELECT DISTINCT order_date FROM (
+      SELECT DISTINCT substr(order_date, 1, 10) AS order_date FROM (
         SELECT order_date FROM pharmarack_placed_orders WHERE order_date IS NOT NULL AND order_date <> ""
         UNION
         SELECT order_date FROM pharmarack_synced_orders WHERE order_date IS NOT NULL AND order_date <> ""
-      ) ORDER BY order_date DESC
+      ) WHERE order_date IS NOT NULL AND length(order_date) >= 10
+      ORDER BY order_date DESC
     `);
-    const dates = rows.map(r => r.order_date);
+    const dates = rows.map(r => r.order_date).filter(Boolean);
     res.json({ success: true, dates });
   } catch (err: any) {
     console.error('Error fetching Pharmarack sent order dates:', err);
@@ -4480,15 +4481,18 @@ router.get('/sent-orders', async (req, res) => {
 
     // Pure offline-first read: Sent PO history strictly queries local SQLite without external network calls
     const rows = await db.all(
-      'SELECT * FROM pharmarack_placed_orders WHERE order_date = ? ORDER BY placed_at DESC',
-      [targetDate]
+      'SELECT * FROM pharmarack_placed_orders WHERE order_date = ? OR substr(order_date, 1, 10) = ? ORDER BY placed_at DESC',
+      [targetDate, targetDate]
     );
 
     // Real Pharmarack order numbers noticed by the order sync (read-only)
     const syncedOrdersList: any[] = [];
     const unattachedSyncedByStore = new Map<string, any[]>();
     try {
-      const synced = await db.all('SELECT * FROM pharmarack_synced_orders WHERE order_date = ? ORDER BY first_seen_at ASC', [targetDate]);
+      const synced = await db.all(
+        'SELECT * FROM pharmarack_synced_orders WHERE order_date = ? OR substr(order_date, 1, 10) = ? ORDER BY first_seen_at ASC',
+        [targetDate, targetDate]
+      );
       for (const o of synced) {
         syncedOrdersList.push(o);
       }
@@ -4767,7 +4771,7 @@ router.post('/sent-orders/:id/send-dispatch', async (req, res) => {
  */
 router.post('/sync-historical-orders', async (req, res) => {
   try {
-    const days = parseInt(req.body?.days as string, 10) || 30;
+    const days = parseInt(req.body?.days as string, 10) || 7;
     const { syncHistoricalPharmarackOrders } = await import('../services/pharmarackOrderSyncService.js');
     const result = await syncHistoricalPharmarackOrders(days, true);
     res.json({ success: result.ok, ...result });

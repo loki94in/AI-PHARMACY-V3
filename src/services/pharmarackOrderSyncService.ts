@@ -64,7 +64,8 @@ async function fetchDisplayOrders(
   fromDdmmyy: string,
   toDdmmyy: string,
   pageSize: number,
-  timeoutMs: number
+  timeoutMs: number,
+  pageNo: number = 1
 ): Promise<any[] | 'expired'> {
   const headers = {
     'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
@@ -75,6 +76,9 @@ async function fetchDisplayOrders(
     'Referer': 'https://retailers.pharmarack.com/',
     'Origin': 'https://retailers.pharmarack.com'
   };
+
+  // Pharmarack DisplayOrders rejects pageSize > 100 with HTTP 406. Cap to safe maximum 100.
+  const safePageSize = Math.min(100, Math.max(1, pageSize));
 
   // Pharmarack DisplayOrders returns HTTP 406 if isMapped is omitted/null and splits
   // mapped vs unmapped distributor orders behind isMapped: true | false.
@@ -88,8 +92,8 @@ async function fetchDisplayOrders(
       todate: toDdmmyy,
       Operation: 'view',
       status: '1,2,3',
-      pageNo: 1,
-      pageSize,
+      pageNo,
+      pageSize: safePageSize,
       isMapped
     }),
     signal: AbortSignal.timeout(timeoutMs)
@@ -886,8 +890,8 @@ export function syncPharmarackOrders(force = false): Promise<PharmarackOrderSync
         } catch (_) { /* UI refresh is best effort */ }
       }
       if (r.ok && r.skipped !== 'no_session' && r.skipped !== 'session_expired') {
-        // Catch up any past-date orders placed while the shop or PC was closed (history-only, zero WhatsApp reminders).
-        void syncHistoricalPharmarackOrders(30, false);
+        // Catch up past-date orders from the last week (7 days) without sending WhatsApp reminders.
+        void syncHistoricalPharmarackOrders(7, false);
       }
       return r;
     })
@@ -897,12 +901,12 @@ export function syncPharmarackOrders(force = false): Promise<PharmarackOrderSync
 }
 
 /**
- * Historical order sync: fetches the past `days` (up to 60, default 30) of orders from Pharmarack DisplayOrders.
+ * Historical order sync: fetches past orders (default 7 days / last week, up to 30) from Pharmarack DisplayOrders.
  * Ingests past-date external orders (< today) into `pharmarack_synced_orders`, `pharmarack_placed_orders`,
  * and `pharmarack_distributor_products` for Sent PO History without sending any WhatsApp reminders.
  * Today's orders are left exclusively to `syncPharmarackOrders()` so present-date WhatsApp reminders stay intact.
  */
-export function syncHistoricalPharmarackOrders(days = 30, force = false): Promise<{ ok: boolean; fetched: number; imported: number; error?: string }> {
+export function syncHistoricalPharmarackOrders(days = 7, force = false): Promise<{ ok: boolean; fetched: number; imported: number; error?: string }> {
   if (historicalInFlight) return historicalInFlight;
   if (!force && Date.now() - lastHistoricalRunAt < HISTORICAL_MIN_GAP_MS) {
     return Promise.resolve({ ok: true, fetched: 0, imported: 0 });
@@ -913,7 +917,7 @@ export function syncHistoricalPharmarackOrders(days = 30, force = false): Promis
   return historicalInFlight;
 }
 
-async function runHistoricalSync(days = 30): Promise<{ ok: boolean; fetched: number; imported: number; error?: string }> {
+async function runHistoricalSync(days = 7): Promise<{ ok: boolean; fetched: number; imported: number; error?: string }> {
   try {
     const db = await dbManager.getConnection();
     const tokenRow = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
@@ -921,23 +925,44 @@ async function runHistoricalSync(days = 30): Promise<{ ok: boolean; fetched: num
     if (!token) return { ok: false, fetched: 0, imported: 0, error: 'No Pharmarack session token' };
 
     const todayIso = localToday().iso;
-    const safeDays = Math.min(60, Math.max(1, days));
+    const safeDays = Math.min(30, Math.max(1, days));
     const now = new Date();
     const past = new Date(Date.now() - safeDays * 86400000);
     const p = (n: number) => String(n).padStart(2, '0');
     const toDdmmyy = `${p(now.getDate())}/${p(now.getMonth() + 1)}/${String(now.getFullYear()).slice(-2)}`;
     const fromDdmmyy = `${p(past.getDate())}/${p(past.getMonth() + 1)}/${String(past.getFullYear()).slice(-2)}`;
 
-    let orders: any[];
-    try {
-      const ordersOrExpired = await fetchDisplayOrders(token, fromDdmmyy, toDdmmyy, 200, 30_000);
-      if (ordersOrExpired === 'expired') {
-        try { await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')"); } catch (_) { /* best effort */ }
-        return { ok: false, fetched: 0, imported: 0, error: 'session_expired' };
+    const orders: any[] = [];
+    const seenOrderNos = new Set<string>();
+    const pageSize = 100;
+    const maxPages = 5; // Up to 500 historical orders
+
+    for (let pageNo = 1; pageNo <= maxPages; pageNo++) {
+      try {
+        const pageResult = await fetchDisplayOrders(token, fromDdmmyy, toDdmmyy, pageSize, 30_000, pageNo);
+        if (pageResult === 'expired') {
+          try { await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')"); } catch (_) { /* best effort */ }
+          if (orders.length === 0) return { ok: false, fetched: 0, imported: 0, error: 'session_expired' };
+          break;
+        }
+        if (!Array.isArray(pageResult) || pageResult.length === 0) break;
+
+        let newInPage = 0;
+        for (const o of pageResult) {
+          const no = String(o?.OrderNo ?? '').trim();
+          if (no && !seenOrderNos.has(no)) {
+            seenOrderNos.add(no);
+            orders.push(o);
+            newInPage++;
+          }
+        }
+        if (pageResult.length < pageSize || newInPage === 0) break;
+      } catch (err: any) {
+        if (orders.length === 0) {
+          return { ok: false, fetched: 0, imported: 0, error: err?.message || 'DisplayOrders failed' };
+        }
+        break;
       }
-      orders = ordersOrExpired;
-    } catch (err: any) {
-      return { ok: false, fetched: 0, imported: 0, error: err?.message || 'DisplayOrders failed' };
     }
 
     let importedCount = 0;
@@ -985,6 +1010,8 @@ async function runHistoricalSync(days = 30): Promise<{ ok: boolean; fetched: num
         if (Array.isArray(fetchedLines) && fetchedLines.length > 0) {
           lines = fetchedLines;
         }
+        // Polite delay between individual order detail requests to prevent bursting Pharmarack API
+        await new Promise(r => setTimeout(r, 120));
       } else {
         try { lines = JSON.parse(placedRow.items_json); } catch (_) {}
       }
@@ -1014,6 +1041,10 @@ async function runHistoricalSync(days = 30): Promise<{ ok: boolean; fetched: num
         void autoSaveMedicineDistributorLinks(lines.map(l => ({ ...l, storeId, storeName })));
       }
     }
+
+    try {
+      await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_initial_history_synced_at', ?)", [String(Date.now())]);
+    } catch (_) { /* best effort */ }
 
     if (importedCount > 0) {
       try {
