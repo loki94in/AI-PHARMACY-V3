@@ -3,9 +3,10 @@ import { useLocation } from 'react-router-dom';
 import {
   Globe, Search, RefreshCw, CheckCircle2, EyeOff,
   Package, Zap, Filter, ChevronLeft, ChevronRight, X, Sparkles,
-  Copy, Check, QrCode, ExternalLink, Settings, Radio, Power, ShieldCheck, Save
+  Copy, Check, QrCode, ExternalLink, Settings, Radio, Power, ShieldCheck, Save, Link2
 } from 'lucide-react';
-import { api } from '../../services/api';
+import { api, type RefillCartPick } from '../../services/api';
+import { MedicineLinkModal } from '../../components/MedicineLinkModal';
 import { toastEvent } from '../../services/events';
 
 interface MedicineCatalogItem {
@@ -22,6 +23,10 @@ interface MedicineCatalogItem {
   featured_rank: number;
   primary_image?: string | null;
   stock_qty: number;
+  link_count?: number;
+  broken_link_count?: number;
+  linked_stores?: string[];
+  suggested_link?: RefillCartPick | null;
 }
 
 interface CatalogVisibilityResponse {
@@ -43,6 +48,9 @@ export default function OnlineCatalog() {
   const location = useLocation();
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'in_stock' | 'online' | 'offline' | 'with_image' | 'all'>('in_stock');
+  const [linkFilter, setLinkFilter] = useState<'all' | 'linked' | 'broken' | 'unlinked' | 'commonly_used'>('all');
+  const [linkTarget, setLinkTarget] = useState<{ id: number; name: string } | null>(null);
+  const [applyingSuggestedId, setApplyingSuggestedId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<CatalogVisibilityResponse | null>(null);
 
@@ -146,11 +154,12 @@ export default function OnlineCatalog() {
 
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const loadData = (query = search, activeFilter = filter, activePage = page) => {
+  const loadData = (query = search, activeFilter = filter, activePage = page, activeLinkFilter = linkFilter) => {
     setLoading(true);
     const params = new URLSearchParams({
       search: query,
       filter: activeFilter,
+      link_filter: activeLinkFilter,
       page: String(activePage),
       limit: '50'
     });
@@ -168,8 +177,22 @@ export default function OnlineCatalog() {
   };
 
   useEffect(() => {
-    loadData(search, filter, page);
-  }, [filter, page]);
+    loadData(search, filter, page, linkFilter);
+  }, [filter, linkFilter, page]);
+
+  const handleApplySuggestedLink = async (med: MedicineCatalogItem) => {
+    if (!med.suggested_link) return;
+    setApplyingSuggestedId(med.id);
+    try {
+      await api.appendMedicineLink(med.id, med.suggested_link);
+      toastEvent.trigger(`Linked ${med.name} → ${med.suggested_link.storeName}`, 'success');
+      loadData(search, filter, page, linkFilter);
+    } catch {
+      toastEvent.trigger('Failed to apply suggested link', 'error');
+    } finally {
+      setApplyingSuggestedId(null);
+    }
+  };
 
   const handleSearchChange = (val: string) => {
     setSearch(val);
@@ -491,6 +514,33 @@ export default function OnlineCatalog() {
             ))}
           </div>
         </div>
+
+        {/* Pharmarack Distributor Link Filter Row */}
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-bold text-muted uppercase tracking-wider mr-1 flex items-center gap-1">
+            <Link2 className="w-3.5 h-3.5 text-primary" /> Distributor Links:
+          </span>
+          {([
+            { key: 'all', label: 'All' },
+            { key: 'linked', label: '🔗 Already Linked' },
+            { key: 'broken', label: '⚠️ Broken Link' },
+            { key: 'unlinked', label: '○ Unlinked' },
+            { key: 'commonly_used', label: '★ Commonly Used' }
+          ] as const).map(lf => (
+            <button
+              key={lf.key}
+              type="button"
+              onClick={() => { setLinkFilter(lf.key); setPage(1); }}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                linkFilter === lf.key
+                  ? 'bg-primary text-white border-primary shadow-xs'
+                  : 'bg-bg3 border-border text-muted hover:text-text hover:border-primary/30'
+              }`}
+            >
+              {lf.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── Bulk Actions Floating / Top Bar ──────────────────────────── */}
@@ -642,8 +692,46 @@ export default function OnlineCatalog() {
                     </div>
                   </div>
 
-                  {/* Online / Offline Toggle Button & Badge */}
-                  <div className="flex items-center gap-3 shrink-0">
+                  {/* Pharmarack Link + Online / Offline Toggle */}
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    {med.suggested_link && (med.link_count || 0) === 0 && (
+                      <button
+                        type="button"
+                        disabled={applyingSuggestedId === med.id}
+                        onClick={() => handleApplySuggestedLink(med)}
+                        className="px-2.5 py-1 rounded-lg bg-sky/10 border border-sky/30 hover:bg-sky/20 text-sky text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50"
+                        title={`Auto-matched via Pharmarack product: ${med.suggested_link.productName || med.suggested_link.productCode} (${med.suggested_link.storeName})`}
+                      >
+                        {applyingSuggestedId === med.id ? 'Linking…' : `⚡ Apply ${med.suggested_link.storeName}`}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setLinkTarget({ id: med.id, name: cleanName })}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                        (med.broken_link_count || 0) > 0
+                          ? 'bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500/20'
+                          : (med.link_count || 0) > 0
+                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/20'
+                          : 'bg-bg3 border-border text-muted hover:text-text hover:border-primary/40'
+                      }`}
+                      title={
+                        (med.broken_link_count || 0) > 0
+                          ? 'Broken Pharmarack link — click to fix'
+                          : (med.link_count || 0) > 0
+                          ? `Linked: ${(med.linked_stores || []).join(', ')}`
+                          : 'Link Pharmarack distributor'
+                      }
+                    >
+                      <Link2 className="w-3.5 h-3.5" />
+                      <span>
+                        {(med.broken_link_count || 0) > 0
+                          ? 'Broken'
+                          : (med.link_count || 0) > 0
+                          ? `Linked (${med.link_count})`
+                          : 'Link'}
+                      </span>
+                    </button>
                     <button
                       type="button"
                       disabled={isBusy}
@@ -864,6 +952,14 @@ export default function OnlineCatalog() {
             </form>
           </div>
         </div>
+      )}
+      {linkTarget && (
+        <MedicineLinkModal
+          medicineId={linkTarget.id}
+          medicineName={linkTarget.name}
+          onSaved={() => loadData(search, filter, page, linkFilter)}
+          onClose={() => setLinkTarget(null)}
+        />
       )}
     </div>
   );

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, AlertTriangle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, ChevronRight, Folder, FolderOpen, CheckCircle2, WifiOff, Store, Zap, Loader2, BookOpen, Star, Globe } from 'lucide-react';
+import { RotateCw, RotateCcw, ExternalLink, ShoppingCart, Package, AlertCircle, AlertTriangle, Truck, Clock, Send, Building2, MessageSquare, Phone, Search, Edit2, X, Plus, Check, Calendar, TrendingUp, TrendingDown, ArrowDown, Layers, Trash2, ArrowLeftRight, ArrowRight, ChevronDown, ChevronUp, ChevronRight, Folder, FolderOpen, CheckCircle2, WifiOff, Store, Zap, Loader2, BookOpen, Star, Globe, Link2 } from 'lucide-react';
 import { formatDisplayDate, getTodayString } from '../../utils/date';
 import { api, apiClient, type SpecialOrder, type Refill, type ReorderSuggestion, type BatchLastPurchaseResult, type ReorderRecentItem, type ReorderDistributorOption } from '../../services/api';
 import { toastEvent, liveCartAddEvent, specialOrdersEvent, whatsappQueueEvent, messageSendEvent } from '../../services/events';
@@ -20,6 +20,7 @@ import { BatchDispatchModal } from './BatchDispatchModal';
 import { SingleDispatchModal } from './SingleDispatchModal';
 import { SingleOrderConfirmModal } from './SingleOrderConfirmModal';
 import { MedicineLinkModal } from '../../components/MedicineLinkModal';
+import { BillPoComparisonModal } from '../../components/BillPoComparisonModal';
 
 const highlightMatchHelper = (text: string, query: string): React.ReactNode => {
   if (!query || !query.trim()) return text;
@@ -1720,6 +1721,7 @@ export default function PharmarackCart() {
 
   // Target for MedicineLinkModal when linking a medicine from live cart or shortfall suggestions
   const [linkModalTarget, setLinkModalTarget] = useState<{ medicineId: number; medicineName: string; storeId?: number; storeName?: string } | null>(null);
+  const [poCompareOrderId, setPoCompareOrderId] = useState<number | null>(null);
 
   const handleSkipFiller = (storeId: number, medName: string) => {
     const key = (medName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -6071,6 +6073,15 @@ export default function PharmarackCart() {
                           </div>
 
                           <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setPoCompareOrderId(order.id)}
+                              className="flex items-center gap-1 px-2.5 py-0.5 rounded-lg text-xs font-semibold bg-bg3 hover:bg-glass-bg border border-glass-border text-text transition-all active:scale-[.98] cursor-pointer"
+                              title="Compare & link this Sent PO's items with your inventory medicines"
+                            >
+                              <Link2 size={11} className="text-primary" />
+                              <span>Link PO</span>
+                            </button>
                             <span className={`text-xs font-bold px-2 py-0.5 rounded-lg ${order.batch_sent ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
                               {order.batch_sent ? '● Sent' : '○ Pending'}
                             </span>
@@ -9484,6 +9495,14 @@ export default function PharmarackCart() {
             setLinkModalTarget(null);
           }}
           onClose={() => setLinkModalTarget(null)}
+        />
+      )}
+
+      {poCompareOrderId && (
+        <BillPoComparisonModal
+          isOpen={true}
+          poOrderId={poCompareOrderId}
+          onClose={() => setPoCompareOrderId(null)}
         />
       )}
     </div>

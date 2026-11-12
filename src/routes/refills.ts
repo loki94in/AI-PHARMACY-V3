@@ -1667,17 +1667,59 @@ router.post('/bill-links', async (req, res) => {
   }
 });
 
-// After a purchase bill save (special-price popup): link the bill's medicines to the bill's
-// Pharmarack distributor. ONE search per unlinked medicine; auto-links only a single exact
-// product, else returns candidates. Links only - never touches the cart, stock or messages.
-router.post('/bill-links', async (req, res) => {
-  const purchaseId = parseInt(String(req.body?.purchaseId), 10);
+// Side-by-side comparison: saved bill medicines vs same-distributor Sent PO History (read-only, non-blocking).
+router.get('/bill-po-comparison/:purchaseId', async (req, res) => {
+  const purchaseId = parseInt(req.params.purchaseId, 10);
+  const days = Math.min(14, Math.max(1, parseInt(String(req.query.days || '3'), 10) || 3));
   if (!purchaseId || isNaN(purchaseId)) return res.status(400).json({ error: 'Valid purchaseId required' });
   try {
-    const { linkBillMedicines } = await import('../services/billDistributorLinkService.js');
-    res.json({ success: true, rows: await linkBillMedicines(purchaseId) });
+    const { getBillPoComparison } = await import('../services/billDistributorLinkService.js');
+    res.json({ success: true, ...(await getBillPoComparison(purchaseId, days)) });
   } catch (err: any) {
-    res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to link bill medicines' });
+    res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to load PO comparison' });
+  }
+});
+
+// Side-by-side comparison opened from Sent PO History row.
+router.get('/po-comparison/:orderId', async (req, res) => {
+  const orderId = parseInt(req.params.orderId, 10);
+  if (!orderId || isNaN(orderId)) return res.status(400).json({ error: 'Valid orderId required' });
+  try {
+    const { getPoOrderComparison } = await import('../services/billDistributorLinkService.js');
+    res.json({ success: true, ...(await getPoOrderComparison(orderId)) });
+  } catch (err: any) {
+    res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to load PO order comparison' });
+  }
+});
+
+// Append or update ONE distributor product link for a medicine (preserves multi-distributor links).
+router.post('/medicine-links/:medicineId/append', async (req, res) => {
+  const medicineId = parseInt(req.params.medicineId, 10);
+  if (!medicineId || isNaN(medicineId)) return res.status(400).json({ error: 'Valid medicine ID required' });
+  if (!req.body?.pick || typeof req.body.pick !== 'object') return res.status(400).json({ error: 'pick object is required' });
+  try {
+    const { appendSingleMedicineLink } = await import('../services/billDistributorLinkService.js');
+    const links = await appendSingleMedicineLink(medicineId, req.body.pick);
+    res.json({ success: true, links });
+  } catch (err: any) {
+    res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to append distributor link' });
+  }
+});
+
+// Remove ONE mistaken distributor product link for a medicine.
+router.delete('/medicine-links/:medicineId/:storeId/:productCode', async (req, res) => {
+  const medicineId = parseInt(req.params.medicineId, 10);
+  const storeId = parseInt(req.params.storeId, 10);
+  const productCode = decodeURIComponent(String(req.params.productCode || ''));
+  if (!medicineId || isNaN(medicineId) || !storeId || isNaN(storeId) || !productCode) {
+    return res.status(400).json({ error: 'Valid medicineId, storeId, and productCode are required' });
+  }
+  try {
+    const { removeSingleMedicineLink } = await import('../services/billDistributorLinkService.js');
+    const links = await removeSingleMedicineLink(medicineId, storeId, productCode);
+    res.json({ success: true, links });
+  } catch (err: any) {
+    res.status(err?.httpStatus || 500).json({ error: err?.message || 'Failed to remove distributor link' });
   }
 });
 

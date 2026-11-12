@@ -32,7 +32,7 @@ export interface CloudSyncResult {
 export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
   const db = await dbManager.getConnection();
 
-  // Query medicines that are in stock or portal-visible
+  // Query medicines that are in stock, portal-visible, or Pharmarack-linked (last highest MRP only; never distributor/rate)
   const rows = await db.all(`
     SELECT m.id, m.name, m.generic_name as composition, m.manufacturer, m.category,
            COALESCE(
@@ -49,10 +49,22 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
              0
            ) as sell_price,
            m.packaging as pack,
-           COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty
+           COALESCE((SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id), 0) as stock_qty,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM medicine_distributor_links mdl
+             WHERE mdl.medicine_id = m.id AND COALESCE(mdl.mapped, 1) = 1 AND mdl.store_id > 0 AND COALESCE(mdl.product_code, '') != ''
+           ) THEN 1 ELSE 0 END as pharmarack_linked
     FROM medicines m
     LEFT JOIN product_channel_visibility pcv ON pcv.medicine_id = m.id
-    WHERE (pcv.is_portal_visible = 1 OR pcv.is_website_visible = 1 OR (SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id) > 0)
+    WHERE (
+      pcv.is_portal_visible = 1
+      OR pcv.is_website_visible = 1
+      OR (SELECT SUM(im.quantity) FROM inventory_master im WHERE im.medicine_id = m.id) > 0
+      OR EXISTS (
+        SELECT 1 FROM medicine_distributor_links mdl
+        WHERE mdl.medicine_id = m.id AND COALESCE(mdl.mapped, 1) = 1 AND mdl.store_id > 0 AND COALESCE(mdl.product_code, '') != ''
+      )
+    )
     ORDER BY m.name ASC
     LIMIT 1000
   `);
@@ -90,8 +102,9 @@ export async function pushLocalCatalogToCloud(): Promise<CloudSyncResult> {
     manufacturer: r.manufacturer || 'Pharmacy Stock',
     pack: r.pack || 'Standard Pack',
     mrp: Number(r.mrp || 0),
-    sell_price: Number(r.sell_price || r.mrp || 0),
-    in_stock: Number(r.stock_qty || 0) > 0,
+    sell_price: Number(r.mrp || r.sell_price || 0),
+    in_stock: Number(r.stock_qty || 0) > 0 || Number(r.pharmarack_linked || 0) === 1,
+    pharmarack_linked: Number(r.pharmarack_linked || 0) === 1,
     stock_qty: Number(r.stock_qty || 0),
   }));
 
@@ -399,6 +412,33 @@ export async function pullCloudOrdersToLocal(): Promise<CloudSyncResult> {
               paymentStatus
             ]
           );
+        }
+
+        // Offline -> Online follow-back for Pharmarack-linked (no-inventory) items:
+        // Check Pharmarack stock for requested qty; if payment already confirmed, add to Live Cart.
+        if (!isRefill && Array.isArray(o.items) && o.items.length > 0) {
+          try {
+            const { checkLinkedPharmarackStock, addConfirmedWebsiteItemToLiveCart } = await import('./pharmarackWebsiteOrderHelper.js');
+            for (const it of o.items) {
+              const itemName = String(it.product || it.name || it.medicine_name || '').trim();
+              const itemQty = Math.max(1, Number(it.qty || 1));
+              const medRow = it.medicineId
+                ? await db.get('SELECT id, name FROM medicines WHERE id = ?', [Number(it.medicineId)]).catch(() => null)
+                : (itemName ? await db.get('SELECT id, name FROM medicines WHERE LOWER(name) = LOWER(?) LIMIT 1', [itemName]).catch(() => null) : null);
+              if (!medRow) continue;
+              const invRow = await db.get(
+                'SELECT COALESCE(SUM(quantity), 0) AS qty FROM inventory_master WHERE medicine_id = ? AND is_active = 1',
+                [medRow.id]
+              ).catch(() => null);
+              if (Number(invRow?.qty || 0) > 0) continue;
+              const stockCheck = await checkLinkedPharmarackStock(Number(medRow.id), itemQty);
+              if (stockCheck.available && paymentStatus === 'PAYMENT_CONFIRMED') {
+                await addConfirmedWebsiteItemToLiveCart(Number(medRow.id), String(medRow.name), itemQty);
+              }
+            }
+          } catch (prCheckErr) {
+            console.warn('[CloudCatalogSync] Offline Pharmarack check skipped:', prCheckErr);
+          }
         }
       }
       importedIds.push(o.orderId);

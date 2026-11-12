@@ -98,9 +98,28 @@ router.get('/medicines/search', async (req, res) => {
         [med.id, storeId]
       ).catch(() => null);
 
-      const highestMrp = batchRow?.max_mrp || 0;
-      const highestSellPrice = batchRow?.max_sell_price || highestMrp;
       const totalStock = batchRow?.total_qty || 0;
+      let highestMrp = batchRow?.max_mrp || 0;
+      let highestSellPrice = batchRow?.max_sell_price || highestMrp;
+      let pharmarackLinked = false;
+
+      if (totalStock <= 0) {
+        const linkRow = await db.get(
+          `SELECT 1 FROM medicine_distributor_links
+           WHERE medicine_id = ? AND COALESCE(mapped, 1) = 1 AND store_id > 0 AND COALESCE(product_code, '') != ''
+           LIMIT 1`,
+          [med.id]
+        ).catch(() => null);
+        if (linkRow) {
+          pharmarackLinked = true;
+          const fallbackMrpRow = await db.get(
+            `SELECT COALESCE((SELECT MAX(mrp) FROM inventory_master WHERE medicine_id = ?), (SELECT mrp FROM medicines WHERE id = ?), 0) AS mrp`,
+            [med.id, med.id]
+          ).catch(() => null);
+          highestMrp = Number(fallbackMrpRow?.mrp || 0);
+          highestSellPrice = highestMrp;
+        }
+      }
 
       safeResults.push({
         id: med.id,
@@ -115,8 +134,9 @@ router.get('/medicines/search', async (req, res) => {
         mrp: highestMrp,
         price: highestSellPrice,
         image_url: med.image_url || null,
-        is_available: totalStock > 0,
-        availability_status: totalStock > 0 ? 'Available' : 'Sold Out'
+        is_available: totalStock > 0 || pharmarackLinked,
+        pharmarack_linked: pharmarackLinked,
+        availability_status: totalStock > 0 ? 'Available' : (pharmarackLinked ? 'Available (Order)' : 'Sold Out')
       });
     }
 
@@ -129,6 +149,30 @@ router.get('/medicines/search', async (req, res) => {
   } catch (err: any) {
     console.error('[WebsiteOrdersRoute] Medicine search error:', err);
     res.status(500).json({ error: 'Failed to search medicines' });
+  }
+});
+
+// On-demand Pharmarack stock + highest-MRP check ONLY when patient adds a no-inventory linked product to cart.
+// Never exposes distributor name, purchase rate, or discount.
+router.post('/medicines/cart-check', async (req, res) => {
+  const medicineId = parseInt(String(req.body?.medicineId || req.body?.medicine_id || ''), 10);
+  const qty = Math.max(1, parseInt(String(req.body?.qty || '1'), 10) || 1);
+  if (!medicineId || isNaN(medicineId)) {
+    return res.status(400).json({ error: 'Valid medicineId is required' });
+  }
+  try {
+    const { checkLinkedPharmarackStock } = await import('../services/pharmarackWebsiteOrderHelper.js');
+    const result = await checkLinkedPharmarackStock(medicineId, qty);
+    res.json({
+      success: true,
+      available: result.available,
+      lowStock: result.lowStock,
+      mrp: result.mrp,
+      message: result.message
+    });
+  } catch (err: any) {
+    console.error('[WebsiteOrdersRoute] Cart check error:', err);
+    res.status(500).json({ error: 'Failed to check product availability' });
   }
 });
 
@@ -805,6 +849,23 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
       [orderId, soCode]
     ).catch(() => {});
 
+    // For confirmed special procurement / Pharmarack-linked bookings: add to Live Cart + build closure-aware 20-24h ETA
+    let etaNotice = '🛒 Your medicine has been added to our Live Cart for procurement. We will notify you as soon as it arrives!';
+    if (isSpecialProcurement) {
+      try {
+        const { addConfirmedWebsiteItemToLiveCart, buildClosureAwareEtaNote } = await import('../services/pharmarackWebsiteOrderHelper.js');
+        const medIdNum = Number(order.medicine_id || 0) || Number(
+          (await db.get('SELECT id FROM medicines WHERE LOWER(name) = LOWER(?) LIMIT 1', [medicineName]).catch(() => null))?.id || 0
+        );
+        if (medIdNum > 0) {
+          await addConfirmedWebsiteItemToLiveCart(medIdNum, medicineName, Number(order.qty || 1));
+        }
+        etaNotice = await buildClosureAwareEtaNote(db, 'en');
+      } catch (etaErr) {
+        console.warn('[WebsiteOrdersRoute] Live Cart / ETA helper warning:', etaErr);
+      }
+    }
+
     // Stage final customer message and send confirmation receipt directly to customer on WhatsApp
     const custFinalMsg = isSpecialProcurement
       ? `🎉 Hello *${customerName}*, your medicine request is confirmed!\n\n` +
@@ -812,7 +873,7 @@ router.patch('/orders/:orderId/payment', async (req, res) => {
         `💊 ${medicineName}\n` +
         `📦 Quantity: ${order.qty || 1}\n\n` +
         `💰 Booking Amount Paid: ₹${amountPaid}\n\n` +
-        `🛒 Your medicine has been added to our Live Cart for procurement. We will notify you as soon as it arrives!\n\n` +
+        `${etaNotice}\n\n` +
         `Thank you!\n— ${storeName}`
       : `🎉 Hello *${customerName}*, your order payment is confirmed!\n\n` +
         `🆔 Order ID: ${soCode}\n\n` +

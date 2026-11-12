@@ -304,6 +304,7 @@ export async function restoreBackup(filename: string): Promise<void> {
     }
   }
 
+  let preRestoreLinksPath: string | null = null;
   try {
     let dbSourcePath = filePath;
     if (sanitized.endsWith('.zip')) {
@@ -362,6 +363,16 @@ export async function restoreBackup(filename: string): Promise<void> {
       }
     }
 
+    if (fs.existsSync(DB_PATH)) {
+      try {
+        preRestoreLinksPath = path.join(BACKUP_DIR, `pre_restore_links_${Date.now()}.db`);
+        fs.copyFileSync(DB_PATH, preRestoreLinksPath);
+      } catch (copyErr: any) {
+        console.warn('[Restore] Could not snapshot pre-restore distributor links:', copyErr?.message);
+        preRestoreLinksPath = null;
+      }
+    }
+
     try {
       fs.renameSync(stagedPath, DB_PATH);
     } catch (renameErr: any) {
@@ -382,6 +393,7 @@ export async function restoreBackup(filename: string): Promise<void> {
       try { fs.rmSync(tempExtractDir, { recursive: true, force: true }); } catch (_) { }
     }
     try { if (fs.existsSync(stagedPath)) fs.unlinkSync(stagedPath); } catch (_) { }
+    if (preRestoreLinksPath && fs.existsSync(preRestoreLinksPath)) { try { fs.unlinkSync(preRestoreLinksPath); } catch (_) { } }
     try { await dbManager.getConnection(); } catch (_) { }
     if (workers) { try { workers.start(); } catch (_) { } }
     throw err;
@@ -397,6 +409,18 @@ export async function restoreBackup(filename: string): Promise<void> {
     await ensureMedicinesFts(db);
   } catch (schemaErr: any) {
     console.warn('[Restore] Schema verification after restore failed:', schemaErr.message);
+  }
+
+  // Preserve newer distributor links, mappings, and priorities from the pre-restore DB
+  if (preRestoreLinksPath && fs.existsSync(preRestoreLinksPath)) {
+    try {
+      const { reconnectDistributorLinks } = await import('../utils/reconnectDistributorLinks.js');
+      await reconnectDistributorLinks(db, preRestoreLinksPath);
+    } catch (linkErr: any) {
+      console.warn('[Restore] Distributor link preservation warning:', linkErr?.message);
+    } finally {
+      try { fs.unlinkSync(preRestoreLinksPath); } catch (_) { }
+    }
   }
 
   if (workers) { try { workers.start(); } catch (_) { } }

@@ -72,8 +72,9 @@ router.get('/', async (req, res) => {
   const rack = (req.query.rack as string || '').trim();
   const stock_filter = (req.query.stock_filter as string || '').trim();
   const online_filter = (req.query.online_filter as string || '').trim().toLowerCase();
+  const link_filter = (req.query.link_filter as string || '').trim().toLowerCase();
 
-  const hasFilters = !!(search || medicine || id || batch || expiry || packs || loose || mrp || rack || stock_filter || online_filter);
+  const hasFilters = !!(search || medicine || id || batch || expiry || packs || loose || mrp || rack || stock_filter || online_filter || link_filter);
   const limit = req.query.limit !== undefined 
     ? parseInt(req.query.limit as string) 
     : (hasFilters ? 200 : 100);
@@ -163,6 +164,14 @@ router.get('/', async (req, res) => {
     } else if (online_filter === 'offline') {
       baseQuery += ` AND (pcv.is_portal_visible IS NULL OR pcv.is_portal_visible = 0)`;
     }
+
+    if (link_filter === 'linked') {
+      baseQuery += ` AND m.id IS NOT NULL AND EXISTS (SELECT 1 FROM medicine_distributor_links mdl WHERE mdl.medicine_id = m.id AND COALESCE(mdl.mapped, 1) = 1 AND mdl.store_id > 0 AND COALESCE(mdl.product_code, '') != '')`;
+    } else if (link_filter === 'broken') {
+      baseQuery += ` AND m.id IS NOT NULL AND EXISTS (SELECT 1 FROM medicine_distributor_links mdl WHERE mdl.medicine_id = m.id AND (COALESCE(mdl.mapped, 1) = 0 OR mdl.store_id <= 0 OR COALESCE(mdl.product_code, '') = '' OR NOT EXISTS (SELECT 1 FROM pharmarack_distributor_mappings pdm WHERE LOWER(TRIM(pdm.store_name)) = LOWER(TRIM(mdl.store_name)))))`;
+    } else if (link_filter === 'unlinked') {
+      baseQuery += ` AND m.id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM medicine_distributor_links mdl WHERE mdl.medicine_id = m.id)`;
+    }
     
     // If limit is 0, fetch all (warning: can cause frontend lag)
     if (limit === 0) {
@@ -189,7 +198,7 @@ router.get('/', async (req, res) => {
     const offset = (page - 1) * limit;
 
     let totalItems: number;
-    const countKey = JSON.stringify([targetStoreId, allStores, search, medicine, id, batch, expiry, packs, loose, mrp, rack, stock_filter, online_filter]);
+    const countKey = JSON.stringify([targetStoreId, allStores, search, medicine, id, batch, expiry, packs, loose, mrp, rack, stock_filter, online_filter, link_filter]);
     const cachedCount = inventoryCountCache.get(countKey);
     if (cachedCount && Date.now() - cachedCount.ts < INVENTORY_COUNT_TTL_MS) {
       totalItems = cachedCount.total;
@@ -217,6 +226,37 @@ router.get('/', async (req, res) => {
       ORDER BY COALESCE(m.name, im.batch_no) ASC, im.id DESC
       LIMIT ? OFFSET ?
     `, [...params, limit, offset]);
+
+    // Enrich page rows with Pharmarack distributor link summary in ONE chunked query.
+    const medIds = Array.from(new Set(rows.map((r: any) => Number(r.medicine_id)).filter((idVal: number) => idVal > 0)));
+    const linkSummaryMap = new Map<number, { linkCount: number; brokenCount: number; stores: string[] }>();
+    if (medIds.length > 0) {
+      const placeholders = medIds.map(() => '?').join(',');
+      const linkRows: any[] = await db.all(
+        `SELECT mdl.medicine_id, mdl.store_id, mdl.store_name, mdl.product_code, COALESCE(mdl.mapped, 1) AS mapped,
+                CASE WHEN pdm.store_name IS NOT NULL THEN 1 ELSE 0 END AS store_mapped
+         FROM medicine_distributor_links mdl
+         LEFT JOIN pharmarack_distributor_mappings pdm ON LOWER(TRIM(pdm.store_name)) = LOWER(TRIM(mdl.store_name))
+         WHERE mdl.medicine_id IN (${placeholders})
+         ORDER BY mdl.pick_order ASC`,
+        medIds
+      ).catch(() => []);
+      for (const lr of linkRows) {
+        const mid = Number(lr.medicine_id);
+        const entry = linkSummaryMap.get(mid) || { linkCount: 0, brokenCount: 0, stores: [] };
+        const isBroken = Number(lr.mapped) === 0 || Number(lr.store_id) <= 0 || !String(lr.product_code || '').trim() || Number(lr.store_mapped) === 0;
+        entry.linkCount++;
+        if (isBroken) entry.brokenCount++;
+        if (lr.store_name && !entry.stores.includes(lr.store_name)) entry.stores.push(String(lr.store_name));
+        linkSummaryMap.set(mid, entry);
+      }
+    }
+    for (const r of rows) {
+      const info = linkSummaryMap.get(Number(r.medicine_id));
+      r.link_count = info?.linkCount || 0;
+      r.broken_link_count = info?.brokenCount || 0;
+      r.linked_stores = info?.stores || [];
+    }
     
     res.json({
       data: rows,

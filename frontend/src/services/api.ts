@@ -527,13 +527,35 @@ export interface BillLinkRow {
   candidates: RefillCartCandidate[];
 }
 
-export interface BillLinkRow {
+export interface PoOrderItemCandidate {
+  storeId: number;
+  storeName: string;
+  productCode: string;
+  productId: string | null;
+  productName: string;
+  packaging: string;
+  company: string;
+  mrp: number | null;
+  rate: number | null;
+  qty: number;
+  orderDate: string;
+  orderNo: string | null;
+}
+
+export interface BillPoComparisonRow {
   medicineId: number;
   medicineName: string;
-  status: 'linked' | 'auto_linked' | 'review' | 'not_found' | 'failed';
-  message: string;
+  billMrp: number;
   links: RefillCartPick[];
-  candidates: RefillCartCandidate[];
+  suggestedPoItem: PoOrderItemCandidate | null;
+  matchScore: number;
+}
+
+export interface BillPoComparisonResult {
+  purchaseId: number | null;
+  distributorName: string;
+  rows: BillPoComparisonRow[];
+  poItems: PoOrderItemCandidate[];
 }
 
 export interface RefillCartCandidate extends RefillCartPick {
@@ -1243,6 +1265,7 @@ export const api = {
     date_to?: string;
     stock_filter?: string;
     online_filter?: string;
+    link_filter?: string;
   }) => apiClient.get('/inventory', { params }).then(res => res.data),
   toggleOnlineStatus: (data: { medicine_id?: number; medicine_ids?: number[]; is_online: boolean }) =>
     apiClient.post('/inventory/toggle-online', data).then(res => res.data),
@@ -1993,6 +2016,14 @@ export const api = {
   // Saved Pharmarack distributor products per medicine (PUT replaces the set; [] unlinks; no cart write)
   linkBillMedicines: (purchaseId: number) =>
     apiClient.post<{ success: boolean; rows: BillLinkRow[] }>('/refills/bill-links', { purchaseId }, { timeout: 60000 }).then(res => res.data),
+  getBillPoComparison: (purchaseId: number, days: number = 3) =>
+    apiClient.get<{ success: boolean } & BillPoComparisonResult>(`/refills/bill-po-comparison/${purchaseId}`, { params: { days } }).then(res => res.data),
+  getPoOrderComparison: (orderId: number) =>
+    apiClient.get<{ success: boolean } & BillPoComparisonResult>(`/refills/po-comparison/${orderId}`).then(res => res.data),
+  appendMedicineLink: (medicineId: number, pick: RefillCartPick) =>
+    apiClient.post<{ success: boolean; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}/append`, { pick }).then(res => res.data),
+  removeMedicineLink: (medicineId: number, storeId: number, productCode: string) =>
+    apiClient.delete<{ success: boolean; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}/${storeId}/${encodeURIComponent(productCode)}`).then(res => res.data),
   getMedicineLinks: (medicineId: number) =>
     apiClient.get<{ success: boolean; links: RefillCartPick[] }>(`/refills/medicine-links/${medicineId}`).then(res => res.data),
   saveMedicineLinks: (medicineId: number, links: RefillCartPick[]) =>

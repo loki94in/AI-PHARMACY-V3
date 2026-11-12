@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Tag, X, Percent, TrendingUp, Sparkles, Check, Link2, Loader2 } from 'lucide-react';
+import { Tag, X, Percent, TrendingUp, Sparkles, Check, Link2, Loader2, ArrowRightLeft } from 'lucide-react';
 import { api, type BillLinkRow, type RefillCartCandidate } from '../services/api';
 import { MedicineLinkModal } from './MedicineLinkModal';
+import { BillPoComparisonModal } from './BillPoComparisonModal';
 import { invalidateAfterPriceWrite } from '../utils/cacheInvalidation';
 import { toastEvent } from '../services/events';
 import { useModalEscape } from '../services/keyboardShortcuts';
@@ -99,6 +100,7 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
   const [linkRows, setLinkRows] = useState<Record<number, BillLinkRow>>({});
   const [linksLoading, setLinksLoading] = useState(false);
   const [linkTarget, setLinkTarget] = useState<{ id: number; name: string } | null>(null);
+  const [poCompareOpen, setPoCompareOpen] = useState(false);
 
   // One link pass per saved bill (opens with the popup): auto-links exact matches, lists the rest for review.
   useEffect(() => {
@@ -312,12 +314,24 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
             </button>
           </div>
 
-          <button
-            onClick={resetAllToMRP}
-            className="px-3 py-1.5 text-xs font-medium text-muted hover:text-text hover:bg-glass-bg border border-glass-border rounded-lg transition-colors"
-          >
-            Reset All to Full MRP
-          </button>
+          <div className="flex items-center gap-2">
+            {purchaseId ? (
+              <button
+                type="button"
+                onClick={() => setPoCompareOpen(true)}
+                className="px-3 py-1.5 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 border border-primary/30 rounded-lg flex items-center gap-1.5 transition-colors"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5" />
+                Compare with Sent PO
+              </button>
+            ) : null}
+            <button
+              onClick={resetAllToMRP}
+              className="px-3 py-1.5 text-xs font-medium text-muted hover:text-text hover:bg-glass-bg border border-glass-border rounded-lg transition-colors"
+            >
+              Reset All to Full MRP
+            </button>
+          </div>
         </div>
 
         {/* Table Body */}
@@ -475,6 +489,16 @@ export const SaveBillSpecialPriceModal: React.FC<SaveBillSpecialPriceModalProps>
           medicineName={linkTarget.name}
           onSaved={() => void refreshLinks(linkTarget.id)}
           onClose={() => setLinkTarget(null)}
+        />
+      )}
+      {poCompareOpen && purchaseId && (
+        <BillPoComparisonModal
+          isOpen={poCompareOpen}
+          purchaseId={purchaseId}
+          onClose={() => setPoCompareOpen(false)}
+          onLinkedChange={() => {
+            rows.forEach(r => { if (r.medicine_id > 0) void refreshLinks(r.medicine_id); });
+          }}
         />
       )}
     </>

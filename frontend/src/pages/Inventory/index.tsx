@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { usePageActive } from '../../lib/keepAlive/PageActiveContext';
 import { useQueryClient } from '@tanstack/react-query';
-import { PackageSearch, Plus, Minus, RefreshCw, X, AlertTriangle, ShieldAlert, BookOpen, Factory, Edit, Save, Loader2, Columns3, Check, Download, ShoppingCart, Globe, Eye, EyeOff, CalendarCheck } from 'lucide-react';
+import { PackageSearch, Plus, Minus, RefreshCw, X, AlertTriangle, ShieldAlert, BookOpen, Factory, Edit, Save, Loader2, Columns3, Check, Download, ShoppingCart, Globe, Eye, EyeOff, CalendarCheck, Link2 } from 'lucide-react';
 import { api, type InventoryItem, type SpecialOrder } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import { parsePackSizeFromPackaging } from '../../utils/packagingMatcher';
@@ -18,6 +18,7 @@ import { exportToCSV, exportToPDF } from '../../utils/export';
 
 import { LastPurchaseByDistributor } from '../../components/LastPurchaseByDistributor';
 import { TodaysReceiptsPanel } from '../../components/TodaysReceiptsPanel';
+import { MedicineLinkModal } from '../../components/MedicineLinkModal';
 const UniversalMedicineEditModal = lazy(() => import('../../components/UniversalMedicineEditModal').then(m => ({ default: m.UniversalMedicineEditModal })));
 
 type LocalSellSourceItem = InventoryItem & { inventory_id?: number; batch_no?: string };
@@ -119,6 +120,8 @@ const Inventory = () => {
   });
   const [stockFilter, setStockFilter] = useState<string>('all');
   const [onlineFilter, setOnlineFilter] = useState<string>('all');
+  const [linkFilter, setLinkFilter] = useState<string>('all');
+  const [linkTarget, setLinkTarget] = useState<{ id: number; name: string } | null>(null);
   const [selectedMedIds, setSelectedMedIds] = useState<Set<number>>(new Set());
   const [isBulkToggling, setIsBulkToggling] = useState(false);
 
@@ -372,6 +375,7 @@ const Inventory = () => {
       rack: debouncedFilters.rack,
       stock_filter: stockFilter,
       online_filter: onlineFilter,
+      link_filter: linkFilter,
     },
     fetchPage: async (pageParam, filters) => {
       const res = await api.getInventory({
@@ -386,7 +390,8 @@ const Inventory = () => {
         mrp: filters.mrp,
         rack: filters.rack,
         stock_filter: filters.stock_filter,
-        online_filter: (filters as any).online_filter,
+        online_filter: (filters as { online_filter?: string }).online_filter,
+        link_filter: (filters as { link_filter?: string }).link_filter,
       });
       const data = res && res.data ? res.data : res;
       const totalPages = res && res.totalPages ? res.totalPages : 1;
@@ -629,6 +634,19 @@ const Inventory = () => {
               <option value="all">All Channels</option>
               <option value="online">🌐 Online Only</option>
               <option value="offline">📴 Offline Only</option>
+            </select>
+
+            {/* Pharmarack Distributor Link Filter */}
+            <select
+              value={linkFilter}
+              onChange={(e) => setLinkFilter(e.target.value)}
+              className="h-8 px-3 rounded-lg border bg-bg3 border-glass-border text-muted hover:text-text text-[13px] font-semibold transition-all cursor-pointer focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 appearance-none"
+              title="Filter medicines by Pharmarack distributor link status"
+            >
+              <option value="all">All Links</option>
+              <option value="linked">🔗 Already Linked</option>
+              <option value="broken">⚠️ Broken Link</option>
+              <option value="unlinked">○ Unlinked</option>
             </select>
 
             {/* Bills received today: reconcile against the shelf */}
@@ -955,6 +973,41 @@ const Inventory = () => {
                           ⚠ {matchedOrder?.qty} req
                         </span>
                       )}
+                      {(item.medicine_id || item.id) > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLinkTarget({
+                              id: Number(item.medicine_id || item.id),
+                              name: String(item.name || item.medicine_name || 'Medicine')
+                            });
+                          }}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold border shrink-0 transition-colors cursor-pointer ${
+                            (item.broken_link_count || 0) > 0
+                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500/20'
+                              : (item.link_count || 0) > 0
+                              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/20'
+                              : 'bg-bg3 border-glass-border text-muted hover:text-text hover:border-primary/40'
+                          }`}
+                          title={
+                            (item.broken_link_count || 0) > 0
+                              ? 'Broken Pharmarack link — click to fix'
+                              : (item.link_count || 0) > 0
+                              ? `Linked: ${(item.linked_stores || []).join(', ')}`
+                              : 'Link Pharmarack distributor'
+                          }
+                        >
+                          <Link2 size={10} />
+                          <span>
+                            {(item.broken_link_count || 0) > 0
+                              ? 'Broken'
+                              : (item.link_count || 0) > 0
+                              ? `Linked (${item.link_count})`
+                              : 'Link'}
+                          </span>
+                        </button>
+                      )}
                     </td>
                     {col('online') && (
                       <td className="px-2 py-0 w-28 shrink-0 flex items-center justify-center" onClick={e => e.stopPropagation()}>
@@ -1123,6 +1176,20 @@ const Inventory = () => {
                       >
                         <Edit size={14} />
                         Universal Edit
+                      </button>
+                      <button
+                        onClick={() => {
+                          setPanelOpen(false);
+                          setLinkTarget({
+                            id: Number(selectedItem.medicine_id || selectedItem.id),
+                            name: String(selectedItem.name || selectedItem.medicine_name || 'Medicine')
+                          });
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/15 border border-primary/30 hover:bg-primary/25 text-primary text-sm font-bold transition-all"
+                        title="Link or edit Pharmarack distributors for this medicine"
+                      >
+                        <Link2 size={14} />
+                        Link Distributor
                       </button>
                     </>
                   )}
@@ -1363,6 +1430,17 @@ const Inventory = () => {
             }}
           />
         </Suspense>
+      )}
+
+      {linkTarget && (
+        <MedicineLinkModal
+          medicineId={linkTarget.id}
+          medicineName={linkTarget.name}
+          onSaved={() => {
+            refetch();
+          }}
+          onClose={() => setLinkTarget(null)}
+        />
       )}
     </div>
   );
