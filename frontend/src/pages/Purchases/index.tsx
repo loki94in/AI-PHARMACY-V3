@@ -4175,7 +4175,7 @@ const Purchases: React.FC = () => {
                                       : 'hover:bg-bg3'
                                   }`}
                                 >
-                                  <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-center justify-between gap-2">
                                     <div className="min-w-0 flex-1">
                                       <div className="font-medium truncate flex flex-wrap items-center gap-1.5">
                                         <span className={idx === searchHighlightIndex ? "font-bold text-text" : ""}>{medicine.name}</span>
@@ -4199,24 +4199,19 @@ const Purchases: React.FC = () => {
                                                 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                                                 : 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/30'
                                             }`}>
-                                              {(sq || 0) <= 0 && lq <= 0 ? '- 0' : `Stock: ${sq || 0}${lq ? ` + ${lq}` : ''}`}
+                                              {(sq || 0) <= 0 && lq <= 0 ? 'Stock: 0' : `Stock: ${sq || 0}${lq ? ` + ${lq}` : ''}`}
                                             </span>
                                           );
                                         })()}
-                                        {((medicine as any).location || (medicine as any).rack || (medicine as any).shelf) && (
-                                          <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold bg-blue-500/15 text-blue-400 border border-blue-500/30">
-                                            📍 {(medicine as any).location || (medicine as any).rack || (medicine as any).shelf}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="text-xs text-muted mt-0.5">
-                                        {medicine.manufacturer && <span>{medicine.manufacturer}</span>}
-                                        {medicine.strength && <span>{medicine.manufacturer ? ' | ' : ''}{medicine.strength}</span>}
-                                        {medicine.pack_unit && <span> | {medicine.pack_unit}</span>}
                                       </div>
                                     </div>
                                     <div className="text-right flex-shrink-0 flex flex-col items-end">
-                                      <div className="font-mono text-sm font-bold">₹{medicine.mrp}</div>
+                                      <div className="font-mono text-sm font-bold text-text">MRP ₹{medicine.mrp ?? 0}</div>
+                                      {Number((medicine as { last_purchase_ptr?: number }).last_purchase_ptr || medicine.rate || 0) > 0 && (
+                                        <div className="font-mono text-[11px] font-semibold text-emerald-500">
+                                          Rate ₹{Number((medicine as { last_purchase_ptr?: number }).last_purchase_ptr || medicine.rate).toFixed(2)}
+                                        </div>
+                                      )}
                                       {idx === searchHighlightIndex && (
                                         <span className="text-[11px] bg-primary text-white font-bold px-1.5 py-0.5 rounded shadow-sm flex items-center gap-0.5 mt-0.5">
                                           ↵ Enter

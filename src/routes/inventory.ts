@@ -168,7 +168,7 @@ router.get('/', async (req, res) => {
     if (link_filter === 'linked') {
       baseQuery += ` AND m.id IS NOT NULL AND EXISTS (SELECT 1 FROM medicine_distributor_links mdl WHERE mdl.medicine_id = m.id AND COALESCE(mdl.mapped, 1) = 1 AND mdl.store_id > 0 AND COALESCE(mdl.product_code, '') != '')`;
     } else if (link_filter === 'broken') {
-      baseQuery += ` AND m.id IS NOT NULL AND EXISTS (SELECT 1 FROM medicine_distributor_links mdl WHERE mdl.medicine_id = m.id AND (COALESCE(mdl.mapped, 1) = 0 OR mdl.store_id <= 0 OR COALESCE(mdl.product_code, '') = '' OR NOT EXISTS (SELECT 1 FROM pharmarack_distributor_mappings pdm WHERE LOWER(TRIM(pdm.store_name)) = LOWER(TRIM(mdl.store_name)))))`;
+      baseQuery += ` AND m.id IS NOT NULL AND EXISTS (SELECT 1 FROM medicine_distributor_links mdl WHERE mdl.medicine_id = m.id AND (COALESCE(mdl.mapped, 1) = 0 OR mdl.store_id <= 0 OR COALESCE(mdl.product_code, '') = ''))`;
     } else if (link_filter === 'unlinked') {
       baseQuery += ` AND m.id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM medicine_distributor_links mdl WHERE mdl.medicine_id = m.id)`;
     }
@@ -233,10 +233,8 @@ router.get('/', async (req, res) => {
     if (medIds.length > 0) {
       const placeholders = medIds.map(() => '?').join(',');
       const linkRows: any[] = await db.all(
-        `SELECT mdl.medicine_id, mdl.store_id, mdl.store_name, mdl.product_code, COALESCE(mdl.mapped, 1) AS mapped,
-                CASE WHEN pdm.store_name IS NOT NULL THEN 1 ELSE 0 END AS store_mapped
+        `SELECT mdl.medicine_id, mdl.store_id, mdl.store_name, mdl.product_code, COALESCE(mdl.mapped, 1) AS mapped
          FROM medicine_distributor_links mdl
-         LEFT JOIN pharmarack_distributor_mappings pdm ON LOWER(TRIM(pdm.store_name)) = LOWER(TRIM(mdl.store_name))
          WHERE mdl.medicine_id IN (${placeholders})
          ORDER BY mdl.pick_order ASC`,
         medIds
@@ -244,7 +242,7 @@ router.get('/', async (req, res) => {
       for (const lr of linkRows) {
         const mid = Number(lr.medicine_id);
         const entry = linkSummaryMap.get(mid) || { linkCount: 0, brokenCount: 0, stores: [] };
-        const isBroken = Number(lr.mapped) === 0 || Number(lr.store_id) <= 0 || !String(lr.product_code || '').trim() || Number(lr.store_mapped) === 0;
+        const isBroken = Number(lr.mapped) === 0 || Number(lr.store_id) <= 0 || !String(lr.product_code || '').trim();
         entry.linkCount++;
         if (isBroken) entry.brokenCount++;
         if (lr.store_name && !entry.stores.includes(lr.store_name)) entry.stores.push(String(lr.store_name));
