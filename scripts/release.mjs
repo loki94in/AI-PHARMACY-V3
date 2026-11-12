@@ -606,19 +606,31 @@ try {
 
 // ── Step 6: Verify server now reports the new version ───────────────────────
 console.log('\n🔎 Step 6: Verifying update server reports new version...');
-try {
-  const verify = await axios.get(`${vercelServer}/api/updates?action=check`, {
-    params: { version: '0.0.0' },
-    timeout: 10000,
-  });
-  if (verify.data.latestVersion !== version) {
-    console.error(`\n❌ Verification FAILED: server reports latestVersion="${verify.data.latestVersion}", expected "${version}".`);
-    console.error('   PCs will keep reporting "up to date" on the OLD version. Do not consider this release done.');
-    process.exit(1);
+let verified = false;
+let lastServerVersion = '';
+for (let attempt = 1; attempt <= 4; attempt++) {
+  try {
+    const verify = await axios.get(`${vercelServer}/api/updates?action=check`, {
+      params: { version: '0.0.0', _t: Date.now() },
+      timeout: 10000,
+    });
+    lastServerVersion = verify.data?.latestVersion;
+    if (lastServerVersion === version) {
+      verified = true;
+      console.log(`✓ Server confirmed: latestVersion="${verify.data.latestVersion}".`);
+      break;
+    }
+  } catch (err) {
+    // retry
   }
-  console.log(`✓ Server confirmed: latestVersion="${verify.data.latestVersion}".`);
-} catch (verifyErr) {
-  console.error('\n❌ Could not verify publish — treat this release as NOT confirmed:', verifyErr?.response?.data || verifyErr.message);
+  if (attempt < 4) {
+    console.log(`   Waiting for edge replication (attempt ${attempt}/4)...`);
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+if (!verified) {
+  console.error(`\n❌ Verification FAILED: server reports latestVersion="${lastServerVersion}", expected "${version}".`);
+  console.error('   PCs will keep reporting "up to date" on the OLD version. Do not consider this release done.');
   process.exit(1);
 }
 
