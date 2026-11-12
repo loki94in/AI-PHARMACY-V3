@@ -7,6 +7,20 @@
 
 ## Fixed
 
+### [Fixed] P1-151 — Add to Live Cart False "Fulfilled" Lock & Duplicate QA Selection Section
+
+- **Symptom:**
+  1. Opening **Add to Live Cart** (`RefillOrderModal`) for an upcoming refill (e.g. due Nov 27) showed `Fulfilled` on all pending medicines and disabled their checkboxes, preventing adding any medicine to the Pharmarack Live Cart.
+  2. Quick Assist (`QuickAssistSidebar`) still rendered a duplicate `CRM → QA Selection` box for `qa_queued` rows alongside the direct 1-step `Add to Cart` flow.
+- **Root Cause:**
+  1. `isRefillActuallyFulfilled` in `frontend/src/utils/refillSettled.ts` checked `daysSinceDispense < intervalDays - leadDays` even when `status === 'pending'` for a future due date, causing `RefillOrderModal`'s `isCycleDuplicateLocked` to treat upcoming pending cycles as already fulfilled.
+  2. `QuickAssistSidebar.tsx` still kept the legacy `CRM → QA Selection` card (`qaQueuedMeds`) and gated the Stage A `Add to Cart` button behind `qaQueuedMeds.length === 0`.
+- **Fix:**
+  1. Simplified `isRefillActuallyFulfilled` in `frontend/src/utils/refillSettled.ts` to `isRefillSettled(med) || isRefillFulfilledToday(med)` so upcoming pending cycles are selectable for Live Cart addition while same-day/settled rows remain locked.
+  2. Removed the duplicate `CRM → QA Selection` card and unused QA staging handlers (`handleApproveQaCartForGroup`, `handleCancelQaCartForGroup`) from `frontend/src/components/QuickAssistSidebar.tsx`, keeping the single Stage A `Add to Cart` button always visible.
+- **Priority:** P1
+- **Verified by:** `npm run guardrails` (exit 0), `npm run build --prefix frontend`, and `node scripts/quick-update.mjs`.
+
 ### [Fixed] P1-150 — Unmapped Pharmarack Orders Missing from Sent PO History (`DisplayOrders` `isMapped` Split)
 
 - **Symptom:** Orders placed with unmapped distributors on Pharmarack (e.g. Order `#1893848` for `SK DISTRIBUTORS`) were missing from Sent PO History (`/pharmarack-cart`).

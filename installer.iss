@@ -97,6 +97,7 @@ Name: "desktopicon";  Description: "Create a &desktop shortcut"; GroupDescriptio
 [Files]
 ; Main executable (Electron native desktop window)
 Source: "dist\PharmacyOS.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Backend executable (Node SEA background service)
 Source: "dist\PharmacyBackend.exe"; DestDir: "{app}"; Flags: ignoreversion nocompression

@@ -174,6 +174,15 @@ export async function buildUpdatePackage() {
     }
   }
 
+  // 1b. WebView2Loader.dll (required beside PharmacyOS.exe for Tauri GNU builds)
+  const webView2DllPath = path.join(distDir, 'WebView2Loader.dll');
+  if (fs.existsSync(webView2DllPath)) {
+    const dllSha = await computeSha256(webView2DllPath);
+    const dllSize = fs.statSync(webView2DllPath).size;
+    updateSources.push({ src: webView2DllPath, zipEntry: 'WebView2Loader.dll' });
+    fileManifest['WebView2Loader.dll'] = { sha256: dllSha, size: dllSize, includedInZip: true };
+  }
+
   // 2. Node SEA backend executable (PharmacyBackend.exe)
   const backendExePath = path.join(distDir, 'PharmacyBackend.exe');
   if (fs.existsSync(backendExePath)) {

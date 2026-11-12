@@ -11,7 +11,7 @@ import {
   CheckCheck, Receipt, Phone, Pill, AlertTriangle, CheckCircle2, Building2
 } from 'lucide-react';
 import { toastEvent, refillEvent, whatsappQueueEvent, messageSendEvent, specialOrdersEvent, quickOrderEvent, automationHubEvent } from '../services/events';
-import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, startRefillCartJob } from '../services/refillCartJobs';
+import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning } from '../services/refillCartJobs';
 import { SpecialOrderArrivalModal } from './SpecialOrderArrivalModal';
 import { QuickAssistOrderEditModal } from './QuickAssistOrderEditModal';
 import { RefillOrderModal } from './RefillOrderModal';
@@ -305,60 +305,6 @@ export const QuickAssistSidebar = memo(({
   };
 
   const [confirmingRefillKeys, setConfirmingRefillKeys] = useState<Set<string>>(new Set());
-
-  const handleApproveQaCartForGroup = (group: {
-    key: string;
-    patient_name: string;
-    medicines: Array<{
-      id: number;
-      medicine_id?: number;
-      medicine_name: string;
-      qa_cart_qty?: number | null;
-      quantity_needed?: number;
-      in_stock_qty?: number;
-      cart_store_name?: string | null;
-      cart_qty?: number | null;
-      in_live_cart?: boolean;
-      cart_status?: string | null;
-    }>;
-  }) => {
-    const qaMeds = group.medicines.filter(isRefillQaStaged);
-    if (qaMeds.length === 0) return;
-    startRefillCartJob(
-      group.patient_name,
-      qaMeds.map(m => ({
-        refillId: m.id,
-        medicineId: m.medicine_id,
-        medicineName: m.medicine_name,
-        qty: Math.max(1, Number(m.qa_cart_qty || m.quantity_needed || 3)),
-        neededQty: m.quantity_needed,
-        stockQty: m.in_stock_qty,
-        cartStoreName: m.cart_store_name,
-        cartQty: m.cart_qty,
-        inLiveCart: m.in_live_cart
-      })),
-      { openModal: false, patientKey: group.key }
-    );
-    toastEvent.trigger(`Approved ${qaMeds.length} medicine(s) in QA — adding to Pharmarack Live Cart…`, 'info', '/pharmarack-cart');
-  };
-
-  const handleCancelQaCartForGroup = async (group: {
-    key: string;
-    patient_name: string;
-    medicines: Array<{ id: number; qa_cart_qty?: number | null; cart_status?: string | null }>;
-  }) => {
-    const qaIds = group.medicines.filter(isRefillQaStaged).map(m => m.id);
-    if (qaIds.length === 0) return;
-    try {
-      await api.unstageRefillsFromQa(qaIds);
-      toastEvent.trigger(`Cleared QA cart selection for "${group.patient_name}" — no live-cart changes made.`, 'info');
-      queryClient.invalidateQueries({ queryKey: ['refills'] });
-      refillEvent.triggerRefresh();
-      onActionComplete();
-    } catch (err: any) {
-      toastEvent.trigger(err?.response?.data?.error || err?.message || 'Failed to clear QA selection', 'error');
-    }
-  };
 
   const handleConfirmRefillGroup = async (group: {
     key: string;
@@ -2033,95 +1979,12 @@ export const QuickAssistSidebar = memo(({
                           Due {group.next_refill_date ? new Date(group.next_refill_date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'N/A'}
                         </span>
                       </div>
-                      {(() => {
-                        const qaQueuedMeds = group.medicines.filter(isRefillQaStaged);
-                        const isPatientJobRunning = cartJobs.some(
-                          j => ((j.patientKey && j.patientKey === group.key) || j.patientName === group.patient_name) && isRefillJobRunning(j)
-                        );
-                        if (qaQueuedMeds.length === 0 || isPatientJobRunning || group.approval_status === 'required') return null;
-                        return (
-                          <div className="flex flex-col gap-1.5 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 min-w-0">
-                            <div className="flex items-center justify-between gap-1 text-[8.5px] text-muted font-semibold uppercase tracking-wider">
-                              <span>CRM → QA Selection ({qaQueuedMeds.length})</span>
-                              <span className="truncate">{group.patient_name}{group.patient_phone ? ` · ${group.patient_phone}` : ''}</span>
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              {qaQueuedMeds.map(m => {
-                                const isEarly = isEarlyCrmAddition(m);
-                                const dueLabel = m.next_refill_date
-                                  ? new Date(m.next_refill_date).toLocaleDateString([], { day: 'numeric', month: 'short' })
-                                  : 'N/A';
-                                return (
-                                  <div
-                                    key={m.id}
-                                    className="flex items-center justify-between gap-1.5 px-1.5 py-1 rounded bg-bg2/90 border border-border/80 text-[9.5px] min-w-0"
-                                  >
-                                    <div className="flex items-center gap-1 min-w-0 flex-1">
-                                      <span className="font-semibold text-text truncate" title={m.medicine_name}>{m.medicine_name}</span>
-                                      <span className="font-mono font-bold text-primary shrink-0">×{m.qa_cart_qty || m.quantity_needed}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      <span className="text-[8.5px] text-muted" title={`Scheduled due date: ${dueLabel}`}>Due {dueLabel}</span>
-                                      <span
-                                        className={`px-1 py-0.5 rounded text-[8px] font-bold border ${
-                                          isEarly
-                                            ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
-                                            : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                                        }`}
-                                      >
-                                        {isEarly ? 'Early CRM addition' : 'Due addition'}
-                                      </span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleApproveQaCartForGroup(group);
-                                }}
-                                className="flex-1 h-6.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs truncate"
-                                title="Final approval: add ONLY these selected QA medicines to Pharmarack Live Cart (does not complete/advance cycle)"
-                              >
-                                <ShoppingCart size={11} className="shrink-0" />
-                                <span className="truncate">Add to Cart ({qaQueuedMeds.length})</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleOrderRefillGroupToCart(group);
-                                }}
-                                className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-bg2 text-text border border-border text-[9px] font-bold transition-colors cursor-pointer shrink-0"
-                                title="Select medicines and edit quantities"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleCancelQaCartForGroup(group);
-                                }}
-                                className="h-6.5 px-1.5 rounded-lg bg-bg3 hover:bg-red-600/20 text-muted hover:text-red-400 border border-border text-[9px] font-bold transition-colors cursor-pointer shrink-0"
-                                title="Remove from QA queue (leaving untouched keeps it staged)"
-                              >
-                                Clear
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })()}
                       <div className="flex items-center gap-1.5 min-w-0">
                         {(() => {
                           const stage = getRefillStage(group.medicines);
                           const isPatientJobRunning = cartJobs.some(
                             j => ((j.patientKey && j.patientKey === group.key) || j.patientName === group.patient_name) && isRefillJobRunning(j)
                           );
-                          const qaQueuedMeds = group.medicines.filter(isRefillQaStaged);
                           const isMarkingGroup = group.medicines.some(m => markingOrderedRefillIds.has(m.id));
                           const isMarkingReady = markingReadyRefillPhones.has(group.patient_phone);
                           const isFulfillingGroup = fulfillingRefillKeys.has(group.key);
@@ -2164,20 +2027,18 @@ export const QuickAssistSidebar = memo(({
                           if (stage === 'upcoming') {
                             return (
                               <>
-                                {qaQueuedMeds.length === 0 && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleOrderRefillGroupToCart(group);
-                                    }}
-                                    className="flex-1 h-6.5 px-2 rounded-lg bg-primary/20 hover:bg-primary text-primary hover:text-white border border-primary/30 text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs truncate"
-                                    title="Select medicines and quantities to add directly to Pharmarack Live Cart"
-                                  >
-                                    <ShoppingCart size={11} className="shrink-0" />
-                                    <span className="truncate">Add to Cart</span>
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOrderRefillGroupToCart(group);
+                                  }}
+                                  className="flex-1 h-6.5 px-2 rounded-lg bg-primary/20 hover:bg-primary text-primary hover:text-white border border-primary/30 text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs truncate"
+                                  title="Select medicines and quantities to add directly to Pharmarack Live Cart"
+                                >
+                                  <ShoppingCart size={11} className="shrink-0" />
+                                  <span className="truncate">Add to Cart</span>
+                                </button>
                                 <button
                                   type="button"
                                   disabled={isMarkingGroup}

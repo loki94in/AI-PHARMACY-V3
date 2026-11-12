@@ -108,6 +108,14 @@ if (!fs.existsSync(builtTauriExe)) {
   throw new Error(`[build-sea] Rust Tauri binary missing at: ${builtTauriExe}`);
 }
 fs.copyFileSync(builtTauriExe, outElectronExe);
+
+// Copy WebView2Loader.dll beside PharmacyOS.exe (required by MinGW/GNU Tauri builds)
+const builtWebView2Dll = path.join(cargoTargetDir, 'release', 'WebView2Loader.dll');
+const outWebView2Dll = path.join(distDir, 'WebView2Loader.dll');
+if (fs.existsSync(builtWebView2Dll)) {
+  fs.copyFileSync(builtWebView2Dll, outWebView2Dll);
+  console.log(`[build-sea] ✓ Copied WebView2Loader.dll -> ${outWebView2Dll}`);
+}
 console.log(`[build-sea] ✓ Rust Tauri PharmacyOS.exe ready -> ${outElectronExe} (${(fs.statSync(outElectronExe).size / (1024 * 1024)).toFixed(2)} MB)`);
 
 // Prepare resources/app folder

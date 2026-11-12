@@ -50,27 +50,14 @@ export const isEarlyCrmAddition = (m: {
   return diffDays > effectiveRefillLeadDays(m.refill_interval_days, 7);
 };
 
-// True ONLY when genuinely fulfilled/completed/in cooldown (never returns true merely because next_refill_date is far future)
+// True ONLY when genuinely fulfilled/completed today or settled (never blocks upcoming pending cycles)
 export const isRefillActuallyFulfilled = (med: {
   next_refill_date?: string | null;
   last_refill_date?: string | null;
   refill_interval_days?: number | null;
   status?: string | null;
 }): boolean => {
-  if (isRefillSettled(med) || isRefillFulfilledToday(med)) return true;
-  if (!med.last_refill_date || !med.next_refill_date) return false;
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const lastDisp = new Date(med.last_refill_date);
-  const nextDue = new Date(med.next_refill_date);
-  if (isNaN(lastDisp.getTime()) || isNaN(nextDue.getTime())) return false;
-  lastDisp.setHours(0, 0, 0, 0);
-  nextDue.setHours(0, 0, 0, 0);
-  const daysSinceDispense = Math.round((now.getTime() - lastDisp.getTime()) / 86400000);
-  const diffDays = Math.round((nextDue.getTime() - now.getTime()) / 86400000);
-  const intervalDays = Math.max(1, Number(med.refill_interval_days || 30));
-  const leadDays = effectiveRefillLeadDays(intervalDays, 7);
-  return diffDays > 0 && daysSinceDispense >= 0 && daysSinceDispense < Math.max(1, intervalDays - leadDays);
+  return isRefillSettled(med) || isRefillFulfilledToday(med);
 };
 
 // Returns true if this refill medicine was fulfilled today in shop local time
