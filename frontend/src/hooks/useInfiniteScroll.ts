@@ -18,6 +18,7 @@ export interface InfiniteScrollFilters {
   rack?: string;
   stock_filter?: string;
   online_filter?: string;
+  link_filter?: string;
   date_from?: string;
   date_to?: string;
   min_amount?: string;
