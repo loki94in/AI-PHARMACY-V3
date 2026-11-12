@@ -188,15 +188,8 @@ const ExitAppButton = () => {
     } catch (_) {}
 
     try {
-      window.open('', '_self', '');
       window.close();
     } catch (_) {}
-
-    // In case running in a browser tab where script cannot close the tab directly,
-    // transition the overlay state cleanly after a short grace period
-    setTimeout(() => {
-      setShutdownSettled(true);
-    }, 2500);
   };
 
   return (
@@ -277,29 +270,10 @@ const ExitAppButton = () => {
               ? 'The backend server process has terminated cleanly and port 5175 is free. You can safely close this tab or window (Ctrl+W or Alt+F4).'
               : 'Creating database shutdown backup and stopping background services...'}
           </p>
-          {!shutdownSettled ? (
-            <div className="mt-5 flex items-center gap-2 text-xs text-muted font-medium bg-bg2 px-4 py-2 rounded-full border border-glass-border">
-              <Loader2 size={14} className="animate-spin text-red-500" />
-              <span>Closing application completely...</span>
-            </div>
-          ) : (
-            <button
-              onClick={() => {
-                try {
-                  window.open('', '_self', '');
-                  window.close();
-                } catch (_) {}
-                setTimeout(() => {
-                  try {
-                    window.location.href = 'about:blank';
-                  } catch (_) {}
-                }, 200);
-              }}
-              className="mt-5 px-5 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-all cursor-pointer shadow-md"
-            >
-              Close Window (Ctrl+W)
-            </button>
-          )}
+          <div className="mt-5 flex items-center gap-2 text-xs text-muted font-medium bg-bg2 px-4 py-2 rounded-full border border-glass-border">
+            <Loader2 size={14} className="animate-spin text-red-500" />
+            <span>Closing application completely...</span>
+          </div>
         </div>,
         document.body
       )}
@@ -1220,6 +1194,7 @@ const LiveCartCountdownPill: React.FC = memo(() => {
       window.removeEventListener('focus', loadCartData);
     };
   }, [loadCartData]);
+
 
   const todayStr = useMemo(() => {
     const now = new Date();
