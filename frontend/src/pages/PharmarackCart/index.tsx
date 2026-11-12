@@ -3169,8 +3169,14 @@ export default function PharmarackCart() {
     if (hideAlreadyInCart) {
       list = list.filter(item => !isMedicineInAnyCart(item.medicineName) && !isMedicineInSentPO(item.medicineName));
     }
-    if (!reorderQueryNorm) return list;
-    return list.filter(item => medicineNameMatches(item.medicineName));
+    if (reorderQueryNorm) {
+      list = list.filter(item => medicineNameMatches(item.medicineName));
+    }
+    return [...list].sort((a, b) => {
+      const dateCmp = (b.lastOrderedDate || '').localeCompare(a.lastOrderedDate || '');
+      if (dateCmp !== 0) return dateCmp;
+      return (b.billCount || 0) - (a.billCount || 0);
+    });
   }, [purchaseHistoryItems, hideAlreadyInCart, isMedicineInAnyCart, isMedicineInSentPO, reorderQueryNorm, medicineNameMatches]);
 
   const totalReorderMatchesCount =

@@ -5292,7 +5292,7 @@ router.get('/purchase-reorder-history', async (req, res) => {
          SELECT pi.medicine_id AS mid, p.distributor_id AS did,
                 COUNT(DISTINCT p.id) AS bill_count,
                 SUM(pi.quantity) AS total_qty, MAX(p.date) AS last_date,
-                ROW_NUMBER() OVER (PARTITION BY p.distributor_id ORDER BY COUNT(DISTINCT p.id) DESC, MAX(p.date) DESC) AS rank_in_dist
+                ROW_NUMBER() OVER (PARTITION BY p.distributor_id ORDER BY MAX(p.date) DESC, COUNT(DISTINCT p.id) DESC) AS rank_in_dist
          FROM purchase_items pi
          JOIN purchases p ON p.id = pi.purchase_id
          WHERE ${whereSql}
@@ -5312,7 +5312,7 @@ router.get('/purchase-reorder-history', async (req, res) => {
        LEFT JOIN distributors d ON d.id = a.did
        WHERE (${q.length >= 2 ? '1=1' : 'a.rank_in_dist <= 100'})
        ${medFilterSql ? `AND ${medFilterSql.replace(/^WHERE /, '')}` : ''}
-       ORDER BY a.bill_count DESC, a.last_date DESC
+       ORDER BY a.last_date DESC, a.bill_count DESC
        LIMIT ?`,
       [...params, ...params, ...likeParams, limit]
     );
