@@ -521,6 +521,32 @@ $window.Add_ContentRendered({
             Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
         }
 
+        # 8b. Refresh Desktop Shortcut Icon & Shell Cache
+        try {
+            $icoPath = Join-Path $InstallDir "app.ico"
+            if (Test-Path -LiteralPath $icoPath) {
+                $desktopPaths = @(
+                    [Environment]::GetFolderPath("Desktop"),
+                    [Environment]::GetFolderPath("CommonDesktopDirectory")
+                )
+                $wsh = New-Object -ComObject WScript.Shell
+                foreach ($dp in $desktopPaths) {
+                    $shortcut = Join-Path $dp "AI Pharmacy.lnk"
+                    if (Test-Path -LiteralPath $shortcut) {
+                        $link = $wsh.CreateShortcut($shortcut)
+                        $link.IconLocation = "$icoPath,0"
+                        $link.Save()
+                        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($link) | Out-Null
+                        Write-Log "Updated desktop shortcut icon to: $icoPath"
+                    }
+                }
+                [System.Runtime.InteropServices.Marshal]::ReleaseComObject($wsh) | Out-Null
+                Start-Process "ie4uinit.exe" -ArgumentList "-show" -WindowStyle Hidden -ErrorAction SilentlyContinue
+            }
+        } catch {
+            Write-Log "Notice: Shortcut icon refresh skipped ($($_.Exception.Message))"
+        }
+
         # 9. Prune Old Backups (keep latest 2)
         $backupRoot = Join-Path $InstallDir "backup"
         if (Test-Path -LiteralPath $backupRoot) {

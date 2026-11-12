@@ -329,6 +329,10 @@ call :CLEANUP_LOCK
 call :LOG "Pruning older pre-update rollback backups (keeping latest 2)..."
 powershell -NoProfile -Command "$bRoot = Join-Path '%INSTALL_DIR%' 'backup'; if (Test-Path $bRoot) { Get-ChildItem -Path $bRoot -Directory -Filter 'preupdate-*' | Sort-Object CreationTime -Descending | Select-Object -Skip 2 | ForEach-Object { Remove-Item $_.FullName -Recurse -Force; Write-Host ('Pruned: ' + $_.Name) } }" >> "%LOG_PATH%" 2>&1
 
+:: ── 8c. Refresh Desktop Shortcut Icon & Shell Cache ─────────
+call :LOG "Refreshing desktop shortcut icon..."
+powershell -NoProfile -Command "$ico = Join-Path '%INSTALL_DIR%' 'app.ico'; if (Test-Path $ico) { $paths = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory')); $wsh = New-Object -ComObject WScript.Shell; foreach ($p in $paths) { $sc = Join-Path $p 'AI Pharmacy.lnk'; if (Test-Path $sc) { $l = $wsh.CreateShortcut($sc); $l.IconLocation = \"$ico,0\"; $l.Save(); [System.Runtime.InteropServices.Marshal]::ReleaseComObject($l) | Out-Null } }; [System.Runtime.InteropServices.Marshal]::ReleaseComObject($wsh) | Out-Null; Start-Process 'ie4uinit.exe' -ArgumentList '-show' -WindowStyle Hidden -ErrorAction SilentlyContinue }" >> "%LOG_PATH%" 2>&1
+
 :: ── 9. Start new version ──────────────────────────────────
 echo.
 echo ==============================================================

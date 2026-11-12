@@ -40,6 +40,7 @@ const UPDATE_SOURCES = [
   { src: path.join(root, 'sea-entry.cjs'),             zipEntry: 'sea-entry.cjs' },
   { src: path.join(root, 'packaging', 'Updater.bat'),  zipEntry: 'Updater.bat' },
   { src: path.join(root, 'packaging', 'UpdateGUI.ps1'), zipEntry: 'UpdateGUI.ps1' },
+  { src: path.join(root, 'packaging', 'app.ico'),      zipEntry: 'app.ico' },
 ];
 
 // frontend/dist directory (recursive)

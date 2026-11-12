@@ -877,6 +877,44 @@ server.on('error', (err: any) => {
         })
         .catch(err => console.warn('[Boot:Phase2] Auto-update scheduler start failed:', err));
 
+      // Reconcile desktop shortcut icon on Windows desktop instances
+      if (process.platform === 'win32' && isPackagedApp()) {
+        setTimeout(async () => {
+          try {
+            const { spawn } = await import('child_process');
+            const psScript = [
+              "$ico = Join-Path (Get-Location) 'app.ico'",
+              "if (Test-Path $ico) {",
+              "  $paths = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory'))",
+              "  $wsh = New-Object -ComObject WScript.Shell",
+              "  $updated = $false",
+              "  foreach ($p in $paths) {",
+              "    $sc = Join-Path $p 'AI Pharmacy.lnk'",
+              "    if (Test-Path $sc) {",
+              "      $l = $wsh.CreateShortcut($sc)",
+              "      if ($l.IconLocation -ne \"$ico,0\") {",
+              "        $l.IconLocation = \"$ico,0\"",
+              "        $l.Save()",
+              "        $updated = $true",
+              "      }",
+              "      [System.Runtime.InteropServices.Marshal]::ReleaseComObject($l) | Out-Null",
+              "    }",
+              "  }",
+              "  [System.Runtime.InteropServices.Marshal]::ReleaseComObject($wsh) | Out-Null",
+              "  if ($updated) {",
+              "    Start-Process 'ie4uinit.exe' -ArgumentList '-show' -WindowStyle Hidden -ErrorAction SilentlyContinue",
+              "  }",
+              "}"
+            ].join('\n');
+            const b64 = Buffer.from(psScript, 'utf16le').toString('base64');
+            spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', b64], {
+              detached: true,
+              stdio: 'ignore'
+            }).unref();
+          } catch (_) {}
+        }, 5000);
+      }
+
       // Record unclean boot flag (flipped to 'true' on clean gracefulShutdown)
       try {
         const prevShutdown = await db.get("SELECT value FROM app_settings WHERE key = 'last_clean_shutdown'");
