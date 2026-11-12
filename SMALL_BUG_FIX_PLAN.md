@@ -7,6 +7,14 @@
 
 ## Fixed
 
+### [Fixed] P1-150 — Unmapped Pharmarack Orders Missing from Sent PO History (`DisplayOrders` `isMapped` Split)
+
+- **Symptom:** Orders placed with unmapped distributors on Pharmarack (e.g. Order `#1893848` for `SK DISTRIBUTORS`) were missing from Sent PO History (`/pharmarack-cart`).
+- **Root Cause:** `src/services/pharmarackOrderSyncService.ts` queried Pharmarack's `DisplayOrders` endpoint with `isMapped: true` only in both `fetchTodaysOrders` and `runHistoricalSync`. Pharmarack's API returns HTTP 406 if `isMapped` is omitted/null and separates mapped (`isMapped: true`) vs unmapped (`isMapped: false`) distributor orders, so unmapped orders were never ingested into `pharmarack_synced_orders` / `pharmarack_placed_orders`.
+- **Fix:** Replaced `fetchTodaysOrders` and the duplicate fetch in `runHistoricalSync` with a shared `fetchDisplayOrders()` helper in `src/services/pharmarackOrderSyncService.ts` that queries both `isMapped: true` and `isMapped: false` in parallel, handles 401/403 expiry on either bucket, and merges/deduplicates by `OrderNo`.
+- **Priority:** P1
+- **Verified by:** Live read-only `DisplayOrders` + `GetOrderDetailsForRetailerManager` probe confirming `#1893848` (`OrderId: 1895019`, `SK DISTRIBUTORS`) under `isMapped: false`; `tests/pharmarackUnmappedOrderSync.test.ts` and `tests/pharmarackHistoricalSyncNoReminder.test.ts`; `npm run guardrails` (exit 0); `node scripts/quick-update.mjs`.
+
 ### [Fixed] P1-149 — POS FEFO Near-Expiry Priority & Cross-Batch Quantity Split
 
 - **Symptom:** When a medicine had multiple active batches in inventory (e.g., `CP60085` with 4 units at an earlier expiry and `STC26334` with 15 units at a later expiry), entering a quantity greater than the near-expiry batch (e.g., 8 units) pulled all 8 units from the newer full-stock batch (`STC26334`) instead of allocating 4 from the near-expiry batch and splitting the remaining 4 into a second row for `STC26334`.

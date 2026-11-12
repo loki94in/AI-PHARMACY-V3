@@ -59,35 +59,70 @@ export function orderDayIso(raw: unknown): string | null {
   return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}`;
 }
 
-async function fetchTodaysOrders(token: string, ddmmyy: string): Promise<any[] | 'expired'> {
-  const res = await fetch(ORDER_LIST_URL, {
+async function fetchDisplayOrders(
+  token: string,
+  fromDdmmyy: string,
+  toDdmmyy: string,
+  pageSize: number,
+  timeoutMs: number
+): Promise<any[] | 'expired'> {
+  const headers = {
+    'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
+    'Content-Type': 'application/json',
+    'devicetype': 'web',
+    'Accept': 'application/json, text/plain, */*',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': 'https://retailers.pharmarack.com/',
+    'Origin': 'https://retailers.pharmarack.com'
+  };
+
+  // Pharmarack DisplayOrders returns HTTP 406 if isMapped is omitted/null and splits
+  // mapped vs unmapped distributor orders behind isMapped: true | false.
+  const fetchBucket = (isMapped: boolean) => fetch(ORDER_LIST_URL, {
     method: 'POST',
-    headers: {
-      'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      'devicetype': 'web',
-      'Accept': 'application/json, text/plain, */*',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Referer': 'https://retailers.pharmarack.com/',
-      'Origin': 'https://retailers.pharmarack.com'
-    },
+    headers,
     // Same body the Orders page sends (status 1,2,3 = every placed/uploaded/processed order).
     body: JSON.stringify({
       searchtext: '',
-      fromdate: ddmmyy,
-      todate: ddmmyy,
+      fromdate: fromDdmmyy,
+      todate: toDdmmyy,
       Operation: 'view',
       status: '1,2,3',
       pageNo: 1,
-      pageSize: 50,
-      isMapped: true
+      pageSize,
+      isMapped
     }),
-    signal: AbortSignal.timeout(15_000)
+    signal: AbortSignal.timeout(timeoutMs)
   });
-  if (res.status === 401 || res.status === 403) return 'expired';
-  if (!res.ok) throw new Error(`Pharmarack order list HTTP ${res.status}`);
-  const json: any = await res.json();
-  return Array.isArray(json?.data) ? json.data : [];
+
+  const [mappedRes, unmappedRes] = await Promise.all([fetchBucket(true), fetchBucket(false)]);
+  if (mappedRes.status === 401 || mappedRes.status === 403 || unmappedRes.status === 401 || unmappedRes.status === 403) {
+    return 'expired';
+  }
+  if (!mappedRes.ok) throw new Error(`Pharmarack order list HTTP ${mappedRes.status}`);
+
+  const mappedJson: any = await mappedRes.json();
+  const mappedRows: any[] = Array.isArray(mappedJson?.data) ? mappedJson.data : [];
+
+  let unmappedRows: any[] = [];
+  if (unmappedRes.ok) {
+    const unmappedJson: any = await unmappedRes.json().catch(() => null);
+    unmappedRows = Array.isArray(unmappedJson?.data) ? unmappedJson.data : [];
+  } else {
+    console.warn(`[PharmarackOrderSync] Unmapped DisplayOrders HTTP ${unmappedRes.status}; proceeding with mapped orders only`);
+  }
+
+  const seenOrderNos = new Set<string>();
+  const merged: any[] = [];
+  for (const row of [...mappedRows, ...unmappedRows]) {
+    const orderNo = String(row?.OrderNo ?? '').trim();
+    if (orderNo) {
+      if (seenOrderNos.has(orderNo)) continue;
+      seenOrderNos.add(orderNo);
+    }
+    merged.push(row);
+  }
+  return merged;
 }
 
 const ORDER_DETAIL_URL = 'https://pharmretail-api.pharmarack.com/order/api/v1/GetOrderDetailsForRetailerManager';
@@ -278,7 +313,7 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
   const today = localToday();
   let orders: any[] | 'expired';
   try {
-    orders = await fetchTodaysOrders(token, today.ddmmyy);
+    orders = await fetchDisplayOrders(token, today.ddmmyy, today.ddmmyy, 50, 15_000);
   } catch (err: any) {
     return { ...result, error: err?.message || 'order list fetch failed' };
   }
@@ -756,7 +791,7 @@ export async function dryRunOrderSync() {
   const tokenRow = await db.get("SELECT value FROM app_settings WHERE key = 'pharmarack_session_token'");
   if (!tokenRow?.value) return { ok: false, error: 'No Pharmarack session saved in the app (log in first).' };
   const today = localToday();
-  const fetched = await fetchTodaysOrders(tokenRow.value, today.ddmmyy);
+  const fetched = await fetchDisplayOrders(tokenRow.value, today.ddmmyy, today.ddmmyy, 50, 15_000);
   if (fetched === 'expired') return { ok: false, error: 'Pharmarack session expired (HTTP 401/403). Log in again.' };
 
   const enabled = await remindersEnabledToday(db, today.iso);
@@ -857,37 +892,17 @@ async function runHistoricalSync(days = 30): Promise<{ ok: boolean; fetched: num
     const toDdmmyy = `${p(now.getDate())}/${p(now.getMonth() + 1)}/${String(now.getFullYear()).slice(-2)}`;
     const fromDdmmyy = `${p(past.getDate())}/${p(past.getMonth() + 1)}/${String(past.getFullYear()).slice(-2)}`;
 
-    const res = await fetch(ORDER_LIST_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': token.startsWith('Bearer ') ? token : `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'devicetype': 'web',
-        'Accept': 'application/json, text/plain, */*',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://retailers.pharmarack.com/',
-        'Origin': 'https://retailers.pharmarack.com'
-      },
-      body: JSON.stringify({
-        searchtext: '',
-        fromdate: fromDdmmyy,
-        todate: toDdmmyy,
-        Operation: 'view',
-        status: '1,2,3',
-        pageNo: 1,
-        pageSize: 200,
-        isMapped: true
-      }),
-      signal: AbortSignal.timeout(30000)
-    });
-
-    if (res.status === 401 || res.status === 403) {
-      try { await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')"); } catch (_) { /* best effort */ }
-      return { ok: false, fetched: 0, imported: 0, error: 'session_expired' };
+    let orders: any[];
+    try {
+      const ordersOrExpired = await fetchDisplayOrders(token, fromDdmmyy, toDdmmyy, 200, 30_000);
+      if (ordersOrExpired === 'expired') {
+        try { await db.run("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('pharmarack_session_status', 'expired')"); } catch (_) { /* best effort */ }
+        return { ok: false, fetched: 0, imported: 0, error: 'session_expired' };
+      }
+      orders = ordersOrExpired;
+    } catch (err: any) {
+      return { ok: false, fetched: 0, imported: 0, error: err?.message || 'DisplayOrders failed' };
     }
-    if (!res.ok) return { ok: false, fetched: 0, imported: 0, error: `DisplayOrders HTTP ${res.status}` };
-    const json: any = await res.json();
-    const orders: any[] = Array.isArray(json?.data) ? json.data : [];
 
     let importedCount = 0;
     const { upsertDistributorProducts, autoSaveMedicineDistributorLinks } = await import('../routes/pharmarack.js');
