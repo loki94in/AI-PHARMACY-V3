@@ -4769,7 +4769,7 @@ router.post('/sync-historical-orders', async (req, res) => {
   try {
     const days = parseInt(req.body?.days as string, 10) || 30;
     const { syncHistoricalPharmarackOrders } = await import('../services/pharmarackOrderSyncService.js');
-    const result = await syncHistoricalPharmarackOrders(days);
+    const result = await syncHistoricalPharmarackOrders(days, true);
     res.json({ success: result.ok, ...result });
   } catch (err: any) {
     console.error('Error triggering historical order sync:', err);

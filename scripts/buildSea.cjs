@@ -177,16 +177,20 @@ for (const cand of isccCandidates) {
   }
 }
 
+// Ensure no local product images are accidentally included in the build distribution
+const distProductsDir = path.join(root, 'frontend', 'dist', 'products');
+if (fs.existsSync(distProductsDir)) {
+  console.log('[build-sea] Stripping local product images from build distribution (images load via web)...');
+  try {
+    fs.rmSync(distProductsDir, { recursive: true, force: true });
+  } catch (_) {}
+}
+
+const skipInstaller = process.env.SKIP_INSTALLER === '1' || process.env.SKIP_INSTALLER === 'true' || process.argv.includes('--skip-installer');
 const issPath = path.join(root, 'installer.iss');
-if (isccExe && fs.existsSync(issPath)) {
-  // Ensure no local product images are accidentally included in the build distribution
-  const distProductsDir = path.join(root, 'frontend', 'dist', 'products');
-  if (fs.existsSync(distProductsDir)) {
-    console.log('[build-sea] Stripping local product images from build distribution (images load via web)...');
-    try {
-      fs.rmSync(distProductsDir, { recursive: true, force: true });
-    } catch (_) {}
-  }
+if (skipInstaller) {
+  console.log('[build-sea] ⏩ Skipping Inno Setup full installer (SKIP_INSTALLER=1 — fast update-only mode).');
+} else if (isccExe && fs.existsSync(issPath)) {
 
   // Generate node_modules BOM stamp from package-lock.json and write stamp file
   const crypto = require('crypto');

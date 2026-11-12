@@ -55,6 +55,8 @@
     "benchmark:local-ai": "node scripts/test-local-ai-inference.mjs",
     "release": "node scripts/release.mjs",
     "release:pilot": "node scripts/release.mjs --pilot",
+    "release:full": "node scripts/release.mjs --full",
+    "release:pilot:full": "node scripts/release.mjs --pilot --full",
     "release:publish": "node scripts/release.mjs --remote",
     "release:pilot:publish": "node scripts/release.mjs --pilot --remote",
     "fuses:harden": "node scripts/flip-electron-fuses.mjs",

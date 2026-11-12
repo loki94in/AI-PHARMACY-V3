@@ -1682,10 +1682,14 @@ export default function PharmarackCart() {
     if (syncingExternalOrders) return;
     setSyncingExternalOrders(true);
     try {
-      toastEvent.trigger("Syncing today's orders from Pharmarack portal...", 'info');
+      toastEvent.trigger("Syncing orders from Pharmarack portal...", 'info');
       const res = await api.syncPharmarackOrders();
       if (res && res.ok) {
-        toastEvent.trigger(`Sync complete: ${res.fetched} fetched, ${res.newOrders} new recorded.`, 'success');
+        // Also catch up any past-date orders placed while the shop or PC was closed (history only, no WhatsApp reminders).
+        const histRes = await api.syncHistoricalPharmarackOrders(30).catch(() => null);
+        const histImported = histRes && histRes.success ? (histRes.imported || 0) : 0;
+        const histNote = histImported > 0 ? `, ${histImported} past order${histImported !== 1 ? 's' : ''} imported` : '';
+        toastEvent.trigger(`Sync complete: ${res.fetched} fetched, ${res.newOrders} new recorded${histNote}.`, 'success');
         const todayStr = getTodayDateKey();
         evictCachedSentOrders(todayStr);
         if (selectedSentDate) {
@@ -1703,8 +1707,9 @@ export default function PharmarackCart() {
       } else {
         toastEvent.trigger(res?.error || 'Failed to sync orders from Pharmarack', 'error');
       }
-    } catch (err: any) {
-      toastEvent.trigger(err?.message || 'Sync failed', 'error');
+    } catch (err: unknown) {
+      const apiErr = err as LocalApiError;
+      toastEvent.trigger(apiErr?.message || 'Sync failed', 'error');
     } finally {
       setSyncingExternalOrders(false);
     }

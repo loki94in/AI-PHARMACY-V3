@@ -12,9 +12,12 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execSync, execFile } from 'child_process';
+import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
+
+const execFileAsync = promisify(execFile);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir   = process.cwd();
@@ -45,8 +48,15 @@ const skipBuild        = args.includes('--skip-build');
 const skipGithub       = args.includes('--skip-github');
 const isClean          = args.includes('--clean');
 const isMaxCompression = args.includes('--max-compression');
+const isFullInstaller  = args.includes('--full') || args.includes('--with-installer') || args.includes('--full-installer') || process.env.FULL_INSTALLER === '1';
 const bumpMajor        = args.includes('--major');
 const bumpMinor        = args.includes('--minor');
+
+if (!isFullInstaller) {
+  process.env.SKIP_INSTALLER = '1';
+} else {
+  process.env.SKIP_INSTALLER = '0';
+}
 
 // Set Inno Setup compression mode (default fast, max when explicitly asked)
 if (isMaxCompression) {
@@ -194,6 +204,7 @@ console.log(`🚀  AI Pharmacy OS — Release ${isRemote ? 'Publisher' : 'Builde
 console.log(`🎯  Rollout Target: ${isPilot ? 'PILOT ONLY (Only test/pilot licensed PCs)' : 'ALL (Production — all customers)'}`);
 console.log(`🌐  Mode: ${isRemote ? 'REMOTE (GitHub + Vercel)' : 'LOCAL ONLY (Installer & Update Package)'}`);
 console.log(`⚙️   Build Mode: ${skipBuild ? 'SKIP BUILD (--skip-build)' : isClean ? 'CLEAN REBUILD (--clean)' : 'INCREMENTAL (fast cached)'}`);
+console.log(`📦  Package   : ${isFullInstaller ? 'FULL SETUP EXE + UPDATE ZIP (--full)' : 'FAST UPDATE-ONLY (~38 MB ZIP + ~1.7 MB WebSetup)'}`);
 console.log(`🗜️   Compression: ${process.env.ISCC_COMPRESSION || 'lzma2/fast'}`);
 console.log(`🧠  Local AI: ${bundleLocalAi ? 'BUNDLED OFFLINE (Qwen3-1.7B + llama-server)' : 'CLOUD DOWNLOAD (Lightweight installer)'}`);
 console.log('=============================================================\n');
@@ -212,9 +223,9 @@ if (!skipBuild) {
   console.log('📦 Step 1: Skipping build (--skip-build).');
 }
 
-// ── Step 2: Locate installer — must contain the bumped version ──────────────
+// ── Step 2: Locate installer (only required in --full mode) ──────────────────
 const step2Start = performance.now();
-console.log('\n🔍 Step 2: Locating versioned installer...');
+console.log('\n🔍 Step 2: Checking installer artifacts...');
 const candidateNames = bundleLocalAi
   ? [`AI-Pharmacy-OS-Offline-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Cloud-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Portable-Setup-${tagName}.exe`]
   : [`AI-Pharmacy-OS-Cloud-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Offline-Setup-${tagName}.exe`, `AI-Pharmacy-OS-Portable-Setup-${tagName}.exe`];
@@ -222,16 +233,19 @@ const candidateNames = bundleLocalAi
 let expectedInstallerName = candidateNames.find(name => fs.existsSync(path.join(installerDir, name))) || candidateNames[0];
 const installerExe = path.join(installerDir, expectedInstallerName);
 
-if (!fs.existsSync(installerExe)) {
-  // List what's actually there for diagnostics
-  const found = fs.existsSync(installerDir) ? fs.readdirSync(installerDir) : [];
-  console.error(`\n❌ STOP BUILD: Versioned installer not found: ${expectedInstallerName}`);
-  console.error(`   Expected: ${installerExe}`);
-  console.error(`   Found in dist/installer: ${found.join(', ') || '(empty)'}`);
-  console.error('   This prevents a stale installer from being released. Fix the build and retry.');
-  process.exit(1);
+if (isFullInstaller) {
+  if (!fs.existsSync(installerExe)) {
+    const found = fs.existsSync(installerDir) ? fs.readdirSync(installerDir) : [];
+    console.error(`\n❌ STOP BUILD: Versioned installer not found: ${expectedInstallerName}`);
+    console.error(`   Expected: ${installerExe}`);
+    console.error(`   Found in dist/installer: ${found.join(', ') || '(empty)'}`);
+    console.error('   This prevents a stale installer from being released. Fix the build and retry.');
+    process.exit(1);
+  }
+  console.log(`✓ Installer: ${expectedInstallerName} (${formatElapsed(step2Start)})`);
+} else {
+  console.log(`✓ Fast mode: skipped 639 MB full setup EXE (pass --full to build it).`);
 }
-console.log(`✓ Installer: ${expectedInstallerName} (${formatElapsed(step2Start)})`);
 
 // ── Step 3: Build update package + SHA-256 ──────────────────────────────────
 const step3Start = performance.now();
@@ -339,11 +353,48 @@ if (!isRemote) {
 // ── Step 4: Upload to GitHub Releases ───────────────────────────────────────
 console.log('\n📤 Step 4: Uploading assets to GitHub Releases...');
 
-const downloadUrl = `https://github.com/${ghRepo}/releases/download/${tagName}/${expectedInstallerName}`;
+const webSetupUrl = `https://github.com/${ghRepo}/releases/download/${tagName}/${webSetupName}`;
 const updatePackageUrl = `https://github.com/${ghRepo}/releases/download/${tagName}/${expectedZipName}`;
+let downloadUrl = isFullInstaller
+  ? `https://github.com/${ghRepo}/releases/download/${tagName}/${expectedInstallerName}`
+  : webSetupUrl;
+
+if (!isFullInstaller) {
+  try {
+    const prevCheck = await axios.get(`${vercelServer}/api/updates?action=check`, {
+      params: { version: '0.0.0' },
+      timeout: 5000,
+    });
+    if (prevCheck.data?.downloadUrl && typeof prevCheck.data.downloadUrl === 'string' && prevCheck.data.downloadUrl.startsWith('http')) {
+      downloadUrl = prevCheck.data.downloadUrl;
+      console.log(`   Preserving existing full installer URL: ${downloadUrl}`);
+    }
+  } catch (_) {
+    // Fallback to webSetupUrl if server check fails
+  }
+}
+
 const releaseNotes = isPilot
   ? `AI Pharmacy OS ${tagName} — Pilot / Staging Release`
   : `AI Pharmacy OS ${tagName} — Production Release`;
+
+const apkFile = path.join(rootDir, 'data', 'pharmacy-mobile.apk');
+const apkName = `AI-Pharmacy-Mobile-${tagName}.apk`;
+
+const assetsToUpload = [
+  { filePath: updateZipPath, fileName: expectedZipName },
+];
+if (isFullInstaller && fs.existsSync(installerExe)) {
+  assetsToUpload.push({ filePath: installerExe, fileName: expectedInstallerName });
+}
+if (fs.existsSync(webSetupExe)) {
+  assetsToUpload.push({ filePath: webSetupExe, fileName: webSetupName });
+  console.log(`   Found Web Stub installer: ${webSetupName}`);
+}
+if (isFullInstaller && fs.existsSync(apkFile)) {
+  assetsToUpload.push({ filePath: apkFile, fileName: apkName });
+  console.log(`   Found mobile companion APK: ${apkName}`);
+}
 
 let uploadedViaGh = false;
 let hasGhCli = false;
@@ -364,22 +415,18 @@ if (skipGithub) {
       releaseExists = true;
     } catch (_) {}
 
+    const quotedAssets = assetsToUpload.map(a => `"${a.filePath}"`).join(' ');
     if (releaseExists) {
-      console.log(`   Release ${tagName} already exists. Updating assets (--clobber)...`);
-      execSync(`gh release upload ${tagName} "${installerExe}" --clobber`, { stdio: 'inherit', cwd: rootDir });
-      execSync(`gh release upload ${tagName} "${updateZipPath}" --clobber`, { stdio: 'inherit', cwd: rootDir });
-      if (fs.existsSync(webSetupExe)) {
-        execSync(`gh release upload ${tagName} "${webSetupExe}" --clobber`, { stdio: 'inherit', cwd: rootDir });
-      }
+      console.log(`   Release ${tagName} already exists. Uploading ${assetsToUpload.length} asset(s) (--clobber)...`);
+      execSync(`gh release upload ${tagName} ${quotedAssets} --clobber`, { stdio: 'inherit', cwd: rootDir });
     } else {
-      console.log(`   Creating new GitHub release ${tagName} via gh CLI...`);
-      const extraAssets = fs.existsSync(webSetupExe) ? ` "${webSetupExe}"` : '';
+      console.log(`   Creating new GitHub release ${tagName} via gh CLI (${assetsToUpload.length} asset(s))...`);
       execSync(
-        `gh release create ${tagName} "${installerExe}" "${updateZipPath}"${extraAssets} --title "AI Pharmacy OS ${tagName}" --notes "${releaseNotes}"`,
+        `gh release create ${tagName} ${quotedAssets} --title "AI Pharmacy OS ${tagName}" --notes "${releaseNotes}"`,
         { stdio: 'inherit', cwd: rootDir }
       );
     }
-    console.log('✓ GitHub upload complete via gh CLI (installer + update package).');
+    console.log(`✓ GitHub upload complete via gh CLI (${assetsToUpload.map(a => a.fileName).join(', ')}).`);
     uploadedViaGh = true;
   } catch (ghErr) {
     console.warn(`   Notice: gh CLI upload failed (${ghErr.message}). Attempting GitHub REST API fallback...`);
@@ -408,101 +455,95 @@ if (!skipGithub && !uploadedViaGh) {
     console.warn(`     - Update ZIP: ${updatePackageUrl}`);
     console.warn('   Proceeding to publish version metadata to update server...\n');
   } else {
-    console.log('   Uploading via GitHub REST API (token authenticated)...');
-  const ghHeaders = {
-    Authorization: `Bearer ${ghToken}`,
-    Accept: 'application/vnd.github.v3+json',
-    'User-Agent': 'AI-Pharmacy-Release-Builder',
-  };
+    console.log(`   Uploading ${assetsToUpload.length} asset(s) in parallel via GitHub REST API...`);
+    const ghHeaders = {
+      Authorization: `Bearer ${ghToken}`,
+      Accept: 'application/vnd.github.v3+json',
+      'User-Agent': 'AI-Pharmacy-Release-Builder',
+    };
 
-  try {
-    let release;
     try {
-      const getRes = await axios.get(`https://api.github.com/repos/${ghRepo}/releases/tags/${tagName}`, { headers: ghHeaders });
-      release = getRes.data;
-      console.log(`   Found existing release ${tagName} (ID: ${release.id})`);
-    } catch (err) {
-      if (err.response?.status === 404) {
-        console.log(`   Creating release ${tagName}...`);
-        const createRes = await axios.post(
-          `https://api.github.com/repos/${ghRepo}/releases`,
-          {
-            tag_name: tagName,
-            name: `AI Pharmacy OS ${tagName}`,
-            body: releaseNotes,
-            draft: false,
-            prerelease: isPilot,
-          },
-          { headers: ghHeaders }
-        );
-        release = createRes.data;
-        console.log(`   Release created (ID: ${release.id})`);
-      } else {
-        throw err;
-      }
-    }
-
-    const apkFile = path.join(rootDir, 'data', 'pharmacy-mobile.apk');
-    const apkName = `AI-Pharmacy-Mobile-${tagName}.apk`;
-
-    const assetsToUpload = [
-      { filePath: installerExe, fileName: expectedInstallerName },
-      { filePath: updateZipPath, fileName: expectedZipName },
-    ];
-    if (fs.existsSync(webSetupExe)) {
-      assetsToUpload.push({ filePath: webSetupExe, fileName: webSetupName });
-      console.log(`   Found Web Stub installer: ${webSetupName}`);
-    }
-    if (fs.existsSync(apkFile)) {
-      assetsToUpload.push({ filePath: apkFile, fileName: apkName });
-      console.log(`   Found mobile companion APK: ${apkName}`);
-    }
-
-    for (const { filePath, fileName } of assetsToUpload) {
-      const fileSize = fs.statSync(filePath).size;
-      // If asset already exists on this release, delete it first
-      if (release.assets && release.assets.length > 0) {
-        const existing = release.assets.find(a => a.name === fileName);
-        if (existing) {
-          console.log(`   Replacing existing asset ${fileName}...`);
-          await axios.delete(`https://api.github.com/repos/${ghRepo}/releases/assets/${existing.id}`, { headers: ghHeaders });
+      let release;
+      try {
+        const getRes = await axios.get(`https://api.github.com/repos/${ghRepo}/releases/tags/${tagName}`, { headers: ghHeaders });
+        release = getRes.data;
+        console.log(`   Found existing release ${tagName} (ID: ${release.id})`);
+      } catch (err) {
+        if (err.response?.status === 404) {
+          console.log(`   Creating release ${tagName}...`);
+          const createRes = await axios.post(
+            `https://api.github.com/repos/${ghRepo}/releases`,
+            {
+              tag_name: tagName,
+              name: `AI Pharmacy OS ${tagName}`,
+              body: releaseNotes,
+              draft: false,
+              prerelease: isPilot,
+            },
+            { headers: ghHeaders }
+          );
+          release = createRes.data;
+          console.log(`   Release created (ID: ${release.id})`);
+        } else {
+          throw err;
         }
       }
 
-      console.log(`   Uploading ${fileName} (${(fileSize / (1024 * 1024)).toFixed(1)} MB)...`);
-      const uploadUrl = `https://uploads.github.com/repos/${ghRepo}/releases/${release.id}/assets?name=${encodeURIComponent(fileName)}`;
-      let uploadSuccess = false;
+      let hasCurl = false;
       try {
-        execSync("curl.exe --version", { stdio: "ignore" });
-        console.log(`   Using curl.exe streaming chunked upload (with retry & keepalive)...`);
-        execSync(
-          `curl.exe -f -L -# -X POST -T "${filePath}" -H "Authorization: Bearer ${ghToken}" -H "Content-Type: application/octet-stream" -H "Accept: application/vnd.github.v3+json" --retry 3 --retry-delay 5 "${uploadUrl}"`,
-          { stdio: "inherit", cwd: rootDir }
-        );
-        uploadSuccess = true;
-      } catch (curlErr) {
-        console.warn(`   ⚠️ curl.exe upload failed (${curlErr.message}), falling back to axios...`);
-      }
-      if (!uploadSuccess) {
-        const fileStream = fs.createReadStream(filePath);
-        await axios.post(uploadUrl, fileStream, {
-          headers: {
-            ...ghHeaders,
-            "Content-Type": "application/octet-stream",
-            "Content-Length": fileSize,
-          },
-          maxBodyLength: Infinity,
-          maxContentLength: Infinity,
-        });
-      }
-      console.log(`   ✓ Uploaded ${fileName}`);
+        execSync('curl.exe --version', { stdio: 'ignore' });
+        hasCurl = true;
+      } catch (_) {}
+
+      await Promise.all(assetsToUpload.map(async ({ filePath, fileName }) => {
+        const fileSize = fs.statSync(filePath).size;
+        if (release.assets && release.assets.length > 0) {
+          const existing = release.assets.find(a => a.name === fileName);
+          if (existing) {
+            console.log(`   Replacing existing asset ${fileName}...`);
+            await axios.delete(`https://api.github.com/repos/${ghRepo}/releases/assets/${existing.id}`, { headers: ghHeaders });
+          }
+        }
+
+        console.log(`   Uploading ${fileName} (${(fileSize / (1024 * 1024)).toFixed(1)} MB)...`);
+        const uploadUrl = `https://uploads.github.com/repos/${ghRepo}/releases/${release.id}/assets?name=${encodeURIComponent(fileName)}`;
+        let uploadSuccess = false;
+        if (hasCurl) {
+          try {
+            await execFileAsync('curl.exe', [
+              '-f', '-s', '-S', '-L', '-X', 'POST',
+              '-T', filePath,
+              '-H', `Authorization: Bearer ${ghToken}`,
+              '-H', 'Content-Type: application/octet-stream',
+              '-H', 'Accept: application/vnd.github.v3+json',
+              '--retry', '3', '--retry-delay', '5',
+              uploadUrl,
+            ], { cwd: rootDir, maxBuffer: 10 * 1024 * 1024 });
+            uploadSuccess = true;
+          } catch (curlErr) {
+            console.warn(`   ⚠️ curl.exe upload failed for ${fileName} (${curlErr.message}), falling back to axios...`);
+          }
+        }
+        if (!uploadSuccess) {
+          const fileStream = fs.createReadStream(filePath);
+          await axios.post(uploadUrl, fileStream, {
+            headers: {
+              ...ghHeaders,
+              'Content-Type': 'application/octet-stream',
+              'Content-Length': fileSize,
+            },
+            maxBodyLength: Infinity,
+            maxContentLength: Infinity,
+          });
+        }
+        console.log(`   ✓ Uploaded ${fileName}`);
+      }));
+      console.log('✓ GitHub REST API parallel upload complete.');
+    } catch (apiErr) {
+      console.error('\n❌ GitHub REST API upload failed:', apiErr.response?.data || apiErr.message);
+      process.exit(1);
     }
-    console.log('✓ GitHub REST API upload complete (installer + update package + APK if present).');
-  } catch (apiErr) {
-    console.error('\n❌ GitHub REST API upload failed:', apiErr.response?.data || apiErr.message);
-    process.exit(1);
   }
-}
 }
 
 // ── Step 4b: Pre-warm GitHub Release CDN edge before announcing update ──────
