@@ -130,5 +130,14 @@ describe('Pharmarack Unmapped Order Sync (isMapped: true + false)', () => {
     const unmappedPast = await db.get(`SELECT * FROM pharmarack_placed_orders WHERE order_no = '1893000'`);
     expect(unmappedPast).toBeTruthy();
     expect(unmappedPast.order_date).toBe(yesterdayIso);
+
+    // Simulate an order whose items_json was left empty ('[]') and verify next sync backfills items + StoreProductPTR
+    await db.run(`UPDATE pharmarack_placed_orders SET items_json = '[]' WHERE order_no = '1893848'`);
+    const backfillRes = await syncPharmarackOrders(true);
+    expect(backfillRes.ok).toBe(true);
+    const backfilled = await db.get(`SELECT items_json FROM pharmarack_placed_orders WHERE order_no = '1893848'`);
+    const parsedBackfilled = JSON.parse(backfilled.items_json);
+    expect(parsedBackfilled).toHaveLength(1);
+    expect(parsedBackfilled[0].productName).toBe('DOLO 650MG TAB');
   });
 });

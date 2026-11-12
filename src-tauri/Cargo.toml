@@ -1,0 +1,14 @@
+[package]
+name = "pharmacy-os"
+version = "0.1.245"
+description = "AI Pharmacy OS Desktop Shell"
+authors = ["AI Pharmacy Team"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+url = "2"

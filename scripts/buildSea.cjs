@@ -81,40 +81,34 @@ esbuild.buildSync({
   logLevel: 'info',
 });
 
-console.log('[build-sea] Step 5: Preparing Electron runtime (PharmacyOS.exe)...');
-const electronSourceDir = path.join(root, 'node_modules', 'electron', 'dist');
+console.log('[build-sea] Step 5: Building Rust Tauri shell (PharmacyOS.exe)...');
+const os = require('os');
 const outElectronExe = path.join(distDir, 'PharmacyOS.exe');
 if (fs.existsSync(outElectronExe)) fs.rmSync(outElectronExe);
-fs.copyFileSync(path.join(electronSourceDir, 'electron.exe'), outElectronExe);
 
-// Brand Electron runtime executable with AI Pharmacy OS icon and PE metadata
-const rceditPath = path.join(root, 'node_modules', 'electron-winstaller', 'vendor', 'rcedit.exe');
-const appIconPath = path.join(root, 'packaging', 'app.ico');
-if (fs.existsSync(rceditPath) && fs.existsSync(appIconPath)) {
-  try {
-    console.log('[build-sea] Branding PharmacyOS.exe with application icon and metadata...');
-    execSync(
-      `"${rceditPath}" "${outElectronExe}" --set-icon "${appIconPath}" --set-version-string "FileDescription" "AI Pharmacy OS" --set-version-string "ProductName" "AI Pharmacy OS" --set-version-string "CompanyName" "AI Pharmacy Team"`,
-      { stdio: 'inherit' }
-    );
-    console.log('[build-sea] ✓ PharmacyOS.exe branded successfully.');
-  } catch (err) {
-    console.warn('[build-sea] Warning: Failed to brand PharmacyOS.exe with rcedit:', err.message);
-  }
-}
+const tauriManifest = path.join(root, 'src-tauri', 'Cargo.toml');
+const cargoTargetDir = path.join(process.env.LOCALAPPDATA || os.tmpdir(), 'pharmacy-os-target');
+const w64Bin = path.resolve(root, '..', 'Coucou', '.toolchain', 'w64devkit', 'bin');
+const rustBin = path.resolve(root, '..', 'Coucou', '.toolchain', 'rust', 'cargo', 'bin');
+const extraPaths = [w64Bin, rustBin].filter(p => fs.existsSync(p));
+const tauriEnv = {
+  ...process.env,
+  CARGO_TARGET_DIR: cargoTargetDir,
+  PATH: extraPaths.length ? `${extraPaths.join(path.delimiter)}${path.delimiter}${process.env.PATH || ''}` : process.env.PATH,
+};
 
-// Flip Electron security fuses on PharmacyOS.exe (PRODUCTION.md §13, §21; Auto-Update Security Hardening)
-try {
-  console.log('[build-sea] Step 5b: Hardening PharmacyOS.exe with Electron security fuses...');
-  execFileSync(
-    process.execPath,
-    [path.join(root, 'scripts', 'flip-electron-fuses.mjs'), '--target', outElectronExe],
-    { cwd: root, stdio: 'inherit' }
-  );
-  console.log('[build-sea] ✓ PharmacyOS.exe security fuses configured.');
-} catch (err) {
-  console.warn('[build-sea] Warning: Failed to flip security fuses on PharmacyOS.exe:', err.message);
+execFileSync('cargo', ['build', '--manifest-path', tauriManifest, '--release'], {
+  cwd: root,
+  env: tauriEnv,
+  stdio: 'inherit',
+});
+
+const builtTauriExe = path.join(cargoTargetDir, 'release', 'pharmacy-os.exe');
+if (!fs.existsSync(builtTauriExe)) {
+  throw new Error(`[build-sea] Rust Tauri binary missing at: ${builtTauriExe}`);
 }
+fs.copyFileSync(builtTauriExe, outElectronExe);
+console.log(`[build-sea] ✓ Rust Tauri PharmacyOS.exe ready -> ${outElectronExe} (${(fs.statSync(outElectronExe).size / (1024 * 1024)).toFixed(2)} MB)`);
 
 // Prepare resources/app folder
 const appResourcesDir = path.join(distDir, 'resources', 'app');

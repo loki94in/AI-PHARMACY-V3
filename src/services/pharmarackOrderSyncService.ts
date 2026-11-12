@@ -163,7 +163,7 @@ export async function fetchOrderLines(db: any, token: string, orderId: number | 
         'Referer': 'https://retailers.pharmarack.com/',
         'Origin': 'https://retailers.pharmarack.com'
       },
-      signal: AbortSignal.timeout(5_000)
+      signal: AbortSignal.timeout(12_000)
     });
     if (res.status === 401 || res.status === 403) return 'expired';
     if (!res.ok) { await audit(db, orderNo, 'detail_http_error', { status: res.status }); return null; }
@@ -177,7 +177,9 @@ export async function fetchOrderLines(db: any, token: string, orderId: number | 
       const q = Number(pickFirst(r, QTY_KEYS));
       const code = pickFirst(r, ['ProductCode']);
       const mrp = Number(pickFirst(r, ['MRP', 'mrp']));
-      const rate = Number(pickFirst(r, ['PTR', 'ptr']));
+      const ptr = Number(pickFirst(r, ['PTR', 'ptr']));
+      const fallbackRate = Number(pickFirst(r, ['StoreProductPTR', 'HiddenPTR']));
+      const rate = Number.isFinite(ptr) && ptr > 0 ? ptr : (Number.isFinite(fallbackRate) && fallbackRate > 0 ? fallbackRate : NaN);
       const pack = pickFirst(r, ['Packing', 'packing', 'Packaging']);
       const scheme = pickFirst(r, ['Scheme', 'scheme', 'ProductScheme']);
       return {
@@ -197,7 +199,14 @@ export async function fetchOrderLines(db: any, token: string, orderId: number | 
 }
 
 /** Fills the product lines of today's distributor rows that were created empty by this sync. */
-async function fillOrderLines(db: any, token: string, orders: any[], todayIso: string): Promise<void> {
+async function fillOrderLines(db: any, token: string, orders: any[], todayIso: string): Promise<number> {
+  const storeOrderCounts = new Map<string, number>();
+  for (const x of orders) {
+    const k = String(x?.StoreName || '').trim().toLowerCase();
+    if (k) storeOrderCounts.set(k, (storeOrderCounts.get(k) || 0) + 1);
+  }
+
+  const pending: Array<{ o: any; orderNo: string; orderId: number | null; rowId: number; isEmpty: boolean }> = [];
   for (const o of orders) {
     const orderNo = String(o?.OrderNo ?? '').trim();
     if (!orderNo) continue;
@@ -235,34 +244,54 @@ async function fillOrderLines(db: any, token: string, orders: any[], todayIso: s
     let existing: any[] = [];
     try { existing = JSON.parse(row.items_json || '[]'); } catch (_) { existing = []; }
 
-    // Check if this store has multiple orders today
-    const sameStoreOrders = orders.filter(
-      x => String(x?.StoreName || '').trim().toLowerCase() === String(o?.StoreName || '').trim().toLowerCase()
-    );
-    const isMultiOrderStore = sameStoreOrders.length > 1;
-
+    const isMultiOrderStore = (storeOrderCounts.get(String(o?.StoreName || '').trim().toLowerCase()) || 0) > 1;
     // Single-order stores keep their existing in-app Send All lines to avoid unnecessary re-fetch.
     // Multi-order stores must fetch exact lines for this PO to prevent duplicate medicines across cards.
     if (existing.length > 0 && !isMultiOrderStore) continue;
 
     const orderId = Number.isFinite(Number(o.OrderId)) ? Number(o.OrderId) : null;
-    const lines = await fetchOrderLines(db, token, orderId, orderNo);
-    if (lines === 'expired') break;
-    if (!lines || lines.length === 0) continue;
-
-    await db.run('UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?', [JSON.stringify(lines), row.id]);
-
-    // Auto-ingest lines into store-scoped distributor products
-    try {
-      const storeId = Number(o?.storeId || o?.StoreId || 0);
-      const storeName = String(o?.StoreName || '').trim();
-      const { upsertDistributorProducts, autoSaveMedicineDistributorLinks } = await import('../routes/pharmarack.js');
-      if (storeId > 0) {
-        await upsertDistributorProducts(lines, storeId, storeName, 'synced_order', todayIso);
-        void autoSaveMedicineDistributorLinks(lines.map(l => ({ ...l, storeId, storeName })));
-      }
-    } catch (_) { /* non-fatal product ingest */ }
+    pending.push({ o, orderNo, orderId, rowId: row.id, isEmpty: existing.length === 0 });
   }
+
+  // Prioritize orders with missing lines (e.g. newly synced unmapped/external orders) before multi-order re-checks
+  pending.sort((a, b) => Number(b.isEmpty) - Number(a.isEmpty));
+
+  let filledCount = 0;
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+    const batch = pending.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (entry) => ({
+        entry,
+        lines: await fetchOrderLines(db, token, entry.orderId, entry.orderNo)
+      }))
+    );
+
+    let expired = false;
+    for (const { entry, lines } of results) {
+      if (lines === 'expired') {
+        expired = true;
+        continue;
+      }
+      if (!lines || lines.length === 0) continue;
+
+      await db.run('UPDATE pharmarack_placed_orders SET items_json = ? WHERE id = ?', [JSON.stringify(lines), entry.rowId]);
+      if (entry.isEmpty) filledCount++;
+
+      // Auto-ingest lines into store-scoped distributor products
+      try {
+        const storeId = Number(entry.o?.storeId || entry.o?.StoreId || 0);
+        const storeName = String(entry.o?.StoreName || '').trim();
+        const { upsertDistributorProducts, autoSaveMedicineDistributorLinks } = await import('../routes/pharmarack.js');
+        if (storeId > 0) {
+          await upsertDistributorProducts(lines, storeId, storeName, 'synced_order', todayIso);
+          void autoSaveMedicineDistributorLinks(lines.map(l => ({ ...l, storeId, storeName })));
+        }
+      } catch (_) { /* non-fatal product ingest */ }
+    }
+    if (expired) break;
+  }
+  return filledCount;
 }
 
 async function remindersEnabledToday(db: any, todayIso: string): Promise<boolean> {
@@ -387,9 +416,16 @@ async function runSync(): Promise<PharmarackOrderSyncResult> {
   }
   result.newOrders = fresh.length;
   // Product names for Sent History (also back-fills today's rows that earlier syncs left empty).
-  try { await fillOrderLines(db, token, orders, today.iso); } catch (_) { /* lines are optional; never break the sync */ }
+  let filledLinesCount = 0;
+  try { filledLinesCount = await fillOrderLines(db, token, orders, today.iso); } catch (_) { /* lines are optional; never break the sync */ }
   // Auto-deduplicate any multi-order line overlaps so medicines are never duplicated across cards
   try { await deduplicateSameStoreMultiOrderLines(db); } catch (_) { }
+  if (filledLinesCount > 0 && fresh.length === 0) {
+    try {
+      const { eventService } = await import('./eventService.js');
+      eventService.broadcast('pharmarack_orders_changed', { at: Date.now(), source: 'pharmarack_order_lines_backfill', count: filledLinesCount });
+    } catch (_) { /* UI refresh is best effort */ }
+  }
   if (fresh.length === 0) return result;
 
   // 2. Announce, under the same switches as the daily reminders.

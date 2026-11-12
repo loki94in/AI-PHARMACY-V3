@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI Pharmacy OS",
+  "version": "0.1.245",
+  "identifier": "com.aipharmacy.os",
+  "build": {
+    "frontendDist": "./splash"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "AI Pharmacy OS",
+        "width": 1366,
+        "height": 868,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "fullscreen": true,
+        "backgroundColor": "#0f172a"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../packaging/app.ico"
+    ]
+  }
+}
