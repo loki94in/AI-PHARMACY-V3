@@ -1686,7 +1686,7 @@ export default function PharmarackCart() {
       const res = await api.syncPharmarackOrders();
       if (res && res.ok) {
         // Also catch up any past-date orders placed while the shop or PC was closed (history only, no WhatsApp reminders).
-        const histRes = await api.syncHistoricalPharmarackOrders(30).catch(() => null);
+        const histRes = await api.syncHistoricalOrders(30).catch(() => null);
         const histImported = histRes && histRes.success ? (histRes.imported || 0) : 0;
         const histNote = histImported > 0 ? `, ${histImported} past order${histImported !== 1 ? 's' : ''} imported` : '';
         toastEvent.trigger(`Sync complete: ${res.fetched} fetched, ${res.newOrders} new recorded${histNote}.`, 'success');
