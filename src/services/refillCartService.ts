@@ -324,8 +324,9 @@ async function processRefillCartItemInner(
     return { ...base, ...extra, status: 'failed', message };
   };
 
-  if (refill.is_active === 0 || ['completed', 'canceled', 'cancelled', 'paused'].includes(String(refill.status || '').toLowerCase())) {
-    return { ...base, status: 'failed', message: 'Refill is already completed or inactive.' };
+  // Pharmacist can manually add to cart at any time even if marked completed or fulfilled
+  if (['canceled', 'cancelled'].includes(String(refill.status || '').toLowerCase())) {
+    return { ...base, status: 'failed', message: 'Refill schedule is cancelled.' };
   }
 
   // 1. Save the pharmacist's ticked distributors as this medicine's links.

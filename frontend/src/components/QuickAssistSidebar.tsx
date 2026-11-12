@@ -283,25 +283,26 @@ export const QuickAssistSidebar = memo(({
 
   const handleOrderRefillGroupToCart = (group: any) => {
     setRefillOrderModalGroup(group);
-    // Background-enrich with all CRM medicines for this patient so returning to select remaining
-    // medicines also shows any pending medicines beyond the 7-day QA due window (Rule 3)
-    api.getRefillsPanel({})
-      .then((allGroups: any[]) => {
-        if (!Array.isArray(allGroups)) return;
-        const cleanDigits = String(group.patient_phone || '').replace(/\D/g, '').slice(-10);
-        const match = allGroups.find(p =>
-          (group.key && p.patient_key && p.patient_key === group.key) ||
-          (group.customer_id && p.customer_id && Number(group.customer_id) === Number(p.customer_id)) ||
-          (cleanDigits && String(p.patient_phone || '').replace(/\D/g, '').slice(-10) === cleanDigits &&
-            String(p.patient_name || '').trim().toLowerCase() === String(group.patient_name || '').trim().toLowerCase())
-        );
-        if (match && Array.isArray(match.medicines) && match.medicines.length > 0) {
-          setRefillOrderModalGroup((prev: any) =>
-            prev && prev.key === group.key ? { ...prev, medicines: match.medicines } : prev
+    // Only query fallback if medicines list is unexpectedly empty to keep modal opening instantaneous
+    if (!Array.isArray(group.medicines) || group.medicines.length === 0) {
+      api.getRefillsPanel({})
+        .then((allGroups: any[]) => {
+          if (!Array.isArray(allGroups)) return;
+          const cleanDigits = String(group.patient_phone || '').replace(/\D/g, '').slice(-10);
+          const match = allGroups.find(p =>
+            (group.key && p.patient_key && p.patient_key === group.key) ||
+            (group.customer_id && p.customer_id && Number(group.customer_id) === Number(p.customer_id)) ||
+            (cleanDigits && String(p.patient_phone || '').replace(/\D/g, '').slice(-10) === cleanDigits &&
+              String(p.patient_name || '').trim().toLowerCase() === String(group.patient_name || '').trim().toLowerCase())
           );
-        }
-      })
-      .catch(() => {});
+          if (match && Array.isArray(match.medicines) && match.medicines.length > 0) {
+            setRefillOrderModalGroup((prev: any) =>
+              prev && prev.key === group.key ? { ...prev, medicines: match.medicines } : prev
+            );
+          }
+        })
+        .catch(() => {});
+    }
   };
 
   const [confirmingRefillKeys, setConfirmingRefillKeys] = useState<Set<string>>(new Set());
@@ -1918,7 +1919,7 @@ export const QuickAssistSidebar = memo(({
                                     </span>
                                   )}
                                   {isRefillQaStaged(med) && !isMedInCart && (
-                                    <span className="h-5 px-1.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0" title="Selected in CRM — awaiting QA Add to Cart approval">
+                                    <span className="h-5 px-1.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[8px] font-bold flex items-center gap-0.5 shrink-0" title={`In QA queue (×${med.qa_cart_qty || med.quantity_needed})`}>
                                       <ClockIcon size={9} className="shrink-0" />
                                       <span>In QA ×{med.qa_cart_qty || med.quantity_needed}</span>
                                     </span>

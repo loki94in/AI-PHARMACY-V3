@@ -132,16 +132,12 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     }
   }, [activeJob]);
 
-  // Only genuinely fulfilled/settled medicines are locked from selection.
-  // Items already in Live Cart or marked Ordered start unchecked by default,
-  // but remain manually selectable so the pharmacist can update qty or re-add.
-  const isCycleDuplicateLocked = (m: RefillMedicineItem): boolean => {
-    return isRefillActuallyFulfilled(m);
-  };
+  // Pharmacist can always select any medicine, even if fulfilled or already in cart.
+  const isCycleDuplicateLocked = (_m: RefillMedicineItem): boolean => false;
 
   const isAlreadyInCartOrOrdered = (m: RefillMedicineItem): boolean => {
     const isAlreadyInCart = !!m.in_live_cart || !!m.cart_store_name || m.cart_status === 'added';
-    return isAlreadyInCart || isRefillOrdered(m) || isRefillActuallyFulfilled(m);
+    return isAlreadyInCart || isRefillOrdered(m);
   };
 
   // Initialize selection and quantities without auto-selecting already-processed items
@@ -278,13 +274,11 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
       // Direct 1-step Pharmarack Live Cart addition strictly for selected medicines & quantities
       startRefillCartJob(patientName, payload, { openModal: false, patientKey });
       toastEvent.trigger(`Adding ${payload.length} medicine(s) to Live Cart in the background…`, 'info', '/pharmarack-cart');
+      onClose();
 
       if (onConfirm) {
-        try {
-          await onConfirm(payload);
-        } catch (_) {}
+        Promise.resolve(onConfirm(payload)).catch(() => {});
       }
-      onClose();
     } catch (err: unknown) {
       console.error('Failed to process refill selection:', err);
       const apiErr = err as { response?: { data?: { error?: string } }; message?: string };
@@ -570,13 +564,11 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
               return (
                 <div
                   key={med.id}
-                  onClick={() => !isDuplicateLocked && toggleSelect(med.id)}
+                  onClick={() => toggleSelect(med.id)}
                   className={`rounded-xl border p-3 transition-all ${
-                    isDuplicateLocked
-                      ? 'border-border/70 bg-bg3/40 opacity-80 cursor-not-allowed'
-                      : isSelected
-                        ? 'border-primary/50 bg-primary/5 shadow-xs cursor-pointer'
-                        : 'border-border bg-bg opacity-85 hover:opacity-100 cursor-pointer'
+                    isSelected
+                      ? 'border-primary/50 bg-primary/5 shadow-xs cursor-pointer'
+                      : 'border-border bg-bg opacity-85 hover:opacity-100 cursor-pointer'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -585,11 +577,10 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        disabled={isDuplicateLocked}
                         onChange={() => toggleSelect(med.id)}
                         onClick={e => e.stopPropagation()}
-                        title={isDuplicateLocked ? 'Already processed in this refill cycle — duplicate selection prevented' : 'Select medicine to add to Live Cart'}
-                        className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/40 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Select medicine to add to Live Cart"
+                        className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/40 cursor-pointer"
                       />
                       <div className="min-w-0 space-y-1">
                         <div className="font-extrabold text-text text-sm flex items-center gap-2 flex-wrap">
@@ -641,7 +632,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                           {isQaQueued && (
                             <span
                               className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-400 font-bold flex items-center gap-1"
-                              title="Selected and waiting for final Add to Cart approval inside Quick Assist (QA)"
+                              title="Selected for Live Cart addition"
                             >
                               <Clock size={10} /> In QA ×{med.qa_cart_qty || state.orderQty}
                             </span>

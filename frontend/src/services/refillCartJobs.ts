@@ -131,16 +131,19 @@ function runRow(jobId: number, row: RefillCartRow, mode: 'add' | 'plan'): void {
       });
       if (res.status === 'added' || res.status === 'in_cart') {
         refillEvent.triggerRefresh();
-        queryClient.invalidateQueries({ queryKey: ['refills'] });
         queryClient.invalidateQueries({ queryKey: ['pharmarack-cart'] });
       }
     } catch (err) {
       const e = err as LocalApiError;
       patchRow(jobId, row.refillId, { state: 'failed', message: e.response?.data?.error || e.message || 'Request failed. Retry.' });
     }
-    await sendSummaryIfDone(jobId);
-    refillEvent.triggerRefresh();
-    queryClient.invalidateQueries({ queryKey: ['refills'] });
+    const currentJob = jobs.find(j => j.id === jobId);
+    const stillRunning = currentJob && isRefillJobRunning(currentJob);
+    if (!stillRunning) {
+      await sendSummaryIfDone(jobId);
+      refillEvent.triggerRefresh();
+      queryClient.invalidateQueries({ queryKey: ['refills'] });
+    }
   });
 }
 
