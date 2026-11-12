@@ -18,9 +18,9 @@ type RefillLike = {
 export const effectiveRefillLeadDays = (intervalDays?: number | null, maxLead = 7): number =>
   Math.min(maxLead, Math.max(1, Math.floor((Number(intervalDays) || 30) / 3)));
 
-// Explicitly selected via CRM Refill-to-Live-Cart workflow and waiting for final QA approval
+// Explicitly queued in QA waiting for final Add to Cart action
 export const isRefillQaStaged = (m: RefillLike | undefined | null): boolean =>
-  !!m && (Number(m.qa_cart_qty || 0) > 0 || m.cart_status === 'qa_queued');
+  !!m && m.cart_status === 'qa_queued';
 
 // True when a refill was explicitly selected/staged via CRM before the normal automated lead window
 // (e.g. 10 November selection for a 27 November scheduled due date)

@@ -20,6 +20,7 @@ import { SalutationNameInput, combineSalutationAndName, parseSalutationAndName }
 import { DelayNoticeModal } from '../../components/DelayNoticeModal';
 import { MedicineLinkModal } from '../../components/MedicineLinkModal';
 import { RefillOrderModal } from '../../components/RefillOrderModal';
+import { startRefillCartJob } from '../../services/refillCartJobs';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import {
   type RefillPatient,
@@ -1003,12 +1004,30 @@ export const RefillsSection: React.FC = () => {
         addToLiveCart: false
       });
       if (pendingMeds.length > 0) {
-        await api.stageRefillsForQa(
-          pendingMeds.map(m => ({ refill_id: m.id, qty: Math.max(1, Number(m.qa_cart_qty || m.quantity_needed || 3)) }))
+        startRefillCartJob(
+          patient.patient_name,
+          pendingMeds.map(m => ({
+            refillId: m.id,
+            medicineId: m.medicine_id,
+            medicineName: m.medicine_name,
+            qty: Math.max(1, Number(m.qa_cart_qty || m.quantity_needed || 3)),
+            neededQty: m.quantity_needed,
+            stockQty: m.in_stock_qty,
+            cartStoreName: m.cart_store_name,
+            cartQty: m.cart_qty,
+            inLiveCart: m.in_live_cart
+          })),
+          { openModal: false, patientKey: patient.customer_id ? `c:${patient.customer_id}` : undefined }
         );
       }
       if (res?.success) {
-        toastEvent.trigger(`Refill confirmed & sent to QA for "${patient.patient_name}"! Approve Add to Cart inside Quick Assist.`, 'success', '/crm');
+        toastEvent.trigger(
+          pendingMeds.length > 0
+            ? `Refill confirmed & adding ${pendingMeds.length} medicine(s) to Live Cart for "${patient.patient_name}"!`
+            : `Refill confirmed for "${patient.patient_name}"!`,
+          'success',
+          '/crm'
+        );
         refillEvent.triggerRefresh();
         await load(true);
       } else {
@@ -2039,7 +2058,7 @@ export const RefillsSection: React.FC = () => {
                     const addToCartBtn = (
                       <button
                         onClick={() => handleOrderRefillShortages(selectedPatient)}
-                        title="Select refill medicines to send to QA for final Add to Cart approval"
+                        title="Select refill medicines and quantities to add directly to Pharmarack Live Cart"
                         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer shadow-xs ${
                           qaQueuedCount > 0
                             ? 'bg-amber-600 hover:bg-amber-500 text-white'
@@ -2432,7 +2451,7 @@ export const RefillsSection: React.FC = () => {
                                   type="button"
                                   onClick={() => handleOrderRefillShortages(selectedPatient, [med.id])}
                                   className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/40 text-primary text-[11px] font-bold transition-all cursor-pointer shadow-xs"
-                                  title={`Select "${med.medicine_name}" (×${cartOrderQty}) for QA review before adding to Pharmarack Live Cart`}
+                                  title={`Select "${med.medicine_name}" (×${cartOrderQty}) to add to Pharmarack Live Cart`}
                                 >
                                   <ShoppingCart size={12} />
                                   <span>+ Live Cart ({cartOrderQty})</span>
@@ -3342,7 +3361,7 @@ export const RefillsSection: React.FC = () => {
           patientName={orderingPatient.patient_name}
           patientPhone={orderingPatient.patient_phone}
           patientKey={orderingPatient.patient_key}
-          workflowMode="crm_select"
+          workflowMode="qa_approve"
           initialSelectedIds={orderingInitialIds}
           medicines={orderingPatient.medicines}
           onClose={() => {

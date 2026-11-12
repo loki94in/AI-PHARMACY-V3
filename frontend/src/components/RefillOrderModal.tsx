@@ -58,7 +58,6 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   patientName,
   patientPhone,
   patientKey,
-  workflowMode = 'crm_select',
   initialSelectedIds,
   medicines,
   onConfirm,
@@ -102,15 +101,16 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [cartError, setCartError] = useState<string | null>(null);
   const [isCartUpdated, setIsCartUpdated] = useState(false);
-  const [isStagingQa, setIsStagingQa] = useState(false);
   const [isMarkingReady, setIsMarkingReady] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [isNotifyingBooking, setIsNotifyingBooking] = useState(false);
 
-  // Background Live Cart Job coordination (scoped strictly by patientKey when supplied)
+  // Background Live Cart Job coordination (scoped strictly to an actively running job for this patientKey)
   const jobs = useSyncExternalStore(subscribeRefillCartJobs, getRefillCartJobs);
-  const activeJob = jobs.find(j => (patientKey ? (j.patientKey || j.patientName) === patientKey : j.patientName === patientName));
-  const isJobRunning = activeJob ? isRefillJobRunning(activeJob) : false;
+  const activeJob = jobs.find(
+    j => (patientKey ? (j.patientKey || j.patientName) === patientKey : j.patientName === patientName) && isRefillJobRunning(j)
+  );
+  const isJobRunning = Boolean(activeJob);
 
   useEffect(() => {
     if (!activeJob) return;
@@ -132,32 +132,29 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     }
   }, [activeJob]);
 
-  // Prevent duplicate CRM selection ONLY when already processed in the current cycle (in cart / ordered / fulfilled).
-  // Future due dates (e.g. due 27 Nov selected on 10 Nov) are NEVER blocked for pharmacist CRM actions.
+  // Prevent duplicate selection when already processed in the current cycle (in cart / ordered / fulfilled).
+  // Future due dates (e.g. due 27 Nov selected on 10 Nov) are NEVER blocked for pharmacist selection.
   const isCycleDuplicateLocked = (m: RefillMedicineItem): boolean => {
     const isAlreadyInCart = !!m.in_live_cart || !!m.cart_store_name || m.cart_status === 'added';
-    return workflowMode === 'crm_select' && (isAlreadyInCart || isRefillOrdered(m) || isRefillActuallyFulfilled(m));
+    return isAlreadyInCart || isRefillOrdered(m) || isRefillActuallyFulfilled(m);
   };
 
-  // Initialize selection and quantities without auto-selecting processed/unrelated items
+  // Initialize selection and quantities without auto-selecting already-processed items
   const [itemStates, setItemStates] = useState<Record<number, ItemState>>(() => {
     const initial: Record<number, ItemState> = {};
     const initialSet = initialSelectedIds && initialSelectedIds.length > 0 ? new Set(initialSelectedIds) : null;
     activeMeds.forEach(m => {
-      const isQaQueued = isRefillQaStaged(m);
       const isProcessed = isCycleDuplicateLocked(m);
       const shortage = Math.max(0, Number(m.quantity_needed || 3) - Number(m.in_stock_qty || 0));
       const defaultQty = Number(m.qa_cart_qty || m.cart_qty || m.quantity_needed || 3);
 
       let selected = false;
-      if (workflowMode === 'qa_approve') {
-        selected = initialSet ? initialSet.has(m.id) : isQaQueued;
-      } else if (isProcessed) {
+      if (isProcessed) {
         selected = false;
       } else if (initialSet) {
         selected = initialSet.has(m.id);
       } else {
-        selected = !isQaQueued;
+        selected = true;
       }
 
       initial[m.id] = {
@@ -273,47 +270,20 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     }));
 
     try {
-      if (workflowMode === 'crm_select') {
-        // CRM only stages selected items + quantities into QA queue — never writes Pharmarack Live Cart directly
-        setIsStagingQa(true);
-        const res = await api.stageRefillsForQa(payload.map(p => ({ refill_id: p.refillId, qty: p.qty })));
-        refillEvent.triggerRefresh();
-        queryClient.invalidateQueries({ queryKey: ['refills'] });
-        const stagedCount = res?.staged_count ?? payload.length;
-        const earlyCount = (res?.staged_items || []).filter(s => s.selection_type === 'early_crm_addition').length;
-        const skippedCount = res?.skipped_duplicates?.length || 0;
-        const earlySuffix = earlyCount > 0 ? ` (${earlyCount} early CRM addition)` : '';
-        const skipSuffix = skippedCount > 0 ? ` · ${skippedCount} already processed skipped` : '';
-        toastEvent.trigger(
-          stagedCount > 0
-            ? `Sent ${stagedCount} medicine(s)${earlySuffix} to QA for "${patientName}".${skipSuffix}`
-            : `All selected medicine(s) are already processed for this cycle.`,
-          stagedCount > 0 ? 'success' : 'info'
-        );
-        if (onConfirm) {
-          try {
-            await onConfirm(payload);
-          } catch (_) {}
-        }
-        onClose();
-        return;
-      }
-
-      // QA final approval: triggers actual Pharmarack Live Cart addition strictly for selected rows
+      // Direct 1-step Pharmarack Live Cart addition strictly for selected medicines & quantities
       startRefillCartJob(patientName, payload, { openModal: false, patientKey });
-      toastEvent.trigger(`Adding ${payload.length} approved medicine(s) to live cart in the background…`, 'info', '/pharmarack-cart');
+      toastEvent.trigger(`Adding ${payload.length} medicine(s) to Live Cart in the background…`, 'info', '/pharmarack-cart');
 
       if (onConfirm) {
         try {
           await onConfirm(payload);
         } catch (_) {}
       }
+      onClose();
     } catch (err: unknown) {
       console.error('Failed to process refill selection:', err);
       const apiErr = err as { response?: { data?: { error?: string } }; message?: string };
       setCartError(apiErr.response?.data?.error || apiErr.message || 'Failed to process refill selection.');
-    } finally {
-      setIsStagingQa(false);
     }
   };
 
@@ -418,14 +388,10 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
             </div>
             <div>
               <h3 className="font-extrabold text-text text-sm">
-                {workflowMode === 'qa_approve'
-                  ? `Approve Live Cart Order (QA) — ${patientName}`
-                  : `Select Refill Medicines for QA — ${patientName}`}
+                Add to Live Cart — {patientName}
               </h3>
               <p className="text-[11px] text-muted">
-                {workflowMode === 'qa_approve'
-                  ? 'Final approval: Only these selected medicines will be added to Pharmarack Live Cart.'
-                  : 'Select pending medicines and edit quantities. Click Continue to QA to send only selected items for approval.'}
+                Select medicines and edit quantities. Click Add to Cart to add only selected items directly.
               </p>
             </div>
           </div>
@@ -479,7 +445,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
               onClick={toggleSelectAll}
               className="px-2.5 py-1 rounded-lg bg-bg2 border border-border hover:border-primary/40 text-muted hover:text-text text-[11px] font-semibold transition-all cursor-pointer"
             >
-              {activeMeds.every(m => itemStates[m.id]?.selected) ? 'Deselect All' : 'Select All'}
+              {activeMeds.some(m => !isCycleDuplicateLocked(m)) && activeMeds.filter(m => !isCycleDuplicateLocked(m)).every(m => itemStates[m.id]?.selected) ? 'Deselect All' : 'Select All'}
             </button>
           </div>
         </div>
@@ -617,7 +583,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                         disabled={isDuplicateLocked}
                         onChange={() => toggleSelect(med.id)}
                         onClick={e => e.stopPropagation()}
-                        title={isDuplicateLocked ? 'Already processed in this refill cycle — duplicate selection prevented' : 'Select medicine for QA'}
+                        title={isDuplicateLocked ? 'Already processed in this refill cycle — duplicate selection prevented' : 'Select medicine to add to Live Cart'}
                         className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary/40 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       />
                       <div className="min-w-0 space-y-1">
@@ -826,10 +792,8 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
             </button>
             {(() => {
               const allSelectedAlreadyInCart = selectedList.length > 0 && selectedList.every(m => m.in_live_cart || m.cart_store_name);
-              const actionVerb = workflowMode === 'crm_select'
-                ? 'Continue to QA'
-                : (allSelectedAlreadyInCart ? 'Update Cart' : 'Add to Cart');
-              const busy = isJobRunning || isStagingQa;
+              const actionVerb = allSelectedAlreadyInCart ? 'Update Cart' : 'Add to Cart';
+              const busy = isJobRunning;
 
               return (
                 <button
@@ -841,7 +805,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
                   {busy ? (
                     <>
                       <Loader2 size={14} className="animate-spin" />
-                      <span>{isStagingQa ? 'Sending to QA…' : 'Adding in Background…'}</span>
+                      <span>Adding in Background…</span>
                     </>
                   ) : (
                     <>

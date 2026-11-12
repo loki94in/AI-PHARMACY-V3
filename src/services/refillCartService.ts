@@ -313,7 +313,10 @@ async function processRefillCartItemInner(
   const base = { refillId, medicineId: refill.medicine_id || undefined, medicineName, qty, linked: [] as RefillCartResult['linked'], candidates: [] as RefillCartCandidate[] };
   const recordNonAddedStatus = async (status: RefillCartStatus) => {
     if (!opts.dryRun) {
-      await db.run('UPDATE patient_refills SET cart_status = ? WHERE id = ?', [status, refillId]).catch(() => {});
+      await db.run(
+        'UPDATE patient_refills SET cart_status = ?, qa_cart_qty = NULL WHERE id = ?',
+        [status, refillId]
+      ).catch(() => {});
     }
   };
   const fail = async (message: string, extra: Partial<RefillCartResult> = {}): Promise<RefillCartResult> => {

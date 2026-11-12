@@ -1959,7 +1959,6 @@ export const QuickAssistSidebar = memo(({
                               <div className="flex items-center justify-between gap-1.5 min-w-0">
                                 <div className="flex items-center gap-1 min-w-0 flex-1">
                                   <Package size={10} className="text-purple-400 shrink-0" />
-                                  <span className="font-mono text-[8.5px] text-muted shrink-0" title={`Refill ID #${med.id}`}>#{med.id}</span>
                                   <span className="font-medium text-text text-[11px] truncate" title={med.medicine_name}>{med.medicine_name}</span>
                                 </div>
                                 <div className="flex items-center gap-1 shrink-0">
@@ -2058,7 +2057,6 @@ export const QuickAssistSidebar = memo(({
                                     className="flex items-center justify-between gap-1.5 px-1.5 py-1 rounded bg-bg2/90 border border-border/80 text-[9.5px] min-w-0"
                                   >
                                     <div className="flex items-center gap-1 min-w-0 flex-1">
-                                      <span className="font-mono text-[8.5px] text-muted shrink-0" title={`Refill ID #${m.id}`}>#{m.id}</span>
                                       <span className="font-semibold text-text truncate" title={m.medicine_name}>{m.medicine_name}</span>
                                       <span className="font-mono font-bold text-primary shrink-0">×{m.qa_cart_qty || m.quantity_needed}</span>
                                     </div>
@@ -2098,7 +2096,7 @@ export const QuickAssistSidebar = memo(({
                                   handleOrderRefillGroupToCart(group);
                                 }}
                                 className="h-6.5 px-2 rounded-lg bg-bg3 hover:bg-bg2 text-text border border-border text-[9px] font-bold transition-colors cursor-pointer shrink-0"
-                                title="Reopen CRM selection to add more pending medicines or change quantities"
+                                title="Select medicines and edit quantities"
                               >
                                 Edit
                               </button>
@@ -2174,10 +2172,10 @@ export const QuickAssistSidebar = memo(({
                                       handleOrderRefillGroupToCart(group);
                                     }}
                                     className="flex-1 h-6.5 px-2 rounded-lg bg-primary/20 hover:bg-primary text-primary hover:text-white border border-primary/30 text-[9.5px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs truncate"
-                                    title="Select medicines and quantities to send to QA (Rule 1 & 2)"
+                                    title="Select medicines and quantities to add directly to Pharmarack Live Cart"
                                   >
                                     <ShoppingCart size={11} className="shrink-0" />
-                                    <span className="truncate">Select in CRM</span>
+                                    <span className="truncate">Add to Cart</span>
                                   </button>
                                 )}
                                 <button
@@ -3345,7 +3343,7 @@ export const QuickAssistSidebar = memo(({
           patientName={refillOrderModalGroup.patient_name}
           patientPhone={refillOrderModalGroup.patient_phone}
           patientKey={refillOrderModalGroup.key}
-          workflowMode="crm_select"
+          workflowMode="qa_approve"
           medicines={refillOrderModalGroup.medicines.map((m: any) => ({
             id: m.id,
             medicine_id: m.medicine_id,
