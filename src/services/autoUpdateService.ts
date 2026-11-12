@@ -1136,6 +1136,7 @@ class AutoUpdateService {
       const targetVersion = this.lastResult.latestVersion;
       const installDir = path.dirname(process.execPath).replace(/[\\/]+$/, '');
       const launcherBat = path.join(stagingDir, 'launch-setup.bat');
+      const setupBackupDir = path.join(installDir, 'backup', 'preupdate-setup');
       const launcherContent = [
         '@echo off',
         `title AI Pharmacy OS — Installing Setup v${targetVersion}`,
@@ -1143,11 +1144,33 @@ class AutoUpdateService {
         'taskkill /F /T /IM PharmacyOS.exe >nul 2>&1',
         'taskkill /F /T /IM PharmacyBackend.exe >nul 2>&1',
         'ping 127.0.0.1 -n 3 >nul',
+        `if exist "${setupBackupDir}" rmdir /S /Q "${setupBackupDir}" >nul 2>&1`,
+        `mkdir "${setupBackupDir}" >nul 2>&1`,
+        `if exist "${path.join(installDir, 'PharmacyOS.exe')}" copy /Y "${path.join(installDir, 'PharmacyOS.exe')}" "${path.join(setupBackupDir, 'PharmacyOS.exe')}" >nul 2>&1`,
+        `if exist "${path.join(installDir, 'WebView2Loader.dll')}" copy /Y "${path.join(installDir, 'WebView2Loader.dll')}" "${path.join(setupBackupDir, 'WebView2Loader.dll')}" >nul 2>&1`,
+        `if exist "${path.join(installDir, 'PharmacyBackend.exe')}" copy /Y "${path.join(installDir, 'PharmacyBackend.exe')}" "${path.join(setupBackupDir, 'PharmacyBackend.exe')}" >nul 2>&1`,
+        `if exist "${path.join(installDir, 'dist-pkg')}" xcopy /E /Y /I "${path.join(installDir, 'dist-pkg')}" "${path.join(setupBackupDir, 'dist-pkg')}" >nul 2>&1`,
+        `if exist "${path.join(installDir, 'frontend', 'dist')}" xcopy /E /Y /I "${path.join(installDir, 'frontend', 'dist')}" "${path.join(setupBackupDir, 'frontend', 'dist')}" >nul 2>&1`,
         `start "" /wait "${exePath}" /SILENT /SUPPRESSMSGBOXES`,
+        'set "SETUP_RC=%ERRORLEVEL%"',
+        `if not "%SETUP_RC%"=="0" goto :RESTORE_SETUP`,
+        `if not exist "${path.join(installDir, 'PharmacyOS.exe')}" goto :RESTORE_SETUP`,
+        `rmdir /S /Q "${setupBackupDir}" >nul 2>&1`,
         'echo Setup completed. Starting AI Pharmacy OS...',
         'ping 127.0.0.1 -n 2 >nul',
         `start "" "${path.join(installDir, 'PharmacyOS.exe')}"`,
-        'exit',
+        'exit /b 0',
+        ':RESTORE_SETUP',
+        'echo Setup failed or aborted. Restoring previous version...',
+        `echo {"version":"${targetVersion}","error":"SETUP_INSTALL_FAILED","rollback":"attempted"} > "${path.join(stagingDir, 'failure.json')}"`,
+        `if exist "${path.join(setupBackupDir, 'PharmacyOS.exe')}" copy /Y "${path.join(setupBackupDir, 'PharmacyOS.exe')}" "${path.join(installDir, 'PharmacyOS.exe')}" >nul 2>&1`,
+        `if exist "${path.join(setupBackupDir, 'WebView2Loader.dll')}" copy /Y "${path.join(setupBackupDir, 'WebView2Loader.dll')}" "${path.join(installDir, 'WebView2Loader.dll')}" >nul 2>&1`,
+        `if exist "${path.join(setupBackupDir, 'PharmacyBackend.exe')}" copy /Y "${path.join(setupBackupDir, 'PharmacyBackend.exe')}" "${path.join(installDir, 'PharmacyBackend.exe')}" >nul 2>&1`,
+        `if exist "${path.join(setupBackupDir, 'dist-pkg')}" xcopy /E /Y /I "${path.join(setupBackupDir, 'dist-pkg')}" "${path.join(installDir, 'dist-pkg')}" >nul 2>&1`,
+        `if exist "${path.join(setupBackupDir, 'frontend', 'dist')}" xcopy /E /Y /I "${path.join(setupBackupDir, 'frontend', 'dist')}" "${path.join(installDir, 'frontend', 'dist')}" >nul 2>&1`,
+        'ping 127.0.0.1 -n 2 >nul',
+        `start "" "${path.join(installDir, 'PharmacyOS.exe')}"`,
+        'exit /b 1',
       ].join('\r\n');
       fs.writeFileSync(launcherBat, launcherContent, 'utf8');
 

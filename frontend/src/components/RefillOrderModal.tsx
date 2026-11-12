@@ -132,9 +132,14 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     }
   }, [activeJob]);
 
-  // Prevent duplicate selection when already processed in the current cycle (in cart / ordered / fulfilled).
-  // Future due dates (e.g. due 27 Nov selected on 10 Nov) are NEVER blocked for pharmacist selection.
+  // Only genuinely fulfilled/settled medicines are locked from selection.
+  // Items already in Live Cart or marked Ordered start unchecked by default,
+  // but remain manually selectable so the pharmacist can update qty or re-add.
   const isCycleDuplicateLocked = (m: RefillMedicineItem): boolean => {
+    return isRefillActuallyFulfilled(m);
+  };
+
+  const isAlreadyInCartOrOrdered = (m: RefillMedicineItem): boolean => {
     const isAlreadyInCart = !!m.in_live_cart || !!m.cart_store_name || m.cart_status === 'added';
     return isAlreadyInCart || isRefillOrdered(m) || isRefillActuallyFulfilled(m);
   };
@@ -144,7 +149,7 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
     const initial: Record<number, ItemState> = {};
     const initialSet = initialSelectedIds && initialSelectedIds.length > 0 ? new Set(initialSelectedIds) : null;
     activeMeds.forEach(m => {
-      const isProcessed = isCycleDuplicateLocked(m);
+      const isProcessed = isAlreadyInCartOrOrdered(m);
       const shortage = Math.max(0, Number(m.quantity_needed || 3) - Number(m.in_stock_qty || 0));
       const defaultQty = Number(m.qa_cart_qty || m.cart_qty || m.quantity_needed || 3);
 
@@ -176,11 +181,11 @@ export const RefillOrderModal: React.FC<RefillOrderModalProps> = ({
         const fullQty = Math.max(1, Number(m.quantity_needed || 3));
         const shortage = Math.max(0, fullQty - Number(m.in_stock_qty || 0));
         const targetQty = newMode === 'full' ? fullQty : (shortage > 0 ? shortage : 1);
-        const locked = isCycleDuplicateLocked(m);
+        const skipAutoSelect = isAlreadyInCartOrOrdered(m);
         next[m.id] = {
           ...next[m.id],
-          orderQty: locked ? (next[m.id]?.orderQty || targetQty) : targetQty,
-          selected: locked ? false : (newMode === 'full' ? true : (shortage > 0))
+          orderQty: skipAutoSelect ? (next[m.id]?.orderQty || targetQty) : targetQty,
+          selected: skipAutoSelect ? false : (newMode === 'full' ? true : (shortage > 0))
         };
       });
       return next;

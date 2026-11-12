@@ -217,6 +217,7 @@ if exist "%INSTALL_DIR%\PharmacyOS.exe" (
         )
     )
 )
+if exist "%INSTALL_DIR%\WebView2Loader.dll" copy /Y "%INSTALL_DIR%\WebView2Loader.dll" "!BACKUP_DIR!\WebView2Loader.dll" >nul 2>&1
 if exist "%INSTALL_DIR%\PharmacyBackend.exe" copy /Y "%INSTALL_DIR%\PharmacyBackend.exe" "!BACKUP_DIR!\PharmacyBackend.exe" >nul 2>&1
 if exist "%INSTALL_DIR%\dist-pkg" (
     mkdir "!BACKUP_DIR!\dist-pkg" 2>nul
@@ -225,6 +226,10 @@ if exist "%INSTALL_DIR%\dist-pkg" (
 if exist "%INSTALL_DIR%\resources\app" (
     mkdir "!BACKUP_DIR!\resources\app" 2>nul
     xcopy /E /Y /I "%INSTALL_DIR%\resources\app" "!BACKUP_DIR!\resources\app" >nul 2>&1
+)
+if exist "%INSTALL_DIR%\frontend\dist" (
+    mkdir "!BACKUP_DIR!\frontend\dist" 2>nul
+    xcopy /E /Y /I "%INSTALL_DIR%\frontend\dist" "!BACKUP_DIR!\frontend\dist" >nul 2>&1
 )
 if exist "%INSTALL_DIR%\sea-entry.cjs"       copy /Y "%INSTALL_DIR%\sea-entry.cjs"       "!BACKUP_DIR!\sea-entry.cjs"       >nul 2>&1
 if exist "%INSTALL_DIR%\Updater.bat"         copy /Y "%INSTALL_DIR%\Updater.bat"         "!BACKUP_DIR!\Updater.bat"         >nul 2>&1
@@ -362,8 +367,14 @@ exit /b 0
 set "RBACK_DIR=%~1"
 set "RBACK_REASON=%~2"
 call :LOG "Rolling back to previous version from: !RBACK_DIR! (reason: !RBACK_REASON!)"
+taskkill /F /T /IM PharmacyOS.exe >nul 2>&1
+taskkill /F /T /IM PharmacyBackend.exe >nul 2>&1
+ping 127.0.0.1 -n 2 >nul
 if exist "!RBACK_DIR!\PharmacyOS.exe" (
     copy /Y "!RBACK_DIR!\PharmacyOS.exe" "%INSTALL_DIR%\PharmacyOS.exe" >nul 2>&1
+)
+if exist "!RBACK_DIR!\WebView2Loader.dll" (
+    copy /Y "!RBACK_DIR!\WebView2Loader.dll" "%INSTALL_DIR%\WebView2Loader.dll" >nul 2>&1
 )
 if exist "!RBACK_DIR!\PharmacyBackend.exe" (
     copy /Y "!RBACK_DIR!\PharmacyBackend.exe" "%INSTALL_DIR%\PharmacyBackend.exe" >nul 2>&1
@@ -373,6 +384,9 @@ if exist "!RBACK_DIR!\dist-pkg" (
 )
 if exist "!RBACK_DIR!\resources\app" (
     xcopy /E /Y /I "!RBACK_DIR!\resources\app" "%INSTALL_DIR%\resources\app" >nul 2>&1
+)
+if exist "!RBACK_DIR!\frontend\dist" (
+    xcopy /E /Y /I "!RBACK_DIR!\frontend\dist" "%INSTALL_DIR%\frontend\dist" >nul 2>&1
 )
 if exist "!RBACK_DIR!\sea-entry.cjs" (
     copy /Y "!RBACK_DIR!\sea-entry.cjs" "%INSTALL_DIR%\sea-entry.cjs" >nul 2>&1

@@ -7,6 +7,14 @@
 
 ## Fixed
 
+### [Fixed] P1-152 — Refill Add to Live Cart Modal Disabled Checkboxes for In-Cart / Ordered Items
+
+- **Symptom:** Opening **Add to Live Cart — {patientName}** (`RefillOrderModal`) from CRM or Quick Assist disabled the medicine checkboxes/rows for items marked as in-cart or ordered, preventing pharmacists from selecting them to update cart quantities or re-add them to Live Cart.
+- **Root Cause:** Commit `8cafe7cc` removed `workflowMode` from `RefillOrderModal.tsx`, which caused `isCycleDuplicateLocked` (previously gated to `workflowMode === 'crm_select'`) to unconditionally lock `isAlreadyInCart || isRefillOrdered(m)` alongside `isRefillActuallyFulfilled(m)`.
+- **Fix:** Split `isAlreadyInCartOrOrdered` (used only to keep in-cart/ordered items unchecked by default on open/mode-switch) from `isCycleDuplicateLocked` (now `isRefillActuallyFulfilled(m)` only) in `frontend/src/components/RefillOrderModal.tsx`, so in-cart and ordered medicines remain manually selectable for `Update Cart` / `Add to Cart`.
+- **Priority:** P1
+- **Verified by:** `npm run guardrails` (exit 0), `npm run build --prefix frontend`, and `node scripts/quick-update.mjs`.
+
 ### [Fixed] P1-151 — Add to Live Cart False "Fulfilled" Lock & Duplicate QA Selection Section
 
 - **Symptom:**

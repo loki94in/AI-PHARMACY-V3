@@ -173,6 +173,118 @@ fn spawn_backend(exe_dir: &Path, port: u16) -> Option<Child> {
     cmd.spawn().ok()
 }
 
+fn find_latest_preupdate_backup(exe_dir: &Path) -> Option<PathBuf> {
+    let backup_root = exe_dir.join("backup");
+    let entries = fs::read_dir(&backup_root).ok()?;
+    let mut candidates: Vec<PathBuf> = entries
+        .filter_map(|e| e.ok().map(|x| x.path()))
+        .filter(|p| {
+            p.is_dir()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.starts_with("preupdate-"))
+                    .unwrap_or(false)
+                && p.join("PharmacyOS.exe").exists()
+        })
+        .collect();
+    // Lexicographical sort on preupdate-YYYYMMDDHHMMSS puts newest last
+    candidates.sort();
+    candidates.pop()
+}
+
+fn trigger_post_update_rollback(exe_dir: &Path, reason: &str) -> bool {
+    let staging_dir = exe_dir.join("updates").join("staging");
+    let success_flag = staging_dir.join("success.json");
+    if !success_flag.exists() {
+        return false;
+    }
+
+    let Some(backup_dir) = find_latest_preupdate_backup(exe_dir) else {
+        return false;
+    };
+
+    let _ = fs::create_dir_all(&staging_dir);
+    let _ = fs::remove_file(&success_flag);
+    let safe_reason = reason.replace('"', "'");
+    let fail_json = format!(
+        "{{\"version\":\"unknown\",\"error\":\"{safe_reason}\",\"rollback\":\"attempted\"}}"
+    );
+    let _ = fs::write(staging_dir.join("failure.json"), &fail_json);
+    let _ = fs::write(staging_dir.join("rollback.json"), &fail_json);
+
+    let current_pid = std::process::id();
+    let script_path = staging_dir.join("boot-rollback.ps1");
+    let install_str = exe_dir.to_string_lossy().replace('\'', "''");
+    let backup_str = backup_dir.to_string_lossy().replace('\'', "''");
+
+    let ps_script = format!(
+        r#"$ErrorActionPreference = 'SilentlyContinue'
+$InstallDir = '{install_str}'
+$BackupDir  = '{backup_str}'
+$WaitPid    = {current_pid}
+
+for ($i = 0; $i -lt 40; $i++) {{
+    if (-not (Get-Process -Id $WaitPid -ErrorAction SilentlyContinue)) {{ break }}
+    Start-Sleep -Milliseconds 250
+}}
+& taskkill.exe /F /T /IM PharmacyOS.exe 2>&1 | Out-Null
+& taskkill.exe /F /T /IM PharmacyBackend.exe 2>&1 | Out-Null
+Start-Sleep -Milliseconds 500
+
+foreach ($f in @('PharmacyOS.exe', 'WebView2Loader.dll', 'PharmacyBackend.exe', 'sea-entry.cjs', 'Updater.bat', 'UpdateGUI.ps1')) {{
+    $src = Join-Path $BackupDir $f
+    $dst = Join-Path $InstallDir $f
+    if (Test-Path -LiteralPath $src) {{
+        for ($a = 1; $a -le 6; $a++) {{
+            try {{ Copy-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop; break }} catch {{ Start-Sleep -Milliseconds (250 * $a) }}
+        }}
+    }}
+}}
+
+foreach ($d in @('dist-pkg', 'resources\app', 'frontend\dist')) {{
+    $srcD = Join-Path $BackupDir $d
+    $dstD = Join-Path $InstallDir $d
+    if (Test-Path -LiteralPath $srcD) {{
+        if (-not (Test-Path -LiteralPath $dstD)) {{ New-Item -ItemType Directory -Path $dstD -Force | Out-Null }}
+        Copy-Item -Path (Join-Path $srcD '*') -Destination $dstD -Recurse -Force -ErrorAction SilentlyContinue
+    }}
+}}
+
+Start-Sleep -Milliseconds 500
+$vbs = Join-Path $InstallDir 'RUN-PharmacyOS-Silent.vbs'
+$exe = Join-Path $InstallDir 'PharmacyOS.exe'
+if (Test-Path -LiteralPath $vbs) {{
+    Start-Process -FilePath 'wscript.exe' -ArgumentList "`"$vbs`"" -WorkingDirectory $InstallDir
+}} elseif (Test-Path -LiteralPath $exe) {{
+    Start-Process -FilePath $exe -WorkingDirectory $InstallDir
+}}
+"#
+    );
+
+    if fs::write(&script_path, ps_script).is_err() {
+        return false;
+    }
+
+    let mut cmd = Command::new("powershell.exe");
+    cmd.args([
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-WindowStyle",
+        "Hidden",
+        "-File",
+    ])
+    .arg(&script_path)
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    cmd.spawn().is_ok()
+}
+
 fn kill_backend(backend_pid: &Arc<Mutex<Option<u32>>>) {
     let pid_opt = backend_pid.lock().ok().and_then(|mut g| g.take());
     if let Some(pid) = pid_opt {
@@ -224,21 +336,37 @@ fn main() {
 
             let app_handle = app.handle().clone();
             thread::spawn(move || {
-                if !check_backend_alive(port, 400) {
+                let mut backend_ok = check_backend_alive(port, 400);
+                if !backend_ok {
                     reclaim_port(port);
                     clean_all_session_locks(&exe_dir);
-                    if let Some(child) = spawn_backend(&exe_dir, port) {
+                    let mut child_opt = spawn_backend(&exe_dir, port);
+                    if let Some(ref child) = child_opt {
                         if let Ok(mut guard) = backend_pid_setup.lock() {
                             *guard = Some(child.id());
                         }
                     }
 
+                    let mut fail_reason = "POST_UPDATE_BACKEND_TIMEOUT";
                     let deadline = Instant::now() + Duration::from_secs(60);
                     while Instant::now() < deadline {
                         if check_backend_alive(port, 300) {
+                            backend_ok = true;
                             break;
                         }
+                        if let Some(ref mut child) = child_opt {
+                            if let Ok(Some(_status)) = child.try_wait() {
+                                fail_reason = "POST_UPDATE_BACKEND_EXITED";
+                                break;
+                            }
+                        }
                         thread::sleep(Duration::from_millis(50));
+                    }
+
+                    if !backend_ok && trigger_post_update_rollback(&exe_dir, fail_reason) {
+                        kill_backend(&backend_pid_setup);
+                        app_handle.exit(1);
+                        return;
                     }
                 }
 

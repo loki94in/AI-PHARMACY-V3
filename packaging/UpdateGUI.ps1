@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # AI Pharmacy OS — Apple-Design Native WPF Update Installer
 # Replaces raw cmd.exe console with a frameless macOS-styled UI.
 # ============================================================
@@ -200,39 +200,73 @@ function Update-UI {
     )
 }
 
+function Restore-FileWithRetry {
+    param([string]$SourceFile, [string]$DestFile)
+    if (-not (Test-Path -LiteralPath $SourceFile)) { return $false }
+    $parent = [System.IO.Path]::GetDirectoryName($DestFile)
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        try {
+            Copy-Item -LiteralPath $SourceFile -Destination $DestFile -Force -ErrorAction Stop
+            return $true
+        } catch {
+            if ($attempt -ge 2 -and (Test-Path -LiteralPath $DestFile)) {
+                $stale = "$DestFile.old-rb-$([Guid]::NewGuid().ToString().Substring(0,8))"
+                try { Move-Item -LiteralPath $DestFile -Destination $stale -Force -ErrorAction SilentlyContinue } catch {}
+            }
+            Start-Sleep -Milliseconds (250 * $attempt)
+        }
+    }
+    Write-Log "WARNING: Failed to restore file after retries: $DestFile"
+    return $false
+}
+
+function Restore-DirectoryFromBackup {
+    param([string]$SourceDir, [string]$DestDir)
+    if (-not (Test-Path -LiteralPath $SourceDir)) { return }
+    if (-not (Test-Path -LiteralPath $DestDir)) {
+        New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    }
+    # Copy contents ("*") into existing $DestDir so PowerShell never nests e.g. dist-pkg\dist-pkg
+    try {
+        Copy-Item -Path (Join-Path $SourceDir "*") -Destination $DestDir -Recurse -Force -ErrorAction Stop
+    } catch {
+        Write-Log "WARNING: Directory restore partial error for ${DestDir}: $($_.Exception.Message)"
+    }
+}
+
 function Rollback-Update {
     param([string]$BackupDir, [string]$Reason)
     Write-Log "Rolling back to previous version from: $BackupDir (reason: $Reason)"
     Update-UI -Step "Rolling back update..." -Detail "Restoring previous files safely..." -Percent 100
 
+    # Ensure no lingering app/backend processes hold locks on files we are about to restore
+    & taskkill.exe /F /T /IM PharmacyOS.exe 2>&1 | Out-Null
+    & taskkill.exe /F /T /IM PharmacyBackend.exe 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 500
+
     if (-not [string]::IsNullOrWhiteSpace($BackupDir) -and (Test-Path -LiteralPath $BackupDir)) {
-        if (Test-Path -LiteralPath (Join-Path $BackupDir "PharmacyOS.exe")) {
-            Copy-Item -LiteralPath (Join-Path $BackupDir "PharmacyOS.exe") -Destination (Join-Path $InstallDir "PharmacyOS.exe") -Force -ErrorAction SilentlyContinue
+        $restoreFiles = @("PharmacyOS.exe", "WebView2Loader.dll", "PharmacyBackend.exe", "sea-entry.cjs", "Updater.bat", "UpdateGUI.ps1")
+        foreach ($f in $restoreFiles) {
+            Restore-FileWithRetry -SourceFile (Join-Path $BackupDir $f) -DestFile (Join-Path $InstallDir $f) | Out-Null
         }
-        if (Test-Path -LiteralPath (Join-Path $BackupDir "PharmacyBackend.exe")) {
-            Copy-Item -LiteralPath (Join-Path $BackupDir "PharmacyBackend.exe") -Destination (Join-Path $InstallDir "PharmacyBackend.exe") -Force -ErrorAction SilentlyContinue
-        }
-        if (Test-Path -LiteralPath (Join-Path $BackupDir "dist-pkg")) {
-            Copy-Item -LiteralPath (Join-Path $BackupDir "dist-pkg") -Destination (Join-Path $InstallDir "dist-pkg") -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        if (Test-Path -LiteralPath (Join-Path $BackupDir "resources\app")) {
-            Copy-Item -LiteralPath (Join-Path $BackupDir "resources\app") -Destination (Join-Path $InstallDir "resources\app") -Recurse -Force -ErrorAction SilentlyContinue
-        }
-        if (Test-Path -LiteralPath (Join-Path $BackupDir "sea-entry.cjs")) {
-            Copy-Item -LiteralPath (Join-Path $BackupDir "sea-entry.cjs") -Destination (Join-Path $InstallDir "sea-entry.cjs") -Force -ErrorAction SilentlyContinue
-        }
-        if (Test-Path -LiteralPath (Join-Path $BackupDir "Updater.bat")) {
-            Copy-Item -LiteralPath (Join-Path $BackupDir "Updater.bat") -Destination (Join-Path $InstallDir "Updater.bat") -Force -ErrorAction SilentlyContinue
-        }
-        if (Test-Path -LiteralPath (Join-Path $BackupDir "UpdateGUI.ps1")) {
-            Copy-Item -LiteralPath (Join-Path $BackupDir "UpdateGUI.ps1") -Destination (Join-Path $InstallDir "UpdateGUI.ps1") -Force -ErrorAction SilentlyContinue
+        $restoreDirs = @("dist-pkg", "resources\app", "frontend\dist")
+        foreach ($d in $restoreDirs) {
+            Restore-DirectoryFromBackup -SourceDir (Join-Path $BackupDir $d) -DestDir (Join-Path $InstallDir $d)
         }
     }
 
     $stagingDir = Join-Path $InstallDir "updates\staging"
     if (-not (Test-Path $stagingDir)) { New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null }
-    $failJson = @{ version = $TargetVersion; error = $Reason; ts = (Get-Date).ToString("dd-MM-yyyy HH:mm:ss") } | ConvertTo-Json
+    $tsNow = (Get-Date).ToString("dd-MM-yyyy HH:mm:ss")
+    $failJson = @{ version = $TargetVersion; error = $Reason; ts = $tsNow } | ConvertTo-Json
     Set-Content (Join-Path $stagingDir "failure.json") $failJson -Encoding UTF8
+    if (-not [string]::IsNullOrWhiteSpace($BackupDir)) {
+        $rbJson = @{ version = $TargetVersion; error = $Reason; ts = $tsNow; rollback = "attempted" } | ConvertTo-Json
+        Set-Content (Join-Path $stagingDir "rollback.json") $rbJson -Encoding UTF8
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($ZipPath) -and (Test-Path -LiteralPath $ZipPath)) {
         Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
@@ -245,11 +279,19 @@ function Rollback-Update {
     Start-Sleep -Seconds 1
     $vbsPath = Join-Path $InstallDir "RUN-PharmacyOS-Silent.vbs"
     $appExe = Join-Path $InstallDir "PharmacyOS.exe"
+    if (-not (Test-Path -LiteralPath $appExe)) {
+        Write-Log "ERROR: PharmacyOS.exe still missing after rollback!"
+        Update-UI -Step "Rollback failed" -Detail "PharmacyOS.exe missing. Please re-run Setup." -Percent 100
+        Start-Sleep -Seconds 4
+        $window.Close()
+        return
+    }
     if (Test-Path -LiteralPath $vbsPath) {
         Start-Process -FilePath "wscript.exe" -ArgumentList "`"$vbsPath`"" -WorkingDirectory $InstallDir
-    } elseif (Test-Path -LiteralPath $appExe) {
+    } else {
         Start-Process -FilePath $appExe -WorkingDirectory $InstallDir
     }
+    Write-Log "Old version relaunch triggered."
     Start-Sleep -Seconds 2
     $window.Close()
 }
@@ -361,18 +403,23 @@ $window.Add_ContentRendered({
         Write-Log "Creating pre-update backup at: $backupDir"
         New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
 
-        $backupFiles = @("PharmacyOS.exe", "PharmacyBackend.exe", "sea-entry.cjs", "Updater.bat", "UpdateGUI.ps1")
+        $backupFiles = @("PharmacyOS.exe", "WebView2Loader.dll", "PharmacyBackend.exe", "sea-entry.cjs", "Updater.bat", "UpdateGUI.ps1")
         foreach ($f in $backupFiles) {
             $source = Join-Path $InstallDir $f
             if (Test-Path -LiteralPath $source) {
                 Copy-Item -LiteralPath $source -Destination (Join-Path $backupDir $f) -Force -ErrorAction SilentlyContinue
             }
         }
-        $backupDirs = @("dist-pkg", "resources\app")
+        $backupDirs = @("dist-pkg", "resources\app", "frontend\dist")
         foreach ($d in $backupDirs) {
             $srcDir = Join-Path $InstallDir $d
             if (Test-Path -LiteralPath $srcDir) {
-                Copy-Item -LiteralPath $srcDir -Destination (Join-Path $backupDir $d) -Recurse -Force -ErrorAction SilentlyContinue
+                $destDir = Join-Path $backupDir $d
+                $destParent = [System.IO.Path]::GetDirectoryName($destDir)
+                if ($destParent -and -not (Test-Path -LiteralPath $destParent)) {
+                    New-Item -ItemType Directory -Path $destParent -Force | Out-Null
+                }
+                Copy-Item -LiteralPath $srcDir -Destination $destDir -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
 

@@ -1,0 +1,9 @@
+E:\CURRENT PROJECT ON WORKING\AI PHARMACY v2\src-tauri\target\debug\deps\utf_types-7e21be33eaa71f4a.d: E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\lib.rs E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\utf16.rs E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\utf8.rs
+
+E:\CURRENT PROJECT ON WORKING\AI PHARMACY v2\src-tauri\target\debug\deps\libutf_types-7e21be33eaa71f4a.rlib: E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\lib.rs E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\utf16.rs E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\utf8.rs
+
+E:\CURRENT PROJECT ON WORKING\AI PHARMACY v2\src-tauri\target\debug\deps\libutf_types-7e21be33eaa71f4a.rmeta: E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\lib.rs E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\utf16.rs E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\utf8.rs
+
+E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\lib.rs:
+E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\utf16.rs:
+E:\CURRENT\ PROJECT\ ON\ WORKING\Coucou\.toolchain\rust\cargo\registry\src\index.crates.io-1949cf8c6b5b557f\utf_types-1.0.0\src\utf8.rs:
