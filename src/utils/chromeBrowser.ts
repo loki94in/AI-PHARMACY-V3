@@ -262,13 +262,14 @@ export function closeAppBrowser(): void {
     activeBrowserPid = null;
   }
 
-  // Windows safety fallback: cleanly terminate any remaining chrome/edge process running our isolated app_browser_profile or matching our app port
+  // Windows safety fallback: cleanly terminate any remaining desktop shell (PharmacyOS) or chrome/edge browser window
   if (process.platform === 'win32') {
     try {
       const psScript = [
         "$ProgressPreference = 'SilentlyContinue'",
         "$targets = Get-CimInstance Win32_Process | Where-Object {",
-        "  ($_.Name -match 'chrome|msedge|GoogleChromePortable') -and (",
+        "  ($_.Name -match 'PharmacyOS|chrome|msedge|GoogleChromePortable') -and (",
+        "    $_.Name -match '^PharmacyOS' -or",
         "    $_.CommandLine -like '*app_browser_profile*' -or",
         "    $_.CommandLine -like '*localhost:5175*' -or",
         "    $_.CommandLine -like '*localhost:5173*' -or",
@@ -279,7 +280,7 @@ export function closeAppBrowser(): void {
         "foreach ($p in $targets) {",
         "  Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue",
         "}",
-        "Get-Process | Where-Object { ($_.ProcessName -match 'chrome|msedge|GoogleChromePortable') -and ($_.MainWindowTitle -match 'AI PHARMACY|AI Pharmacy') } | ForEach-Object {",
+        "Get-Process | Where-Object { ($_.ProcessName -match 'PharmacyOS|chrome|msedge|GoogleChromePortable') -and ($_.MainWindowTitle -match 'AI PHARMACY|AI Pharmacy') } | ForEach-Object {",
         "  $_.CloseMainWindow() | Out-Null",
         "  Start-Sleep -Milliseconds 100",
         "  if (!$_.HasExited) {",

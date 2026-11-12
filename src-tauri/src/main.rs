@@ -336,11 +336,12 @@ fn main() {
 
             let app_handle = app.handle().clone();
             thread::spawn(move || {
+                let mut child_opt = None;
                 let mut backend_ok = check_backend_alive(port, 400);
                 if !backend_ok {
                     reclaim_port(port);
                     clean_all_session_locks(&exe_dir);
-                    let mut child_opt = spawn_backend(&exe_dir, port);
+                    child_opt = spawn_backend(&exe_dir, port);
                     if let Some(ref child) = child_opt {
                         if let Ok(mut guard) = backend_pid_setup.lock() {
                             *guard = Some(child.id());
@@ -374,6 +375,16 @@ fn main() {
                     if let Ok(url) = Url::parse(&format!("http://127.0.0.1:{port}")) {
                         let _ = w.navigate(url);
                     }
+                }
+
+                // Background watchdog: when backend terminates cleanly, close the native window immediately
+                if let Some(mut child) = child_opt {
+                    let exit_handle = app_handle.clone();
+                    thread::spawn(move || {
+                        let _ = child.wait();
+                        // Backend process has exited cleanly; terminate native window
+                        exit_handle.exit(0);
+                    });
                 }
             });
 

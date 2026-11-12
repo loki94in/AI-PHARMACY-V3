@@ -1286,9 +1286,13 @@ async function gracefulShutdown(signal: string) {
     if (process.platform === 'win32' && signal !== 'APPLY_UPDATE') {
       try {
         const pid = process.pid;
+        const ppid = process.ppid;
         const { spawn } = await import('child_process');
-        const targetPid = isPackagedApp() || !process.ppid ? pid : process.ppid;
-        spawn('cmd.exe', ['/c', `taskkill /pid ${targetPid} /t /f`], { detached: true, stdio: 'ignore' }).unref();
+        if (ppid && ppid > 0) {
+          spawn('cmd.exe', ['/c', `taskkill /pid ${ppid} /t /f`], { detached: true, stdio: 'ignore' }).unref();
+        }
+        spawn('cmd.exe', ['/c', `taskkill /im PharmacyOS.exe /f`], { detached: true, stdio: 'ignore' }).unref();
+        spawn('cmd.exe', ['/c', `taskkill /pid ${pid} /t /f`], { detached: true, stdio: 'ignore' }).unref();
       } catch (_) {}
     }
     process.exit(0);
@@ -1439,9 +1443,13 @@ async function gracefulShutdown(signal: string) {
   if (process.platform === 'win32' && signal !== 'APPLY_UPDATE') {
     try {
       const pid = process.pid;
+      const ppid = process.ppid;
       const { spawn } = await import('child_process');
-      const targetPid = isPackagedApp() || !process.ppid ? pid : process.ppid;
-      spawn('cmd.exe', ['/c', `taskkill /pid ${targetPid} /t /f`], {
+      if (ppid && ppid > 0) {
+        spawn('cmd.exe', ['/c', `taskkill /pid ${ppid} /t /f`], { detached: true, stdio: 'ignore' }).unref();
+      }
+      spawn('cmd.exe', ['/c', `taskkill /im PharmacyOS.exe /f`], { detached: true, stdio: 'ignore' }).unref();
+      spawn('cmd.exe', ['/c', `taskkill /pid ${pid} /t /f`], {
         detached: true,
         stdio: 'ignore'
       }).unref();
