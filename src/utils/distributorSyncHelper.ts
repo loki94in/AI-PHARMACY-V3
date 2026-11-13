@@ -618,6 +618,19 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
       }
     }
 
+    // 5. Auto-resolve pending fallback call tasks for this distributor once valid phone is present
+    if (effectivePhone && effectiveName) {
+      await db.run(
+        `UPDATE patient_call_tasks 
+         SET status = 'completed', 
+             call_outcome = 'Distributor contact updated with valid WhatsApp number', 
+             updated_at = CURRENT_TIMESTAMP 
+         WHERE (LOWER(TRIM(patient_name)) = LOWER(TRIM(?)) OR patient_phone LIKE ? OR patient_phone = ?)
+           AND status IN ('pending', 'rescheduled')`,
+        [effectiveName.trim(), `%${effectivePhone.slice(-10)}`, effectivePhone]
+      ).catch(() => null);
+    }
+
     if (isTxOwner) {
       await db.run('COMMIT');
     }
@@ -633,6 +646,7 @@ export async function syncDistributorPhoneAcrossTables(db: any, params: SyncDist
         at: Date.now()
       });
       eventService.broadcast('distributors_updated', { at: Date.now() });
+      eventService.broadcast('call_tasks_updated', { at: Date.now() });
       eventService.broadcast('dispatch_updated', { at: Date.now(), source: 'distributor_sync', store_name: storeMappingKey });
       eventService.broadcast('pharmarack_cart_changed', { at: Date.now() });
     } catch (_) {}

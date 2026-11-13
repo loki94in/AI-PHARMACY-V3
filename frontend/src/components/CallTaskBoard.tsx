@@ -161,13 +161,18 @@ export function CallTaskBoard({ filter = 'all', compact = false }: CallTaskBoard
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-text truncate">{task.patient_name}</p>
-                    <a
-                      href={`tel:${task.patient_phone}`}
-                      className="text-[11px] text-sky-500 hover:text-sky-400 flex items-center gap-1 transition-colors"
-                    >
-                      <Phone size={10} />
-                      {task.patient_phone}
-                    </a>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                      <a
+                        href={`tel:${task.patient_phone}`}
+                        className="text-[11px] text-sky-500 hover:text-sky-400 flex items-center gap-1 transition-colors font-mono"
+                      >
+                        <Phone size={10} />
+                        {task.patient_phone}
+                      </a>
+                      <span className="px-1 py-0.2 rounded text-[9px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                        Call Required
+                      </span>
+                    </div>
                   </div>
                 </div>
                 <span className={`flex-shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase ${task.task_type === 'refill' ? 'bg-sky-500/20 text-sky-400' : 'bg-amber-500/20 text-amber-400'}`}>

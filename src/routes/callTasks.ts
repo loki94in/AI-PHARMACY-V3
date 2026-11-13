@@ -24,6 +24,21 @@ router.get('/', async (req, res) => {
     const db = await dbManager.getConnection();
     const { status, type, limit = '50', offset = '0' } = req.query as Record<string, string>;
 
+    // Auto-expire stale dispatch reminders (>48h old) and dismiss invalid @lid entries
+    await db.run(
+      `UPDATE patient_call_tasks 
+       SET status = 'completed', call_outcome = 'Auto-expired stale dispatch reminder (>48h)', updated_at = CURRENT_TIMESTAMP
+       WHERE status = 'pending' 
+         AND (details_json LIKE '%distributor_dispatch_reminder%' OR details_json LIKE '%distributor%')
+         AND created_at < datetime('now', '-48 hours')`
+    ).catch(() => null);
+
+    await db.run(
+      `UPDATE patient_call_tasks 
+       SET status = 'dismissed', notes = 'Invalid recipient identifier (@lid)', updated_at = CURRENT_TIMESTAMP
+       WHERE status = 'pending' AND patient_phone LIKE '%@lid%'`
+    ).catch(() => null);
+
     const conditions: string[] = [];
     const params: any[] = [];
 
