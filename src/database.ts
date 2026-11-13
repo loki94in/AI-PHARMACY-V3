@@ -625,6 +625,24 @@ export async function autoHealRefillIntervalsAndTasks(db: any): Promise<void> {
           WHERE pr.last_refill_date >= datetime('now', 'localtime', '-48 hours')
         )
     `);
+
+    // 4. Heal any patient_refills missing medicine_name by pulling from medicine_distributor_links
+    await db.run(`
+      UPDATE patient_refills
+      SET medicine_name = (
+        SELECT mdl.medicine_name
+        FROM medicine_distributor_links mdl
+        WHERE mdl.medicine_id = patient_refills.medicine_id
+          AND mdl.medicine_name IS NOT NULL AND TRIM(mdl.medicine_name) != ''
+        LIMIT 1
+      )
+      WHERE (medicine_name IS NULL OR TRIM(medicine_name) = '')
+        AND EXISTS (
+          SELECT 1 FROM medicine_distributor_links mdl
+          WHERE mdl.medicine_id = patient_refills.medicine_id
+            AND mdl.medicine_name IS NOT NULL AND TRIM(mdl.medicine_name) != ''
+        )
+    `);
   } catch (_) {}
 }
 

@@ -157,7 +157,7 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
     setExpandedIds(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const fetchStatus = async (forceBypassCache = false) => {
+  const fetchStatus = async (forceBypassCache = true) => {
     try {
       // Dedupe with Layout's active-queue poller: reuse its fresh result
       // instead of hitting the same endpoint again within ~2.5s unless explicitly forced.
@@ -217,26 +217,128 @@ export const WhatsAppQueuePopover: React.FC<WhatsAppQueuePopoverProps> = ({ onCl
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- sanctioned SSE queue-event refresh flow per AGENTS.md
-    fetchStatus(false);
+    fetchStatus(true);
     if (activeTab === 'register') fetchSentRegister();
+
     const unsub = whatsappQueueEvent.subscribeUpdated(() => {
       fetchStatus(true);
       if (activeTab === 'register') fetchSentRegister();
     });
+
     const unsubSend = messageSendEvent.subscribeSendProgress((detail) => {
       startSendAnimation(detail.recipient, detail.messagePreview, detail.durationSec || 10);
+      // Instant in-memory state transition to 'sending'
+      const rawId = detail.id?.startsWith('queue-') ? Number(detail.id.replace('queue-', '')) : Number(detail.id);
+      setQueueState(prev => {
+        if (!prev || !prev.recentItems) return prev;
+        let changed = false;
+        const updated = prev.recentItems.map(item => {
+          const isMatch = (!isNaN(rawId) && item.id === rawId) || 
+            (!rawId && detail.recipient && (item.target_name === detail.recipient || item.number === detail.recipient));
+          if (isMatch && item.status !== 'sending') {
+            changed = true;
+            return { ...item, status: 'sending' as const, last_attempt_at: new Date().toISOString() };
+          }
+          return item;
+        });
+        if (!changed) return prev;
+        return {
+          ...prev,
+          recentItems: updated,
+          isProcessing: true,
+          counts: prev.counts ? {
+            ...prev.counts,
+            sending: (prev.counts.sending || 0) + 1,
+            pending: Math.max(0, (prev.counts.pending || 0) - 1),
+          } : prev.counts,
+        };
+      });
     });
-    const handleSse = () => {
+
+    const handleSse = (e?: Event) => {
+      const customEvt = e as CustomEvent;
+      const detail = customEvt?.detail;
+      const payloadType = detail?.type || detail?.payload?.type;
+      const itemId = Number(detail?.id || detail?.payload?.id);
+
+      if (payloadType === 'sent' && !isNaN(itemId)) {
+        // Instant in-memory state transition to 'sent'
+        setQueueState(prev => {
+          if (!prev || !prev.recentItems) return prev;
+          let changed = false;
+          const updatedItems = prev.recentItems.map(item => {
+            if (item.id === itemId && item.status !== 'sent') {
+              changed = true;
+              return { ...item, status: 'sent' as const, sent_at: Date.now(), error_message: null };
+            }
+            return item;
+          });
+          if (!changed) return prev;
+          return {
+            ...prev,
+            recentItems: updatedItems,
+            counts: prev.counts ? {
+              ...prev.counts,
+              sending: Math.max(0, (prev.counts.sending || 0) - 1),
+              sent: (prev.counts.sent || 0) + 1,
+            } : prev.counts,
+            todaySummary: prev.todaySummary ? {
+              ...prev.todaySummary,
+              sent: (prev.todaySummary.sent || 0) + 1,
+            } : prev.todaySummary,
+          };
+        });
+      } else if (payloadType === 'failed' && !isNaN(itemId)) {
+        // Instant in-memory state transition to 'failed_perm'
+        const errMsg = detail?.error || detail?.payload?.error || 'Delivery failed';
+        setQueueState(prev => {
+          if (!prev || !prev.recentItems) return prev;
+          let changed = false;
+          const updatedItems = prev.recentItems.map(item => {
+            if (item.id === itemId) {
+              changed = true;
+              return { ...item, status: 'failed_perm' as const, error_message: errMsg };
+            }
+            return item;
+          });
+          if (!changed) return prev;
+          return {
+            ...prev,
+            recentItems: updatedItems,
+            counts: prev.counts ? {
+              ...prev.counts,
+              sending: Math.max(0, (prev.counts.sending || 0) - 1),
+              failed: (prev.counts.failed || 0) + 1,
+            } : prev.counts,
+          };
+        });
+      } else if (payloadType === 'deleted' && !isNaN(itemId)) {
+        setQueueState(prev => {
+          if (!prev || !prev.recentItems) return prev;
+          return {
+            ...prev,
+            recentItems: prev.recentItems.filter(item => item.id !== itemId),
+          };
+        });
+      }
+
+      // Background server reconciliation
       fetchStatus(true);
       if (activeTab === 'register') fetchSentRegister();
     };
+
     window.addEventListener('sse-wa-queue-updated', handleSse);
+    window.addEventListener('app-wa-queue-updated', handleSse);
+    window.addEventListener('app-automation-hub-updated', handleSse);
+
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       if (activeSendTimerRef.current) clearInterval(activeSendTimerRef.current);
       unsub();
       unsubSend();
       window.removeEventListener('sse-wa-queue-updated', handleSse);
+      window.removeEventListener('app-wa-queue-updated', handleSse);
+      window.removeEventListener('app-automation-hub-updated', handleSse);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only + event subscriptions, fetchStatus is stable-in-practice
   }, [activeTab]);

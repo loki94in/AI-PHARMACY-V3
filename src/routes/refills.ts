@@ -738,7 +738,13 @@ router.get('/', async (req, res) => {
     const whereClause = allStores ? '' : 'WHERE (pr.store_id = ? OR (pr.store_id IS NULL AND ? = 1))';
     const params = allStores ? [] : [targetStoreId, targetStoreId];
     const refills = await db.all(
-      `SELECT pr.*, COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name FROM patient_refills pr
+      `SELECT pr.*, COALESCE(
+        m.name,
+        pr.medicine_name,
+        (SELECT mdl.medicine_name FROM medicine_distributor_links mdl WHERE mdl.medicine_id = pr.medicine_id AND mdl.medicine_name IS NOT NULL AND TRIM(mdl.medicine_name) != '' LIMIT 1),
+        pr.cart_product_name,
+        'Unknown Medicine'
+      ) as medicine_name FROM patient_refills pr
        LEFT JOIN medicines m ON pr.medicine_id = m.id
        ${whereClause}
        ORDER BY pr.next_refill_date ASC LIMIT 1000`,
@@ -1053,7 +1059,13 @@ router.get('/panel', async (req, res) => {
     // Perf: base refill rows first (cheap: patient_refills is small). Stock lookups are
     // resolved in a SECOND pass restricted to only the medicines on this page — the old
     // query aggregated + window-sorted the ENTIRE inventory_master twice per request.
-    let query = `SELECT pr.*, COALESCE(m.name, pr.medicine_name, pr.cart_product_name, 'Unknown Medicine') as medicine_name, m.packaging, m.pack_size, m.sell_price, m.mrp as medicine_mrp,
+    let query = `SELECT pr.*, COALESCE(
+                  m.name,
+                  pr.medicine_name,
+                  (SELECT mdl.medicine_name FROM medicine_distributor_links mdl WHERE mdl.medicine_id = pr.medicine_id AND mdl.medicine_name IS NOT NULL AND TRIM(mdl.medicine_name) != '' LIMIT 1),
+                  pr.cart_product_name,
+                  'Unknown Medicine'
+                ) as medicine_name, m.packaging, m.pack_size, m.sell_price, m.mrp as medicine_mrp,
                 COALESCE(pr.language, cc.language, cp.language, 'en') as language,
                 COALESCE(pr.reminder_mode, cc.reminder_mode, cp.reminder_mode, 'manual') as reminder_mode
         FROM patient_refills pr

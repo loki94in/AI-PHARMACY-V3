@@ -169,18 +169,21 @@ export function useGlobalSseInvalidation(enabled: boolean = true) {
         const queryKeys = SSE_QUERY_MAP[type];
         if (queryKeys) {
           const last = lastInvalidated.current[type] || 0;
-          if (now - last < 1500) return; // dedupe bursts
-          lastInvalidated.current[type] = now;
-          queryKeys.forEach(key => {
-            // Deferred-SSE contract: hidden kept-alive pages only get MARKED
-            // STALE here (refetchType: 'none') — their PageQueryTracker silently
-            // refreshes them on next activation, so one backend write can never
-            // fan out into simultaneous refetches across every visited page.
-            void queryClient.invalidateQueries({ queryKey: key, refetchType: 'none' });
-          });
-          CHROME_INSTANT_KEYS.forEach(key => {
-            void queryClient.refetchQueries({ queryKey: key, stale: true });
-          });
+          // Throttle query invalidations to prevent refetch storms, but NEVER return early
+          // so DOM CustomEvents and local cache syncs are delivered for every frame.
+          if (now - last >= 1500) {
+            lastInvalidated.current[type] = now;
+            queryKeys.forEach(key => {
+              // Deferred-SSE contract: hidden kept-alive pages only get MARKED
+              // STALE here (refetchType: 'none') — their PageQueryTracker silently
+              // refreshes them on next activation, so one backend write can never
+              // fan out into simultaneous refetches across every visited page.
+              void queryClient.invalidateQueries({ queryKey: key, refetchType: 'none' });
+            });
+            CHROME_INSTANT_KEYS.forEach(key => {
+              void queryClient.refetchQueries({ queryKey: key, stale: true });
+            });
+          }
         }
 
         // Keep local compact inventory cache updated on stock mutations
@@ -207,7 +210,7 @@ export function useGlobalSseInvalidation(enabled: boolean = true) {
         (SSE_CUSTOM_EVENTS[type] || []).forEach(evtName => {
           // detail carries the full parsed SSE frame (or unpacked payload for toasts) so page-level listeners
           // can consume payloads without opening their own EventSource
-          const detailData = ((evtName === 'app-show-toast' || evtName === 'app-order-delta' || evtName === 'sse-migration-update') && parsed?.payload) ? parsed.payload : parsed;
+          const detailData = ((evtName === 'app-show-toast' || evtName === 'app-order-delta' || evtName === 'sse-migration-update') && parsed?.payload) ? parsed.payload : (parsed?.payload && typeof parsed.payload === 'object' ? { ...parsed, ...parsed.payload, payload: parsed.payload } : parsed);
           window.dispatchEvent(new CustomEvent(evtName, { detail: detailData }));
         });
       };
