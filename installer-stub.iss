@@ -89,8 +89,21 @@ var
   VerifiedLicenseKey: String;
 
 function CheckIfExistingInstall(): Boolean;
+var
+  AppDir: String;
 begin
-  Result := FileExists(ExpandConstant('{app}\data\app.db')) or FileExists(ExpandConstant('{app}\PharmacyOS.exe'));
+  AppDir := '';
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{E3A1F2B4-7C8D-4E5F-9A0B-1C2D3E4F5A6B}_is1', 'InstallLocation', AppDir) then
+  begin
+    if (AppDir <> '') and (FileExists(AppDir + '\data\app.db') or FileExists(AppDir + '\PharmacyOS.exe')) then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+
+  AppDir := ExpandConstant('{localappdata}\{#MyAppName}');
+  Result := FileExists(AppDir + '\data\app.db') or FileExists(AppDir + '\PharmacyOS.exe');
 end;
 
 function GetMachineGuid(): String;
