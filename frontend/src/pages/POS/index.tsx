@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, lazy, Suspense, useMemo, useCallback, useD
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useOnClickOutside } from '../../hooks/useOnClickOutside';
 import { createPortal } from 'react-dom';
-import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft, RotateCcw, Repeat2, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { Search, ShoppingCart, Trash2, CheckCircle, Camera, Plus, X, Phone, Calendar, UserCheck, Edit, Loader2, Send, Zap, Printer, MessageSquare, FileText, Sparkles, History, ShieldAlert, ArrowLeft, RotateCcw, Repeat2, Eye, EyeOff, AlertTriangle, Lock } from 'lucide-react';
 const AICamera = lazy(() => import('../../components/AICamera'));
 import { CompositionIntelligenceModal } from '../../components/CompositionIntelligenceModal';
 import { api, apiClient, getCompactInventoryCache, isCompactInventoryCacheReady, ensureCompactInventoryReady,
@@ -2655,6 +2655,46 @@ const POS = () => {
     return newCart;
   };
 
+  // Unified Fast-Cashier Focus Dispatcher:
+  // If medicine is loose-enabled: focus directly on the Loose Qty input where user enters number of tablets.
+  // If medicine is non-loose: auto-advance directly to the next medicine row search input.
+  const routePosMedicineFocus = useCallback((targetIndex: number, isLooseAllowed: boolean) => {
+    justSelectedMedicineRef.current = true;
+    setTimeout(() => { justSelectedMedicineRef.current = false; }, 350);
+
+    let attempts = 0;
+    const maxAttempts = 20; // 20 * 16ms = ~320ms polling window (CPU SwiftShader friendly)
+    const poll = () => {
+      attempts++;
+      if (isLooseAllowed) {
+        const looseInput = (
+          document.getElementById(`row-loose-input-${targetIndex}`) ||
+          document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${targetIndex}"][data-pos-field="looseQty"]`)
+        ) as HTMLInputElement | null;
+        if (looseInput && !looseInput.disabled) {
+          looseInput.focus();
+          looseInput.select?.();
+          return;
+        }
+      } else {
+        const targetNext = targetIndex + 1;
+        const nextInput = (
+          document.getElementById(`row-med-input-${targetNext}`) ||
+          document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
+        ) as HTMLInputElement | null;
+        if (nextInput && !nextInput.disabled) {
+          nextInput.focus();
+          nextInput.select?.();
+          return;
+        }
+      }
+      if (attempts < maxAttempts) {
+        setTimeout(poll, 16);
+      }
+    };
+    poll();
+  }, []);
+
   const addToCart = (med: CartRow | PosBatchItem) => {
     // Expiry check
     const expiryStr = med.expiry || med.expiry_date || '';
@@ -2713,8 +2753,8 @@ const POS = () => {
       
       if (existingIndex !== -1) {
         const existingItem = cleanPrev[existingIndex];
-        const newQty = (existingItem.qty || 0) + 1;
-        const newLoose = (existingItem.looseQty || 0) + incLooseQty;
+        const newQty = (existingItem.qty || 0) + incQty;
+        const newLoose = (existingItem.looseQty || 0) + (isLoose ? 1 : 0);
         return rebalanceCartMedicine(cleanPrev, Number(existingItem.medicine_id || existingItem.id || 0), existingItem.id, { qty: newQty, looseQty: newLoose });
       }
       
@@ -2795,58 +2835,8 @@ const POS = () => {
     }
 
     // Fast-cashier focus routing: loose-first if loose allowed, else auto-advance to next medicine row
-    justSelectedMedicineRef.current = true;
-    setTimeout(() => { justSelectedMedicineRef.current = false; }, 350);
-
     const isLooseAllowed = resolveAllowLooseSale(med) === 1;
-    let targetDone = false;
-    let timer1: ReturnType<typeof setTimeout> | null = null;
-    let timer2: ReturnType<typeof setTimeout> | null = null;
-
-    const focusAppropriateTarget = () => {
-      if (targetDone) return true;
-      if (isLooseAllowed) {
-        // Direct focus to Loose Qty
-        const looseInput = (
-          document.getElementById(`row-loose-input-${targetIndex}`) ||
-          document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${targetIndex}"][data-pos-field="looseQty"]`)
-        ) as HTMLInputElement | null;
-        if (looseInput && !looseInput.disabled) {
-          looseInput.focus();
-          looseInput.select?.();
-          targetDone = true;
-          if (timer1) clearTimeout(timer1);
-          if (timer2) clearTimeout(timer2);
-          return true;
-        }
-      } else {
-        // Full Pack Only: Direct focus to Next Medicine search input
-        const targetNext = targetIndex + 1;
-        const nextInput = (
-          document.getElementById(`row-med-input-${targetNext}`) ||
-          document.querySelector<HTMLInputElement>('input[placeholder="Search medicine..."]')
-        ) as HTMLInputElement | null;
-        if (nextInput && !nextInput.disabled) {
-          nextInput.focus();
-          nextInput.select?.();
-          targetDone = true;
-          if (timer1) clearTimeout(timer1);
-          if (timer2) clearTimeout(timer2);
-          return true;
-        }
-      }
-      return false;
-    };
-
-    if (!focusAppropriateTarget()) {
-      timer1 = setTimeout(() => {
-        if (!focusAppropriateTarget()) {
-          timer2 = setTimeout(() => {
-            focusAppropriateTarget();
-          }, 40);
-        }
-      }, 20);
-    }
+    routePosMedicineFocus(targetIndex, isLooseAllowed);
   };
 
   const toggleAllowLooseSale = async (item: CartRow | PosBatchItem) => {
@@ -2865,6 +2855,13 @@ const POS = () => {
       }
       return row;
     }));
+
+    if (newFlag === 1) {
+      const rowIndex = cart.findIndex(r => (r.medicine_id && r.medicine_id === medId) || r.id === item.id);
+      if (rowIndex !== -1) {
+        routePosMedicineFocus(rowIndex, true);
+      }
+    }
 
     try {
       await api.patchAllowLooseSale(Number(medId), newFlag);
@@ -3086,7 +3083,7 @@ const POS = () => {
       }).catch(err => console.error('Failed to post correction learning:', err));
     }
 
-    // Fast-billing: All selected medicines (syrups, liquids, solids, tablets, capsules, ointments, loose) default to at least 1 unit
+    // Fast-billing: Loose-allowed medicines focus loose input with qty=0; non-loose medicines default to 1 pack
     const isLoose = resolveAllowLooseSale(med) === 1;
     const isOrigEmpty = Boolean(originalItem?.isEmptyRow);
     const defaultLooseQty = opts?.presetLooseQty ?? (
@@ -3094,8 +3091,8 @@ const POS = () => {
     );
     const defaultQty = opts?.presetQty ?? (
       isOrigEmpty
-        ? 1
-        : Math.max(1, originalItem?.qty || 1)
+        ? (isLoose ? 0 : 1)
+        : (isLoose ? (originalItem?.qty ?? 0) : Math.max(1, originalItem?.qty || 1))
     );
     const compactInventory = getCompactInventoryCache();
     const fallbackItem: Partial<CartRow> = {
@@ -3187,61 +3184,7 @@ const POS = () => {
 
     // Fast-cashier focus routing: loose-first if loose allowed, else auto-advance to next medicine row
     const isLooseAllowed = resolveAllowLooseSale(med) === 1;
-
-    let targetDone = false;
-    let timer1: ReturnType<typeof setTimeout> | null = null;
-    let timer2: ReturnType<typeof setTimeout> | null = null;
-    let timer3: ReturnType<typeof setTimeout> | null = null;
-
-    const focusAppropriateTarget = () => {
-      if (targetDone) return true;
-      if (isLooseAllowed) {
-        // Direct focus to Loose Qty
-        const looseInput = (
-          document.getElementById(`row-loose-input-${targetIndex}`) ||
-          document.querySelector<HTMLInputElement>(`input[data-pos-row-index="${targetIndex}"][data-pos-field="looseQty"]`)
-        ) as HTMLInputElement | null;
-        if (looseInput && !looseInput.disabled) {
-          looseInput.focus();
-          looseInput.select?.();
-          targetDone = true;
-          if (timer1) clearTimeout(timer1);
-          if (timer2) clearTimeout(timer2);
-          if (timer3) clearTimeout(timer3);
-          return true;
-        }
-      } else {
-        // Full Pack Only: Direct focus to Next Medicine search input
-        const targetNext = targetIndex + 1;
-        const nextInput = document.getElementById(`row-med-input-${targetNext}`) as HTMLInputElement | null;
-        if (nextInput && !nextInput.disabled) {
-          nextInput.focus();
-          nextInput.select?.();
-          targetDone = true;
-          if (timer1) clearTimeout(timer1);
-          if (timer2) clearTimeout(timer2);
-          if (timer3) clearTimeout(timer3);
-          return true;
-        }
-      }
-      return false;
-    };
-
-    if (!focusAppropriateTarget()) {
-      timer1 = setTimeout(() => {
-        if (!focusAppropriateTarget()) {
-          timer2 = setTimeout(() => {
-            if (!focusAppropriateTarget()) {
-              timer3 = setTimeout(() => {
-                if (!focusAppropriateTarget()) {
-                  focusCartMedicineInput(true);
-                }
-              }, 60);
-            }
-          }, 40);
-        }
-      }, 30);
-    }
+    routePosMedicineFocus(targetIndex, isLooseAllowed);
 
     // Enrich salts & alternatives asynchronously in the background
     api.getMedicineQuickDetails(Number(med.medicine_id))
@@ -6224,6 +6167,17 @@ const POS = () => {
                                     ? 'bg-amber-500/5 border-amber-500/20 hover:border-amber-500/40 focus-within:border-amber-500/50 focus-within:ring-1 focus-within:ring-amber-500/20' 
                                     : 'bg-rose-500/5 border-rose-500/20 opacity-75'
                                 }`}>
+                                  {!isLooseAllowed && !item.isEmptyRow && (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleAllowLooseSale(item)}
+                                      className="p-0.5 text-muted hover:text-amber-500 transition-colors cursor-pointer"
+                                      title="Restricted: Full Pack Only. Click lock to enable loose sales for this medicine."
+                                      aria-label="Enable loose sales"
+                                    >
+                                      <Lock size={12} className="text-muted/70 hover:text-amber-500" />
+                                    </button>
+                                  )}
                                   <input 
                                     id={`row-loose-input-${rowIdx}`}
                                     name={`row_loose_qty_${rowIdx}`}

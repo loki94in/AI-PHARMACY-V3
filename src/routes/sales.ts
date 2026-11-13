@@ -1214,8 +1214,25 @@ router.post('/', async (req, res) => {
       }).catch(() => {});
     }
 
-    // Trigger WhatsApp notification — ONLY IF user explicitly enabled sendWhatsApp
-    if (Boolean(sendWhatsApp)) {
+    const isCredit = paymentMedium?.toUpperCase() === 'CREDIT' || paymentStatus?.toUpperCase() === 'UNPAID';
+
+    // Broadcast live in-app notification of credit transaction
+    if (isCredit) {
+      try {
+        const custRow = customerId ? await db.get('SELECT name, credit_balance FROM customers WHERE id = ?', [customerId]) : null;
+        const custName = custRow?.name || patient_name || 'Customer';
+        const curBal = Number(custRow?.credit_balance ?? total);
+        eventService.broadcast('toast_alert', {
+          type: 'info',
+          message: `💳 Credit Bill #${invoice_no}: ₹${Number(total).toFixed(2)} posted to ${custName}. (Total Balance: ₹${curBal.toFixed(2)})`,
+          link: '/crm?tab=credit'
+        });
+      } catch (_) {}
+    }
+
+    // Trigger WhatsApp notification — IF user explicitly enabled sendWhatsApp OR if it's a credit bill (unless explicitly opted out)
+    const shouldSendWA = Boolean(sendWhatsApp) || (isCredit && sendWhatsApp !== false);
+    if (shouldSendWA) {
       let rawDigits = (patient_phone || '').replace(/\D/g, '');
       if ((!rawDigits || rawDigits.length < 10) && customerId) {
         try {
@@ -1354,6 +1371,16 @@ router.post('/', async (req, res) => {
               pdfPath
             );
             console.log(`[POS WhatsApp] Enqueued bill notification with PDF for ${invoice_no} to ${phoneForWA} (queue ID: #${queueId})`);
+
+            if (isCredit) {
+              try {
+                eventService.broadcast('toast_alert', {
+                  type: 'automation',
+                  message: `📲 WhatsApp credit notification queued for ${nameForWA} (${phoneForWA}) • #${invoice_no}`,
+                  link: '/crm?tab=whatsapp'
+                });
+              } catch (_) {}
+            }
 
             await db.run(
               `INSERT INTO automation_notifications (type, recipient_name, recipient_phone, message, status, reference_id)
@@ -2923,6 +2950,8 @@ router.put('/:id', async (req, res) => {
     // Resolve payment medium and status
     const isCredit = (paymentMedium || '').toUpperCase() === 'CREDIT';
     const resolvedMedium = paymentMedium ? paymentMedium.toUpperCase() : existing.payment_medium;
+    const wasCredit = String(existing.payment_medium || '').toUpperCase() === 'CREDIT';
+    const isConvertedToCredit = !wasCredit && String(resolvedMedium || '').toUpperCase() === 'CREDIT';
     const resolvedStatus = paymentStatus !== undefined && paymentStatus !== null
       ? paymentStatus
       : (isCredit ? 'UNPAID' : (paymentMedium ? 'PAID' : existing.payment_status));
@@ -3030,14 +3059,40 @@ router.put('/:id', async (req, res) => {
         eventService.broadcast('customers_updated', { at: Date.now(), id: cId });
         eventService.broadcast('credit_updated', { at: Date.now(), id: cId });
       }
+
+      if (isConvertedToCredit && customerId) {
+        try {
+          const custRow = await db.get('SELECT name, credit_balance FROM customers WHERE id = ?', [customerId]);
+          const custName = custRow?.name || newName || existing.customer_name_snapshot || 'Customer';
+          const curBal = Number(custRow?.credit_balance ?? 0);
+          const invNum = existing.invoice_no || `INV-${id}`;
+          eventService.broadcast('toast_alert', {
+            type: 'info',
+            message: `💳 Bill #${invNum} converted to Credit: ₹${Number(existing.total_amount || 0).toFixed(2)} posted to ${custName}. (Total Balance: ₹${curBal.toFixed(2)})`,
+            link: '/crm?tab=credit'
+          });
+        } catch (_) {}
+      }
     } catch (sseErr) {
       console.warn('Could not broadcast sale update:', sseErr);
     }
 
-    if (Boolean(req.body?.sendWhatsApp)) {
+    const shouldSendWaOnEdit = Boolean(req.body?.sendWhatsApp) || (isConvertedToCredit && req.body?.sendWhatsApp !== false);
+    if (shouldSendWaOnEdit) {
       try {
         const { whatsappInvoiceService } = await import('../services/whatsappInvoiceService.js');
-        whatsappInvoiceService.sendInvoiceViaWhatsApp(Number(id)).catch(waErr => {
+        whatsappInvoiceService.sendInvoiceViaWhatsApp(Number(id), { isConversion: isConvertedToCredit }).then(sent => {
+          if (sent && isConvertedToCredit) {
+            import('../services/eventService.js').then(({ eventService }) => {
+              const invNum = existing.invoice_no || `INV-${id}`;
+              eventService.broadcast('toast_alert', {
+                type: 'automation',
+                message: `📲 WhatsApp credit conversion notification queued for #${invNum}`,
+                link: '/crm?tab=whatsapp'
+              });
+            }).catch(() => {});
+          }
+        }).catch(waErr => {
           console.error('[WhatsApp] Failed to send invoice PDF for updated sale:', waErr);
         });
       } catch (importErr) {

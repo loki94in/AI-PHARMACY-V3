@@ -252,6 +252,26 @@ Shortcut pointer: **`.agents/rules/data-flow-tree.md`**.
 
 ---
 
+## POS Billing Contract (mandatory for POS edits)
+
+Before editing `frontend/src/pages/POS/index.tsx` or related POS components, agents **MUST** read **`POS.md`**.
+
+Key invariants locked in `POS.md`:
+- Loose-sale enabled items (`allow_loose_sale === 1`) initialize with `qty = 0`, `looseQty = 0`, routing focus directly to `row-loose-input-${targetIndex}`. Never auto-increment full strips or call `focusCartMedicineInput(true)`.
+- Non-loose items (`allow_loose_sale === 0`) auto-add 1 pack and automatically advance focus to the next medicine row search input.
+- Enter key in `row-loose-input` advances to the next medicine row (`row-med-input-${idx+1}`).
+- Inline lock toggle in loose cell allows 1-click restriction unlocking with immediate focus dispatch.
+
+---
+
+## 22+ Core Application Pages Flow Contract (mandatory for all UI edits)
+
+Before modifying any of the 22+ pages in `frontend/src/pages/`, agents **MUST** read **`APP_PAGES_FLOW_CONTRACT.md`**.
+
+This document details the exact role, upstream/downstream connections, action buttons, keyboard shortcuts, and business guardrails for all 22+ application pages (POS, Inventory, Purchases, Sells, CRM, LiveCart, Dispatch, Reports, Expiry, Dashboard, etc.) so that no future agent breaks existing workflows.
+
+---
+
 ## Database & Backend Schema Safety (mandatory for data-backed features)
 
 When creating or modifying features that query or persist SQLite data, agents **MUST** read before editing:
