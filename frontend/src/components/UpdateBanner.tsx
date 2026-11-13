@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ArrowDownToLine, Sparkles, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { toastEvent } from '../services/events';
 import { useUpdateStatus, applyUpdateNow } from '../services/updateStatusStore';
@@ -46,14 +46,20 @@ export default function UpdateBanner() {
   const updateStatus = useUpdateStatus();
   const [dismissed, setDismissed] = useState(false);
   const [showChangelog, setShowChangelog] = useState(false);
+  const lastNotifiedRef = useRef<string | null>(null);
 
   const targetVersion = updateStatus.version;
   const isSkipped = Boolean(targetVersion && sessionStorage.getItem(`update_later_${targetVersion}`) === 'true');
 
-  // Option B: Silent background update mode.
-  // Floating popups on counter/operational pages are suppressed to keep counter billing uninterrupted.
-  // Staged updates apply automatically on restart/exit, or via Settings > License & Updates.
-  const isSilentOptionB = true;
+  // Surface update card when update is downloaded and ready to install
+  const isSilentOptionB = false;
+
+  useEffect(() => {
+    if (updateStatus.state === 'ready' && targetVersion && lastNotifiedRef.current !== targetVersion && !isSkipped) {
+      lastNotifiedRef.current = targetVersion;
+      toastEvent.trigger(`🚀 AI Pharmacy OS v${targetVersion} is ready to install!`, 'success');
+    }
+  }, [updateStatus.state, targetVersion, isSkipped]);
 
   const handleInstallNow = async () => {
     const res = await applyUpdateNow();

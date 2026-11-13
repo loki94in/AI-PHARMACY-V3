@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   Layers,
   Zap,
+  Bell,
 } from 'lucide-react';
 import {
   FONT_SIZE_MAP,
@@ -38,6 +39,22 @@ export const AppearanceTab: React.FC = () => {
   const [toastStyle, setToastStyleState] = useState<ToastStyle>(getToastStyle);
   const [bindings, setBindings] = useState(getPageBindings);
   const [capturing, setCapturing] = useState<string | null>(null);
+  const [notifDensity, setNotifDensity] = useState<'detailed' | 'compact'>(() => {
+    try {
+      return (localStorage.getItem('app_notif_density') as 'detailed' | 'compact') || 'detailed';
+    } catch {
+      return 'detailed';
+    }
+  });
+
+  const handleNotifDensityChange = (mode: 'detailed' | 'compact') => {
+    setNotifDensity(mode);
+    try {
+      localStorage.setItem('app_notif_density', mode);
+      window.dispatchEvent(new Event('app_notif_density_changed'));
+      toastEvent.trigger(`Notification panel view set to ${mode === 'compact' ? 'Compact Rows' : 'Detailed Cards'}`, 'success');
+    } catch (_) {}
+  };
 
   const saveBinding = (path: string, key: string) => {
     const next = { ...bindings, [path]: key };
@@ -342,6 +359,54 @@ export const AppearanceTab: React.FC = () => {
                   Preview {t}
                 </button>
               ))}
+            </div>
+          </div>
+
+          {/* Notification Panel View Mode — Detailed vs Compact */}
+          <div className="p-5 rounded-2xl bg-bg border border-border shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Bell size={18} className="text-primary" />
+                <h3 className="text-sm font-bold text-text">Notification Panel Layout</h3>
+              </div>
+              <span className="text-xs font-mono font-bold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full border border-primary/20">
+                {notifDensity === 'compact' ? 'Compact Rows' : 'Detailed Cards'}
+              </span>
+            </div>
+            <p className="text-xs text-muted">
+              Choose how operational alerts and system events appear inside the topbar Notification drop-down panel.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => handleNotifDensityChange('detailed')}
+                className={`flex items-start justify-between gap-3 p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  notifDensity === 'detailed'
+                    ? 'border-primary bg-primary/10 ring-1 ring-primary/30'
+                    : 'border-border bg-bg2 hover:border-primary/40 hover:bg-bg3'
+                }`}
+              >
+                <div>
+                  <span className="text-xs font-bold text-text">Detailed Cards (Default)</span>
+                  <p className="text-[11px] text-muted mt-1">Multi-line activity cards with badges, full descriptions, metadata tags, and action buttons.</p>
+                </div>
+                {notifDensity === 'detailed' && <Check size={14} className="text-primary shrink-0" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleNotifDensityChange('compact')}
+                className={`flex items-start justify-between gap-3 p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  notifDensity === 'compact'
+                    ? 'border-primary bg-primary/10 ring-1 ring-primary/30'
+                    : 'border-border bg-bg2 hover:border-primary/40 hover:bg-bg3'
+                }`}
+              >
+                <div>
+                  <span className="text-xs font-bold text-text">Compact Rows</span>
+                  <p className="text-[11px] text-muted mt-1">High-density single-line rows displaying 2.5x more notifications without resizing the panel.</p>
+                </div>
+                {notifDensity === 'compact' && <Check size={14} className="text-primary shrink-0" />}
+              </button>
             </div>
           </div>
 

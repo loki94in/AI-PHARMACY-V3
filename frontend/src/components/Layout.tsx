@@ -25,6 +25,8 @@ import {
   ExternalLink,
   Info,
   ChevronRight,
+  LayoutList,
+  List,
   ArrowLeft,
   ArrowRight,
   Mail as MailIcon,
@@ -66,6 +68,7 @@ import {
   Calendar,
   RotateCw,
   ArrowDownToLine,
+  Sparkles,
 } from 'lucide-react';
 
 
@@ -73,7 +76,7 @@ import { toastEvent, quickOrderEvent, liveCartAddEvent, refillEvent, whatsappQue
 import type { ToastEventDetail } from '../services/events';
 import type { WhatsAppReadinessState } from '../types/api';
 import { subscribeRefillCartJobs, getRefillCartJobs, isRefillJobRunning, openRefillCartJob, startRefillCartJob } from '../services/refillCartJobs';
-import { useUpdateStatus } from '../services/updateStatusStore';
+import { useUpdateStatus, applyUpdateNow } from '../services/updateStatusStore';
 // Lazy-loaded modals & popovers — prevents bundling heavy components into the main shell
 const QuickOrderModal = lazy(() => import('./QuickOrderModal').then(m => ({ default: m.QuickOrderModal })));
 const LiveCartAddModal = lazy(() => import('./LiveCartAddModal').then(m => ({ default: m.LiveCartAddModal })));
@@ -447,6 +450,12 @@ const Sidebar = memo(({
                     {stagedPurchasesCount}
                   </span>
                 );
+              } else if (item.path.startsWith('/settings') && updateStatus.state === 'ready') {
+                badge = (
+                  <span className="ml-auto flex h-4 items-center justify-center rounded-full bg-emerald-500/20 border border-emerald-500/40 text-[9px] font-black text-emerald-400 px-1.5 animate-pulse">
+                    Update
+                  </span>
+                );
               }
 
               return (
@@ -634,9 +643,42 @@ const NotificationPanel = ({
   onClose: () => void;
 }) => {
   const navigate = useNavigate();
+  const updateStatus = useUpdateStatus();
   const panelRef = useRef<HTMLDivElement>(null);
-  const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'alerts'>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'unread' | 'alerts' | 'whatsapp' | 'sales' | 'system'>('all');
+  const [density, setDensity] = useState<'detailed' | 'compact'>(() => {
+    try {
+      return (localStorage.getItem('app_notif_density') as 'detailed' | 'compact') || 'detailed';
+    } catch {
+      return 'detailed';
+    }
+  });
   const [actionLogs, setActionLogs] = useState<LocalActionLogRow[]>([]);
+
+  // Sync density if changed from Settings or other components
+  useEffect(() => {
+    const handleDensitySync = () => {
+      try {
+        const stored = localStorage.getItem('app_notif_density') as 'detailed' | 'compact';
+        if (stored === 'detailed' || stored === 'compact') {
+          setDensity(stored);
+        }
+      } catch (_) {}
+    };
+    window.addEventListener('app_notif_density_changed', handleDensitySync);
+    return () => window.removeEventListener('app_notif_density_changed', handleDensitySync);
+  }, []);
+
+  const handleToggleDensity = useCallback(() => {
+    setDensity(prev => {
+      const next = prev === 'detailed' ? 'compact' : 'detailed';
+      try {
+        localStorage.setItem('app_notif_density', next);
+        window.dispatchEvent(new Event('app_notif_density_changed'));
+      } catch (_) {}
+      return next;
+    });
+  }, []);
 
   // Close on outside click
   useEffect(() => {
@@ -717,14 +759,97 @@ const NotificationPanel = ({
     return merged.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
   }, [notifications, actionLogs]);
 
+  const getDomainCategory = useCallback((item: AppNotification): 'whatsapp' | 'sales' | 'system' | 'general' => {
+    const msg = (item.message || '').toLowerCase();
+    const type = (item.type || '').toLowerCase();
+    if (msg.includes('whatsapp') || msg.includes('message') || type === 'automation' || msg.includes('refill reminder') || msg.includes('queue')) {
+      return 'whatsapp';
+    }
+    if (msg.includes('sale') || msg.includes('pos') || msg.includes('bill') || msg.includes('order') || msg.includes('purchase') || msg.includes('staged') || msg.includes('cart')) {
+      return 'sales';
+    }
+    if (msg.includes('backup') || msg.includes('update') || msg.includes('system') || msg.includes('sync') || msg.includes('database') || type === 'mail') {
+      return 'system';
+    }
+    return 'general';
+  }, []);
+
+  const getActionTarget = useCallback((notif: AppNotification): { label: string; path?: string; isQueue?: boolean } | null => {
+    const msg = (notif.message || '').toLowerCase();
+    if (msg.includes('whatsapp') || notif.type === 'automation') {
+      return { label: 'Queue', isQueue: true };
+    }
+    if (notif.link) {
+      return { label: 'Open', path: notif.link };
+    }
+    if (msg.includes('sale') || msg.includes('bill') || msg.includes('pos')) {
+      return { label: 'Sales', path: '/sells' };
+    }
+    if (msg.includes('purchase')) {
+      return { label: 'Purchases', path: '/purchases' };
+    }
+    if (msg.includes('cart') || msg.includes('pharmarack')) {
+      return { label: 'Cart', path: '/pharmarack-cart' };
+    }
+    if (msg.includes('refill')) {
+      return { label: 'Refills', path: '/crm?tab=refills' };
+    }
+    if (msg.includes('special order')) {
+      return { label: 'Special Orders', path: '/crm?tab=special-orders' };
+    }
+    return null;
+  }, []);
+
   const unreadCount = notifications.filter(n => !n.read).length;
   const alertCount = combinedActivities.filter(n => n.type === 'error' || n.type === 'automation').length;
 
-  const filteredNotifications = combinedActivities.filter(n => {
-    if (activeFilter === 'unread') return !n.read;
-    if (activeFilter === 'alerts') return n.type === 'error' || n.type === 'automation';
-    return true;
-  });
+  const counts = useMemo(() => ({
+    all: combinedActivities.length,
+    unread: unreadCount,
+    alerts: alertCount,
+    whatsapp: combinedActivities.filter(n => getDomainCategory(n) === 'whatsapp').length,
+    sales: combinedActivities.filter(n => getDomainCategory(n) === 'sales').length,
+    system: combinedActivities.filter(n => getDomainCategory(n) === 'system').length,
+  }), [combinedActivities, unreadCount, alertCount, getDomainCategory]);
+
+  const filteredNotifications = useMemo(() => {
+    return combinedActivities.filter(n => {
+      if (activeFilter === 'unread') return !n.read;
+      if (activeFilter === 'alerts') return n.type === 'error' || n.type === 'automation';
+      if (activeFilter === 'whatsapp') return getDomainCategory(n) === 'whatsapp';
+      if (activeFilter === 'sales') return getDomainCategory(n) === 'sales';
+      if (activeFilter === 'system') return getDomainCategory(n) === 'system';
+      return true;
+    });
+  }, [combinedActivities, activeFilter, getDomainCategory]);
+
+  // Group notifications into Today / Yesterday / Earlier
+  const groupedNotifications = useMemo(() => {
+    const today: AppNotification[] = [];
+    const yesterday: AppNotification[] = [];
+    const earlier: AppNotification[] = [];
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 86400000;
+
+    filteredNotifications.forEach(n => {
+      const itemTime = n.time instanceof Date ? n.time.getTime() : new Date(n.time).getTime();
+      if (itemTime >= startOfToday) {
+        today.push(n);
+      } else if (itemTime >= startOfYesterday) {
+        yesterday.push(n);
+      } else {
+        earlier.push(n);
+      }
+    });
+
+    const groups: { label: string; items: AppNotification[] }[] = [];
+    if (today.length > 0) groups.push({ label: 'Today', items: today });
+    if (yesterday.length > 0) groups.push({ label: 'Yesterday', items: yesterday });
+    if (earlier.length > 0) groups.push({ label: 'Earlier', items: earlier });
+    return groups;
+  }, [filteredNotifications]);
 
   return (
     <div
@@ -754,7 +879,7 @@ const NotificationPanel = ({
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-muted font-medium">Real-time store events & system status</p>
+              <p className="text-[11px] text-muted font-medium">Real-time store events &amp; system status</p>
             </div>
           </div>
 
@@ -776,6 +901,18 @@ const NotificationPanel = ({
               </span>
               <MessageSquareIcon size={12} />
               <span>Queue</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleDensity}
+              className={`p-1.5 rounded-xl border transition-all cursor-pointer ${
+                density === 'compact'
+                  ? 'bg-primary/10 border-primary/30 text-primary'
+                  : 'border-transparent text-muted hover:text-text hover:bg-bg3'
+              }`}
+              title={density === 'compact' ? 'Switch to Detailed View' : 'Switch to Compact View'}
+            >
+              {density === 'compact' ? <LayoutList size={15} /> : <List size={15} />}
             </button>
             <button
               type="button"
@@ -813,65 +950,139 @@ const NotificationPanel = ({
           </div>
         </div>
 
-        {/* Filter Segmented Control Bar */}
-        <div className="flex items-center justify-between bg-bg3/60 p-1 rounded-2xl border border-border/50">
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setActiveFilter('all')}
-              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${activeFilter === 'all'
-                  ? 'bg-bg text-text shadow-sm border border-border'
-                  : 'text-muted hover:text-text hover:bg-bg3'
-                }`}
-            >
-              All ({combinedActivities.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveFilter('unread')}
-              className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${activeFilter === 'unread'
-                  ? 'bg-bg text-sky-400 shadow-sm border border-border'
-                  : 'text-muted hover:text-text hover:bg-bg3'
-                }`}
-            >
-              <span>Unread</span>
-              {unreadCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-400 text-[10px] font-extrabold font-mono leading-none border border-sky-500/30">
-                  {unreadCount}
-                </span>
-              )}
-            </button>
-            {alertCount > 0 && (
+        {/* Filter Segmented Control & Domain Tabs */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar py-0.5">
+            <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => setActiveFilter('alerts')}
-                className={`px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${activeFilter === 'alerts'
-                    ? 'bg-bg text-purple-400 shadow-sm border border-border'
+                onClick={() => setActiveFilter('all')}
+                className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  activeFilter === 'all'
+                    ? 'bg-bg text-text shadow-sm border border-border'
                     : 'text-muted hover:text-text hover:bg-bg3'
-                  }`}
+                }`}
               >
-                Alerts ({alertCount})
+                All ({counts.all})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveFilter('unread')}
+                className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                  activeFilter === 'unread'
+                    ? 'bg-bg text-sky-400 shadow-sm border border-border'
+                    : 'text-muted hover:text-text hover:bg-bg3'
+                }`}
+              >
+                <span>Unread</span>
+                {counts.unread > 0 && (
+                  <span className="px-1 py-0.2 rounded-full bg-sky-500/15 text-sky-400 text-[9px] font-extrabold font-mono leading-none border border-sky-500/30">
+                    {counts.unread}
+                  </span>
+                )}
+              </button>
+              {counts.alerts > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActiveFilter('alerts')}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1 whitespace-nowrap ${
+                    activeFilter === 'alerts'
+                      ? 'bg-bg text-purple-400 shadow-sm border border-border'
+                      : 'text-muted hover:text-text hover:bg-bg3'
+                  }`}
+                >
+                  Alerts ({counts.alerts})
+                </button>
+              )}
+              {counts.whatsapp > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActiveFilter('whatsapp')}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    activeFilter === 'whatsapp'
+                      ? 'bg-bg text-emerald-400 shadow-sm border border-border'
+                      : 'text-muted hover:text-text hover:bg-bg3'
+                  }`}
+                >
+                  WhatsApp ({counts.whatsapp})
+                </button>
+              )}
+              {counts.sales > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActiveFilter('sales')}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    activeFilter === 'sales'
+                      ? 'bg-bg text-amber-400 shadow-sm border border-border'
+                      : 'text-muted hover:text-text hover:bg-bg3'
+                  }`}
+                >
+                  Sales ({counts.sales})
+                </button>
+              )}
+              {counts.system > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActiveFilter('system')}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                    activeFilter === 'system'
+                      ? 'bg-bg text-indigo-400 shadow-sm border border-border'
+                      : 'text-muted hover:text-text hover:bg-bg3'
+                  }`}
+                >
+                  System ({counts.system})
+                </button>
+              )}
+            </div>
+
+            {unreadCount > 0 && (
+              <button
+                type="button"
+                onClick={() => notifications.forEach(n => { if (!n.read) onMarkRead(n.id); })}
+                className="text-[10px] font-bold text-sky-400 hover:text-sky-300 transition-colors flex items-center gap-1 cursor-pointer px-2 py-1 rounded-xl hover:bg-sky-500/10 shrink-0 whitespace-nowrap ml-auto"
+                title="Mark all notifications as read"
+              >
+                <Check size={11} />
+                <span>Mark read</span>
               </button>
             )}
           </div>
-
-          {unreadCount > 0 && (
-            <button
-              type="button"
-              onClick={() => notifications.forEach(n => { if (!n.read) onMarkRead(n.id); })}
-              className="text-[11px] font-bold text-sky-400 hover:text-sky-300 transition-colors flex items-center gap-1 cursor-pointer px-2 py-1 rounded-xl hover:bg-sky-500/10"
-              title="Mark all notifications as read"
-            >
-              <Check size={12} />
-              <span>Mark all read</span>
-            </button>
-          )}
         </div>
       </div>
 
-      {/* Notification Cards List Container */}
+      {/* Pinned Update Ready Notification Banner */}
+      {updateStatus.state === 'ready' && updateStatus.version && (
+        <div className="mx-3 mt-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0">
+              <Sparkles size={16} />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-black text-text">Update Ready</span>
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono text-[10px] font-bold">
+                  v{updateStatus.version}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted truncate mt-0.5">
+                Downloaded &amp; verified. Ready to apply.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void applyUpdateNow()}
+            className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shrink-0 flex items-center gap-1 shadow-sm transition-all cursor-pointer"
+          >
+            <ArrowDownToLine size={13} />
+            <span>Install</span>
+          </button>
+        </div>
+      )}
+
+      {/* Notification Cards / Rows Container */}
       <div className="max-h-[400px] min-h-[180px] overflow-y-auto custom-scrollbar p-3 space-y-2">
-        {filteredNotifications.length === 0 ? (
+        {groupedNotifications.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
             <div className="w-14 h-14 rounded-3xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-3 shadow-inner">
               <Bell size={24} className="text-primary opacity-80" />
@@ -886,142 +1097,238 @@ const NotificationPanel = ({
             </p>
           </div>
         ) : (
-          filteredNotifications.map((notif) => {
-            const cfg = typeConfig(notif.type);
-            return (
-              <div
-                key={notif.id}
-                onClick={() => { if (!notif.read) onMarkRead(notif.id); }}
-                className={`
-                  group rounded-2xl p-3.5 border transition-all duration-200 cursor-pointer relative overflow-hidden flex flex-col gap-2
-                  ${!notif.read
-                    ? 'bg-sky-500/[0.04] border-sky-500/30 shadow-sm hover:border-sky-500/50'
-                    : 'bg-bg/40 border-border/60 hover:bg-bg3/60 hover:border-border'}
-                `}
-              >
-                {/* Vertical Indicator Strip for Unread Items */}
-                {!notif.read && (
-                  <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-sky-400 to-indigo-500 rounded-l-2xl" />
-                )}
-
-                {/* Top Row: Type Pill + Time + Unread Dot */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-[10px] font-black uppercase tracking-wider ${cfg.badgeBg}`}>
-                      {cfg.icon}
-                      <span>{cfg.label}</span>
-                    </span>
-                    <span className="text-[10px] text-muted font-mono font-medium">{formatTime(notif.time)}</span>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    {!notif.read && (
-                      <span className="w-2 h-2 rounded-full bg-sky-400 shadow-[0_0_6px_rgba(56,189,248,0.8)]" />
-                    )}
-                    <button
-                      type="button"
-                      onClick={e => {
-                        e.stopPropagation();
-                        onMarkRead(notif.id);
-                      }}
-                      className={`p-1 rounded-lg transition-all ${notif.read
-                          ? 'text-muted/40 hover:text-sky-400 hover:bg-sky-500/10'
-                          : 'text-sky-400 hover:bg-sky-500/20'
-                        }`}
-                      title={notif.read ? "Mark as unread" : "Mark as read"}
-                    >
-                      <Check size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async e => {
-                        e.stopPropagation();
-                        if (typeof notif.id === 'string' && notif.id.startsWith('log-')) {
-                          const numId = parseInt(notif.id.replace('log-', ''), 10);
-                          if (!isNaN(numId)) {
-                            setActionLogs(prev => prev.filter(l => l.id !== numId));
-                          }
-                        }
-                        onClearOne(notif.id);
-                      }}
-                      className="p-1 rounded-lg text-muted/40 hover:text-rose-400 hover:bg-rose-500/10 transition-all"
-                      title="Remove notification"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Middle Content */}
-                <p className={`text-xs leading-relaxed ${!notif.read ? 'text-text font-semibold' : 'text-muted font-medium'}`}>
-                  {notif.message}
-                </p>
-
-                {/* Metadata Tags & Action Row */}
-                <div className="flex items-center justify-between pt-1 border-t border-border/30 mt-1">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    {notif.distributor && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold">
-                        <Building2 size={10} />
-                        {notif.distributor}
-                      </span>
-                    )}
-                    {notif.qty !== undefined && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold">
-                        Qty: {notif.qty}
-                      </span>
-                    )}
-                  </div>
-
-                  {(notif.link || notif.message.toLowerCase().includes('whatsapp') || notif.type === 'automation') && (
-                    <button
-                      type="button"
-                      onMouseEnter={() => {
-                        if (notif.message.toLowerCase().includes('whatsapp') || notif.type === 'automation' || !notif.link) {
-                          import('./WhatsAppQueuePopover').catch(() => {});
-                        }
-                      }}
-                      onClick={e => {
-                        e.stopPropagation();
-                        if (!notif.read) onMarkRead(notif.id);
-                        if (notif.message.toLowerCase().includes('whatsapp') || notif.type === 'automation' || !notif.link) {
-                          whatsappQueueEvent.triggerOpen();
-                        } else {
-                          navigate(notif.link!);
-                        }
-                        onClose();
-                      }}
-                      className={`inline-flex items-center gap-1 text-[11px] font-bold transition-all px-2.5 py-1 rounded-xl cursor-pointer ${notif.message.toLowerCase().includes('whatsapp') || notif.type === 'automation'
-                          ? 'text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25'
-                          : 'text-sky-400 hover:text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/25'
-                        }`}
-                    >
-                      {notif.message.toLowerCase().includes('whatsapp') || notif.type === 'automation' ? (
-                        <>
-                          <MessageSquareIcon size={11} />
-                          <span>View Queue</span>
-                        </>
-                      ) : (
-                        <>
-                          <ExternalLink size={11} />
-                          <span>Open</span>
-                        </>
-                      )}
-                      <ChevronRight size={11} />
-                    </button>
-                  )}
-                </div>
+          groupedNotifications.map((group) => (
+            <div key={group.label} className="space-y-1.5">
+              {/* Timeline Header Divider */}
+              <div className="flex items-center gap-2 pt-1.5 pb-0.5 px-1">
+                <span className="text-[10px] font-black uppercase tracking-wider text-muted font-mono">{group.label}</span>
+                <div className="h-px bg-border flex-1" />
+                <span className="text-[9px] text-muted font-mono">{group.items.length}</span>
               </div>
-            );
-          })
+
+              {group.items.map((notif) => {
+                const cfg = typeConfig(notif.type);
+                const action = getActionTarget(notif);
+
+                if (density === 'compact') {
+                  return (
+                    <div
+                      key={notif.id}
+                      onClick={() => { if (!notif.read) onMarkRead(notif.id); }}
+                      className={`
+                        group px-2.5 py-1.5 rounded-xl border transition-all duration-150 cursor-pointer flex items-center justify-between gap-2 text-xs relative overflow-hidden
+                        ${!notif.read
+                          ? 'bg-sky-500/[0.05] border-sky-500/30 hover:border-sky-500/50'
+                          : 'bg-bg/40 border-border hover:bg-bg3/60'}
+                      `}
+                    >
+                      {!notif.read && (
+                        <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-sky-400 to-indigo-500" />
+                      )}
+
+                      <div className="flex items-center gap-2 min-w-0 flex-1 pl-1">
+                        <span className={`p-1 rounded-md shrink-0 border ${cfg.badgeBg}`}>
+                          {cfg.icon}
+                        </span>
+                        <span className={`truncate text-xs ${!notif.read ? 'text-text font-bold' : 'text-muted font-medium'}`} title={notif.message}>
+                          {notif.message}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] text-muted font-mono">{formatTime(notif.time)}</span>
+
+                        {action && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              if (!notif.read) onMarkRead(notif.id);
+                              if (action.isQueue) {
+                                whatsappQueueEvent.triggerOpen();
+                              } else if (action.path) {
+                                navigate(action.path);
+                              }
+                              onClose();
+                            }}
+                            className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 transition-all border border-sky-500/25 cursor-pointer"
+                          >
+                            {action.label}
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onMarkRead(notif.id);
+                          }}
+                          className={`p-1 rounded transition-all cursor-pointer ${
+                            notif.read ? 'text-muted hover:text-sky-400' : 'text-sky-400'
+                          }`}
+                          title={notif.read ? 'Mark as unread' : 'Mark as read'}
+                        >
+                          <Check size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async e => {
+                            e.stopPropagation();
+                            if (typeof notif.id === 'string' && notif.id.startsWith('log-')) {
+                              const numId = parseInt(notif.id.replace('log-', ''), 10);
+                              if (!isNaN(numId)) {
+                                setActionLogs(prev => prev.filter(l => l.id !== numId));
+                              }
+                            }
+                            onClearOne(notif.id);
+                          }}
+                          className="p-1 rounded text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-all cursor-pointer"
+                          title="Dismiss notification"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Detailed Card Mode
+                return (
+                  <div
+                    key={notif.id}
+                    onClick={() => { if (!notif.read) onMarkRead(notif.id); }}
+                    className={`
+                      group rounded-2xl p-3.5 border transition-all duration-200 cursor-pointer relative overflow-hidden flex flex-col gap-2
+                      ${!notif.read
+                        ? 'bg-sky-500/[0.04] border-sky-500/30 shadow-sm hover:border-sky-500/50'
+                        : 'bg-bg/40 border-border hover:bg-bg3/60'}
+                    `}
+                  >
+                    {/* Vertical Indicator Strip for Unread Items */}
+                    {!notif.read && (
+                      <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-sky-400 to-indigo-500 rounded-l-2xl" />
+                    )}
+
+                    {/* Top Row: Type Pill + Time + Unread Dot */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border text-[10px] font-black uppercase tracking-wider ${cfg.badgeBg}`}>
+                          {cfg.icon}
+                          <span>{cfg.label}</span>
+                        </span>
+                        <span className="text-[10px] text-muted font-mono font-medium">{formatTime(notif.time)}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        {!notif.read && (
+                          <span className="w-2 h-2 rounded-full bg-sky-400 shadow-[0_0_6px_rgba(56,189,248,0.8)]" />
+                        )}
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onMarkRead(notif.id);
+                          }}
+                          className={`p-1 rounded-lg transition-all ${
+                            notif.read
+                              ? 'text-muted hover:text-sky-400 hover:bg-sky-500/10'
+                              : 'text-sky-400 hover:bg-sky-500/20'
+                          }`}
+                          title={notif.read ? 'Mark as unread' : 'Mark as read'}
+                        >
+                          <Check size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async e => {
+                            e.stopPropagation();
+                            if (typeof notif.id === 'string' && notif.id.startsWith('log-')) {
+                              const numId = parseInt(notif.id.replace('log-', ''), 10);
+                              if (!isNaN(numId)) {
+                                setActionLogs(prev => prev.filter(l => l.id !== numId));
+                              }
+                            }
+                            onClearOne(notif.id);
+                          }}
+                          className="p-1 rounded-lg text-muted hover:text-rose-400 hover:bg-rose-500/10 transition-all cursor-pointer"
+                          title="Remove notification"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Middle Content */}
+                    <p className={`text-xs leading-relaxed ${!notif.read ? 'text-text font-semibold' : 'text-muted font-medium'}`}>
+                      {notif.message}
+                    </p>
+
+                    {/* Metadata Tags & Action Row */}
+                    <div className="flex items-center justify-between pt-1 border-t border-border mt-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {notif.distributor && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-[10px] font-bold">
+                            <Building2 size={10} />
+                            {notif.distributor}
+                          </span>
+                        )}
+                        {notif.qty !== undefined && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold">
+                            Qty: {notif.qty}
+                          </span>
+                        )}
+                      </div>
+
+                      {action && (
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            if (!notif.read) onMarkRead(notif.id);
+                            if (action.isQueue) {
+                              whatsappQueueEvent.triggerOpen();
+                            } else if (action.path) {
+                              navigate(action.path);
+                            }
+                            onClose();
+                          }}
+                          className="inline-flex items-center gap-1 text-[11px] font-bold transition-all px-2.5 py-1 rounded-xl cursor-pointer text-sky-400 hover:text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 border border-sky-500/25"
+                        >
+                          {action.isQueue ? (
+                            <>
+                              <MessageSquareIcon size={11} />
+                              <span>View Queue</span>
+                            </>
+                          ) : (
+                            <>
+                              <ExternalLink size={11} />
+                              <span>{action.label}</span>
+                            </>
+                          )}
+                          <ChevronRight size={11} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))
         )}
       </div>
 
       {/* Footer Summary */}
       {combinedActivities.length > 0 && (
         <div className="px-4 py-2.5 border-t border-border bg-bg/40 flex items-center justify-between text-xs text-muted font-medium">
-          <span>{combinedActivities.length} total item{combinedActivities.length !== 1 ? 's' : ''}</span>
-          <span className="text-[10px] font-mono text-muted/70">Live Activity Feed</span>
+          <span>{filteredNotifications.length} visible ({combinedActivities.length} total)</span>
+          <button
+            type="button"
+            onClick={handleToggleDensity}
+            className="text-[10px] font-mono text-muted hover:text-text transition-colors flex items-center gap-1 cursor-pointer"
+            title="Click to toggle density view"
+          >
+            <span>{density === 'compact' ? 'Compact View' : 'Detailed View'}</span>
+          </button>
         </div>
       )}
     </div>
@@ -2957,7 +3264,7 @@ const Topbar = memo(({
               onClick={() => setShowPanel(prev => !prev)}
               className={`relative p-2 rounded-xl transition-all duration-200 flex items-center justify-center border cursor-pointer group ${showPanel
                   ? 'bg-sky-500/15 border-sky-500/40 text-sky-400 shadow-sm'
-                  : hasUnread
+                  : hasUnread || updateStatus.state === 'ready'
                     ? 'bg-glass-bg border-sky-500/30 text-sky-400 hover:bg-sky-500/10 hover:border-sky-500/50'
                     : 'bg-glass-bg border-glass-border text-muted hover:text-text hover:bg-bg3/60'
                 }`}
@@ -2965,16 +3272,16 @@ const Topbar = memo(({
               title="Notifications"
             >
               <div className="relative flex items-center justify-center">
-                {hasUnread ? (
+                {hasUnread || updateStatus.state === 'ready' ? (
                   <BellRing size={18} className="animate-pulse text-sky-400 group-hover:scale-110 transition-transform" />
                 ) : (
                   <Bell size={18} className="group-hover:scale-110 transition-transform" />
                 )}
               </div>
-              {hasUnread && (
+              {(hasUnread || updateStatus.state === 'ready') && (
                 <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-gradient-to-r from-sky-500 to-blue-600 text-white text-[10px] font-black shadow-md shadow-sky-500/30 ring-2 ring-bg border border-sky-300/40">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-40"></span>
-                  <span className="relative z-10">{notifications.filter(n => !n.read).length > 99 ? '99+' : notifications.filter(n => !n.read).length}</span>
+                  <span className="relative z-10">{notifications.filter(n => !n.read).length > 0 ? (notifications.filter(n => !n.read).length > 99 ? '99+' : notifications.filter(n => !n.read).length) : '!'}</span>
                 </span>
               )}
             </button>
