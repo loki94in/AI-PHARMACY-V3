@@ -674,6 +674,9 @@ router.post('/doctors', async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [cleanName, speciality || null, cleanPhone, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0]
     );
+    try {
+      eventService.broadcast('doctors_updated', { id: result.lastID, name: cleanName, action: 'create', at: Date.now() });
+    } catch (_) {}
     res.json({ success: true, message: 'Doctor added successfully', doctorId: result.lastID });
   } catch (error) {
     console.error('Failed to add doctor:', error);
@@ -706,6 +709,9 @@ router.put('/doctors/:id', async (req, res) => {
       [cleanName, speciality || null, cleanPhone, hospital || null, degree || null, reg_no || null, send_daily_summary ? 1 : 0, id]
     );
     const updated = await db.get('SELECT * FROM doctors WHERE id = ?', id);
+    try {
+      eventService.broadcast('doctors_updated', { id: Number(id), name: cleanName, action: 'update', at: Date.now() });
+    } catch (_) {}
     res.json({ success: true, doctor: updated });
   } catch (error) {
     console.error('Failed to update doctor:', error);
@@ -719,6 +725,9 @@ router.delete('/doctors/:id', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     await db.run('DELETE FROM doctors WHERE id = ?', id);
+    try {
+      eventService.broadcast('doctors_updated', { id: Number(id), action: 'delete', at: Date.now() });
+    } catch (_) {}
     res.json({ success: true, message: 'Doctor deleted successfully' });
   } catch (error) {
     console.error('Failed to delete doctor:', error);

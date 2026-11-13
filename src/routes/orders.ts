@@ -2363,6 +2363,19 @@ router.delete('/:id', async (req, res) => {
     // Cancel and remove any pending unsent WhatsApp queue items & notifications for this deleted order
     await cancelPendingWhatsAppForOrder(db, existing);
     
+    // Auto-dismiss matching pending call task for this deleted special order
+    await db.run(
+      `UPDATE patient_call_tasks 
+       SET status = 'dismissed', notes = 'Special order deleted/cancelled', updated_at = CURRENT_TIMESTAMP
+       WHERE (reference_id = ? OR (patient_phone = ? AND task_type = 'special_order'))
+         AND status IN ('pending', 'rescheduled')`,
+      [String(id), existing.phone]
+    ).catch(() => {});
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('call_tasks_updated', { at: Date.now() });
+    } catch (_) {}
+    
     // Auto-adjust or remove from Pharmarack Live Cart
     let cartAdjustment: any = null;
     try {
@@ -2428,6 +2441,19 @@ router.post('/:id/fulfill', async (req, res) => {
     }
 
     await db.run("UPDATE special_orders SET status = 'Fulfilled', notified = 1, auto_remind = 0, last_collection_reminder_at = NULL WHERE id = ?", id);
+
+    // Resolve matching pending call task for this special order
+    await db.run(
+      `UPDATE patient_call_tasks 
+       SET status = 'completed', call_outcome = 'Special order fulfilled at store', updated_at = CURRENT_TIMESTAMP
+       WHERE (reference_id = ? OR (patient_phone = ? AND task_type = 'special_order'))
+         AND status IN ('pending', 'rescheduled')`,
+      [String(id), order.phone]
+    ).catch(() => {});
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('call_tasks_updated', { at: Date.now() });
+    } catch (_) {}
 
     // Clean up all staged notifications and arrival alerts for this special order
     // (pending queue items first, so the optional receipt enqueued below is not removed)

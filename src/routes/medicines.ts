@@ -1009,8 +1009,18 @@ router.put('/medicines/:id/quick-edit', async (req, res) => {
       }
     }
 
+    if (name) {
+      await db.run('UPDATE patient_refills SET medicine_name = ? WHERE medicine_id = ?', [name.trim(), id]).catch(() => {});
+    }
+
     await db.run('COMMIT');
     inventoryCache.invalidate();
+
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('inventory_sync', { medicine_id: Number(id), at: Date.now() });
+      eventService.broadcast('medicines_updated', { medicine_id: Number(id), at: Date.now() });
+    } catch (_) {}
 
     res.json({ success: true, message: 'Medicine updated' });
   } catch (error: any) {
@@ -1034,6 +1044,11 @@ router.patch('/medicines/:id/allow-loose-sale', async (req, res) => {
     const db = await dbManager.getConnection();
     await db.run('UPDATE medicines SET allow_loose_sale = ? WHERE id = ?', [val, id]);
     inventoryCache.invalidate();
+    try {
+      const { eventService } = await import('../services/eventService.js');
+      eventService.broadcast('inventory_sync', { medicine_id: Number(id), at: Date.now() });
+      eventService.broadcast('medicines_updated', { medicine_id: Number(id), at: Date.now() });
+    } catch (_) {}
     res.json({ success: true, medicine_id: Number(id), allow_loose_sale: val });
   } catch (err: any) {
     console.error('Error toggling allow_loose_sale:', err);

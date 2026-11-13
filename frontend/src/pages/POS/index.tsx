@@ -3086,7 +3086,7 @@ const POS = () => {
       }).catch(err => console.error('Failed to post correction learning:', err));
     }
 
-    // Fast-billing: Loose-allowed items focus directly on loose units; full-pack items default to 1 strip
+    // Fast-billing: All selected medicines (syrups, liquids, solids, tablets, capsules, ointments, loose) default to at least 1 unit
     const isLoose = resolveAllowLooseSale(med) === 1;
     const isOrigEmpty = Boolean(originalItem?.isEmptyRow);
     const defaultLooseQty = opts?.presetLooseQty ?? (
@@ -3094,8 +3094,8 @@ const POS = () => {
     );
     const defaultQty = opts?.presetQty ?? (
       isOrigEmpty
-        ? (isLoose ? 0 : 1)
-        : (isLoose && defaultLooseQty > 0 ? (originalItem?.qty ?? 0) : Math.max(1, originalItem?.qty || 1))
+        ? 1
+        : Math.max(1, originalItem?.qty || 1)
     );
     const compactInventory = getCompactInventoryCache();
     const fallbackItem: Partial<CartRow> = {
