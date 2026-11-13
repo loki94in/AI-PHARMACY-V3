@@ -619,6 +619,21 @@ router.put('/patient-medicines', async (req, res) => {
         await db.run('UPDATE customers SET name = ?, phone = ?, language = ? WHERE id = ?', [cleanName, cleanPhone, cleanLang, customerId]);
       }
 
+      // Cascade update to pending patient_call_tasks and notifications
+      await db.run(
+        `UPDATE patient_call_tasks 
+         SET customer_id = ?, patient_name = ?, patient_phone = ?, updated_at = CURRENT_TIMESTAMP 
+         WHERE (customer_id = ? OR patient_phone = ? OR patient_phone = ? OR LOWER(TRIM(patient_name)) = LOWER(TRIM(?)))
+           AND status IN ('pending', 'rescheduled')`,
+        [customerId, cleanName, cleanPhone, customerId, origPhone, cleanPhone, cleanName]
+      ).catch(() => {});
+      await db.run(
+        `UPDATE automation_notifications 
+         SET recipient_name = ?, recipient_phone = ? 
+         WHERE (recipient_phone = ? OR recipient_phone = ?) AND status IN ('staged', 'pending')`,
+        [cleanName, cleanPhone, origPhone, cleanPhone]
+      ).catch(() => {});
+
       // Fetch existing refill records for this patient
       const existingRows = await db.all(
         `SELECT * FROM patient_refills 
@@ -709,6 +724,12 @@ router.put('/patient-medicines', async (req, res) => {
       }
 
       await db.run('COMMIT');
+
+      try {
+        eventService.broadcast('customers_updated', { id: customerId, phone: cleanPhone, name: cleanName, at: Date.now() });
+        eventService.broadcast('call_tasks_updated', { customerId, phone: cleanPhone, at: Date.now() });
+        eventService.broadcast('refills_updated', { customerId, phone: cleanPhone, at: Date.now() });
+      } catch (_) {}
     } catch (txErr) {
       await db.run('ROLLBACK').catch(() => {});
       throw txErr;

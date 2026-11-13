@@ -1,8 +1,9 @@
 import { dbManager } from '../database/connection.js';
-import { normalizeWhatsAppPhone } from '../whatsappClient.js';
+import { normalizeWhatsAppPhone, checkPhoneWhatsAppRegistered } from '../whatsappClient.js';
 import { paymentQrService } from './paymentQrService.js';
 import { pdfInvoiceService } from './pdfInvoiceService.js';
 import { whatsappQueueWorker } from './whatsappQueueWorker.js';
+import { eventService } from './eventService.js';
 import { getMessage } from '../i18n/getMessage.js';
 import { getAppDataDir } from '../config/index.js';
 import path from 'path';
@@ -22,6 +23,7 @@ export interface CreditReminderResult {
   amount?: number;
   skipped?: boolean;
   reason?: string;
+  channel?: 'whatsapp' | 'call_task';
 }
 
 export class CreditReminderService {
@@ -111,6 +113,48 @@ export class CreditReminderService {
     const dueDateStr = customer.credit_due_date
       ? formatDate(customer.credit_due_date)
       : 'As agreed';
+
+    // Verify whether customer phone is registered on WhatsApp
+    const waStatus = await checkPhoneWhatsAppRegistered(cleanPhone.slice(-10), false).catch(() => 'UNABLE_TO_VERIFY');
+    if (waStatus === 'NOT_AVAILABLE') {
+      // Non-WhatsApp Fallback: automatically route to Call Reminders Board (patient_call_tasks)
+      const existingTask = await db.get(
+        `SELECT id FROM patient_call_tasks 
+         WHERE (customer_id = ? OR patient_phone = ?) 
+           AND task_type = 'credit' 
+           AND status IN ('pending', 'rescheduled')`,
+        [customerId, cleanPhone.slice(-10)]
+      );
+      if (!existingTask) {
+        await db.run(
+          `INSERT INTO patient_call_tasks 
+             (customer_id, task_type, patient_name, patient_phone, reference_id, details_json, status, priority, notes)
+           VALUES (?, 'credit', ?, ?, ?, ?, 'pending', 'high', ?)`,
+          [
+            customerId,
+            customer.name || 'Customer',
+            cleanPhone.slice(-10),
+            `credit_${customerId}`,
+            JSON.stringify({
+              amount: finalOutstanding,
+              due_date: customer.credit_due_date,
+              unpaid_count: pendingInvoices?.length || 0,
+              bills: pendingInvoices?.map((i: any) => ({ no: i.invoice_no, amt: i.total_amount })) || []
+            }),
+            `Overdue Payment: ₹${finalOutstanding.toFixed(2)} (Due: ${dueDateStr}). Recipient is not registered on WhatsApp. Call to follow up.`
+          ]
+        );
+        try {
+          eventService.broadcast('call_tasks_updated', { customerId, taskType: 'credit', at: Date.now() });
+        } catch (_) {}
+      }
+      return {
+        success: true,
+        channel: 'call_task',
+        amount: finalOutstanding,
+        message: 'Customer is not registered on WhatsApp. Routed to Call Reminders Board for phone follow-up.'
+      };
+    }
 
     const storeSetting = await db.get(
       "SELECT value FROM app_settings WHERE key IN ('shop_name', 'pharmacy_name', 'store_name') AND value IS NOT NULL LIMIT 1"
@@ -210,6 +254,7 @@ export class CreditReminderService {
 
     return {
       success: true,
+      channel: 'whatsapp',
       queueId,
       amount: finalOutstanding
     };

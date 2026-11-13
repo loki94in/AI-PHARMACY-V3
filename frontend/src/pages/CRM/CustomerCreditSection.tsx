@@ -27,6 +27,21 @@ interface CreditCustomerItem {
 let cachedCreditCustomers: CreditCustomerItem[] = [];
 let cachedSelectedCustomerId: number | null = null;
 
+function getDefault7thDueDate(): string {
+  const now = new Date();
+  let dueYear = now.getFullYear();
+  let dueMonth = now.getMonth();
+  if (now.getDate() >= 7) {
+    dueMonth += 1;
+    if (dueMonth > 11) {
+      dueMonth = 0;
+      dueYear += 1;
+    }
+  }
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${dueYear}-${pad(dueMonth + 1)}-07`;
+}
+
 export const CustomerCreditSection: React.FC = () => {
   const navigate = useNavigate();
   const [customers, setCustomers] = useState<CreditCustomerItem[]>(cachedCreditCustomers);
@@ -148,6 +163,19 @@ export const CustomerCreditSection: React.FC = () => {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- module-cache hydration loader
     loadCreditCustomers();
+  }, [loadCreditCustomers]);
+
+  // Real-time SSE sync: refresh list whenever credit or customers update
+  useEffect(() => {
+    const handleRefresh = () => {
+      loadCreditCustomers();
+    };
+    window.addEventListener('refresh-credit-customers', handleRefresh);
+    window.addEventListener('app-customers-updated', handleRefresh);
+    return () => {
+      window.removeEventListener('refresh-credit-customers', handleRefresh);
+      window.removeEventListener('app-customers-updated', handleRefresh);
+    };
   }, [loadCreditCustomers]);
 
   const handleSaveDueDate = async (id: number) => {
@@ -674,7 +702,7 @@ export const CustomerCreditSection: React.FC = () => {
                       <span className={selectedCustomer.credit_due_date ? 'text-text font-bold' : 'text-muted italic'}>
                         {selectedCustomer.credit_due_date ? formatDate(selectedCustomer.credit_due_date) : 'Not Set'}
                       </span>
-                      <button onClick={() => { setEditingId(selectedCustomer.id); setNewDueDate(selectedCustomer.credit_due_date || ''); }} className="text-[10px] text-primary hover:underline font-bold">
+                      <button onClick={() => { setEditingId(selectedCustomer.id); setNewDueDate(selectedCustomer.credit_due_date || getDefault7thDueDate()); }} className="text-[10px] text-primary hover:underline font-bold">
                         Edit Date
                       </button>
                     </div>

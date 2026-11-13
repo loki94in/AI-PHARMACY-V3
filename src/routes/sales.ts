@@ -629,10 +629,38 @@ router.post('/', async (req, res) => {
 
     // Update customer credit balance automatically if payment medium is CREDIT or status is PENDING/UNPAID
     if (customerId && (paymentMedium?.toUpperCase() === 'CREDIT' || paymentStatus?.toUpperCase() === 'PENDING' || paymentStatus?.toUpperCase() === 'UNPAID')) {
+      // Default credit due date: 7th of the upcoming month
+      const now = new Date();
+      let dueYear = now.getFullYear();
+      let dueMonth = now.getMonth(); // 0-indexed
+      if (now.getDate() >= 7) {
+        dueMonth += 1;
+        if (dueMonth > 11) {
+          dueMonth = 0;
+          dueYear += 1;
+        }
+      }
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const default7thDueDate = `${dueYear}-${pad(dueMonth + 1)}-07`;
+      const explicitDueDate = req.body.credit_due_date && String(req.body.credit_due_date).trim() ? String(req.body.credit_due_date).trim() : null;
+
       await db.run(
-        'UPDATE customers SET credit_balance = COALESCE(credit_balance, 0) + ?, credit_enabled = 1 WHERE id = ?',
-        [total, customerId]
+        `UPDATE customers 
+         SET credit_balance = COALESCE(credit_balance, 0) + ?, 
+             credit_enabled = 1,
+             credit_due_date = COALESCE(?, CASE 
+               WHEN credit_due_date IS NULL OR credit_due_date = '' OR date(credit_due_date) < date('now', 'localtime') 
+               THEN ? 
+               ELSE credit_due_date 
+             END)
+         WHERE id = ?`,
+        [total, explicitDueDate, default7thDueDate, customerId]
       );
+      try {
+        eventService.broadcast('customers_changed', { at: Date.now(), id: customerId });
+        eventService.broadcast('customers_updated', { at: Date.now(), id: customerId });
+        eventService.broadcast('credit_updated', { at: Date.now(), id: customerId });
+      } catch (_) {}
     }
 
     // Batch-fetch stock for all items that already carry an inventory_id, in one query.

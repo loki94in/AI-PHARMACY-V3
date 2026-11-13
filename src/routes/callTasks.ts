@@ -28,25 +28,38 @@ router.get('/', async (req, res) => {
     const params: any[] = [];
 
     if (status && status !== 'all') {
-      conditions.push('status = ?');
+      conditions.push('pct.status = ?');
       params.push(status);
     }
     if (type && type !== 'all') {
-      conditions.push('task_type = ?');
+      conditions.push('pct.task_type = ?');
       params.push(type);
     }
 
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
     const tasks = await db.all(
-      `SELECT * FROM patient_call_tasks ${where} ORDER BY
-         CASE WHEN status = 'pending' THEN 0 WHEN status = 'rescheduled' THEN 1 ELSE 2 END,
-         created_at DESC
+      `SELECT 
+         pct.*,
+         COALESCE(c.phone, pct.patient_phone) AS patient_phone,
+         COALESCE(c.name, pct.patient_name) AS patient_name,
+         c.credit_balance,
+         c.credit_due_date,
+         COALESCE(pct.customer_id, c.id) AS customer_id
+       FROM patient_call_tasks pct
+       LEFT JOIN customers c ON (
+         (pct.customer_id IS NOT NULL AND c.id = pct.customer_id)
+         OR (pct.customer_id IS NULL AND (c.phone = pct.patient_phone OR LOWER(TRIM(c.name)) = LOWER(TRIM(pct.patient_name))))
+       )
+       ${where}
+       ORDER BY
+         CASE WHEN pct.status = 'pending' THEN 0 WHEN pct.status = 'rescheduled' THEN 1 ELSE 2 END,
+         pct.created_at DESC
        LIMIT ? OFFSET ?`,
       [...params, parseInt(limit, 10), parseInt(offset, 10)]
     );
 
     const total = await db.get(
-      `SELECT COUNT(*) as c FROM patient_call_tasks ${where}`,
+      `SELECT COUNT(*) as c FROM patient_call_tasks pct ${where}`,
       params
     );
 
@@ -83,11 +96,16 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, error: 'task_type must be refill, credit, special_order, online_order, or general' });
     }
 
+    const cust = await db.get(
+      'SELECT id FROM customers WHERE phone = ? OR LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1',
+      [patient_phone, patient_name]
+    ).catch(() => null);
+
     const result = await db.run(
       `INSERT INTO patient_call_tasks
-         (task_type, patient_name, patient_phone, reference_id, details_json, status)
-       VALUES (?, ?, ?, ?, ?, 'pending')`,
-      [task_type, patient_name, patient_phone, reference_id || null, JSON.stringify({ details: details || '' })]
+         (customer_id, task_type, patient_name, patient_phone, reference_id, details_json, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
+      [cust?.id || req.body.customer_id || null, task_type, patient_name, patient_phone, reference_id || null, JSON.stringify({ details: details || '' })]
     );
 
     eventService.broadcast('call_tasks_updated', { taskId: result.lastID, taskType: task_type });

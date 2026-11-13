@@ -258,17 +258,58 @@ router.put('/patients/:id', async (req, res) => {
       [name, cleanPhone, address || '', notes || '', language || 'en', id]
     );
 
-    // Cascade update linked operational tables (patient_refills, special_orders) to prevent phone/contact inconsistencies
+    // Cascade update linked operational tables (patient_refills, special_orders, patient_call_tasks, notifications)
     if (phone !== undefined || name) {
+      const existingCust = await db.get('SELECT phone, name FROM customers WHERE id = ?', [id]).catch(() => null);
+      const oldPhone = existingCust?.phone || '';
+      const oldName = existingCust?.name || '';
+
       if (phone !== undefined && name) {
-        await db.run('UPDATE patient_refills SET patient_name = ?, patient_phone = ? WHERE customer_id = ?', [name, cleanPhone, id]);
-        await db.run('UPDATE special_orders SET requester = ?, phone = ? WHERE customer_id = ?', [name, cleanPhone, id]);
+        await db.run('UPDATE patient_refills SET patient_name = ?, patient_phone = ? WHERE customer_id = ? OR (patient_phone = ? AND ? != "")', [name, cleanPhone, id, oldPhone, oldPhone]);
+        await db.run('UPDATE special_orders SET requester = ?, phone = ? WHERE customer_id = ? OR (phone = ? AND ? != "")', [name, cleanPhone, id, oldPhone, oldPhone]);
+        await db.run(
+          `UPDATE patient_call_tasks 
+           SET customer_id = ?, patient_name = ?, patient_phone = ?, updated_at = CURRENT_TIMESTAMP 
+           WHERE (customer_id = ? OR (patient_phone = ? AND ? != "") OR LOWER(TRIM(patient_name)) = LOWER(TRIM(?)))
+             AND status IN ('pending', 'rescheduled')`,
+          [id, name, cleanPhone, id, oldPhone, oldPhone, oldName]
+        );
+        if (cleanPhone) {
+          await db.run(
+            `UPDATE automation_notifications 
+             SET recipient_name = ?, recipient_phone = ? 
+             WHERE (recipient_phone = ? OR recipient_phone = ?) AND status IN ('staged', 'pending')`,
+            [name, cleanPhone, oldPhone, cleanPhone]
+          ).catch(() => {});
+        }
       } else if (phone !== undefined) {
-        await db.run('UPDATE patient_refills SET patient_phone = ? WHERE customer_id = ?', [cleanPhone, id]);
-        await db.run('UPDATE special_orders SET phone = ? WHERE customer_id = ?', [cleanPhone, id]);
+        await db.run('UPDATE patient_refills SET patient_phone = ? WHERE customer_id = ? OR (patient_phone = ? AND ? != "")', [cleanPhone, id, oldPhone, oldPhone]);
+        await db.run('UPDATE special_orders SET phone = ? WHERE customer_id = ? OR (phone = ? AND ? != "")', [cleanPhone, id, oldPhone, oldPhone]);
+        await db.run(
+          `UPDATE patient_call_tasks 
+           SET customer_id = ?, patient_phone = ?, updated_at = CURRENT_TIMESTAMP 
+           WHERE (customer_id = ? OR (patient_phone = ? AND ? != ""))
+             AND status IN ('pending', 'rescheduled')`,
+          [id, cleanPhone, id, oldPhone, oldPhone]
+        );
+        if (cleanPhone) {
+          await db.run(
+            `UPDATE automation_notifications 
+             SET recipient_phone = ? 
+             WHERE (recipient_phone = ? OR recipient_phone = ?) AND status IN ('staged', 'pending')`,
+            [cleanPhone, oldPhone, cleanPhone]
+          ).catch(() => {});
+        }
       } else if (name) {
-        await db.run('UPDATE patient_refills SET patient_name = ? WHERE customer_id = ?', [name, id]);
+        await db.run('UPDATE patient_refills SET patient_name = ? WHERE customer_id = ? OR LOWER(TRIM(patient_name)) = LOWER(TRIM(?))', [name, id, oldName]);
         await db.run('UPDATE special_orders SET requester = ? WHERE customer_id = ?', [name, id]);
+        await db.run(
+          `UPDATE patient_call_tasks 
+           SET customer_id = ?, patient_name = ?, updated_at = CURRENT_TIMESTAMP 
+           WHERE (customer_id = ? OR LOWER(TRIM(patient_name)) = LOWER(TRIM(?)))
+             AND status IN ('pending', 'rescheduled')`,
+          [id, name, id, oldName]
+        );
       }
     }
 
@@ -279,8 +320,11 @@ router.put('/patients/:id', async (req, res) => {
     const updated = await db.get('SELECT * FROM customers WHERE id = ?', id);
     try {
       eventService.broadcast('customers_changed', { at: Date.now(), id: Number(id), name, phone });
+      eventService.broadcast('customers_updated', { at: Date.now(), id: Number(id), name, phone: cleanPhone });
+      eventService.broadcast('call_tasks_updated', { at: Date.now(), customer_id: Number(id), phone: cleanPhone });
       if (phone || name) {
         eventService.broadcast('refill_updated', { at: Date.now(), customer_id: Number(id) });
+        eventService.broadcast('refills_updated', { at: Date.now(), customer_id: Number(id) });
         eventService.broadcast('order_updated', { at: Date.now(), customer_id: Number(id) });
       }
     } catch (_) {}

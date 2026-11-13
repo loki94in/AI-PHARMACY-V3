@@ -992,7 +992,9 @@ async function ensureOrderTimingSchema(db: any) {
     await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_status_date ON patient_call_tasks(status, created_at DESC)');
     await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_phone ON patient_call_tasks(patient_phone)');
     await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_reschedule ON patient_call_tasks(reschedule_date)');
+    await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_customer_id ON patient_call_tasks(customer_id)');
     await ensureColumns(db, 'patient_call_tasks', {
+      customer_id: "INTEGER DEFAULT NULL",
       priority: "TEXT DEFAULT 'normal'",
       call_attempts: "INTEGER DEFAULT 0",
       last_called_at: "DATETIME DEFAULT NULL"
@@ -1461,7 +1463,9 @@ export async function ensureSchema(dbPath: string) {
           await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_status_date ON patient_call_tasks(status, created_at DESC)');
           await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_phone ON patient_call_tasks(patient_phone)');
           await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_reschedule ON patient_call_tasks(reschedule_date)');
+          await db.run('CREATE INDEX IF NOT EXISTS idx_call_tasks_customer_id ON patient_call_tasks(customer_id)');
           await ensureColumns(db, 'patient_call_tasks', {
+            customer_id: "INTEGER DEFAULT NULL",
             priority: "TEXT DEFAULT 'normal'",
             call_attempts: "INTEGER DEFAULT 0",
             last_called_at: "DATETIME DEFAULT NULL"
