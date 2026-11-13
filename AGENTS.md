@@ -319,6 +319,9 @@ Every medicine image in the catalog must be strictly verified against the comple
 
 ## UI Development Guidelines
 
+**AUTHORITATIVE DESIGN SPECIFICATION:**
+All UI components and pages must follow the OpenDesignMD design tokens and patterns codified in [DESIGN.md](./DESIGN.md) (root directory). This standard governs 3-tier ink hierarchy, tabular monospace numerics, keyboard shortcut chips, high-density table rhythms, and CPU-safe rendering.
+
 **CRITICAL RULE FOR ALL NEW UI COMPONENTS:**
 Never hardcode raw Tailwind colors like `bg-black/20`, `bg-[#18181b]`, `text-white`, or `bg-white/5` when building UI.
 This breaks the light mode/theme toggle.
