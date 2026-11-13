@@ -699,7 +699,7 @@ export interface WhatsAppQueueItem {
   retry_count: number;
   created_at: number;
   sent_at: number | null;
-  error_message?: string;
+  error_message?: string | null;
   target_name?: string;
   scheduled_at?: number | null;
   media_url?: string | null;

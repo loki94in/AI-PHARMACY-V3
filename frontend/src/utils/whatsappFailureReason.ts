@@ -1,5 +1,5 @@
 /** Turns a raw WhatsApp send error into a short, human-readable reason. Shared by WhatsAppQueuePopover and AutomationHubPopover so failure text is identical everywhere it's shown. */
-export function getFormattedFailureReason(errorMsg?: string, status?: string): string {
+export function getFormattedFailureReason(errorMsg?: string | null, status?: string): string {
   if (!errorMsg && status === 'failed_offline') {
     return 'PC / Internet is offline or connection lost';
   }
