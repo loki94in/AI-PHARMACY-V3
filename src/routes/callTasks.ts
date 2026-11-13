@@ -120,7 +120,7 @@ router.patch('/:id/complete', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     const { id } = req.params;
-    const { call_outcome, notes } = req.body;
+    const { call_outcome, notes } = req.body || {};
     const taskId = parseInt(id, 10);
 
     const task = await db.get('SELECT * FROM patient_call_tasks WHERE id = ?', [taskId]);
@@ -211,7 +211,7 @@ router.patch('/:id/reschedule', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     const { id } = req.params;
-    const { reschedule_date, notes } = req.body;
+    const { reschedule_date, notes } = req.body || {};
 
     if (!reschedule_date) {
       return res.status(400).json({ success: false, error: 'reschedule_date is required (YYYY-MM-DD)' });
@@ -236,7 +236,7 @@ router.patch('/:id/dismiss', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     const { id } = req.params;
-    const { notes } = req.body;
+    const { notes } = req.body || {};
 
     await db.run(
       `UPDATE patient_call_tasks
@@ -257,7 +257,7 @@ router.patch('/:id', async (req, res) => {
   try {
     const db = await dbManager.getConnection();
     const { id } = req.params;
-    const { notes, call_outcome } = req.body;
+    const { notes, call_outcome } = req.body || {};
 
     await db.run(
       `UPDATE patient_call_tasks

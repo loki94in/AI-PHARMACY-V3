@@ -14,6 +14,7 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../services/api';
+import { toastEvent } from '../services/events';
 import { Phone, CheckCircle, Clock, X, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface CallTask {
@@ -104,8 +105,14 @@ export function CallTaskBoard({ filter = 'all', compact = false }: CallTaskBoard
   });
 
   const dismissMutation = useMutation({
-    mutationFn: (id: number) => apiClient.patch(`/call-tasks/${id}/dismiss`),
-    onSuccess: invalidate,
+    mutationFn: (id: number) => apiClient.patch(`/call-tasks/${id}/dismiss`, {}),
+    onSuccess: () => {
+      invalidate();
+      toastEvent.trigger('Call task dismissed', 'info', '/crm');
+    },
+    onError: (err: any) => {
+      toastEvent.trigger(err?.response?.data?.error || 'Failed to dismiss task', 'error', '/crm');
+    },
   });
 
   const tasks = pendingData?.tasks ?? [];

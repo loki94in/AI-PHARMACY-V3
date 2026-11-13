@@ -1,4 +1,4 @@
-# Implementation Plan: DESIGN.md System Standardization
+   # Implementation Plan: DESIGN.md System Standardization
 
 **Status:** Completed  
 **Goal:** Establish an OpenDesignMD-compliant `DESIGN.md` contract at the repository root to guarantee visual consistency, clinical readability, keyboard-first ergonomics, and performance-guardrail compliance across all AI agents and feature developments.
