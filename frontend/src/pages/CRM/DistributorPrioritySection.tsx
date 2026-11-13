@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GripVertical, Save, ListOrdered } from 'lucide-react';
+import { GripVertical, Save, ListOrdered, ChevronUp, ChevronDown } from 'lucide-react';
 import { api } from '../../services/api';
 import { useApiQuery } from '../../hooks/useApiQuery';
 import { toastEvent, refillEvent } from '../../services/events';
@@ -107,6 +107,26 @@ export const DistributorPrioritySection: React.FC = () => {
             }`}
           >
             <GripVertical size={16} className="text-muted shrink-0" />
+            <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+              <button
+                type="button"
+                disabled={i === 0}
+                onClick={() => change(move(rows, i, i - 1))}
+                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                title="Move up (Higher priority)"
+              >
+                <ChevronUp size={15} />
+              </button>
+              <button
+                type="button"
+                disabled={i === rows.length - 1}
+                onClick={() => change(move(rows, i, i + 1))}
+                className="p-1 rounded-lg text-muted hover:text-text hover:bg-bg3 disabled:opacity-20 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                title="Move down (Lower priority)"
+              >
+                <ChevronDown size={15} />
+              </button>
+            </div>
             <span className="w-7 text-center text-xs font-mono font-bold text-primary">{i + 1}</span>
             <div className="flex-1 min-w-0 text-xs font-bold text-text truncate">{r.storeName}</div>
             {!r.ranked && <span className="text-[11px] text-primary font-bold shrink-0">New — drag to place</span>}

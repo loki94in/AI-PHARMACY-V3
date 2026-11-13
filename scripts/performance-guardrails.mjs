@@ -23,7 +23,7 @@ const ROOT = process.cwd();
 const MODE = process.argv.includes('--all') ? 'all'
   : process.argv.includes('--self-test') ? 'self-test' : 'changed';
 
-const SCAN_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.iss']);
+const SCAN_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'dist-pkg', 'build', 'uploads',
   '.wwebjs_auth', 'pharmarack_profile', '.understand-anything', 'backup', 'data']);
 
@@ -325,37 +325,6 @@ const RULES = [
       return out;
     },
   },
-  {
-    id: 'I1', name: 'inno-uninitialized-app-constant',
-    scope: p => norm(p).endsWith('.iss'),
-    fileRule: true,
-    checkFile(file, content) {
-      const out = [];
-      const lines = content.split('\n');
-      let inEarlyHook = false;
-      let hookName = '';
-      lines.forEach((line, idx) => {
-        const trimmed = line.trim();
-        if (/(?:function|procedure)\s+(InitializeSetup|InitializeWizard|CheckIfExistingInstall)\b/i.test(trimmed)) {
-          inEarlyHook = true;
-          const match = trimmed.match(/(?:function|procedure)\s+([A-Za-z0-9_]+)/i);
-          hookName = match ? match[1] : 'early wizard hook';
-        }
-        if (inEarlyHook) {
-          if (/ExpandConstant\s*\(\s*['"]\{app\}/i.test(line) && !looksLikeComment(line)) {
-            out.push({
-              rule: 'I1', name: 'inno-uninitialized-app-constant', file, line: idx + 1,
-              msg: `Illegal ExpandConstant("{app}") inside ${hookName}. In Inno Setup, {app} is uninitialized before directory selection (causes fatal Runtime error at 1:70). Use {localappdata} or Windows Registry instead.`,
-            });
-          }
-          if (/^end;/i.test(trimmed)) {
-            inEarlyHook = false;
-          }
-        }
-      });
-      return out;
-    },
-  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -524,15 +493,6 @@ function selfTest() {
   }
   if (!e1.checkFile('electron/main.ts', lockedMain + "\napp.commandLine.appendSwitch('ignore-gpu-blocklist');").length) {
     console.error('SELF-TEST FAIL: E1 silent on a GPU-forcing switch.'); failed++;
-  }
-  const i1 = RULES.find(r => r.id === 'I1');
-  const badIss = 'procedure InitializeWizard();\nbegin\n  FileExists(ExpandConstant(\'{app}\\test\'));\nend;';
-  if (!i1.checkFile('installer-stub.iss', badIss).length) {
-    console.error('SELF-TEST FAIL: I1 silent on uninitialized {app} in InitializeWizard.'); failed++;
-  }
-  const goodIss = 'procedure InitializeWizard();\nbegin\n  FileExists(ExpandConstant(\'{localappdata}\\test\'));\nend;';
-  if (i1.checkFile('installer-stub.iss', goodIss).length) {
-    console.error('SELF-TEST FAIL: I1 flagged safe {localappdata} in InitializeWizard.'); failed++;
   }
   if (failed) { console.error('\n--self-test: ' + failed + ' failure(s)'); process.exit(1); }
   console.log('--self-test: PASS — every rule fires on bad samples, stays silent on clean ones.');

@@ -2,7 +2,7 @@ import { matchUniversalTokens } from '../../utils/searchUtils';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Search, RefreshCw, FileText, Send, CheckCircle2, X, Users, Phone, QrCode, Zap, Package, RotateCcw } from 'lucide-react';
+import { Search, RefreshCw, FileText, Send, CheckCircle2, X, Users, Phone, QrCode, Zap, Package, RotateCcw, Pencil, Check } from 'lucide-react';
 import type { SalesHistoryInvoice, SalesHistoryItemLine, LocalApiError } from './crmTypes';
 import { formatDate } from './crmTypes';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
@@ -51,6 +51,37 @@ export const CustomerCreditSection: React.FC = () => {
   const creditPhone = (selectedCustomer?.phone || '').replace(/\D/g, '').slice(-10);
   const { isNotOnWa: creditNotOnWa } = useWaPhoneStatus(creditPhone);
   const [viewInvoice, setViewInvoice] = useState<SalesHistoryInvoice | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editingNameValue, setEditingNameValue] = useState('');
+  const [savingName, setSavingName] = useState(false);
+
+  const handleStartEditName = () => {
+    if (!selectedCustomer) return;
+    setEditingNameValue(selectedCustomer.name || '');
+    setIsEditingName(true);
+  };
+
+  const handleSaveCustomerName = async () => {
+    if (!selectedCustomer || savingName) return;
+    const cleanName = editingNameValue.trim();
+    if (!cleanName) {
+      toastEvent.trigger('Customer name cannot be empty', 'error', '/crm');
+      return;
+    }
+    setSavingName(true);
+    try {
+      await api.updatePatient(selectedCustomer.id, { name: cleanName });
+      setSelectedCustomer(prev => (prev ? { ...prev, name: cleanName } : null));
+      setCustomers(prev => prev.map(c => (c.id === selectedCustomer.id ? { ...c, name: cleanName } : c)));
+      cachedCreditCustomers = cachedCreditCustomers.map(c => (c.id === selectedCustomer.id ? { ...c, name: cleanName } : c));
+      setIsEditingName(false);
+      toastEvent.trigger(`Customer name updated to "${cleanName}"`, 'success', '/crm');
+    } catch (err: unknown) {
+      toastEvent.trigger((err as LocalApiError)?.response?.data?.error || 'Failed to update customer name', 'error', '/crm');
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   const loadCustomerInvoices = useCallback(async (customerId: number) => {
     setLoadingInvoices(true);
@@ -308,6 +339,7 @@ export const CustomerCreditSection: React.FC = () => {
                   <div
                     key={cust.id}
                     onClick={() => {
+                      setIsEditingName(false);
                       setSelectedCustomer(cust);
                       loadCustomerInvoices(cust.id);
                     }}
@@ -352,7 +384,53 @@ export const CustomerCreditSection: React.FC = () => {
               <div className="p-3.5 border-b border-border bg-bg3/30 flex flex-wrap items-center justify-between gap-3 shrink-0">
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="text-base font-bold text-text">{selectedCustomer.name || 'Unnamed Patient'}</h2>
+                    {isEditingName ? (
+                      <div className="flex items-center gap-1.5 py-0.5">
+                        <input
+                          type="text"
+                          autoFocus
+                          value={editingNameValue}
+                          onChange={(e) => setEditingNameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveCustomerName();
+                            else if (e.key === 'Escape') setIsEditingName(false);
+                          }}
+                          placeholder="Enter patient name..."
+                          disabled={savingName}
+                          className="px-2.5 py-1 text-sm font-bold bg-bg border border-primary rounded-lg text-text focus:outline-none focus:ring-2 focus:ring-primary/20 shadow-sm min-w-[200px]"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveCustomerName}
+                          disabled={savingName}
+                          className="p-1.5 rounded-lg bg-primary text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer shadow-sm"
+                          title="Save Name (Enter)"
+                        >
+                          <Check size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingName(false)}
+                          disabled={savingName}
+                          className="p-1.5 rounded-lg bg-bg border border-border text-muted hover:text-text hover:bg-bg3 cursor-pointer shadow-sm"
+                          title="Cancel (Esc)"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <h2 className="text-base font-bold text-text">{selectedCustomer.name || 'Unnamed Patient'}</h2>
+                        <button
+                          type="button"
+                          onClick={handleStartEditName}
+                          className="p-1 rounded-md text-muted hover:text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+                          title="Edit patient name (fix spelling mistakes)"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </>
+                    )}
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
                       CREDIT ACCOUNT
                     </span>

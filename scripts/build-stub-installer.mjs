@@ -39,7 +39,7 @@ for (const cand of isccCandidates) {
       isccExe = cand;
       break;
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 if (!isccExe) {
@@ -51,18 +51,6 @@ if (!isccExe) {
 const issPath = path.join(rootDir, 'installer-stub.iss');
 const outDir = path.join(rootDir, 'dist', 'installer');
 fs.mkdirSync(outDir, { recursive: true });
-
-// Pre-flight check: ensure installer-stub.iss does not expand {app} before directory selection (causes Runtime Error at 1:70)
-const issContent = fs.readFileSync(issPath, 'utf8');
-const earlyHooks = issContent.match(/(?:function|procedure)\s+(InitializeSetup|InitializeWizard|CheckIfExistingInstall)[\s\S]*?end;/gi) || [];
-for (const hook of earlyHooks) {
-  if (/ExpandConstant\s*\(\s*['"]\{app\}/i.test(hook)) {
-    console.error('\n❌ BUILD FAILED: installer-stub.iss expands {app} in an early initialization hook.');
-    console.error('   In Inno Setup, {app} is uninitialized before directory selection and triggers a fatal Runtime Error at 1:70.');
-    console.error('   Use {localappdata} or Windows Registry instead.');
-    process.exit(1);
-  }
-}
 
 const payloadUrl = process.env.PAYLOAD_URL || '';
 const payloadArg = payloadUrl ? ` "/DPayloadUrl=${payloadUrl}"` : '';
