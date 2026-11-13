@@ -3678,24 +3678,26 @@ const POS = () => {
     }
     const finalPhone = isValid10DigitPhone(phoneToUse) ? phoneToUse : '';
 
-    // Expiry check
-    for (const item of cart) {
-      if (item.isEmptyRow) continue;
-      const expiryStr = item.expiry || '';
-      if (expiryStr) {
-        let expDate: Date;
-        if (expiryStr.includes('/')) {
-          const parts = expiryStr.split('/');
-          let year = parseInt(parts[1], 10);
-          const month = parseInt(parts[0], 10) - 1;
-          if (year < 100) year += 2000;
-          expDate = new Date(year, month + 1, 0);
-        } else {
-          expDate = new Date(expiryStr);
-        }
-        if (expDate < new Date()) {
-          toastEvent.trigger(`❌ Critical Safety Block: Cart contains EXPIRED product "${item.name}" (${expiryStr}). Cannot proceed with checkout.`, 'error');
-          return;
+    // Expiry check (enforced for new sales; historical saved bills being edited skip check for already-dispensed items)
+    if (!editingInvoiceId) {
+      for (const item of cart) {
+        if (item.isEmptyRow) continue;
+        const expiryStr = item.expiry || '';
+        if (expiryStr) {
+          let expDate: Date;
+          if (expiryStr.includes('/')) {
+            const parts = expiryStr.split('/');
+            let year = parseInt(parts[1], 10);
+            const month = parseInt(parts[0], 10) - 1;
+            if (year < 100) year += 2000;
+            expDate = new Date(year, month + 1, 0);
+          } else {
+            expDate = new Date(expiryStr);
+          }
+          if (expDate < new Date()) {
+            toastEvent.trigger(`❌ Critical Safety Block: Cart contains EXPIRED product "${item.name}" (${expiryStr}). Cannot proceed with checkout.`, 'error');
+            return;
+          }
         }
       }
     }

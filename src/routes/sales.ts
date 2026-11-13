@@ -2843,14 +2843,15 @@ router.put('/:id', async (req, res) => {
     // or create a duplicate customer because of phone formatting.
     const digitsOf = (v: unknown) => String(v ?? '').replace(/\D/g, '');
     const linkedCustomer = existing.customer_id
-      ? await db.get('SELECT name, phone FROM customers WHERE id = ?', [existing.customer_id])
+      ? await db.get('SELECT id, name, phone, credit_enabled, credit_due_date FROM customers WHERE id = ?', [existing.customer_id])
       : null;
     const savedName = String(existing.customer_name_snapshot ?? linkedCustomer?.name ?? '').trim();
     const savedPhone = digitsOf(existing.customer_phone_snapshot ?? linkedCustomer?.phone);
     const newName = typeof patient_name === 'string' ? patient_name.trim() : '';
+    const newPhoneDigits = patient_phone !== undefined && patient_phone !== null ? digitsOf(patient_phone) : '';
     const customerChanged = !!newName && (
       newName.toLowerCase() !== savedName.toLowerCase() ||
-      (patient_phone !== undefined && digitsOf(patient_phone) !== savedPhone)
+      (patient_phone !== undefined && newPhoneDigits !== savedPhone)
     );
     let customerId = existing.customer_id;
     if (customerChanged) {
@@ -2858,14 +2859,34 @@ router.put('/:id', async (req, res) => {
         // Placeholder or blank name (e.g. Walk-in) — preserve as unlinked counter sale; never create dummy customer
         customerId = null;
       } else {
-        const existingCust = await db.get('SELECT id FROM customers WHERE name = ? AND phone = ?', [newName, patient_phone || '']);
+        // Find existing customer by 10-digit phone first
+        let existingCust = (newPhoneDigits.length === 10)
+          ? await db.get('SELECT id, name, phone FROM customers WHERE phone = ?', [newPhoneDigits])
+          : null;
+        // Or by name
+        if (!existingCust) {
+          existingCust = await db.get('SELECT id, name, phone FROM customers WHERE LOWER(TRIM(name)) = LOWER(?)', [newName]);
+        }
+
         if (existingCust) {
           customerId = existingCust.id;
+          if (newPhoneDigits.length === 10 && (!existingCust.phone || String(existingCust.phone).trim() === '')) {
+            await db.run('UPDATE customers SET phone = ? WHERE id = ?', [newPhoneDigits, existingCust.id]);
+          }
+        } else if (existing.customer_id) {
+          customerId = existing.customer_id;
+          await db.run(
+            'UPDATE customers SET name = ?, phone = COALESCE(NULLIF(?, ""), phone) WHERE id = ?',
+            [newName, newPhoneDigits.length === 10 ? newPhoneDigits : '', customerId]
+          );
         } else {
-          const custResult = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [newName, patient_phone || '']);
+          const custResult = await db.run('INSERT INTO customers (name, phone) VALUES (?, ?)', [newName, newPhoneDigits.length === 10 ? newPhoneDigits : '']);
           customerId = custResult.lastID;
         }
       }
+    } else if (customerId && newPhoneDigits.length === 10 && (!linkedCustomer?.phone || String(linkedCustomer.phone).trim() === '')) {
+      // Even if customer name/id didn't change, but had no phone saved, update the customer record!
+      await db.run('UPDATE customers SET phone = ? WHERE id = ?', [newPhoneDigits, customerId]);
     }
 
     // Doctor: only an edit that sends doctor fields (POS edit mode) changes or re-checks it.
@@ -2899,23 +2920,59 @@ router.put('/:id', async (req, res) => {
     }
     const doctorChanged = (resolvedDoctorId || null) !== (existing.doctor_id || null);
 
+    // Resolve payment medium and status
+    const isCredit = (paymentMedium || '').toUpperCase() === 'CREDIT';
+    const resolvedMedium = paymentMedium ? paymentMedium.toUpperCase() : existing.payment_medium;
+    const resolvedStatus = paymentStatus !== undefined && paymentStatus !== null
+      ? paymentStatus
+      : (isCredit ? 'UNPAID' : (paymentMedium ? 'PAID' : existing.payment_status));
+
     // Lines: one shared rule set with the Investigation correction (services/saleBillEditService.ts).
     // Stock moves only by the net change per batch; totals use the POS math.
     if (Array.isArray(items)) {
       const { subtotal, total, tax, roff, totalCgst, totalSgst } = await applySaleBillEdit(db, id, items, Number(discount || 0));
       await db.run(
         'UPDATE sales_invoices SET customer_id = ?, total_amount = ?, tax_amount = ?, cgst_value = ?, sgst_value = ?, payment_medium = COALESCE(?, payment_medium), payment_status = COALESCE(?, payment_status), discount = ?, subtotal = ?, doctor_id = ?, roff = ? WHERE id = ?',
-        [customerId, total, tax, totalCgst, totalSgst, paymentMedium || null, paymentStatus || null, Number(discount || 0), subtotal, resolvedDoctorId, roff, id]
+        [customerId, total, tax, totalCgst, totalSgst, resolvedMedium, resolvedStatus, Number(discount || 0), subtotal, resolvedDoctorId, roff, id]
       );
     } else {
-      await db.run('UPDATE sales_invoices SET customer_id = ?, doctor_id = ?, payment_medium = COALESCE(?, payment_medium), payment_status = COALESCE(?, payment_status) WHERE id = ?', [customerId, resolvedDoctorId, paymentMedium || null, paymentStatus || null, id]);
+      await db.run('UPDATE sales_invoices SET customer_id = ?, doctor_id = ?, payment_medium = COALESCE(?, payment_medium), payment_status = COALESCE(?, payment_status) WHERE id = ?', [customerId, resolvedDoctorId, resolvedMedium, resolvedStatus, id]);
+    }
+
+    // Auto-enable customer credit & provision default 7th due date when converting to credit
+    if (isCredit && customerId) {
+      const now = new Date();
+      let dueYear = now.getFullYear();
+      let dueMonth = now.getMonth();
+      if (now.getDate() >= 7) {
+        dueMonth += 1;
+        if (dueMonth > 11) {
+          dueMonth = 0;
+          dueYear += 1;
+        }
+      }
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const default7thDueDate = `${dueYear}-${pad(dueMonth + 1)}-07`;
+      const explicitDueDate = req.body.credit_due_date && String(req.body.credit_due_date).trim() ? String(req.body.credit_due_date).trim() : null;
+
+      await db.run(
+        `UPDATE customers 
+         SET credit_enabled = 1,
+             credit_due_date = COALESCE(?, CASE 
+               WHEN credit_due_date IS NULL OR credit_due_date = '' OR date(credit_due_date) < date('now', 'localtime') 
+               THEN ? 
+               ELSE credit_due_date 
+             END)
+         WHERE id = ?`,
+        [explicitDueDate, default7thDueDate, customerId]
+      );
     }
 
     // The bill list and print read the saved name copies first, so a changed patient or
     // doctor must update them or the edit would never show.
-    if (customerChanged) {
-      const snapName = isValidCustomerName(newName) ? newName : null;
-      const snapPhone = isValidCustomerName(newName) ? (patient_phone || '') : null;
+    if (customerChanged || (newPhoneDigits.length === 10 && !existing.customer_phone_snapshot)) {
+      const snapName = isValidCustomerName(newName) ? newName : (existing.customer_name_snapshot || null);
+      const snapPhone = isValidCustomerName(newName) || existing.customer_name_snapshot ? (patient_phone || '') : null;
       await db.run('UPDATE sales_invoices SET customer_name_snapshot = ?, customer_phone_snapshot = ? WHERE id = ?', [snapName, snapPhone, id]);
     }
     if (doctorChanged) {
@@ -2932,7 +2989,9 @@ router.put('/:id', async (req, res) => {
       const unpaidRow = await db.get(
         `SELECT COALESCE(SUM(total_amount), 0) as total 
          FROM sales_invoices 
-         WHERE customer_id = ? AND (payment_medium = 'CREDIT' OR payment_status = 'UNPAID' OR payment_status = 'PENDING')`,
+         WHERE customer_id = ? 
+           AND (UPPER(payment_medium) = 'CREDIT' OR UPPER(payment_status) IN ('UNPAID', 'PENDING'))
+           AND UPPER(COALESCE(payment_status, '')) != 'PAID'`,
         [cId]
       );
       const newBalance = Math.max(0, Number(unpaidRow?.total || 0));
@@ -2966,6 +3025,11 @@ router.put('/:id', async (req, res) => {
       eventService.broadcast('sales_sync', { success: true, action: 'update', id: Number(id) });
       eventService.broadcast('inventory_sync', { success: true });
       eventService.broadcast('inventory_changed', { reason: 'sale_edit', invoice_id: Number(id) });
+      for (const cId of custIdsToRecalc) {
+        eventService.broadcast('customers_changed', { at: Date.now(), id: cId });
+        eventService.broadcast('customers_updated', { at: Date.now(), id: cId });
+        eventService.broadcast('credit_updated', { at: Date.now(), id: cId });
+      }
     } catch (sseErr) {
       console.warn('Could not broadcast sale update:', sseErr);
     }

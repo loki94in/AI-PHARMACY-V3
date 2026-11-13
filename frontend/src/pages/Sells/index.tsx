@@ -1,9 +1,10 @@
 import { matchUniversalTokens } from '../../utils/searchUtils';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Edit3, Trash2, X, User, FileText, Save, AlertTriangle, BookOpen, RefreshCw, ShieldAlert, Factory, Calendar, RotateCcw, Download, QrCode, Printer, PackageCheck, SlidersHorizontal } from 'lucide-react';
+import { Edit3, Trash2, X, User, FileText, Save, AlertTriangle, BookOpen, RefreshCw, ShieldAlert, Factory, Calendar, RotateCcw, Download, QrCode, Printer, PackageCheck, SlidersHorizontal, CreditCard } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { UniversalMedicineEditModal } from '../../components/UniversalMedicineEditModal';
+import { PhoneInputWithBadge } from '../../components/PhoneInputWithBadge';
 import { api } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import { useQueryClient } from '@tanstack/react-query';
@@ -426,9 +427,9 @@ const Sells = () => {
     }
   };
 
-  const openEditModal = async (invoice: SaleInvoice) => {
-    // Intercept old FY bills
-    if (isOldFinancialYear(invoice.date)) {
+  const openEditModal = async (invoice: SaleInvoice, forceMedium?: string, allowOldFy?: boolean) => {
+    // Intercept old FY bills unless explicitly converting payment/customer or explicitly allowed
+    if (isOldFinancialYear(invoice.date) && !allowOldFy && forceMedium !== 'CREDIT') {
       setOldFyBillConfirm(invoice);
       return;
     }
@@ -444,9 +445,9 @@ const Sells = () => {
       setOriginalEditItems(JSON.parse(JSON.stringify(itemsList)));
       setEditCustomerName(full.customer_name || '');
       setEditCustomerPhone(full.customer_phone || '');
-      setEditPaymentMedium(full.payment_medium || 'CASH');
+      setEditPaymentMedium(forceMedium || full.payment_medium || 'CASH');
       setEditDiscount(Number(full.discount || 0));
-      setEditReason('');
+      setEditReason(forceMedium === 'CREDIT' ? 'Convert to Credit' : '');
     } catch (_err) {
       toastEvent.trigger('Failed to load invoice items for editing', 'error');
     }
@@ -496,7 +497,20 @@ const Sells = () => {
     }
 
     const cleanPh = sanitizePhoneInput(editCustomerPhone);
-    if (editCustomerPhone.trim() && !isValid10DigitPhone(cleanPh)) {
+    if (editPaymentMedium === 'CREDIT') {
+      if (!cleanPh) {
+        toastEvent.trigger('Customer phone number is required to save as Credit bill.', 'error');
+        return;
+      }
+      if (!isValid10DigitPhone(cleanPh)) {
+        toastEvent.trigger('Customer phone must be a valid 10-digit Indian mobile number (starts with 6–9).', 'error');
+        return;
+      }
+      if (!editCustomerName.trim()) {
+        toastEvent.trigger('Customer name is required for Credit bill.', 'error');
+        return;
+      }
+    } else if (editCustomerPhone.trim() && !isValid10DigitPhone(cleanPh)) {
       toastEvent.trigger('Customer phone must be a valid 10-digit Indian mobile number (starts with 6–9).', 'error');
       return;
     }
@@ -511,6 +525,7 @@ const Sells = () => {
         return sum + (q * dPrice) + (l * (dPrice / pSize));
       }, 0);
       const grandTotal = Math.max(0, subtotal - editDiscount);
+      const targetPaymentStatus = editPaymentMedium === 'CREDIT' ? 'UNPAID' : 'PAID';
 
       await api.updateSale(editInvoice.id, {
         items: editItems.map(item => ({
@@ -521,9 +536,10 @@ const Sells = () => {
           discount_per: item.discount_per || 0,
         })),
         patient_name: editCustomerName,
-        patient_phone: editCustomerPhone,
+        patient_phone: cleanPh || editCustomerPhone,
         discount: editDiscount,
         paymentMedium: editPaymentMedium,
+        paymentStatus: targetPaymentStatus,
       });
 
       // Optimistic row update in 0ms (no UI lag)
@@ -532,15 +548,21 @@ const Sells = () => {
         prev => ({
           ...prev,
           customer_name: editCustomerName,
-          customer_phone: editCustomerPhone,
+          customer_phone: cleanPh || editCustomerPhone,
           payment_medium: editPaymentMedium,
+          payment_status: targetPaymentStatus,
           discount: editDiscount,
           subtotal: Math.round(subtotal),
           total_amount: Math.round(grandTotal),
         })
       );
 
-      toastEvent.trigger('Invoice updated successfully, shelf stock reconciled', 'success');
+      toastEvent.trigger(
+        editPaymentMedium === 'CREDIT'
+          ? `Invoice #${editInvoice.invoice_no} converted to Credit successfully! Customer credit account updated.`
+          : 'Invoice updated successfully, shelf stock reconciled',
+        'success'
+      );
       setEditInvoice(null);
       
       // Centralized cache invalidation for frontend lists and local infinite scroll caches
@@ -1158,6 +1180,15 @@ const Sells = () => {
 
             {/* Modal Body */}
             <div className="p-5 space-y-5 flex-1 min-h-0 overflow-y-auto">
+              {isOldFinancialYear(editInvoice.date) && (
+                <div className="flex items-center gap-2.5 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300">
+                  <AlertTriangle size={16} className="shrink-0 text-amber-400" />
+                  <span>
+                    <strong>Historical Bill ({formatDate(editInvoice.date)}):</strong> Line item quantities are locked to preserve historical stock integrity. You can safely update Customer Name, Phone Number (with WhatsApp capability check), and Payment Method (e.g. Convert to Credit).
+                  </span>
+                </div>
+              )}
+
               {/* Customer & Payment Info Bar */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 bg-bg2/60 p-3.5 rounded-xl border border-glass-border">
                 <div>
@@ -1174,16 +1205,15 @@ const Sells = () => {
                   />
                 </div>
                 <div>
-                  <label htmlFor="edit-sale-customer-phone" className="text-[10px] font-bold text-muted uppercase tracking-wider mb-1 block">Phone Number</label>
-                  <input
-                    id="edit-sale-customer-phone"
-                    name="edit_sale_customer_phone"
-                    autoComplete="off"
-                    type="text"
+                  <PhoneInputWithBadge
+                    label="Phone Number"
                     value={editCustomerPhone}
-                    onChange={e => setEditCustomerPhone(e.target.value)}
-                    className="w-full px-3 py-1.5 bg-bg3 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50 font-mono"
-                    placeholder="Phone number..."
+                    onChange={setEditCustomerPhone}
+                    allowEmpty={editPaymentMedium !== 'CREDIT'}
+                    required={editPaymentMedium === 'CREDIT'}
+                    placeholder="10-digit mobile..."
+                    id="edit-sale-customer-phone"
+                    checkWhatsApp={true}
                   />
                 </div>
                 <div>
@@ -1193,12 +1223,14 @@ const Sells = () => {
                     name="edit_sale_payment_medium"
                     value={editPaymentMedium}
                     onChange={e => setEditPaymentMedium(e.target.value)}
-                    className="w-full px-3 py-1.5 bg-bg3 border border-glass-border rounded-lg text-sm text-text focus:outline-none focus:border-primary/50"
+                    className={`w-full px-3 py-1.5 bg-bg3 border rounded-lg text-sm font-bold focus:outline-none focus:border-primary/50 ${
+                      editPaymentMedium === 'CREDIT' ? 'border-amber-500/50 text-amber-400 bg-amber-500/10' : 'border-glass-border text-text'
+                    }`}
                   >
                     <option value="CASH">Cash</option>
                     <option value="UPI">UPI / Online</option>
                     <option value="CARD">Card</option>
-                    <option value="CREDIT">Credit</option>
+                    <option value="CREDIT">Credit (Udhar)</option>
                   </select>
                 </div>
                 <div>
@@ -1544,7 +1576,9 @@ const Sells = () => {
               </button>
 
               <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-                {deleteConfirmInEdit ? (
+                {isOldFinancialYear(editInvoice.date) ? (
+                  <span className="text-xs text-muted italic px-2">Historical FY: Deletion locked</span>
+                ) : deleteConfirmInEdit ? (
                   <div className="flex items-center gap-2 p-1.5 rounded-xl bg-red-500/15 border border-red-500/40">
                     <span className="text-xs text-red font-bold px-2">
                       Permanently delete #{editInvoice.invoice_no}?
@@ -1581,10 +1615,13 @@ const Sells = () => {
                   type="button"
                   onClick={handleSaveEdit}
                   disabled={saving}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary/90 text-white rounded-xl text-sm font-bold disabled:opacity-50 transition-all shadow-lg cursor-pointer"
+                  className={editPaymentMedium === 'CREDIT'
+                    ? 'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 transition-all shadow-lg cursor-pointer text-white bg-amber-600 hover:bg-amber-500 shadow-amber-600/30'
+                    : 'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50 transition-all shadow-lg cursor-pointer text-white bg-primary hover:bg-primary/90'
+                  }
                 >
-                  <Save size={16} />
-                  {saving ? 'Saving...' : 'Save Changes & Reconcile Stock'}
+                  {editPaymentMedium === 'CREDIT' ? <CreditCard size={16} /> : <Save size={16} />}
+                  {saving ? 'Saving...' : (editPaymentMedium === 'CREDIT' ? 'Save & Convert to Credit' : 'Save Changes')}
                 </button>
               </div>
             </div>
@@ -1788,6 +1825,18 @@ const Sells = () => {
               </button>
 
               <div className="flex items-center gap-3">
+                {String(viewInvoice.payment_medium || '').toUpperCase() !== 'CREDIT' && (
+                  <button
+                    type="button"
+                    onClick={() => openEditModal(viewInvoice, 'CREDIT', true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-amber-500/15 hover:bg-amber-500 text-amber-400 hover:text-white border border-amber-500/30 rounded-lg text-sm font-bold transition-all cursor-pointer shadow-sm"
+                    title="Convert this bill to Credit (Udhar) and update patient credit balance"
+                  >
+                    <CreditCard size={15} />
+                    Convert to Credit
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => openEditModal(viewInvoice)}
@@ -2158,6 +2207,26 @@ const Sells = () => {
                   <div className="font-bold text-text text-sm">Stock Adjustment (Manual)</div>
                   <div className="text-xs text-muted mt-0.5 leading-relaxed">
                     Opens Inventory with this bill pre-filled as reference. Manually adjust stock quantities with a reason note.
+                  </div>
+                </div>
+              </button>
+
+              {/* Option 3: Update Payment / Convert to Credit */}
+              <button
+                onClick={() => {
+                  const bill = oldFyBillConfirm;
+                  setOldFyBillConfirm(null);
+                  openEditModal(bill, undefined, true);
+                }}
+                className="w-full flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 hover:border-amber-500/50 transition-all text-left group cursor-pointer"
+              >
+                <div className="p-2 rounded-lg bg-amber-500/20 group-hover:bg-amber-500/30 transition-all shrink-0 mt-0.5">
+                  <CreditCard size={18} className="text-amber-400" />
+                </div>
+                <div>
+                  <div className="font-bold text-text text-sm">Update Payment Method / Convert to Credit</div>
+                  <div className="text-xs text-muted mt-0.5 leading-relaxed">
+                    Update the patient name, phone number (with WhatsApp capability check), or convert Cash to Credit without altering stock.
                   </div>
                 </div>
               </button>
