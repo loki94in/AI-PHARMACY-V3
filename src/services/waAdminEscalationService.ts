@@ -1,5 +1,6 @@
 import { dbManager } from '../database/connection.js';
 import { whatsappQueueWorker } from './whatsappQueueWorker.js';
+import { isPromotionalOrBroadcastMessage } from './intentKeywords.js';
 
 interface RelatedMedicineInfo { name: string; registered: boolean; inventoryStock: number }
 
@@ -207,6 +208,18 @@ export async function maybeEscalate(payload: EscalationPayload): Promise<void> {
     const cleanPhone = (p: string) => p.replace(/\D/g, '').slice(-10);
     if (cleanPhone(customerPhoneRaw) === cleanPhone(adminWhatsapp)) {
       console.log('[Admin Escalation] Self-send detected (customer is admin). Skipping escalation.');
+      return;
+    }
+
+    // Promotional & noise guard: never escalate broadcast marketing, ads, or consumer appliances to store owner
+    const fullText = (payload.messageBody || payload.medicineName || '').trim();
+    if (isPromotionalOrBroadcastMessage(fullText) || isPromotionalOrBroadcastMessage(payload.medicineName)) {
+      console.log('[Admin Escalation] Suppressed admin escalation: message identified as promotional broadcast.');
+      return;
+    }
+    const NON_PHARMA_NOISE_REGEX = /\b(?:aata maker|flour mill|mixer|grinder|tv|recharge|dth|mobile|set-top|set top|offer|bonus|wallet|update|live\s*tv|get more|enjoy|investor|sebi|http|www\.)\b/i;
+    if (NON_PHARMA_NOISE_REGEX.test(payload.medicineName) || NON_PHARMA_NOISE_REGEX.test(fullText)) {
+      console.log(`[Admin Escalation] Suppressed admin escalation for "${payload.medicineName}": non-pharmaceutical/promotional token.`);
       return;
     }
 
@@ -623,6 +636,29 @@ export interface UnmatchedQueryPayload {
  */
 export async function notifyAdminOfUnmatchedQuery(payload: UnmatchedQueryPayload): Promise<void> {
   try {
+    // Promotional & noise guard: never forward marketing ads or consumer appliances to store owner
+    const fullText = (payload.messageBody || payload.medicineName || '').trim();
+    if (isPromotionalOrBroadcastMessage(fullText) || isPromotionalOrBroadcastMessage(payload.medicineName)) {
+      console.log('[Admin Escalation] Suppressed unmatched query alert: message identified as promotional broadcast.');
+      return;
+    }
+
+    const NON_PHARMA_NOISE_REGEX = /\b(?:aata maker|flour mill|mixer|grinder|tv|recharge|dth|mobile|set-top|set top|offer|bonus|wallet|update|live\s*tv|get more|enjoy|investor|sebi|http|www\.)\b/i;
+    if (NON_PHARMA_NOISE_REGEX.test(payload.medicineName) || NON_PHARMA_NOISE_REGEX.test(fullText)) {
+      console.log(`[Admin Escalation] Suppressed unmatched query alert for "${payload.medicineName}": non-pharmaceutical/promotional token.`);
+      return;
+    }
+
+    // Explicit medical intent requirement for text-based queries without prescription photo
+    if (!payload.imagePath) {
+      const hasMedicalSignal = /\b(?:tab(?:let)?s?|cap(?:sule)?s?|syrup|gel|ointment|cream|drops?|suspension|inj(?:ection)?|inhaler|sachet|mg|gm|ml|strip|strips|bottle|pack|dawai|medicine|tablets|capsules|bhej\s+do|chahiye|order|rx|prescription|dose|dosage|bukhar|dard|khansi|cold|cough|fever|pain)\b/i.test(fullText);
+      const isKnownCandidate = payload.medicineName.length >= 4 && !/^[0-9\s]+$/.test(payload.medicineName);
+      if (!hasMedicalSignal && !isKnownCandidate) {
+        console.log(`[Admin Escalation] Suppressed unmatched query alert for "${payload.medicineName}": no medical intent or prescription signal.`);
+        return;
+      }
+    }
+
     const db = await dbManager.getConnection();
     const guard = await escalateGuard(db, payload.phone || payload.customer?.phone, payload.customer?.phone);
     if (!guard) return;

@@ -1878,6 +1878,21 @@ export const api = {
   sendExpiryAlerts: (data: { phone?: string, days?: number }) => apiClient.post('/expiry/send-alerts', data).then(res => res.data),
   exportExpiryReport: (params: { date_from?: string; date_to?: string; format: 'pdf' | 'csv' }) =>
     apiClient.get('/expiry/export', { params, responseType: 'blob' }).then(res => res.data),
+  downloadShelfRemovalPdf: (params: {
+    date_from?: string;
+    date_to?: string;
+    days?: number;
+    sort_by?: 'alphabetical' | 'company' | 'rack' | 'expiry_date';
+    dosage_form?: 'all' | 'solid' | 'liquid';
+  }) => apiClient.get('/expiry/shelf-removal-pdf', { params, responseType: 'blob' }).then(res => res.data),
+  sendShelfRemovalWhatsApp: (data: {
+    date_from?: string;
+    date_to?: string;
+    days?: number;
+    sort_by?: 'alphabetical' | 'company' | 'rack' | 'expiry_date';
+    dosage_form?: 'all' | 'solid' | 'liquid';
+    phone?: string;
+  }) => apiClient.post<{ success: boolean; queueId?: number; count: number; message: string }>('/expiry/shelf-removal-pdf/send-whatsapp', data).then(res => res.data),
   createReturnFromExpiry: (inventoryId: number, quantity: number, lossPercentage: number) =>
     apiClient.post('/expiry/create-return', { inventory_id: inventoryId, quantity, loss_percentage: lossPercentage }).then(res => res.data),
 

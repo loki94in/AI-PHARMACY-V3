@@ -6848,7 +6848,7 @@ async function searchAndBroadcast(opts: {
       } catch (notifyErr) {
         console.error('[Intent Service] Failed to notify admin of uncertain scan:', notifyErr);
       }
-    } else if (source === 'text' && isPlausible) {
+    } else if (source === 'text' && isPlausible && !isPromotionalOrBroadcastMessage(messageBody || '') && !isPromotionalOrBroadcastMessage(medicineName)) {
       // Unmatched inquiry alert: neither local DB nor Pharmarack returned any match for a plausible medicine name
       try {
         const db = await dbManager.getConnection();

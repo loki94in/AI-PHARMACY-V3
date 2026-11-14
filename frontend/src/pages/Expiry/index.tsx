@@ -8,8 +8,10 @@ import {
   RotateCcw,
   FileText,
   Sliders,
-  X
+  X,
+  CheckSquare
 } from 'lucide-react';
+import { ShelfRemovalModal } from './ShelfRemovalModal';
 import { api } from '../../services/api';
 import { toastEvent } from '../../services/events';
 import { DateRangeFilter } from '../../components/DateRangeFilter';
@@ -42,6 +44,7 @@ const cachedExpiryMap: Record<string, ExpiryItem[]> = {};
 const Expiry = () => {
   const navigate = useNavigate();
   const [pendingReviewsCount, setPendingReviewsCount] = useState(0);
+  const [isShelfRemovalModalOpen, setIsShelfRemovalModalOpen] = useState(false);
 
   useEffect(() => {
     api.getExpiryReviews({ status: 'pending' }).then(res => {
@@ -855,7 +858,23 @@ const Expiry = () => {
           <FileText size={16} className="text-red" />
           Export PDF
         </button>
+
+        <button
+          onClick={() => setIsShelfRemovalModalOpen(true)}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white transition-all hover:scale-105 active:scale-95 shadow-xl font-bold text-xs cursor-pointer"
+          title="Open Shelf Removal Pick-List PDF Options"
+        >
+          <CheckSquare size={16} />
+          Shelf Removal PDF
+        </button>
       </div>
+
+      <ShelfRemovalModal
+        isOpen={isShelfRemovalModalOpen}
+        onClose={() => setIsShelfRemovalModalOpen(false)}
+        defaultDateFrom={dateRangeHelper.dateRange.from}
+        defaultDateTo={dateRangeHelper.dateRange.to}
+      />
     </div>
   );
 };

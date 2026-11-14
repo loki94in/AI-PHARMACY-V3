@@ -7,6 +7,21 @@
 
 ## Fixed
 
+### [Fixed] P1-153 — Promotional Spam & Advertising Messages Forwarded to Store Owner as Unmatched Inquiries
+
+- **Symptom:** Inbound marketing ads and broadcasts (such as Jio Set-Top Box promotions, Domino's wallet updates, SEBI investor advisories, and appliance queries like "aata maker") were parsed as rare medicines by the regex parser. When not found in stock or Pharmarack, the app forwarded urgent WhatsApp alerts to the store owner's personal phone (`❓ Unmatched Customer Medicine Inquiry: Asked for "enjoy"` / `Asked for "get more"`).
+- **Root Cause:**
+  1. `isPromotionalOrBroadcastMessage` in `src/services/intentKeywords.ts` only matched a narrow set of marketing phrases and required specific celebration/money emojis, allowing telecom/app/wallet/link broadcasts to bypass detection.
+  2. `notifyAdminOfUnmatchedQuery` in `src/services/waAdminEscalationService.ts` lacked a Medical Intent Gate; any non-matching string passed to it was automatically enqueued to `adminWhatsapp`.
+  3. `whatsappIntentService.ts` enqueued customer acknowledgment messages and unmatched inquiries on text without verifying pharmaceutical context.
+- **Fix:**
+  1. Expanded `isPromotionalOrBroadcastMessage` in `src/services/intentKeywords.ts` to detect telecom, DTH, set-top box, streaming apps, mobile recharge, wallet updates, financial links, and broad promo emoji combinations without medicine tokens.
+  2. Implemented strict Medical Intent and non-pharma noise guards in `notifyAdminOfUnmatchedQuery` and `maybeEscalate` (`src/services/waAdminEscalationService.ts`), strictly rejecting promotional broadcasts, non-medical consumer items (e.g., "aata maker"), and text queries without healthcare intent tokens from escalating to the store owner.
+  3. Filtered promotional broadcasts before inquiry acknowledgment in `src/services/whatsappIntentService.ts`.
+  4. Fixed Hindi/Marathi confirmation token detection in `isRefillConfirmationResponse`.
+- **Priority:** P1
+- **Verified by:** `tests/promotionalSpamEscalationGuard.test.ts` (8 passing tests), `tests/intentKeywords.test.ts` (23 passing tests), `npm run guardrails` (exit 0), and `node scripts/quick-update.mjs`.
+
 ### [Fixed] P1-152 — Refill Add to Live Cart Modal Disabled Checkboxes for In-Cart / Ordered Items
 
 - **Symptom:** Opening **Add to Live Cart — {patientName}** (`RefillOrderModal`) from CRM or Quick Assist disabled the medicine checkboxes/rows for items marked as in-cart or ordered, preventing pharmacists from selecting them to update cart quantities or re-add them to Live Cart.

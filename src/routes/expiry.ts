@@ -3,7 +3,7 @@ import { dbManager } from '../database/connection.js';
 import path from 'path';
 // import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { exportToPdf, exportToCsv } from '../utils/reportExporter.js';
+import { exportToPdf, exportToCsv, exportShelfRemovalPdf, detectItemDosageForm } from '../utils/reportExporter.js';
 import { getAppDataDir } from '../config/index.js';
 
 // const __filename = fileURLToPath(import.meta.url);
@@ -256,6 +256,192 @@ router.get('/export', async (req, res) => {
   } catch (err) {
     console.error('Expiry export error:', err);
     res.status(500).json({ error: 'Failed to generate report' });
+  }
+});
+
+/**
+ * Shared helper to fetch and filter inventory batches for shelf removal
+ */
+async function fetchShelfRemovalBatches(
+  db: any,
+  dateFrom: string,
+  dateTo: string,
+  dosageFilter: 'all' | 'solid' | 'liquid',
+  sortBy: 'alphabetical' | 'company' | 'rack' | 'expiry_date'
+) {
+  const candidateRows = await db.all(`
+    SELECT im.id, im.medicine_id, m.name as medicine_name, im.batch_no, im.expiry_date,
+           im.quantity, im.mrp, COALESCE(im.rack_location, m.rack) as rack_location,
+           m.dosage_form, COALESCE(m.manufacturer, m.marketed_by) as manufacturer
+    FROM inventory_master im
+    JOIN medicines m ON im.medicine_id = m.id
+    WHERE COALESCE(im.is_active, 1) = 1 AND (im.quantity > 0 OR COALESCE(im.loose_quantity, 0) > 0)
+  `);
+
+  let items = candidateRows.filter((r: any) => isDateInRange(r.expiry_date, dateFrom, dateTo));
+
+  if (dosageFilter === 'solid') {
+    items = items.filter((it: any) => detectItemDosageForm(it.dosage_form, it.medicine_name) === 'SOLID');
+  } else if (dosageFilter === 'liquid') {
+    items = items.filter((it: any) => detectItemDosageForm(it.dosage_form, it.medicine_name) === 'LIQUID');
+  }
+
+  if (sortBy === 'alphabetical') {
+    items.sort((a: any, b: any) => (a.medicine_name || '').localeCompare(b.medicine_name || ''));
+  } else if (sortBy === 'company') {
+    items.sort((a: any, b: any) => {
+      const compA = (a.manufacturer || 'General').toLowerCase();
+      const compB = (b.manufacturer || 'General').toLowerCase();
+      const cmp = compA.localeCompare(compB);
+      if (cmp !== 0) return cmp;
+      return (a.medicine_name || '').localeCompare(b.medicine_name || '');
+    });
+  } else if (sortBy === 'rack') {
+    items.sort((a: any, b: any) => {
+      const rackA = (a.rack_location || 'Unassigned').toLowerCase();
+      const rackB = (b.rack_location || 'Unassigned').toLowerCase();
+      const cmp = rackA.localeCompare(rackB);
+      if (cmp !== 0) return cmp;
+      return (a.medicine_name || '').localeCompare(b.medicine_name || '');
+    });
+  } else if (sortBy === 'expiry_date') {
+    items.sort((a: any, b: any) => {
+      const dA = a.expiry_date || '';
+      const dB = b.expiry_date || '';
+      const cmp = dA.localeCompare(dB);
+      if (cmp !== 0) return cmp;
+      return (a.medicine_name || '').localeCompare(b.medicine_name || '');
+    });
+  }
+
+  return items;
+}
+
+// Download printable Shelf Removal Pick-List PDF
+router.get('/shelf-removal-pdf', async (req, res) => {
+  const date_from = (req.query.date_from as string) || getTodayString();
+  let date_to = req.query.date_to as string;
+  if (!date_to) {
+    const days = req.query.days ? parseInt(req.query.days as string, 10) : 90;
+    date_to = getNDaysAheadString(days);
+  }
+
+  const sortBy = (req.query.sort_by as any) || 'alphabetical';
+  const dosageFilter = (req.query.dosage_form as any) || 'all';
+
+  try {
+    const db = await dbManager.getConnection();
+    const items = await fetchShelfRemovalBatches(db, date_from, date_to, dosageFilter, sortBy);
+
+    let storeName = 'AI PHARMACY';
+    const nameRow = await db.get("SELECT value FROM app_settings WHERE key = 'medical_name'");
+    if (nameRow?.value) storeName = nameRow.value;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="shelf_removal_picklist_${Date.now()}.pdf"`);
+
+    exportShelfRemovalPdf(res, items, {
+      storeName,
+      sortBy,
+      dosageFilter,
+      subtitle: `Shelf Removal Pick-Sheet (${date_from} to ${date_to})`
+    });
+  } catch (err) {
+    console.error('Failed to generate shelf removal PDF:', err);
+    res.status(500).json({ error: 'Failed to generate shelf removal pick-list PDF' });
+  }
+});
+
+// Enqueue Shelf Removal Pick-List PDF to WhatsApp
+router.post('/shelf-removal-pdf/send-whatsapp', async (req, res) => {
+  const { phone, date_from, date_to, days, sort_by, dosage_form } = req.body;
+  const dateFrom = date_from || getTodayString();
+  let dateTo = date_to;
+  if (!dateTo) {
+    const targetDays = days ? parseInt(days, 10) : 90;
+    dateTo = getNDaysAheadString(targetDays);
+  }
+
+  const sortBy = sort_by || 'alphabetical';
+  const dosageFilter = dosage_form || 'all';
+
+  try {
+    const db = await dbManager.getConnection();
+    const items = await fetchShelfRemovalBatches(db, dateFrom, dateTo, dosageFilter, sortBy);
+
+    if (items.length === 0) {
+      return res.json({ success: true, count: 0, message: 'No expiring medicines found for the selected criteria.' });
+    }
+
+    let storeName = 'AI PHARMACY';
+    const nameRow = await db.get("SELECT value FROM app_settings WHERE key = 'medical_name'");
+    if (nameRow?.value) storeName = nameRow.value;
+
+    let targetPhone = phone;
+    if (!targetPhone) {
+      const phoneRow = await db.get("SELECT value FROM app_settings WHERE key = 'owner_phone'");
+      if (phoneRow?.value) targetPhone = phoneRow.value;
+    }
+    if (!targetPhone) {
+      const { getStorePhone } = await import('../services/storeSettingsService.js');
+      targetPhone = await getStorePhone(db);
+    }
+
+    if (!targetPhone) {
+      return res.status(400).json({ error: 'Recipient phone number is required (configure owner_phone in settings or pass phone in body).' });
+    }
+
+    const cleanPhone = targetPhone.replace(/\D/g, '');
+    const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+
+    // Create temp PDF file
+    const tempDir = path.resolve(getAppDataDir(), 'data', 'temp');
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    const tempPdfPath = path.join(tempDir, `shelf_removal_picklist_${Date.now()}.pdf`);
+    const writeStream = fs.createWriteStream(tempPdfPath);
+
+    exportShelfRemovalPdf(writeStream, items, {
+      storeName,
+      sortBy,
+      dosageFilter,
+      subtitle: `Shelf Removal Pick-Sheet (${dateFrom} to ${dateTo})`
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      writeStream.on('finish', () => resolve());
+      writeStream.on('error', reject);
+    });
+
+    const { whatsappQueueWorker } = await import('../services/whatsappQueueWorker.js');
+    const caption = `📋 *${storeName} - Near-Expiry Shelf Removal Pick-List*\n` +
+      `Found *${items.length}* expiring batch(es) to remove from shelves.\n` +
+      `• Sort Order: *${String(sortBy).toUpperCase()}*\n` +
+      `• Dosage Form: *${String(dosageFilter).toUpperCase()}*\n` +
+      `• Date Range: ${dateFrom} to ${dateTo}\n\n` +
+      `Please use the attached PDF pick-sheet with checkboxes to pull expired stock from shelves.`;
+
+    const queueId = await whatsappQueueWorker.enqueue(
+      formattedPhone,
+      caption,
+      'shelf_removal_picklist',
+      'Pharmacy Owner / Staff',
+      undefined,
+      tempPdfPath,
+      undefined,
+      { skipDedupe: true }
+    );
+
+    res.json({
+      success: true,
+      queueId,
+      count: items.length,
+      message: `Pick-list PDF successfully queued for WhatsApp dispatch to ${formattedPhone}`
+    });
+  } catch (err: any) {
+    console.error('Failed to send shelf removal PDF via WhatsApp:', err);
+    res.status(500).json({ error: err.message || 'Failed to dispatch shelf removal PDF via WhatsApp' });
   }
 });
 

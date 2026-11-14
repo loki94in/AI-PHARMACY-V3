@@ -137,7 +137,7 @@ export function isPromotionalOrBroadcastMessage(text: string): boolean {
   const lower = raw.toLowerCase();
 
   // 1. Marketing headlines & promotional phrases
-  const PROMO_PHRASES_REGEX = /\b(?:here'?s what you(?:'re| are) missing|what you(?:'re| are) missing|don'?t miss out|start saving|save up to|maximum festive|festive margins?|limited festive deals?|festive deals?|double margins?|bumper discount|special discount|ushop points?|reward points?|extra margin|cashback|b2b (?:offer|update)s?|market updates?|distributor offer|stockist update|shikhar|udaan|download (?:the )?app|order on (?:the )?app|click (?:here|the link)|register now|join group|webinar link|limited period offer|terms (?:&|and) conditions|t&c apply|coupon code|promo code|mega sale|flash sale|hurry up|valid (?:till|until)|part time job|work from home|per month|per day|(?:\d{1,3}(?:,\d{3})+|\d+)\s*\/\s*month|earn\b[^\n]*\b(?:month|day|daily)|flat\s+\d+%\s+off|up\s+to\s+\d+%\s+off|\d+%\s+discount|buy\s+\d+\s+get\s+\d+|bogo|exclusive\s+offers?|festive\s+offers?|special\s+offers?|best\s+deals?|mega\s+offer|bumper\s+offer|todays?\s+offer|today'?s\s+deal|deal\s+of\s+the\s+day)\b/i;
+  const PROMO_PHRASES_REGEX = /\b(?:here'?s what you(?:'re| are) missing|what you(?:'re| are) missing|don'?t miss out|start saving|save up to|maximum festive|festive margins?|limited festive deals?|festive deals?|double margins?|bumper discount|special discount|ushop points?|reward points?|extra margin|cashback|b2b (?:offer|update)s?|market updates?|distributor offer|stockist update|shikhar|udaan|download (?:the )?app|order on (?:the )?app|click (?:here|the link)|register now|join group|webinar link|limited period offer|terms (?:&|and) conditions|t&c apply|coupon code|promo code|mega sale|flash sale|hurry up|valid (?:till|until)|part time job|work from home|per month|per day|(?:\d{1,3}(?:,\d{3})+|\d+)\s*\/\s*month|earn\b[^\n]*\b(?:month|day|daily)|flat\s+\d+%\s+off|up\s+to\s+\d+%\s+off|\d+%\s+discount|buy\s+\d+\s+get\s+\d+|bogo|exclusive\s+offers?|festive\s+offers?|special\s+offers?|best\s+deals?|mega\s+offer|bumper\s+offer|todays?\s+offer|today'?s\s+deal|deal\s+of\s+the\s+day|set-top box|livetv|dth|jio(?:tv|home|pc|fiber|care| cinema)?|entertainment apps?|welcome offer|wallet (?:update|has been credited|credited successfully)|thanks for choosing|follow our (?:whatsapp )?channel|latest shows|movies & updates|for any support related queries|chat with (?:jiocare|support|customer care)|tap(?:ping)? on the link|investor\.sebi|saarthi|demat|trading account|kyc update|pre-approved loan|credit card offer|switch on your)\b/i;
   if (PROMO_PHRASES_REGEX.test(lower)) return true;
 
   // 2. Greeting / festive broadcasts
@@ -145,9 +145,9 @@ export function isPromotionalOrBroadcastMessage(text: string): boolean {
     return true;
   }
 
-  // 3. Promotional marketing emojis (money, celebration, broadcast sirens, etc.)
-  const promoEmojiMatches = raw.match(/[\u{1F4B0}\u{1F911}\u{1F973}\u{1F631}\u{231B}\u{1F6CD}\u{1F389}\u{1F381}\u{1F680}\u{1F4E2}\u{1F3F7}\u{1F4A5}\u{1FA99}\u{1F4B8}\u{1F4C8}\u{1F4C9}\u{1F3AF}\u{1F514}\u{1F6D2}\u{1F388}]/gu);
-  if (promoEmojiMatches && promoEmojiMatches.length >= 2) {
+  // 3. Promotional marketing emojis (money, celebration, broadcast sirens, telecom, set-top, etc.)
+  const promoEmojiMatches = raw.match(/[\u{1F4B0}\u{1F911}\u{1F973}\u{1F631}\u{231B}\u{1F6CD}\u{1F389}\u{1F381}\u{1F680}\u{1F4E2}\u{1F3F7}\u{1F4A5}\u{1FA99}\u{1F4B8}\u{1F4C8}\u{1F4C9}\u{1F3AF}\u{1F514}\u{1F6D2}\u{1F388}\u{1F92F}\u{1F447}\u{1F4E1}\u{1F3AC}\u{1F4BB}\u{1F449}\u{1F4AC}\u{1F4F1}\u{1F4FA}]/gu);
+  if (promoEmojiMatches && promoEmojiMatches.length >= 2 && !/\b(?:tablet|syrup|capsule|strip|dawai|mg|ml|rx|prescription)\b/i.test(lower)) {
     return true;
   }
 
@@ -158,8 +158,8 @@ export function isPromotionalOrBroadcastMessage(text: string): boolean {
   }
 
   // 5. Links combined with marketing words
-  if (/https?:\/\/|wa\.me\/|bit\.ly\/|t\.me\//i.test(lower)) {
-    if (/\b(?:offer|deal|save|discount|points?|app|margin|shop|scheme|updates?|free)\b/i.test(lower)) {
+  if (/https?:\/\/|wa\.me\/|bit\.ly\/|t\.me\/|t\.jio\/|t\.co\//i.test(lower)) {
+    if (/\b(?:offer|deal|save|discount|points?|app|margin|shop|scheme|updates?|free|support|queries|care|channel|watch|link)\b/i.test(lower)) {
       return true;
     }
   }
@@ -493,7 +493,7 @@ export function isRefillConfirmationResponse(text: string): boolean {
     return true;
   }
   const devanagariTokens = [
-    'हाँ', 'हां', 'होय', 'पाठवा', 'द्या', 'लागतं',
+    'हाँ', 'हां', 'हा', 'हो', 'होय', 'पाठवा', 'द्या', 'लागतं',
     'भेज दो', 'भेजो', 'दे दो', 'कन्फर्म', 'नक्की', 'बरोबर'
   ];
   return devanagariTokens.some(t => cleaned === t || (words.length <= 4 && (cleaned.startsWith(`${t} `) || cleaned.endsWith(` ${t}`))));
