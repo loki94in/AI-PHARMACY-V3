@@ -1931,7 +1931,9 @@ const POS = () => {
     }
 
     const filtered = filterLocalInventory(term, mappedInventory).filter(item => {
-      return getRemainingSellableUnits(item, cart, activeRowSearchIndex) > 0;
+      const pSize = Math.max(1, Number(item.pack_size || item.packSize || 1));
+      const totalUnits = (Number(item.quantity ?? item.stock_qty ?? 0) * pSize) + Number(item.loose_quantity ?? item.loose_qty ?? 0);
+      return totalUnits > 0;
     });
     setRowSearchResults(filtered);
     setRowSearchHighlightIndex(filtered.length > 0 ? 0 : -1);
@@ -1990,7 +1992,11 @@ const POS = () => {
             }
           }
           const ranked = rankAndSortMedicines(merged, term, { onlySellable: true })
-            .filter(item => getRemainingSellableUnits(item, cart, activeRowSearchIndex) > 0)
+            .filter(item => {
+              const pSize = Math.max(1, Number(item.pack_size || item.packSize || 1));
+              const totalUnits = (Number(item.quantity ?? item.stock_qty ?? 0) * pSize) + Number(item.loose_quantity ?? item.loose_qty ?? 0);
+              return totalUnits > 0;
+            })
             .slice(0, 30);
           setRowSearchResults(ranked);
           setRowSearchHighlightIndex(prev => (prev >= 0 && prev < ranked.length ? prev : (ranked.length > 0 ? 0 : -1)));
@@ -2742,21 +2748,58 @@ const POS = () => {
       return idMatches || medicineIdMatch || nameMatch;
     });
 
-    const targetIndex = existingIndex !== -1 ? existingIndex : cleanCart.length;
+    const isLoose = resolveAllowLooseSale(med) === 1;
+
+    // Existing medicine in cart deduplication & physical stock ceiling protection
+    if (existingIndex !== -1) {
+      const existingItem = cleanCart[existingIndex];
+      const actualCartIndex = cart.findIndex(c => !c.isEmptyRow && (c.id === existingItem.id || (c.medicine_id && c.medicine_id === existingItem.medicine_id)));
+      const targetRowIndex = actualCartIndex !== -1 ? actualCartIndex : existingIndex;
+      const remainingUnits = getRemainingSellableUnits(med as PosBatchItem, cart);
+
+      writeRef(skipEmptyRowAutofocusRef, true);
+
+      if (remainingUnits <= 0) {
+        toastEvent.trigger(
+          `${med.name || (med as any).medicine_name} is already in cart (Row ${targetRowIndex + 1}) — all available stock is allocated.`,
+          'info'
+        );
+        routePosMedicineFocus(targetRowIndex, isLoose);
+        return;
+      }
+
+      const pSize = Math.max(1, Number(existingItem.packSize || (med as any).pack_size || 1));
+      const incQty = isLoose ? 0 : 1;
+      const incLoose = isLoose ? 1 : 0;
+      const requestedUnits = (incQty * pSize) + incLoose;
+
+      if (requestedUnits > remainingUnits) {
+        toastEvent.trigger(
+          `Cannot add full pack of ${med.name || (med as any).medicine_name} — only ${remainingUnits} unit(s) remaining in stock. Focus shifted to Row ${targetRowIndex + 1}.`,
+          'info'
+        );
+        routePosMedicineFocus(targetRowIndex, isLoose);
+        return;
+      }
+
+      updateCart((prevCart): CartRow[] => {
+        const cleanPrev = prevCart.filter(item => !item.isEmptyRow);
+        const newQty = (existingItem.qty || 0) + incQty;
+        const newLoose = (existingItem.looseQty || 0) + incLoose;
+        return rebalanceCartMedicine(cleanPrev, Number(existingItem.medicine_id || existingItem.id || 0), existingItem.id, { qty: newQty, looseQty: newLoose });
+      });
+
+      routePosMedicineFocus(targetRowIndex, isLoose);
+      return;
+    }
+
+    const targetIndex = cleanCart.length;
     writeRef(skipEmptyRowAutofocusRef, true);
 
     updateCart((prevCart): CartRow[] => {
       const cleanPrev = prevCart.filter(item => !item.isEmptyRow);
-      const isLoose = resolveAllowLooseSale(med) === 1;
       const incQty = isLoose ? 0 : 1;
       const incLooseQty = 0;
-      
-      if (existingIndex !== -1) {
-        const existingItem = cleanPrev[existingIndex];
-        const newQty = (existingItem.qty || 0) + incQty;
-        const newLoose = (existingItem.looseQty || 0) + (isLoose ? 1 : 0);
-        return rebalanceCartMedicine(cleanPrev, Number(existingItem.medicine_id || existingItem.id || 0), existingItem.id, { qty: newQty, looseQty: newLoose });
-      }
       
       const hasRealBatch = !!(med.batch_no || med.batch) && !!(med.inventory_id || (typeof med.id === 'number' && med.id < 1000000000));
       const initialMrp = hasRealBatch ? (med.mrp || 0) : 0;
@@ -3073,9 +3116,52 @@ const POS = () => {
     updateCart(prevCart => prevCart.filter(item => item.id !== id));
   };
 
-  const changeRowMedicine = (index: number, med: CartRow | PosBatchItem, opts?: { presetQty?: number; presetLooseQty?: number }) => {
+  const changeRowMedicine = (index: number, med: CartRow | PosBatchItem, opts?: { presetQty?: number; presetLooseQty?: number }): boolean => {
     const targetIndex = (index >= 0 && index < cart.length) ? index : (cart.length > 0 ? cart.length - 1 : 0);
     const originalItem = cart[targetIndex];
+
+    // Check if this medicine is ALREADY in another row of the cart
+    const targetMedId = med.medicine_id || (typeof med.id === 'number' && med.id < 1000000 ? med.id : null);
+    const targetMedName = normKey(med.medicine_name || med.name);
+
+    const otherIndex = cart.findIndex((row, idx) => {
+      if (idx === targetIndex || row.isEmptyRow) return false;
+      const rowMedId = row.medicine_id || (typeof row.id === 'number' && row.id < 1000000 ? row.id : null);
+      const rowNormName = normKey(row.name || row.medicine_name);
+      return (targetMedId && rowMedId && Number(targetMedId) === Number(rowMedId)) ||
+        (targetMedName && rowNormName && targetMedName === rowNormName);
+    });
+
+    if (otherIndex !== -1) {
+      if (rowCatalogSearchTimeoutRef.current) clearTimeout(rowCatalogSearchTimeoutRef.current);
+      if (rowCatalogSearchAbortRef.current) {
+        rowCatalogSearchAbortRef.current.abort();
+        rowCatalogSearchAbortRef.current = null;
+      }
+      rowCatalogSearchSeqRef.current++;
+
+      setActiveRowSearchIndex(null);
+      setRowSearchTerm('');
+      setRowSearchResults([]);
+      setRowSearchHighlightIndex(-1);
+
+      const isLoose = resolveAllowLooseSale(med) === 1;
+      const remaining = getRemainingSellableUnits(med as PosBatchItem, cart);
+      if (remaining <= 0) {
+        toastEvent.trigger(
+          `${med.medicine_name || med.name} is already in cart (Row ${otherIndex + 1}) — all available stock is allocated.`,
+          'info'
+        );
+      } else {
+        toastEvent.trigger(
+          `${med.medicine_name || med.name} is already in cart (Row ${otherIndex + 1}).`,
+          'info'
+        );
+      }
+      routePosMedicineFocus(otherIndex, isLoose);
+      return false;
+    }
+
     if (originalItem && originalItem.rawOcrText && (originalItem.name || '').toLowerCase().trim() !== (med.medicine_name || '').toLowerCase().trim()) {
       apiClient.post('/aicamera/learn', {
         ocrText: originalItem.rawOcrText,
@@ -3165,6 +3251,7 @@ const POS = () => {
     setRowSearchTerm('');
     setRowSearchResults([]);
     setRowSearchHighlightIndex(-1);
+    return true;
   };
 
   const fetchDetailsAndChangeRowMedicine = (index: number, med: CartRow | PosBatchItem, opts?: { presetQty?: number; presetLooseQty?: number }) => {
@@ -3180,7 +3267,10 @@ const POS = () => {
     setRowSearchHighlightIndex(-1);
 
     // Apply medicine selection synchronously for instant UI response (<5ms)
-    changeRowMedicine(targetIndex, med, opts);
+    const changed = changeRowMedicine(targetIndex, med, opts);
+    if (!changed) {
+      return;
+    }
 
     // Fast-cashier focus routing: loose-first if loose allowed, else auto-advance to next medicine row
     const isLooseAllowed = resolveAllowLooseSale(med) === 1;
@@ -4981,6 +5071,21 @@ const POS = () => {
                                   return;
                                 }
                                 if (remainingUnits <= 0) {
+                                  const existingIdx = cart.findIndex(c => {
+                                    if (c.isEmptyRow) return false;
+                                    const cMedId = c.medicine_id || (typeof c.id === 'number' && c.id < 1000000 ? c.id : null);
+                                    const itMedId = item.medicine_id || (typeof item.id === 'number' && item.id < 1000000 ? item.id : null);
+                                    return (cMedId && itMedId && Number(cMedId) === Number(itMedId)) ||
+                                      (normKey(c.name || c.medicine_name) === normKey(item.medicine_name || item.name));
+                                  });
+                                  if (existingIdx !== -1) {
+                                    toastEvent.trigger(`${item.medicine_name} is already in cart (Row ${existingIdx + 1}) — all available stock is allocated`, 'info');
+                                    setSearchTerm('');
+                                    setSearchResults([]);
+                                    setShowSearchDropdown(false);
+                                    routePosMedicineFocus(existingIdx, resolveAllowLooseSale(item) === 1);
+                                    return;
+                                  }
                                   toastEvent.trigger(`Cannot add more ${item.medicine_name} — maximum available stock (${totalUnits} units) is already in cart!`, 'error');
                                   return;
                                 }
@@ -4997,6 +5102,21 @@ const POS = () => {
                                     return;
                                   }
                                   if (remainingUnits <= 0) {
+                                    const existingIdx = cart.findIndex(c => {
+                                      if (c.isEmptyRow) return false;
+                                      const cMedId = c.medicine_id || (typeof c.id === 'number' && c.id < 1000000 ? c.id : null);
+                                      const itMedId = item.medicine_id || (typeof item.id === 'number' && item.id < 1000000 ? item.id : null);
+                                      return (cMedId && itMedId && Number(cMedId) === Number(itMedId)) ||
+                                        (normKey(c.name || c.medicine_name) === normKey(item.medicine_name || item.name));
+                                    });
+                                    if (existingIdx !== -1) {
+                                      toastEvent.trigger(`${item.medicine_name} is already in cart (Row ${existingIdx + 1}) — all available stock is allocated`, 'info');
+                                      setSearchTerm('');
+                                      setSearchResults([]);
+                                      setShowSearchDropdown(false);
+                                      routePosMedicineFocus(existingIdx, resolveAllowLooseSale(item) === 1);
+                                      return;
+                                    }
                                     toastEvent.trigger(`Cannot add more ${item.medicine_name} — maximum available stock (${totalUnits} units) is already in cart!`, 'error');
                                     return;
                                   }
@@ -5037,6 +5157,13 @@ const POS = () => {
                                     </span>
                                   )}
                                   {item.quantity !== undefined && (() => {
+                                    if (remainingUnits <= 0) {
+                                      return (
+                                        <span className="ml-3 font-mono font-semibold text-muted">
+                                          Stock: 0 (In Cart)
+                                        </span>
+                                      );
+                                    }
                                     const remainingLoose = remainingUnits % packSize;
                                     const hasLoose = (item.loose_quantity !== undefined && item.loose_quantity > 0) || remainingLoose > 0;
                                     return (
@@ -5608,6 +5735,22 @@ const POS = () => {
                                       const med = rowSearchResults[targetIdx];
                                       const remaining = getRemainingSellableUnits(med, cart, idx);
                                       if (remaining <= 0) {
+                                        const otherIdx = cart.findIndex((row, cIdx) => {
+                                          if (cIdx === idx || row.isEmptyRow) return false;
+                                          const rowMedId = row.medicine_id || (typeof row.id === 'number' && row.id < 1000000 ? row.id : null);
+                                          const targetMedId = med.medicine_id || (typeof med.id === 'number' && med.id < 1000000 ? med.id : null);
+                                          return (rowMedId && targetMedId && Number(rowMedId) === Number(targetMedId)) ||
+                                            (normKey(row.name || row.medicine_name) === normKey(med.medicine_name || med.name));
+                                        });
+                                        if (otherIdx !== -1) {
+                                          toastEvent.trigger(`${med.medicine_name || med.name} is already in cart (Row ${otherIdx + 1}) — all available stock is allocated`, 'info');
+                                          setActiveRowSearchIndex(null);
+                                          setRowSearchTerm('');
+                                          setRowSearchResults([]);
+                                          setRowSearchHighlightIndex(-1);
+                                          routePosMedicineFocus(otherIdx, resolveAllowLooseSale(med) === 1);
+                                          return;
+                                        }
                                         toastEvent.trigger(`Cannot add more ${med.medicine_name || med.name} — maximum available stock is already in cart!`, 'error');
                                         return;
                                       }
@@ -5773,6 +5916,22 @@ const POS = () => {
                                               const idx = rowIdx;
                                               const remaining = getRemainingSellableUnits(med, cart, idx);
                                               if (remaining <= 0) {
+                                                const otherIdx = cart.findIndex((row, cIdx) => {
+                                                  if (cIdx === idx || row.isEmptyRow) return false;
+                                                  const rowMedId = row.medicine_id || (typeof row.id === 'number' && row.id < 1000000 ? row.id : null);
+                                                  const targetMedId = med.medicine_id || (typeof med.id === 'number' && med.id < 1000000 ? med.id : null);
+                                                  return (rowMedId && targetMedId && Number(rowMedId) === Number(targetMedId)) ||
+                                                    (normKey(row.name || row.medicine_name) === normKey(med.medicine_name || med.name));
+                                                });
+                                                if (otherIdx !== -1) {
+                                                  toastEvent.trigger(`${med.medicine_name || med.name} is already in cart (Row ${otherIdx + 1}) — all available stock is allocated`, 'info');
+                                                  setActiveRowSearchIndex(null);
+                                                  setRowSearchTerm('');
+                                                  setRowSearchResults([]);
+                                                  setRowSearchHighlightIndex(-1);
+                                                  routePosMedicineFocus(otherIdx, resolveAllowLooseSale(med) === 1);
+                                                  return;
+                                                }
                                                 toastEvent.trigger(`Cannot add more ${med.medicine_name || med.name} — maximum available stock is already in cart!`, 'error');
                                                 return;
                                               }
@@ -5784,6 +5943,22 @@ const POS = () => {
                                                 const idx = rowIdx;
                                                 const remaining = getRemainingSellableUnits(med, cart, idx);
                                                 if (remaining <= 0) {
+                                                  const otherIdx = cart.findIndex((row, cIdx) => {
+                                                    if (cIdx === idx || row.isEmptyRow) return false;
+                                                    const rowMedId = row.medicine_id || (typeof row.id === 'number' && row.id < 1000000 ? row.id : null);
+                                                    const targetMedId = med.medicine_id || (typeof med.id === 'number' && med.id < 1000000 ? med.id : null);
+                                                    return (rowMedId && targetMedId && Number(rowMedId) === Number(targetMedId)) ||
+                                                      (normKey(row.name || row.medicine_name) === normKey(med.medicine_name || med.name));
+                                                  });
+                                                  if (otherIdx !== -1) {
+                                                    toastEvent.trigger(`${med.medicine_name || med.name} is already in cart (Row ${otherIdx + 1}) — all available stock is allocated`, 'info');
+                                                    setActiveRowSearchIndex(null);
+                                                    setRowSearchTerm('');
+                                                    setRowSearchResults([]);
+                                                    setRowSearchHighlightIndex(-1);
+                                                    routePosMedicineFocus(otherIdx, resolveAllowLooseSale(med) === 1);
+                                                    return;
+                                                  }
                                                   toastEvent.trigger(`Cannot add more ${med.medicine_name || med.name} — maximum available stock is already in cart!`, 'error');
                                                   return;
                                                 }
@@ -5832,6 +6007,9 @@ const POS = () => {
                                               MRP: ₹{Math.round(med.mrp ?? 0)} | Stock: {(() => {
                                                 const packSize = Math.max(1, Number(med.pack_size || 1));
                                                 const remainingUnits = getRemainingSellableUnits(med, cart, activeRowSearchIndex);
+                                                if (remainingUnits <= 0) {
+                                                  return '0 (In Cart)';
+                                                }
                                                 const remainingPacks = Math.floor(remainingUnits / packSize);
                                                 const remainingLoose = remainingUnits % packSize;
                                                 const hasLoose = Number(med.loose_quantity ?? 0) > 0 || Number(med.loose_qty ?? 0) > 0 || remainingLoose > 0;

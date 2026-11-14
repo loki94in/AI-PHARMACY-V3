@@ -7,6 +7,24 @@
 
 ## Fixed
 
+### [Fixed] P1-154 — POS Medicine Selection Lock & Duplicate Cart Rows Exceeding Physical Stock Ceiling
+
+- **Symptom:**
+  1. In the POS page, clicking or pressing Enter on an already-added medicine in search results was unresponsive or threw an error toast (`Cannot add more ... maximum available stock is already in cart!`), completely blocking the cashier from clicking or selecting the medicine.
+  2. Selecting an already-added non-loose medicine (`allow_loose_sale === 0`) blindly added `+1` pack even when total store inventory was only 1 unit.
+  3. Typing an existing medicine in the trailing empty row created duplicate rows with extra stock allocations, bypassing the physical stock ceiling (purchases minus sales).
+- **Root Cause:**
+  1. In `frontend/src/pages/POS/index.tsx`, `renderMedicineItem` (top search) and row search dropdown (`onMouseDown`, `onKeyDown`) strictly aborted the action (`return;`) when `remainingUnits <= 0`, refusing to focus the existing cart line. In row search, `filterLocalInventory` and `rankAndSortMedicines` dropped medicines entirely when remaining units reached 0.
+  2. `addToCart` applied `newQty = (existingItem.qty || 0) + incQty` (where `incQty = 1` for non-loose items) upon re-selection without verifying if additional stock was physically available.
+  3. `changeRowMedicine` lacked cart deduplication checks, creating a second row for the same medicine and allocating batches independently without deducting units already committed in earlier cart rows.
+- **Fix:**
+  1. Integrated cart deduplication into `changeRowMedicine` and `fetchDetailsAndChangeRowMedicine`: if the medicine is already in another cart row, the app prevents duplicate rows and routes focus straight to the existing row's input with a clear notification.
+  2. Updated `addToCart` to stop blind `+1` auto-incrementing when remaining units are exhausted, shifting focus to the existing row instead.
+  3. Updated dropdown click and Enter handlers in both top search and row search to navigate to the existing cart row when remaining stock is exhausted rather than aborting the click.
+  4. Retained in-stock medicines in the row search dropdown annotated as `Stock: 0 (In Cart)` so cashiers can click them to jump directly to the cart row.
+- **Priority:** P1
+- **Verified by:** `tests/posBatchAllocator.test.ts`, `tests/posSearchFilter.test.ts`, `npm run guardrails` (exit 0), frontend production build (`tsc -b && vite build` in 46.90s), and `node scripts/quick-update.mjs`.
+
 ### [Fixed] P1-153 — Promotional Spam & Advertising Messages Forwarded to Store Owner as Unmatched Inquiries
 
 - **Symptom:** Inbound marketing ads and broadcasts (such as Jio Set-Top Box promotions, Domino's wallet updates, SEBI investor advisories, and appliance queries like "aata maker") were parsed as rare medicines by the regex parser. When not found in stock or Pharmarack, the app forwarded urgent WhatsApp alerts to the store owner's personal phone (`❓ Unmatched Customer Medicine Inquiry: Asked for "enjoy"` / `Asked for "get more"`).

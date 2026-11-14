@@ -57,6 +57,12 @@ Applies to liquids, syrups, suspensions, bottles, drops, ointments, creams, inha
 1. In the loose quantity column, medicines restricted to Full Pack Only display an inline lock toggle button.
 2. Clicking this lock button toggles `allow_loose_sale` from 0 to 1 via `api.patchAllowLooseSale`, updates the live cart, and **immediately shifts focus into `row-loose-input-${rowIdx}`** for typing loose quantity.
 
+### D. Cart Deduplication & Physical Stock Ceiling Protection
+1. **Re-selecting an Already Added Medicine**:
+   - Re-selecting an already-added medicine from either the top search bar (`addToCart`) or the inline row search input (`changeRowMedicine`) **never creates a duplicate row**.
+   - If all available physical stock (purchases minus previous sales) is already allocated in the cart, the system does not block the click or Enter key. Instead, it smoothly shifts focus to the existing cart row (`routePosMedicineFocus(existingIndex, isLoose)`), displays an informative toast: `"[Medicine] is already in cart (Row X) — all available stock is allocated"`, and preserves cart integrity.
+   - For non-loose medicines (`allow_loose_sale === 0`), the app does not blindly auto-increment `+1` pack upon re-selection if physical stock is exhausted. It navigates focus to the existing row so the cashier maintains full human-in-the-loop manual control.
+
 ---
 
 ## 3. Keyboard Navigation Matrix
