@@ -2732,8 +2732,8 @@ export const api = {
     apiClient.get<{ success: boolean; qr_id: string; label: string; payee_name: string; upi_id: string; upi_uri: string; qr_image_url: string; amount: number; payment_status: string }>(`/website/orders/${orderId}/payment-qr`).then(res => res.data),
 
   // Application lifecycle & process shutdown
-  shutdownSystem: () =>
-    apiClient.post<{ success: boolean; message: string }>('/system/shutdown').then(res => res.data),
+  shutdownSystem: (options?: { direct?: boolean; skipBackup?: boolean }) =>
+    apiClient.post<{ success: boolean; message: string; backup?: { filename: string; sizeBytes?: number } }>('/system/shutdown', { direct: true, ...options }).then(res => res.data),
 
   // Enquiries & Dosage Browsing
   getEnquiries: (status?: string) =>

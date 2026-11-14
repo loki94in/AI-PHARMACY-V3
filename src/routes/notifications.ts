@@ -81,6 +81,9 @@ router.get('/notifications/stream', (req, res) => {
 
   const listener = (eventData: any) => {
     res.write(`data: ${JSON.stringify(eventData)}\n\n`);
+    if (typeof (res as any).flush === 'function') {
+      (res as any).flush();
+    }
   };
 
   eventService.on('server_event', listener);

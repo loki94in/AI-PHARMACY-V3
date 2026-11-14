@@ -397,9 +397,10 @@ app.post('/api/system/shutdown', async (req, res) => {
     backup: backupResult,
   });
 
+  // Give client 15 seconds to display backup confirmation card and close cleanly
   setTimeout(() => {
     void gracefulShutdown('CLIENT_EXIT');
-  }, 300);
+  }, 15000);
 });
 
 // Alias for Electron client-exit shutdown requests

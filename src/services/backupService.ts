@@ -37,6 +37,7 @@ export function broadcastBackupProgress(payload: {
   sizeBytes?: number;
 }): void {
   try {
+    console.log(`[Backup Progress] ${payload.percent}% (${payload.stage}): ${payload.message}`);
     eventService.broadcast('shutdown_progress', payload);
   } catch (_) {}
 }

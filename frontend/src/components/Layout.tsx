@@ -165,6 +165,27 @@ const ExitAppButton = () => {
   const [progress, setProgress] = useState(0);
   const [stageMessage, setStageMessage] = useState('Initiating safety backup...');
   const [completedInfo, setCompletedInfo] = useState<{ filename: string; sizeBytes?: number } | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+
+  const executeFinalClose = () => {
+    (window as any).__AI_PHARMACY_CLEAN_EXIT__ = true;
+    try {
+      window.close();
+    } catch (_) {}
+  };
+
+  // Auto-close countdown after backup reaches 100%
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown <= 0) {
+      executeFinalClose();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setCountdown(c => (c !== null ? c - 1 : null));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
 
   // Listen for Electron close event interception ('app-request-exit')
   useEffect(() => {
@@ -175,12 +196,12 @@ const ExitAppButton = () => {
     return () => window.removeEventListener('app-request-exit', handleExitRequest);
   }, []);
 
-  // Listen for real-time SSE progress during shutdown
+  // Listen for real-time SSE progress during shutdown from mount
   useEffect(() => {
-    if (!isShuttingDown) return;
     const handleProgress = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (!detail) return;
+      setIsShuttingDown(true);
       if (typeof detail.percent === 'number') {
         setProgress(detail.percent);
       }
@@ -193,11 +214,13 @@ const ExitAppButton = () => {
           sizeBytes: detail.sizeBytes || 0,
         });
         setProgress(100);
+        setStageMessage('Safety backup completed successfully!');
+        setCountdown(6);
       }
     };
     window.addEventListener('sse-shutdown-progress', handleProgress);
     return () => window.removeEventListener('sse-shutdown-progress', handleProgress);
-  }, [isShuttingDown]);
+  }, []);
 
   const handleRemoteLogout = () => {
     localStorage.removeItem('pharmacy_owner_token');
@@ -225,21 +248,16 @@ const ExitAppButton = () => {
     (window as any).__AI_PHARMACY_EXITING__ = true;
 
     try {
-      const res: any = await api.shutdownSystem();
+      const res: any = await api.shutdownSystem({ direct: true });
       if (res?.backup?.filename) {
         setCompletedInfo(res.backup);
         setProgress(100);
         setStageMessage('Safety backup completed successfully!');
+        setCountdown(6);
       }
-    } catch (_) {}
-
-    // Allow user to see the completed backup card for 1.2s before window close
-    await new Promise(r => setTimeout(r, 1200));
-
-    (window as any).__AI_PHARMACY_CLEAN_EXIT__ = true;
-    try {
-      window.close();
-    } catch (_) {}
+    } catch (err) {
+      console.warn('[Shutdown] Shutdown API notice:', err);
+    }
   };
 
   return (
@@ -372,20 +390,33 @@ const ExitAppButton = () => {
               </div>
             )}
 
-            {/* Bottom Status Indicator */}
-            <div className="flex items-center gap-2 text-xs text-muted font-medium bg-bg2 px-4 py-2 rounded-full border border-glass-border">
-              {completedInfo ? (
-                <>
-                  <Check size={14} className="text-emerald-500 shrink-0" />
-                  <span className="text-text font-medium">Closing AI Pharmacy OS completely...</span>
-                </>
-              ) : (
-                <>
-                  <Loader2 size={14} className="animate-spin text-red-500 shrink-0" />
-                  <span>Please do not close this window while backup is in progress...</span>
-                </>
-              )}
-            </div>
+            {/* Bottom Status Indicator & Action */}
+            {completedInfo ? (
+              <div className="w-full space-y-3 pt-1 animate-fade-in">
+                <div className="flex items-center justify-between text-xs px-1">
+                  <span className="text-muted text-[11px] font-medium">
+                    Auto-closing in {countdown !== null ? countdown : 6}s...
+                  </span>
+                  <div className="flex items-center gap-1.5 text-emerald-500 font-semibold text-xs">
+                    <Check size={14} />
+                    <span>Database Secured</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={executeFinalClose}
+                  className="w-full py-2.5 px-4 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Check size={15} />
+                  <span>Close Application Now</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-muted font-medium bg-bg2 px-4 py-2 rounded-full border border-glass-border">
+                <Loader2 size={14} className="animate-spin text-red-500 shrink-0" />
+                <span>Please do not close this window while backup is in progress...</span>
+              </div>
+            )}
 
           </div>
         </div>,
