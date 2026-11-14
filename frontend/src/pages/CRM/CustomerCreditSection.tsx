@@ -2,7 +2,7 @@ import { matchUniversalTokens } from '../../utils/searchUtils';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Search, RefreshCw, FileText, Send, CheckCircle2, X, Users, Phone, QrCode, Zap, Package, RotateCcw, Pencil, Check } from 'lucide-react';
+import { Search, RefreshCw, FileText, Send, CheckCircle2, X, Users, Phone, QrCode, Zap, Package, RotateCcw, Pencil, Check, Clock } from 'lucide-react';
 import type { SalesHistoryInvoice, SalesHistoryItemLine, LocalApiError } from './crmTypes';
 import { formatDate } from './crmTypes';
 import { useWaPhoneStatus } from '../../hooks/useWaPhoneStatus';
@@ -20,6 +20,7 @@ interface CreditCustomerItem {
   credit_balance: number;
   credit_due_date?: string;
   credit_enabled?: number;
+  reminder_mode?: 'auto' | 'manual';
   unpaid_bills_count: number;
   last_sale_date?: string;
 }
@@ -62,6 +63,7 @@ export const CustomerCreditSection: React.FC = () => {
   const [payAmount, setPayAmount] = useState('');
   const [collectingPayment, setCollectingPayment] = useState(false);
   const [sendingId, setSendingId] = useState<number | null>(null);
+  const [snoozingId, setSnoozingId] = useState<number | null>(null);
   // WA registration check — disables credit WA reminder button when number confirmed not on WA
   const creditPhone = (selectedCustomer?.phone || '').replace(/\D/g, '').slice(-10);
   const { isNotOnWa: creditNotOnWa } = useWaPhoneStatus(creditPhone);
@@ -267,6 +269,51 @@ export const CustomerCreditSection: React.FC = () => {
     }
   };
 
+  const handleToggleReminderMode = async (cust: CreditCustomerItem) => {
+    const newMode = (cust.reminder_mode || 'manual') === 'auto' ? 'manual' : 'auto';
+    // Optimistic UI update
+    setCustomers(prev => prev.map(c => c.id === cust.id ? { ...c, reminder_mode: newMode } : c));
+    cachedCreditCustomers = cachedCreditCustomers.map(c => c.id === cust.id ? { ...c, reminder_mode: newMode } : c);
+    if (selectedCustomer?.id === cust.id) {
+      setSelectedCustomer(prev => prev ? { ...prev, reminder_mode: newMode } : null);
+    }
+
+    try {
+      await apiClient.put(`/crm/credit-customers/${cust.id}/reminder-mode`, { reminder_mode: newMode });
+      toastEvent.trigger(
+        newMode === 'auto'
+          ? `Auto reminders enabled for ${cust.name || 'Customer'}`
+          : `Manual approval mode set for ${cust.name || 'Customer'}`,
+        'success',
+        '/crm'
+      );
+    } catch {
+      toastEvent.trigger('Failed to update reminder mode', 'error', '/crm');
+      await loadCreditCustomers();
+    }
+  };
+
+  const handleSnooze = async (id: number, days: number) => {
+    setSnoozingId(id);
+    try {
+      const res = await apiClient.post(`/crm/credit-customers/${id}/snooze`, { days });
+      const nextDate = res.data?.due_date;
+      toastEvent.trigger(
+        `Snoozed for ${days} days (Resumes on ${formatDate(nextDate || '')})`,
+        'success',
+        '/crm'
+      );
+      if (selectedCustomer?.id === id && nextDate) {
+        setSelectedCustomer(prev => prev ? { ...prev, credit_due_date: nextDate } : null);
+      }
+      await loadCreditCustomers();
+    } catch (err) {
+      toastEvent.trigger((err as LocalApiError).response?.data?.error || 'Failed to snooze credit reminder', 'error', '/crm');
+    } finally {
+      setSnoozingId(null);
+    }
+  };
+
   const filtered = customers.filter(c => {
     const q = search.toLowerCase().trim();
     if (!q) return true;
@@ -384,6 +431,9 @@ export const CustomerCreditSection: React.FC = () => {
                         ) : (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-500 border border-rose-500/20 font-bold">BLOCKED</span>
                         )}
+                        <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold border ${cust.reminder_mode === 'auto' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-sky-500/10 text-sky-400 border-sky-500/20'}`}>
+                          {cust.reminder_mode === 'auto' ? 'AUTO' : 'MANUAL'}
+                        </span>
                       </div>
                       <div className="text-[10px] text-muted flex items-center gap-1.5 mt-0.5">
                         <span>📱 {cust.phone || 'No phone'}</span>
@@ -462,6 +512,18 @@ export const CustomerCreditSection: React.FC = () => {
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
                       CREDIT ACCOUNT
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleReminderMode(selectedCustomer)}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
+                        (selectedCustomer.reminder_mode || 'manual') === 'auto'
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/25'
+                          : 'bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/25'
+                      }`}
+                      title="Click to toggle: Auto dispatch 🤖 vs Manual review 👆"
+                    >
+                      {(selectedCustomer.reminder_mode || 'manual') === 'auto' ? '🤖 Auto Reminder' : '👆 Manual Approval'}
+                    </button>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-bg3 text-text border border-border">
                       {selectedCustomer.language === 'hi' ? '🇮🇳 HI' : selectedCustomer.language === 'mr' ? '🇮🇳 MR' : '🇬🇧 EN'}
                     </span>
@@ -678,13 +740,37 @@ export const CustomerCreditSection: React.FC = () => {
                         />
                       </div>
                     </div>
+
+                    {/* Promise to Pay Quick Snooze Chips for Remaining Balance */}
+                    {liveRemaining > 0 && (
+                      <div className="flex items-center justify-between flex-wrap gap-2 pt-1.5 border-t border-border/40 text-xs">
+                        <span className="text-muted text-[11px] font-medium flex items-center gap-1">
+                          <Clock size={12} className="text-amber-400" />
+                          Promise-to-pay remaining ₹{liveRemaining.toFixed(2)} in:
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {[3, 4, 7, 15].map(d => (
+                            <button
+                              key={d}
+                              type="button"
+                              disabled={snoozingId === selectedCustomer.id}
+                              onClick={() => handleSnooze(selectedCustomer.id, d)}
+                              className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 active:scale-95 transition-all disabled:opacity-50"
+                              title={`Snooze remaining ₹${liveRemaining.toFixed(2)} for ${d} days`}
+                            >
+                              +{d} Days
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
 
               {/* Due Date Management Bar */}
-              <div className="px-4 py-2 bg-bg border-b border-border flex items-center justify-between text-xs shrink-0">
-                <div className="flex items-center gap-2">
+              <div className="px-4 py-2 bg-bg border-b border-border flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-muted font-medium">Agreed Credit Due Date:</span>
                   {editingId === selectedCustomer.id ? (
                     <div className="flex items-center gap-1.5">
@@ -698,13 +784,32 @@ export const CustomerCreditSection: React.FC = () => {
                       <button onClick={() => setEditingId(null)} className="px-2 py-0.5 text-muted text-[10px]">Cancel</button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className={selectedCustomer.credit_due_date ? 'text-text font-bold' : 'text-muted italic'}>
                         {selectedCustomer.credit_due_date ? formatDate(selectedCustomer.credit_due_date) : 'Not Set'}
                       </span>
                       <button onClick={() => { setEditingId(selectedCustomer.id); setNewDueDate(selectedCustomer.credit_due_date || getDefault7thDueDate()); }} className="text-[10px] text-primary hover:underline font-bold">
                         Edit Date
                       </button>
+                      <span className="text-muted/40 text-[10px]">|</span>
+                      <span className="text-[10px] text-muted font-semibold flex items-center gap-1">
+                        <Clock size={11} className="text-primary" />
+                        Snooze:
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {[3, 4, 7, 15].map(days => (
+                          <button
+                            key={days}
+                            type="button"
+                            disabled={snoozingId === selectedCustomer.id}
+                            onClick={() => handleSnooze(selectedCustomer.id, days)}
+                            className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-bg3 hover:bg-primary/20 text-text border border-border hover:border-primary/40 transition-all active:scale-95 disabled:opacity-50"
+                            title={`Snooze reminders and extend due date by +${days} days`}
+                          >
+                            +{days}d
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

@@ -14,6 +14,38 @@ export interface CreditReminderOptions {
   customMessage?: string;
   isManual?: boolean;
   amountOverride?: number;
+  scheduledAt?: number;
+}
+
+/**
+ * Calculates a humanized, randomized daytime timestamp between 10:00 and 19:00.
+ * Prevents robotic burst-blasting and protects against anti-spam filters.
+ */
+export function getRandomizedDaytimeSchedule(): number {
+  const now = new Date();
+  const currentHour = now.getHours();
+
+  if (currentHour < 10) {
+    // Before 10 AM: schedule for today between 10:15 and 12:45
+    const target = new Date(now);
+    const randomMinute = Math.floor(Math.random() * 150) + 15;
+    target.setHours(10, 0, 0, 0);
+    target.setMinutes(randomMinute);
+    return target.getTime();
+  } else if (currentHour >= 19) {
+    // After 7 PM: schedule for tomorrow between 10:15 and 12:00
+    const target = new Date(now);
+    target.setDate(target.getDate() + 1);
+    const randomMinute = Math.floor(Math.random() * 105) + 15;
+    target.setHours(10, 0, 0, 0);
+    target.setMinutes(randomMinute);
+    return target.getTime();
+  } else {
+    // During daytime operating hours (10:00 - 19:00):
+    // Natural human jitter of 3 to 25 minutes from right now
+    const jitterMin = Math.floor(Math.random() * 22) + 3;
+    return Date.now() + (jitterMin * 60 * 1000);
+  }
 }
 
 export interface CreditReminderResult {
@@ -228,13 +260,13 @@ export class CreditReminderService {
 
     const notificationType = options?.isManual ? 'manual_credit_reminder' : 'auto_credit_reminder';
 
-    // Enqueue message with attached Branded QR Card image and PDF statement
+    // Enqueue message with attached Branded QR Card image, PDF statement, and optional randomized schedule
     const queueId = await whatsappQueueWorker.enqueue(
       cleanPhone,
       message,
       'credit_reminder',
       customer.name || 'Customer',
-      undefined,
+      options?.scheduledAt,
       pdfPath,
       cardBuffer ? {
         mimetype: 'image/png',
@@ -262,8 +294,10 @@ export class CreditReminderService {
 
   /**
    * Scan all overdue customers and queue amount-specific UPI QR reminders.
-   * Gated on app_settings: trigger_wa_credit_reminder_enabled != 'false'
-   * and credit_auto_reminder_enabled == 'true' (opt-in pilot).
+   * Gated on app_settings: trigger_wa_credit_reminder_enabled != 'false'.
+   * Dispatches automatically for customers whose reminder_mode === 'auto'
+   * or when credit_auto_reminder_enabled === 'true'.
+   * Uses humanized randomized daytime scheduling (10:00 - 19:00).
    */
   async checkOverdueAndEnqueue(dbInstance?: any, forceRun: boolean = false): Promise<{
     processed: number;
@@ -278,13 +312,10 @@ export class CreditReminderService {
         console.log('[CreditReminderService] Credit reminder automation is disabled in settings.');
         return { processed: 0, queued: 0, skipped: 0 };
       }
-
-      const autoOptIn = await db.get("SELECT value FROM app_settings WHERE key = 'credit_auto_reminder_enabled'");
-      if (autoOptIn?.value !== 'true') {
-        console.log('[CreditReminderService] Auto credit reminders are not opted in (credit_auto_reminder_enabled != true).');
-        return { processed: 0, queued: 0, skipped: 0 };
-      }
     }
+
+    const autoOptIn = await db.get("SELECT value FROM app_settings WHERE key = 'credit_auto_reminder_enabled'");
+    const isGlobalAuto = autoOptIn?.value === 'true';
 
     console.log('[CreditReminderService] Scanning overdue credit accounts for automatic reminder dispatch...');
 
@@ -296,7 +327,7 @@ export class CreditReminderService {
            AND payment_status != 'PAID'
          GROUP BY customer_id
        )
-       SELECT c.id, c.name, c.phone, c.credit_balance, c.credit_due_date,
+       SELECT c.id, c.name, c.phone, c.credit_balance, c.credit_due_date, c.reminder_mode,
               COALESCE(ui.unpaid_count, 0) as unpaid_count,
               COALESCE(ui.unpaid_total, 0) as unpaid_total
        FROM customers c
@@ -311,10 +342,20 @@ export class CreditReminderService {
     let skippedCount = 0;
 
     for (const cust of overdueCustomers) {
+      // In automated background runs, dispatch only if customer is set to 'auto' or global auto is active
+      if (!forceRun && cust.reminder_mode !== 'auto' && !isGlobalAuto) {
+        skippedCount++;
+        continue;
+      }
+
+      // Assign natural, randomized daytime schedule
+      const scheduledTime = !forceRun ? getRandomizedDaytimeSchedule() : undefined;
+
       try {
         const res = await this.buildCreditReminderWithQr(cust.id, db, {
           skipDedupe: false,
-          isManual: false
+          isManual: false,
+          scheduledAt: scheduledTime
         });
 
         if (res.skipped) {

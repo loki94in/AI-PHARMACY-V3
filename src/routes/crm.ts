@@ -876,7 +876,7 @@ router.get('/credit-customers', async (_req, res) => {
          WHERE (payment_medium = 'CREDIT' OR payment_status IN ('UNPAID', 'PENDING')) AND payment_status != 'PAID'
          GROUP BY customer_id
        )
-       SELECT c.id, c.name, c.phone, c.address, c.language, c.credit_due_date, c.credit_enabled,
+       SELECT c.id, c.name, c.phone, c.address, c.language, c.credit_due_date, c.credit_enabled, c.reminder_mode,
               CASE 
                 WHEN c.credit_balance IS NOT NULL AND c.credit_balance > 0 THEN c.credit_balance
                 ELSE COALESCE(ui.invoice_due, 0)
@@ -958,6 +958,59 @@ router.put('/credit-customers/:id/toggle-credit', async (req, res) => {
   } catch (error: any) {
     console.error('Failed to toggle customer credit:', error);
     res.status(500).json({ error: 'Failed to toggle credit status: ' + error.message });
+  }
+});
+
+// Toggle Customer Credit Reminder Mode (Auto vs Manual)
+router.put('/credit-customers/:id/reminder-mode', async (req, res) => {
+  const { id } = req.params;
+  const { reminder_mode } = req.body || {};
+  const modeVal = reminder_mode === 'auto' ? 'auto' : 'manual';
+  try {
+    const db = await dbManager.getConnection();
+    await db.run('UPDATE customers SET reminder_mode = ? WHERE id = ?', [modeVal, id]);
+    try {
+      eventService.broadcast('customers_changed', { at: Date.now(), id: Number(id), reminder_mode: modeVal });
+    } catch (_) {}
+    res.json({
+      success: true,
+      reminder_mode: modeVal,
+      message: `Customer reminder mode set to ${modeVal === 'auto' ? 'Auto Dispatch' : 'Manual Approval'}`,
+    });
+  } catch (error: any) {
+    console.error('Failed to update credit reminder mode:', error);
+    res.status(500).json({ error: 'Failed to update reminder mode: ' + error.message });
+  }
+});
+
+// Snooze Customer Credit Reminder by relative days (+3d, +4d, +7d, etc.)
+router.post('/credit-customers/:id/snooze', async (req, res) => {
+  const { id } = req.params;
+  const days = parseInt(req.body?.days, 10);
+  if (isNaN(days) || days <= 0) {
+    return res.status(400).json({ error: 'Valid positive number of days required for snooze' });
+  }
+  try {
+    const db = await dbManager.getConnection();
+    // Compute date in local time YYYY-MM-DD
+    const targetDateRow = await db.get("SELECT date('now', 'localtime', '+' || ? || ' days') as next_date", [days]);
+    const nextDate = targetDateRow?.next_date;
+    if (!nextDate) {
+      throw new Error('Failed to calculate snooze date');
+    }
+    await db.run('UPDATE customers SET credit_due_date = ? WHERE id = ?', [nextDate, id]);
+    try {
+      eventService.broadcast('customers_changed', { at: Date.now(), id: Number(id), credit_due_date: nextDate, snoozed_days: days });
+    } catch (_) {}
+    res.json({
+      success: true,
+      due_date: nextDate,
+      days,
+      message: `Credit reminder snoozed for ${days} day(s). Automated reminders will resume on ${nextDate}.`,
+    });
+  } catch (error: any) {
+    console.error('Failed to snooze credit reminder:', error);
+    res.status(500).json({ error: 'Failed to snooze reminder: ' + error.message });
   }
 });
 

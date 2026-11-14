@@ -391,12 +391,14 @@ interface UpdateHistoryResponse {
 let cachedReleaseHistory: UpdateHistoryResponse | null = null;
 let cachedReleaseHistoryTime = 0;
 
-function formatCheckTime(isoStr?: string): string | null {
+function formatCheckDateTime(isoStr?: string): string | null {
   if (!isoStr) return null;
   try {
     const d = new Date(isoStr);
     if (isNaN(d.getTime())) return null;
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const datePart = d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    const timePart = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `${datePart}, ${timePart}`;
   } catch {
     return null;
   }
@@ -434,7 +436,7 @@ function SoftwareUpdateCard() {
   const [copiedLog, setCopiedLog] = React.useState(false);
   const terminalScrollRef = React.useRef<HTMLDivElement>(null);
 
-  const lastCheckedStr = formatCheckTime(updateStatus.lastCheckedAt);
+  const lastCheckedStr = formatCheckDateTime(updateStatus.lastCheckedAt);
 
   // Automated live polling while downloading or checking — user never has to click refresh
   React.useEffect(() => {
@@ -650,15 +652,21 @@ function SoftwareUpdateCard() {
             <RefreshCw size={16} />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center flex-wrap gap-2">
               <h3 className="text-sm font-black text-text tracking-tight">Software Update</h3>
               <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
                 Installed: v{updateStatus.currentVersion}
               </span>
+              <span
+                className="inline-flex items-center gap-1.5 text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-bg border border-border text-text shadow-2xs"
+                title="Automated background check runs on every boot and every 30 minutes while active"
+              >
+                <Clock size={11} className="text-primary shrink-0" />
+                <span>Last check: {lastCheckedStr || 'Checking now...'}</span>
+              </span>
             </div>
             <p className="text-[11px] text-muted mt-0.5">
-              AI Pharmacy OS — automatic background sync &amp; live diagnostics
-              {lastCheckedStr && <span className="ml-1">· Last checked {lastCheckedStr}</span>}
+              AI Pharmacy OS — automatic background sync (on boot &amp; every 30m)
             </p>
           </div>
         </div>

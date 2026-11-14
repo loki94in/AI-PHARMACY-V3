@@ -476,28 +476,38 @@ class TriggerSchedulerService {
     }
 
     // ----------------------------------------------------
-    // Trigger 12: Overdue Credit WhatsApp Reminder
+    // Trigger 12: Overdue Credit WhatsApp Reminder (Morning & Daytime Window)
     // ----------------------------------------------------
     if (cfg.trigger_credit_overdue_check_enabled !== 'false') {
       const timeStr = cfg.trigger_credit_overdue_check_time || '09:30';
       const cronExpr = this.timeToCron(timeStr);
       try {
-        const task = cron.schedule(cronExpr, () => {
-          void runHeavyJob('credit_overdue', async () => {
-            try {
-              const mode = await getBackendFetchMode('bg.dailyScans', 'off');
-              if (mode === 'off' || (mode === 'manual' && activityTracker.isIdle())) return;
+        const runCreditCheck = async (label: string) => {
+          try {
+            const mode = await getBackendFetchMode('bg.dailyScans', 'off');
+            if (mode === 'off' || (mode === 'manual' && activityTracker.isIdle())) return;
 
-              console.log(`[Trigger: Credit Overdue] Running overdue credit scan scheduled at ${timeStr}...`);
-              const { creditReminderService } = await import('./creditReminderService.js');
-              await creditReminderService.checkOverdueAndEnqueue(database);
-            } catch (err) {
-              console.error('[Trigger: Credit Overdue] Execution failed:', err);
-            }
-          });
+            console.log(`[Trigger: Credit Overdue] Running overdue credit scan (${label})...`);
+            const { creditReminderService } = await import('./creditReminderService.js');
+            await creditReminderService.checkOverdueAndEnqueue(database);
+          } catch (err) {
+            console.error(`[Trigger: Credit Overdue] Execution failed (${label}):`, err);
+          }
+        };
+
+        const task = cron.schedule(cronExpr, () => {
+          void runHeavyJob('credit_overdue', () => runCreditCheck(`scheduled at ${timeStr}`));
         });
         this.scheduledTasks.set('credit_overdue', task);
-        console.log(`[TriggerScheduler] Registered 'Overdue Credit Check' -> Cron: ${cronExpr} (${timeStr})`);
+
+        // Daytime Periodic Evaluation (Every 2 hours between 11:00 - 17:00):
+        // Ensures newly overdue accounts or late-opened app sessions evaluate anytime during daytime hours
+        const daytimeTask = cron.schedule('0 11,13,15,17 * * *', () => {
+          void runHeavyJob('credit_overdue_daytime', () => runCreditCheck('daytime periodic scan'));
+        });
+        this.scheduledTasks.set('credit_overdue_daytime', daytimeTask);
+
+        console.log(`[TriggerScheduler] Registered 'Overdue Credit Check' -> Cron: ${cronExpr} (${timeStr}) + Daytime Periodic`);
       } catch (err) {
         console.error('[TriggerScheduler] Failed to schedule Credit Overdue Check:', err);
       }

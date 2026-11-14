@@ -1000,13 +1000,10 @@ server.on('error', (err: any) => {
             console.error('[Boot:Phase3] Morning schedule briefing startup error:', briefingErr);
           }
 
-          // Credit overdue catch-up check
+          // Credit overdue catch-up check (evaluates overdue accounts with 'auto' mode or global auto)
           try {
-            const autoCreditRow = await db.get("SELECT value FROM app_settings WHERE key = 'credit_auto_reminder_enabled'");
-            if (autoCreditRow?.value === 'true') {
-              const { creditReminderService } = await import('./services/creditReminderService.js');
-              await creditReminderService.checkOverdueAndEnqueue(db, false);
-            }
+            const { creditReminderService } = await import('./services/creditReminderService.js');
+            await creditReminderService.checkOverdueAndEnqueue(db, false);
           } catch (creditErr) {
             console.error('[Boot:Phase3] Credit overdue check failed:', creditErr);
           }
