@@ -162,7 +162,42 @@ const ExitAppButton = () => {
 
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
-  const [shutdownSettled, setShutdownSettled] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [stageMessage, setStageMessage] = useState('Initiating safety backup...');
+  const [completedInfo, setCompletedInfo] = useState<{ filename: string; sizeBytes?: number } | null>(null);
+
+  // Listen for Electron close event interception ('app-request-exit')
+  useEffect(() => {
+    const handleExitRequest = () => {
+      setShowConfirmModal(true);
+    };
+    window.addEventListener('app-request-exit', handleExitRequest);
+    return () => window.removeEventListener('app-request-exit', handleExitRequest);
+  }, []);
+
+  // Listen for real-time SSE progress during shutdown
+  useEffect(() => {
+    if (!isShuttingDown) return;
+    const handleProgress = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail) return;
+      if (typeof detail.percent === 'number') {
+        setProgress(detail.percent);
+      }
+      if (detail.message) {
+        setStageMessage(detail.message);
+      }
+      if (detail.stage === 'completed' || detail.status === 'completed') {
+        setCompletedInfo({
+          filename: detail.filename || '',
+          sizeBytes: detail.sizeBytes || 0,
+        });
+        setProgress(100);
+      }
+    };
+    window.addEventListener('sse-shutdown-progress', handleProgress);
+    return () => window.removeEventListener('sse-shutdown-progress', handleProgress);
+  }, [isShuttingDown]);
 
   const handleRemoteLogout = () => {
     localStorage.removeItem('pharmacy_owner_token');
@@ -183,13 +218,25 @@ const ExitAppButton = () => {
   }
 
   const handleConfirmExit = async () => {
+    setShowConfirmModal(false);
     setIsShuttingDown(true);
+    setProgress(5);
+    setStageMessage('Starting database safety snapshot...');
     (window as any).__AI_PHARMACY_EXITING__ = true;
+
     try {
-      toastEvent.trigger('Shutting down AI Pharmacy OS...', 'info');
-      await api.shutdownSystem();
+      const res: any = await api.shutdownSystem();
+      if (res?.backup?.filename) {
+        setCompletedInfo(res.backup);
+        setProgress(100);
+        setStageMessage('Safety backup completed successfully!');
+      }
     } catch (_) {}
 
+    // Allow user to see the completed backup card for 1.2s before window close
+    await new Promise(r => setTimeout(r, 1200));
+
+    (window as any).__AI_PHARMACY_CLEAN_EXIT__ = true;
     try {
       window.close();
     } catch (_) {}
@@ -217,7 +264,7 @@ const ExitAppButton = () => {
               <div className="flex-1 min-w-0">
                 <h3 className="font-bold text-base text-text">Exit AI Pharmacy OS?</h3>
                 <p className="text-xs text-muted mt-1 leading-relaxed">
-                  This will cleanly create an auto-backup, stop all background services, release port 5175, and close the application.
+                  This will cleanly create an auto-backup, enforce retention limits, stop all background services, release port 5175, and close the application.
                 </p>
               </div>
             </div>
@@ -259,23 +306,87 @@ const ExitAppButton = () => {
         document.body
       )}
 
-      {/* Shutdown in Progress Fullscreen Overlay */}
+      {/* Shutdown in Progress Fullscreen Overlay with Real-time 0-100% Progress */}
       {isShuttingDown && createPortal(
-        <div className="fixed inset-0 z-[999999] bg-bg/95 flex flex-col items-center justify-center text-center p-6 select-none animate-fade-in">
-          <div className="p-4 rounded-3xl bg-red-500/10 text-red-500 mb-4 animate-pulse border border-red-500/20">
-            <Power size={36} />
-          </div>
-          <h2 className="text-lg font-extrabold text-text tracking-tight mb-1.5">
-            {shutdownSettled ? 'AI Pharmacy OS Shut Down' : 'Shutting Down AI Pharmacy OS...'}
-          </h2>
-          <p className="text-xs text-muted max-w-sm leading-relaxed">
-            {shutdownSettled
-              ? 'The backend server process has terminated cleanly and port 5175 is free. You can safely close this tab or window (Ctrl+W or Alt+F4).'
-              : 'Creating database shutdown backup and stopping background services...'}
-          </p>
-          <div className="mt-5 flex items-center gap-2 text-xs text-muted font-medium bg-bg2 px-4 py-2 rounded-full border border-glass-border">
-            <Loader2 size={14} className="animate-spin text-red-500" />
-            <span>Closing application completely...</span>
+        <div className="fixed inset-0 z-[999999] bg-bg/95 flex flex-col items-center justify-center text-center p-6 select-none animate-fade-in backdrop-blur-sm">
+          <div className="w-[95vw] max-w-md bg-bg border border-glass-border rounded-3xl p-6 shadow-2xl flex flex-col items-center text-center space-y-4">
+            
+            {/* Header Icon */}
+            {completedInfo ? (
+              <div className="p-4 rounded-3xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 animate-fade-in">
+                <Check size={36} />
+              </div>
+            ) : (
+              <div className="p-4 rounded-3xl bg-red-500/10 text-red-500 border border-red-500/20 animate-pulse">
+                <Power size={36} />
+              </div>
+            )}
+
+            <div>
+              <h2 className="text-lg font-extrabold text-text tracking-tight mb-1">
+                {completedInfo ? 'Backup Completed Safely' : 'Backing Up & Shutting Down...'}
+              </h2>
+              <p className="text-xs text-muted leading-relaxed">
+                {completedInfo
+                  ? 'All database tables and sessions secured cleanly. Closing application...'
+                  : 'Creating full database backup and stopping background services safely.'}
+              </p>
+            </div>
+
+            {/* Progress Bar Container */}
+            <div className="w-full space-y-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-text font-medium truncate max-w-[260px] text-left">
+                  {stageMessage}
+                </span>
+                <span className="font-mono font-bold text-xs text-text bg-bg2 px-2 py-0.5 rounded border border-border">
+                  {Math.min(100, Math.max(0, progress))}%
+                </span>
+              </div>
+
+              {/* Progress bar track */}
+              <div className="w-full h-2.5 bg-bg2 rounded-full overflow-hidden border border-border p-0.5">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ease-out ${
+                    completedInfo ? 'bg-emerald-500' : 'bg-red-500'
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Completed Backup Card */}
+            {completedInfo && (
+              <div className="w-full p-3.5 rounded-2xl bg-bg2 border border-emerald-500/30 text-left space-y-1.5 animate-fade-in">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted text-[11px] font-medium">Backup Archive:</span>
+                  {completedInfo.sizeBytes && completedInfo.sizeBytes > 0 && (
+                    <span className="text-[11px] font-mono text-emerald-500 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                      {(completedInfo.sizeBytes / (1024 * 1024)).toFixed(1)} MB
+                    </span>
+                  )}
+                </div>
+                <div className="font-mono text-[11px] text-text break-all bg-bg p-2 rounded-xl border border-border">
+                  {completedInfo.filename}
+                </div>
+              </div>
+            )}
+
+            {/* Bottom Status Indicator */}
+            <div className="flex items-center gap-2 text-xs text-muted font-medium bg-bg2 px-4 py-2 rounded-full border border-glass-border">
+              {completedInfo ? (
+                <>
+                  <Check size={14} className="text-emerald-500 shrink-0" />
+                  <span className="text-text font-medium">Closing AI Pharmacy OS completely...</span>
+                </>
+              ) : (
+                <>
+                  <Loader2 size={14} className="animate-spin text-red-500 shrink-0" />
+                  <span>Please do not close this window while backup is in progress...</span>
+                </>
+              )}
+            </div>
+
           </div>
         </div>,
         document.body

@@ -429,6 +429,29 @@ function createWindow() {
     }
   });
 
+  // Intercept window close to trigger in-app exit confirmation & backup progress modal
+  mainWindow.on('close', async (e) => {
+    if (shutdownInProgress) return;
+    try {
+      const isClean = await mainWindow?.webContents?.executeJavaScript('Boolean(window.__AI_PHARMACY_CLEAN_EXIT__)');
+      if (isClean) {
+        shutdownInProgress = true;
+        return; // Allow clean close
+      }
+    } catch (_) {
+      shutdownInProgress = true;
+      return;
+    }
+
+    e.preventDefault();
+    try {
+      await mainWindow?.webContents?.executeJavaScript("window.dispatchEvent(new CustomEvent('app-request-exit'))");
+    } catch (_) {
+      shutdownInProgress = true;
+      mainWindow?.destroy();
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -596,11 +619,10 @@ app.on('window-all-closed', () => {
     app.quit();
   };
 
-  // The backend's own gracefulShutdown() self-enforces a 6s hard cap (writes
-  // last_clean_shutdown='true', destroys the WhatsApp client cleanly, closes the DB,
-  // then exits itself) — give it a bounded window to finish that path on its own before
-  // falling back to the old hard taskkill, which always produced an unclean shutdown.
-  const GRACE_MS = 5000;
+  // The backend's own gracefulShutdown() creates a safety backup, writes
+  // last_clean_shutdown='true', destroys WhatsApp client cleanly, closes the DB,
+  // then exits itself — bounded window allows full streaming backup before hard fallback.
+  const GRACE_MS = 25000;
   shutdownForceTimer = setTimeout(() => {
     if (!shutdownInProgress) return;
     console.warn('[ElectronMain] Graceful shutdown did not finish in time — forcing kill.');

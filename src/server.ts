@@ -336,6 +336,7 @@ app.use('/api/network', lazyRoute(() => import('./routes/network.js'), 'hot'));
 
 // Pending shutdown timer for tab-close grace period (allows F5 reload / navigation without killing server)
 let pendingShutdownTimer: NodeJS.Timeout | null = null;
+let shutdownBackupCompleted = false;
 
 // Client-initiated cancellation of pending tab-close shutdown
 app.post('/api/system/cancel-shutdown', (_req, res) => {
@@ -352,8 +353,9 @@ app.post('/api/system/cancel-shutdown', (_req, res) => {
 app.use('/api', ownerRemoteGate);
 
 // Client-initiated clean application exit: releases port, runs backup, and closes DB
-app.post('/api/system/shutdown', (req, res) => {
+app.post('/api/system/shutdown', async (req, res) => {
   const isTabClose = req.query.type === 'tab_close';
+  const skipBackup = req.query.backup === 'false';
 
   if (isTabClose) {
     // In development mode (Vite / tsx watch), closing or refreshing a browser tab must not terminate the development server.
@@ -372,15 +374,32 @@ app.post('/api/system/shutdown', (req, res) => {
     return;
   }
 
-  console.log('[System] Received direct client exit request. Terminating server...');
+  console.log('[System] Received direct client exit request. Executing shutdown backup...');
   if (pendingShutdownTimer) {
     clearTimeout(pendingShutdownTimer);
     pendingShutdownTimer = null;
   }
-  res.json({ success: true, message: 'Shutting down AI Pharmacy OS...' });
+
+  let backupResult: { filename: string; sizeBytes?: number } | null = null;
+  if (!skipBackup && !shutdownBackupCompleted) {
+    try {
+      const { createBackup } = await import('./services/backupService.js');
+      backupResult = await createBackup('Shutdown (Client Exit)');
+      shutdownBackupCompleted = true;
+    } catch (err: any) {
+      console.warn('[System] Pre-shutdown backup error:', err.message || err);
+    }
+  }
+
+  res.json({
+    success: true,
+    message: 'AI Pharmacy OS backup completed and server shutting down...',
+    backup: backupResult,
+  });
+
   setTimeout(() => {
     void gracefulShutdown('CLIENT_EXIT');
-  }, 100);
+  }, 300);
 });
 
 // Alias for Electron client-exit shutdown requests
@@ -1315,9 +1334,9 @@ async function gracefulShutdown(signal: string) {
 
   console.log(`[Shutdown] ${signal} received. Closing UI window immediately...`);
 
-  // Hard watchdog: under NO circumstance can shutdown stay hung longer than 6 seconds
+  // Hard watchdog: under NO circumstance can shutdown stay hung longer than 20 seconds
   const shutdownWatchdog = setTimeout(async () => {
-    console.warn('[Shutdown] Hard watchdog expired (6s). Forcing immediate process termination.');
+    console.warn('[Shutdown] Hard watchdog expired (20s). Forcing immediate process termination.');
     if (process.platform === 'win32' && signal !== 'APPLY_UPDATE') {
       try {
         const pid = process.pid;
@@ -1331,7 +1350,7 @@ async function gracefulShutdown(signal: string) {
       } catch (_) {}
     }
     process.exit(0);
-  }, 6000);
+  }, 20000);
   shutdownWatchdog.unref();
 
   // 1. Immediately terminate the desktop app window so user sees window disappear without delay
@@ -1368,19 +1387,24 @@ async function gracefulShutdown(signal: string) {
     console.error('[Shutdown] Could not write last_clean_shutdown=true:', flagErr);
   }
 
-  // 4. Create shutdown backup with strict 3.5s timeout (prevents backup from ever blocking shutdown)
-  console.log(`[Shutdown] Creating shutdown backup...`);
-  try {
-    const { createBackup } = await import('./services/backupService.js');
-    const result = await Promise.race([
-      createBackup(`Shutdown (${signal})`),
-      new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Shutdown backup timed out after 3500ms')), 3500))
-    ]);
-    if (result) {
-      console.log(`[Backup] Shutdown backup created: ${result.filename}`);
+  // 4. Create shutdown backup with safe 15s timeout if not already created during client exit
+  if (!shutdownBackupCompleted) {
+    console.log(`[Shutdown] Creating fallback shutdown backup...`);
+    try {
+      const { createBackup } = await import('./services/backupService.js');
+      const result = await Promise.race([
+        createBackup(`Shutdown (${signal})`),
+        new Promise<null>((_, reject) => setTimeout(() => reject(new Error('Shutdown backup timed out after 15000ms')), 15000))
+      ]);
+      if (result) {
+        shutdownBackupCompleted = true;
+        console.log(`[Backup] Shutdown backup created: ${result.filename}`);
+      }
+    } catch (err: any) {
+      console.warn('[Backup] Shutdown backup notice:', err.message || err);
     }
-  } catch (err: any) {
-    console.warn('[Backup] Shutdown backup notice:', err.message || err);
+  } else {
+    console.log('[Shutdown] Shutdown backup was already created cleanly by client exit flow.');
   }
 
   // 5. Concurrently clean up sidecars and background workers with timeout

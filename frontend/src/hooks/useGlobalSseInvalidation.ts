@@ -120,6 +120,7 @@ const SSE_CUSTOM_EVENTS: Record<string, string[]> = {
   update_available: ['sse-update-available'],
   update_progress: ['sse-update-progress'],
   update_check_complete: ['sse-update-check-complete'],
+  shutdown_progress: ['sse-shutdown-progress'],
 };
 
 // Chrome-owned queries rendered OUTSIDE KeepAliveOutlet pages (Layout /

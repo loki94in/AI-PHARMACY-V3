@@ -6,6 +6,7 @@ import { dbManager } from '../database/connection.js';
 import Database from 'better-sqlite3';
 import zlib from 'zlib';
 import { pipeline } from 'stream/promises';
+import { eventService } from './eventService.js';
 
 import { config } from '../config/index.js';
 import { getAppDataDir } from '../config/index.js';
@@ -28,11 +29,23 @@ const SESSION_EXCLUDED_DIRS = new Set([
 // Active scheduled task reference (so we can cancel & reschedule)
 let scheduledTask: ScheduledTask | null = null;
 
+export function broadcastBackupProgress(payload: {
+  stage: 'cloning' | 'compressing' | 'retention' | 'completed' | 'error';
+  percent: number;
+  message: string;
+  filename?: string;
+  sizeBytes?: number;
+}): void {
+  try {
+    eventService.broadcast('shutdown_progress', payload);
+  } catch (_) {}
+}
+
 /**
  * Create a backup of the database file.
  * @param reason - A short description for the action log (e.g. 'Manual', 'Scheduled 3h', 'Shutdown')
  */
-export async function createBackup(reason: string = 'Manual'): Promise<{ filename: string }> {
+export async function createBackup(reason: string = 'Manual'): Promise<{ filename: string; sizeBytes?: number }> {
   // ponytail: defer auto-backups during cold boot to avoid SQLite lock contention
   const isManual = reason === 'Manual';
   const isShutdown = reason.startsWith('Shutdown');
@@ -48,54 +61,139 @@ export async function createBackup(reason: string = 'Manual'): Promise<{ filenam
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const filename = `app_backup_${timestamp}.db.gz`;
   const backupPath = path.join(BACKUP_DIR, filename);
-
-  // Use native better-sqlite3 backup API to safely checkpoint WAL and clone live SQLite database
   const tempDbPath = backupPath.replace('.gz', '');
-  const tempDb = new Database(DB_PATH);
-  await tempDb.backup(tempDbPath);
-  tempDb.close();
 
-  // Compress the backup using gzip (ponytail: native stdlib zlib - fast level 1 for shutdown to avoid hanging)
-  const gzip = zlib.createGzip({ level: isShutdown ? zlib.constants.Z_BEST_SPEED : 6 });
-  const source = fs.createReadStream(tempDbPath);
-  const destination = fs.createWriteStream(backupPath);
+  broadcastBackupProgress({
+    stage: 'cloning',
+    percent: 5,
+    message: 'Starting database safety snapshot...',
+    filename,
+  });
+
   try {
-    await pipeline(source, gzip, destination);
-  } finally {
+    // 1. Use native better-sqlite3 backup API to safely checkpoint WAL and clone live SQLite database
+    const tempDb = new Database(DB_PATH);
+    let lastClonePercent = 5;
+    await tempDb.backup(tempDbPath, {
+      progress({ totalPages, remainingPages }) {
+        if (totalPages > 0) {
+          const ratio = (totalPages - remainingPages) / totalPages;
+          const currentPercent = Math.min(30, 5 + Math.round(ratio * 25));
+          if (currentPercent > lastClonePercent) {
+            lastClonePercent = currentPercent;
+            broadcastBackupProgress({
+              stage: 'cloning',
+              percent: currentPercent,
+              message: `Cloning active database (${Math.round(ratio * 100)}%)...`,
+              filename,
+            });
+          }
+        }
+        return 500; // 500 pages per batch
+      }
+    });
+    tempDb.close();
+
+    // 2. Compress the backup using gzip
+    const uncompressedSize = fs.existsSync(tempDbPath) ? fs.statSync(tempDbPath).size : 0;
+    let bytesRead = 0;
+    let lastCompPercent = 30;
+
+    broadcastBackupProgress({
+      stage: 'compressing',
+      percent: 30,
+      message: 'Compressing backup archive (gzip)...',
+      filename,
+    });
+
+    const gzip = zlib.createGzip({ level: isShutdown ? zlib.constants.Z_BEST_SPEED : 6 });
+    const source = fs.createReadStream(tempDbPath);
+    const destination = fs.createWriteStream(backupPath);
+
+    source.on('data', (chunk) => {
+      bytesRead += chunk.length;
+      if (uncompressedSize > 0) {
+        const compRatio = bytesRead / uncompressedSize;
+        const currentPercent = Math.min(90, 30 + Math.round(compRatio * 60));
+        if (currentPercent > lastCompPercent) {
+          lastCompPercent = currentPercent;
+          broadcastBackupProgress({
+            stage: 'compressing',
+            percent: currentPercent,
+            message: `Compressing backup archive (${Math.round(compRatio * 100)}%)...`,
+            filename,
+          });
+        }
+      }
+    });
+
+    try {
+      await pipeline(source, gzip, destination);
+    } finally {
+      if (fs.existsSync(tempDbPath)) {
+        try {
+          fs.unlinkSync(tempDbPath);
+          console.log(`[Backup] Cleaned uncompressed temporary file: ${tempDbPath}`);
+        } catch (_) {}
+      }
+    }
+
+    // 3. Log the action
+    try {
+      const db = await dbManager.getConnection();
+      await db.run(
+        'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
+        ['BACKUP', `Backup created (${reason}): ${filename}`]
+      );
+    } catch {
+      console.error('Backup created but failed to log action');
+    }
+
+    // 4. Enforce retention limit
+    broadcastBackupProgress({
+      stage: 'retention',
+      percent: 95,
+      message: 'Pruning old backups & enforcing retention...',
+      filename,
+    });
+    enforceRetention();
+
+    const finalSize = fs.existsSync(backupPath) ? fs.statSync(backupPath).size : 0;
+    broadcastBackupProgress({
+      stage: 'completed',
+      percent: 100,
+      message: 'Safety backup completed successfully!',
+      filename,
+      sizeBytes: finalSize,
+    });
+
+    // 5. Trigger Google Drive upload and email dispatch if enabled
+    try {
+      const { backupRecoveryService } = await import('./backupRecoveryService.js');
+      const gdriveEnabled = await backupRecoveryService.getSetting('backup_gdrive_enabled', 'false') === 'true';
+      if (gdriveEnabled) {
+        void backupRecoveryService.uploadFileToGoogleDrive(backupPath, filename);
+      }
+      void backupRecoveryService.dispatchBackupEmailIfConfigured(backupPath, filename);
+    } catch (cloudErr) {
+      console.warn('[Backup] Cloud sync hook warning (non-fatal):', cloudErr);
+    }
+
+    invalidatePreupdateCache();
+    return { filename, sizeBytes: finalSize };
+  } catch (err: any) {
+    broadcastBackupProgress({
+      stage: 'error',
+      percent: 100,
+      message: `Backup failed: ${err?.message || 'Unknown error'}`,
+      filename,
+    });
+    // Ensure temporary clone is deleted on error too
     if (fs.existsSync(tempDbPath)) {
-      fs.unlinkSync(tempDbPath);
+      try { fs.unlinkSync(tempDbPath); } catch (_) {}
     }
+    throw err;
   }
-
-  // Log the action
-  try {
-    const db = await dbManager.getConnection();
-    await db.run(
-      'INSERT INTO action_logs (action_type, description) VALUES (?, ?)',
-      ['BACKUP', `Backup created (${reason}): ${filename}`]
-    );
-  } catch {
-    // If DB logging fails, the backup file was still written — don't throw
-    console.error('Backup created but failed to log action');
-  }
-
-  // Enforce retention limit
-  enforceRetention();
-
-  // Trigger Google Drive upload and email dispatch if enabled
-  try {
-    const { backupRecoveryService } = await import('./backupRecoveryService.js');
-    const gdriveEnabled = await backupRecoveryService.getSetting('backup_gdrive_enabled', 'false') === 'true';
-    if (gdriveEnabled) {
-      void backupRecoveryService.uploadFileToGoogleDrive(backupPath, filename);
-    }
-    void backupRecoveryService.dispatchBackupEmailIfConfigured(backupPath, filename);
-  } catch (cloudErr) {
-    console.warn('[Backup] Cloud sync hook warning (non-fatal):', cloudErr);
-  }
-
-  invalidatePreupdateCache();
-  return { filename };
 }
 
 /**
@@ -187,6 +285,10 @@ export function listBackups(): { filename: string; sizeBytes: number; createdAt:
       try {
         const stats = fs.statSync(filePath);
         if (stats.isFile() && (filename.endsWith('.db') || filename.endsWith('.db.gz') || filename.endsWith('.zip'))) {
+          // Skip temporary uncompressed .db clone if its compressed .db.gz counterpart exists
+          if (filename.endsWith('.db') && fs.existsSync(path.join(dir, filename + '.gz'))) {
+            continue;
+          }
           // Avoid duplicate filenames if same file is listed in root vs subdir
           if (!results.some(r => r.filename === filename)) {
             results.push({
@@ -553,12 +655,12 @@ export function enforceRetention(): void {
             continue;
           }
 
-          // Clean uncompressed .db files if .db.gz exists or older than 30m
+          // Clean uncompressed .db files if .db.gz exists or older than 5m
           if (f.startsWith('app_backup_') && f.endsWith('.db')) {
             const gzEquivalent = f + '.gz';
             const stats = fs.statSync(fullPath);
             const ageMs = Date.now() - stats.mtimeMs;
-            if (fs.existsSync(path.join(BACKUP_DIR, gzEquivalent)) || ageMs > 30 * 60 * 1000) {
+            if (fs.existsSync(path.join(BACKUP_DIR, gzEquivalent)) || ageMs > 5 * 60 * 1000) {
               fs.unlinkSync(fullPath);
               console.log(`[Backup] Cleaned uncompressed leftover database: ${f}`);
             }
@@ -617,6 +719,12 @@ export function enforceRetention(): void {
  * Reads the saved frequency from app_settings and starts the cron.
  */
 export async function initBackupScheduler(): Promise<void> {
+  // Prune any orphaned leftover .db files and enforce 20-file retention on boot
+  try {
+    enforceRetention();
+  } catch (retErr) {
+    console.warn('[Backup] Boot retention sweep warning:', retErr);
+  }
   const freq = await getScheduleConfig();
   startScheduler(freq);
 }
