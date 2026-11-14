@@ -80,6 +80,101 @@ if ((isPromote || isRemote) && !adminSecret) {
 }
 const ghRepo       = 'loki94in/AI-PHARMACY-V3';
 
+const notesFlagIdx = args.findIndex(a => a === '--notes' || a === '-m' || a === '--changelog');
+const customNotes = notesFlagIdx !== -1 && args[notesFlagIdx + 1] && !args[notesFlagIdx + 1].startsWith('-')
+  ? args[notesFlagIdx + 1]
+  : null;
+
+/**
+ * Automatically generate rich release notes from git commits since the previous release.
+ */
+function generateReleaseNotes(targetTagName, isPilotRelease) {
+  if (customNotes && customNotes.trim()) {
+    return customNotes.trim();
+  }
+
+  // 1. Check if a local RELEASE_NOTES.md exists in root
+  const releaseNotesFile = path.join(rootDir, 'RELEASE_NOTES.md');
+  if (fs.existsSync(releaseNotesFile)) {
+    try {
+      const content = fs.readFileSync(releaseNotesFile, 'utf8').trim();
+      if (content) {
+        console.log('   📄 Loaded release notes from RELEASE_NOTES.md');
+        return content;
+      }
+    } catch (_) {}
+  }
+
+  // 2. Find previous release tag to diff against
+  let previousTag = '';
+  try {
+    const allTags = execSync('git tag --sort=-creatordate', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })
+      .trim()
+      .split(/\r?\n/)
+      .map(t => t.trim())
+      .filter(Boolean);
+    previousTag = allTags.find(t => t !== targetTagName) || '';
+  } catch (_) {}
+
+  const gitRange = previousTag ? `${previousTag}..HEAD` : '-n 10';
+  let commits = [];
+  try {
+    const logOutput = execSync(`git log ${gitRange} --no-merges --pretty=format:"%s"`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    }).trim();
+    if (logOutput) {
+      commits = logOutput
+        .split(/\r?\n/)
+        .map(c => c.trim())
+        .filter(c => {
+          if (!c) return false;
+          if (/^chore\(release\):/i.test(c)) return false;
+          if (/^bump version/i.test(c)) return false;
+          if (/^release v\d/i.test(c)) return false;
+          return true;
+        });
+    }
+  } catch (_) {}
+
+  const releaseType = isPilotRelease ? 'Pilot / Staging Release' : 'Production Release';
+  if (commits.length === 0) {
+    return `## What's New in ${targetTagName}\n• ${targetTagName} — ${releaseType} optimizations and stability updates.`;
+  }
+
+  const bulletLines = Array.from(new Set(commits)).map(c => {
+    let line = c.trim().replace(/^[-*•]\s*/, '');
+    const match = line.match(/^([a-z]+)(?:\(([^)]+)\))?:\s*(.+)$/i);
+    if (match) {
+      const [, type, scope, msg] = match;
+      let label = '';
+      if (scope) {
+        label = scope
+          .split(/[-_/ ]+/)
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .join(' ');
+      } else {
+        const typeMap = {
+          feat: 'Feature',
+          fix: 'Fix',
+          perf: 'Performance',
+          refactor: 'Refactor',
+          docs: 'Docs',
+          style: 'UI / Style',
+          test: 'Test',
+        };
+        label = typeMap[type.toLowerCase()] || type.charAt(0).toUpperCase() + type.slice(1);
+      }
+      const cleanMsg = msg.charAt(0).toUpperCase() + msg.slice(1);
+      return `• **${label}**: ${cleanMsg}`;
+    }
+    const clean = line.charAt(0).toUpperCase() + line.slice(1);
+    return `• ${clean}`;
+  });
+
+  return `## What's New in ${targetTagName}\n\n${bulletLines.join('\n')}`;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // PROMOTE MODE: re-publish existing Pilot version to ALL — no rebuild needed
 // PRODUCTION.md §18
@@ -126,7 +221,7 @@ if (isPromote) {
       downloadUrl,
       updatePackageUrl,
       sha256,
-      changelog:        `AI Pharmacy OS ${tagName} — Production Rollout`,
+      changelog:        generateReleaseNotes(tagName, false),
       rolloutMode:      'ALL',
       releaseType:      'production',
       releaseDate:      new Date().toISOString(),
@@ -374,9 +469,11 @@ if (!isFullInstaller) {
   }
 }
 
-const releaseNotes = isPilot
-  ? `AI Pharmacy OS ${tagName} — Pilot / Staging Release`
-  : `AI Pharmacy OS ${tagName} — Production Release`;
+const releaseNotes = generateReleaseNotes(tagName, isPilot);
+console.log('\n=============================================================');
+console.log('📋 Auto-Generated Release Notes:');
+console.log(releaseNotes);
+console.log('=============================================================\n');
 
 const apkFile = path.join(rootDir, 'data', 'pharmacy-mobile.apk');
 const apkName = `AI-Pharmacy-Mobile-${tagName}.apk`;
@@ -419,10 +516,13 @@ if (skipGithub) {
     if (releaseExists) {
       console.log(`   Release ${tagName} already exists. Uploading ${assetsToUpload.length} asset(s) (--clobber)...`);
       execSync(`gh release upload ${tagName} ${quotedAssets} --clobber`, { stdio: 'inherit', cwd: rootDir });
+      try {
+        execSync(`gh release edit ${tagName} --notes "${releaseNotes.replace(/"/g, '\\"')}"`, { stdio: 'ignore', cwd: rootDir });
+      } catch (_) {}
     } else {
       console.log(`   Creating new GitHub release ${tagName} via gh CLI (${assetsToUpload.length} asset(s))...`);
       execSync(
-        `gh release create ${tagName} ${quotedAssets} --title "AI Pharmacy OS ${tagName}" --notes "${releaseNotes}"`,
+        `gh release create ${tagName} ${quotedAssets} --title "AI Pharmacy OS ${tagName}" --notes "${releaseNotes.replace(/"/g, '\\"')}"`,
         { stdio: 'inherit', cwd: rootDir }
       );
     }
@@ -434,17 +534,20 @@ if (skipGithub) {
 }
 
 if (!skipGithub && !uploadedViaGh) {
-  let ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+  let ghToken = '';
+  // 1. Prefer active git credential fill if available (authenticated local developer session)
+  try {
+    const creds = execSync('git credential fill', {
+      input: 'protocol=https\nhost=github.com\n\n',
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    const pwLine = creds.split('\n').find(l => l.startsWith('password='));
+    if (pwLine) ghToken = pwLine.slice(9).trim();
+  } catch (_) {}
+  // 2. Fall back to process.env tokens
   if (!ghToken) {
-    try {
-      const creds = execSync('git credential fill', {
-        input: 'protocol=https\nhost=github.com\n\n',
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'ignore'],
-      });
-      const pwLine = creds.split('\n').find(l => l.startsWith('password='));
-      if (pwLine) ghToken = pwLine.slice(9).trim();
-    } catch (_) {}
+    ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
   }
   if (!ghToken) {
     console.warn('\n⚠️  Notice: GitHub asset upload skipped:');
@@ -468,6 +571,16 @@ if (!skipGithub && !uploadedViaGh) {
         const getRes = await axios.get(`https://api.github.com/repos/${ghRepo}/releases/tags/${tagName}`, { headers: ghHeaders });
         release = getRes.data;
         console.log(`   Found existing release ${tagName} (ID: ${release.id})`);
+        if (release.body !== releaseNotes) {
+          console.log(`   Updating release notes on GitHub for ${tagName}...`);
+          const updateRes = await axios.patch(
+            `https://api.github.com/repos/${ghRepo}/releases/${release.id}`,
+            { body: releaseNotes },
+            { headers: ghHeaders }
+          );
+          release = updateRes.data;
+          console.log(`   ✓ Release notes updated on GitHub.`);
+        }
       } catch (err) {
         if (err.response?.status === 404) {
           console.log(`   Creating release ${tagName}...`);
@@ -585,7 +698,7 @@ try {
     downloadUrl,
     updatePackageUrl,
     sha256,
-    changelog:        `AI Pharmacy OS ${tagName}\n• Production-stable installer\n• Auto background update\n• Safe updater with rollback`,
+    changelog:        releaseNotes,
     rolloutMode:      rollout,
     releaseType:      isPilot ? 'pilot' : 'production',
     releaseDate:      new Date().toISOString(),
